@@ -13,19 +13,19 @@
    a. Closed task with active seats: end each active seat of that task with `gobby-agents:kill_agent(run_id=<run>)`. Its work is done. Re-list the seats after the kills.
    b. Open task with an active seat: skip the tree. Its work is live.
    c. No active seat, closed task, clean tree (`git -C <tree> status --short` prints nothing), branch merged into its landing target (the tree's stored `base_branch`, from `gobby-worktrees:get_worktree`; `git -C <tree> merge-base --is-ancestor <branch> <target>` exits 0): run `gobby-worktrees:delete_worktree(worktree_id=<id>, merged_into=<target>)`. A pod's sub-tree targets its epic main branch, not the integration branch.
-   d. Detached tree that meets every gate in (c): follow the named Detached-tree recovery paragraph in the Dev Team Lead's Post-land cleanup, with the same landing target and every proof it lists, HEAD included. Then retry the delete from (c).
+   d. Detached tree that meets every other gate in (c): report it with its path, task, HEAD and landing target. Never switch its branch; the task's Dev Team Lead recovers it.
    e. Closed task, but the tree is dirty or unmerged: report it, never delete it.
    f. Open task, no active seat: report it as stale when its branch is 100 or more commits behind the integration branch (`git -C <tree> rev-list --count <branch>..<integration>`). Report it also when it is dirty or unmerged. Otherwise take no action.
-5. Read each delete result. `already_deleted: true` is done. A `worktree_in_use` that names a session outside your kill set: report it and do not retry. `uncommitted_changes`, a refused merge proof, or a `worktree_branch_mismatch` that step (d) does not clear: report it with the tree path, branch, task and error code. Never pass `force` or `force_delete_branch`.
+5. Read each delete result. `already_deleted: true` is done. A `worktree_in_use` that names a session outside your kill set: report it and do not retry. `uncommitted_changes`, a refused merge proof, or a `worktree_branch_mismatch`: report it with the tree path, branch, task and error code. Never pass `force` or `force_delete_branch`.
 6. Report. Send Triage one plain message per sweep that did anything. List each tree deleted (path and task), each seat ended (session ref and task), and each tree reported (path, branch, task and reason: stale, dirty, unmerged, unregistered, or the refusal code). Triage forwards it to the Orchestrator.
 
 ## Limits
 
 - The integration branch is the one `project_policy` names (0.5.0 today). Read it once per sweep with `get_variable(name="project_policy")`.
-- Read-only git only, except the detached-tree `git switch` in step 4d. Never run `git worktree remove` or `prune`, `git branch -D`, `reset`, `stash` or `clean`. Deletion goes through `gobby-worktrees:delete_worktree` only.
+- Read-only git only; the seat's rules refuse every shell Git mutation. Never run `git switch`, `git worktree remove` or `prune`, `git branch -D`, `reset`, `stash` or `clean`. Deletion goes through `gobby-worktrees:delete_worktree` only.
 - Never pass `force` or `force_delete_branch`, and never delete an unmerged, dirty, unregistered or open-task tree.
 - Never end a seat of an open task, and never restart the daemon or edit a file.
 
-_Version: 2.0.0_
+_Version: 3.0.0_
 
-_Last verified: 2026-11-01_
+_Last verified: 2026-11-03_

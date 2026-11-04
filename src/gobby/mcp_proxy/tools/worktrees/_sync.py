@@ -9,6 +9,10 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._landing_fork import (
+    landed_source_fork,
+    receipt_integration_base,
+)
 from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
     _non_gobby_dirty_paths,
     _non_gobby_status_lines,
@@ -293,7 +297,13 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         async def _source_changed_schema_identity() -> bool:
             if not source_is_reconciled:
                 revisions = [f"{target_ref}...{source_ref}"]
+            elif fork := await landed_source_fork(
+                resolved_git_mgr, repo_path, source_ref, target_ref
+            ):
+                revisions = [fork, source_ref]
             else:
+                # A fast-forward landing left no merge: its landing receipt names the
+                # pre-landing target, and only a task without one uses the recorded fork.
                 task_id = worktree.task_id
                 if (
                     effective_source != worktree.branch_name
@@ -302,10 +312,20 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     or ctx.task_manager is None
                 ):
                     return False
-                artifacts = ctx.task_manager.artifacts.get_artifacts(task_id)
-                if not isinstance(artifacts.base_commit_sha, str) or not artifacts.base_commit_sha:
+                landed = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["rev-parse", "--verify", source_ref], cwd=repo_path, timeout=10
+                    )
+                )
+                landed_sha = landed.stdout.strip() if landed.returncode == 0 else ""
+                fork = landed_sha and await asyncio.to_thread(
+                    receipt_integration_base, ctx.task_manager.db, task_id, landed_sha
+                )
+                if not fork:
+                    fork = ctx.task_manager.artifacts.get_artifacts(task_id).base_commit_sha
+                if not isinstance(fork, str) or not fork:
                     return False
-                revisions = [artifacts.base_commit_sha, source_ref]
+                revisions = [fork, source_ref]
 
             diff_result = await run_to_completion(
                 resolved_git_mgr.run_git_command(

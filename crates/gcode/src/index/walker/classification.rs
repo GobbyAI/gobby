@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::index::languages;
 use crate::index::security;
@@ -60,6 +61,85 @@ pub fn classify_explicit_file_with_options(
     classify_file(root, path, exclude_patterns)
 }
 
+/// Classify many explicitly requested files with one visibility pass.
+///
+/// Each result equals `classify_explicit_file_with_options` for the same path. The
+/// hidden-path context loads once and one walk covers the whole batch, descending only
+/// along ancestors of the candidates. Cost follows the candidate set instead of
+/// rebuilding a root-scoped walker and canonicalizing ancestors for every file.
+pub fn classify_explicit_files_with_options<S: AsRef<str>>(
+    root: &Path,
+    paths: &[PathBuf],
+    exclude_patterns: &[S],
+    options: DiscoveryOptions,
+) -> Vec<Option<FileClassification>> {
+    let context = HiddenPathContext::load(root);
+    let visible = explicit_paths_visible(root, paths, options, &context);
+    paths
+        .iter()
+        .zip(visible)
+        .map(|(path, visible)| {
+            if visible {
+                classify_file(root, path, exclude_patterns)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Batch form of `explicit_path_visible`, returning one flag per input path.
+fn explicit_paths_visible(
+    root: &Path,
+    paths: &[PathBuf],
+    options: DiscoveryOptions,
+    context: &HiddenPathContext,
+) -> Vec<bool> {
+    let mut visible = vec![false; paths.len()];
+    let mut pending: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+    for (index, path) in paths.iter().enumerate() {
+        if context.allowlist().matches(root, path) {
+            visible[index] = true;
+        } else if !is_hidden_path(root, path) {
+            pending.entry(path.clone()).or_default().push(index);
+        }
+    }
+    if pending.is_empty() {
+        return visible;
+    }
+    #[cfg(test)]
+    super::op_counts::record_visibility_walk();
+
+    // Every pending path and each of its ancestors may be descended into. Inserting
+    // stops at the first ancestor already present, whose own ancestors are present too.
+    let mut descend: HashSet<PathBuf> = HashSet::new();
+    for path in pending.keys() {
+        for ancestor in path.ancestors() {
+            if !descend.insert(ancestor.to_path_buf()) {
+                break;
+            }
+        }
+    }
+
+    let mut settings = gobby_core::indexing::WalkerSettings::new(root);
+    settings.respect_gitignore = options.respect_gitignore;
+    settings.max_filesize = Some(MAX_FILE_SIZE);
+    let mut builder = settings.into_walker();
+    builder.hidden(false);
+    builder.filter_entry(move |entry| descend.contains(entry.path()));
+    for entry in builder.build().flatten() {
+        if !entry.path().is_file() {
+            continue;
+        }
+        if let Some(indices) = pending.get(entry.path()) {
+            for &index in indices {
+                visible[index] = true;
+            }
+        }
+    }
+    visible
+}
+
 /// Return true when `path` is an unsupported, safe text file suitable for chunks.
 pub fn is_content_indexable(
     root: &Path,
@@ -102,6 +182,8 @@ fn explicit_path_visible(
         return false;
     }
 
+    #[cfg(test)]
+    super::op_counts::record_visibility_walk();
     let mut settings = gobby_core::indexing::WalkerSettings::new(root);
     settings.respect_gitignore = options.respect_gitignore;
     settings.max_filesize = Some(MAX_FILE_SIZE);

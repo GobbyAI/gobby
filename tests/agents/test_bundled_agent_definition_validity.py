@@ -8,8 +8,10 @@ validate through AgentDefinitionBody.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -18,16 +20,24 @@ from pydantic import ValidationError
 
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.cli.agents_steps import check_agent
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.clones import create_clones_registry
+from gobby.mcp_proxy.tools.merge import create_merge_registry
+from gobby.mcp_proxy.tools.worktrees._factory import create_worktrees_registry
 from gobby.skills.sync import get_bundled_skills_path
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.condition_helpers_git_tools import GIT_MUTATING_MCP_TOOLS
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     RuleDefinitionBody,
     split_rule_definition_data,
 )
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.selectors import resolve_rules_for_agent
 from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -229,3 +239,141 @@ def test_review_stage_seat_loads_the_holistic_epic_review_for_epic_targets() -> 
     for duty in EPIC_REVIEW_DUTIES:
         assert duty in reference, duty
     assert re.search(r"^_Version: \d+\.\d+\.\d+_$", raw, re.MULTILINE)
+
+
+SHELL_GIT_MUTATION_FIELD = "canonical_git_mutation"
+READ_ONLY_MCP_CALL = ("gobby-worktrees", "get_worktree")
+REVIEW_ATTESTATIONS = {"independent-review", "security-review"}
+_SYNCED_AT = datetime(2026, 11, 3, tzinfo=UTC)
+
+
+def _bundled_rule_rows() -> list[RuleDefinitionRow]:
+    """Bundled rules as sync stores them: per-rule tags, else file tags, plus gobby."""
+    rows: list[RuleDefinitionRow] = []
+    for path in sorted(get_bundled_rules_path().rglob("*.yaml")):
+        if {"deprecated", "_deprecated"}.intersection(path.parts):
+            continue
+        document = _load(path)
+        for name, definition in (document.get("rules") or {}).items():
+            tags = list(definition.get("tags", document.get("tags", [])))
+            rows.append(
+                RuleDefinitionRow(
+                    id=name,
+                    name=name,
+                    enabled=True,
+                    enabled_pinned=False,
+                    priority=int(definition.get("priority", 100)),
+                    definition_json=dict(definition),
+                    source="installed",
+                    tags=tags if "gobby" in tags else [*tags, "gobby"],
+                    created_at=_SYNCED_AT,
+                    updated_at=_SYNCED_AT,
+                )
+            )
+    return rows
+
+
+BUNDLED_RULE_ROWS = _bundled_rule_rows()
+SHELL_GIT_BLOCKING_RULES = {
+    row.name
+    for row in BUNDLED_RULE_ROWS
+    if SHELL_GIT_MUTATION_FIELD in str(row.definition_json.get("when", ""))
+    and any(effect.get("type") == "block" for effect in row.definition_json.get("effects", []))
+}
+AGENT_BODIES = {body.name: body for body in map(_validate_agent_definition, BUNDLED_AGENT_YAMLS)}
+
+
+def _blocks_shell_git_mutation(body: AgentDefinitionBody) -> bool:
+    return bool(resolve_rules_for_agent(body, BUNDLED_RULE_ROWS) & SHELL_GIT_BLOCKING_RULES)
+
+
+SHELL_GIT_BLOCKED_SEATS = sorted(
+    name for name, body in AGENT_BODIES.items() if _blocks_shell_git_mutation(body)
+)
+TREE_REVIEW_SEATS = sorted(
+    name
+    for name, body in AGENT_BODIES.items()
+    if body.checkout_mode == "inherit" and REVIEW_ATTESTATIONS & set(body.task_attestation_writes)
+)
+
+
+def test_branch_guard_invariants_cover_bundled_seats() -> None:
+    assert SHELL_GIT_BLOCKING_RULES, "no bundled rule blocks shell git mutation"
+    assert TREE_REVIEW_SEATS, "no bundled review seat runs in an inherited checkout"
+
+
+@pytest.mark.parametrize("name", TREE_REVIEW_SEATS)
+def test_review_seat_in_the_author_tree_cannot_mutate_git_from_the_shell(name: str) -> None:
+    assert _blocks_shell_git_mutation(AGENT_BODIES[name]), name
+
+
+def _registered_mcp_tools() -> set[tuple[str, str]]:
+    registries = (
+        create_worktrees_registry(MagicMock()),
+        create_clones_registry(MagicMock(), None, None),
+        create_merge_registry(MagicMock(), MagicMock()),
+    )
+    return {
+        (registry.name, tool["name"]) for registry in registries for tool in registry.list_tools()
+    }
+
+
+def _seat_git_engine(db: HubDatabase, name: str) -> RuleEngine:
+    """Install the shell-git blocking rules the seat selects, as sync stores them."""
+    selected = resolve_rules_for_agent(AGENT_BODIES[name], BUNDLED_RULE_ROWS)
+    manager = RuleDefinitionManager(db)
+    for row in BUNDLED_RULE_ROWS:
+        if row.name in selected & SHELL_GIT_BLOCKING_RULES:
+            body = RuleDefinitionBody.model_validate(
+                {key: row.definition_json[key] for key in ("event", "when", "effects")}
+            )
+            manager.create(
+                name=row.name,
+                tags=["default"],
+                priority=row.priority,
+                definition_json=body.model_dump(mode="json"),
+            )
+    return RuleEngine(db)
+
+
+def _mcp_call(server: str, tool: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="22222222-2222-4222-8222-222222222222",
+        source=SessionSource.CLAUDE,
+        timestamp=_SYNCED_AT,
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": server,
+            "mcp_tool": tool,
+            "tool_input": {"server_name": server, "tool_name": tool, "arguments": {}},
+        },
+    )
+
+
+def test_declared_git_mutating_mcp_tools_are_registered() -> None:
+    registered = _registered_mcp_tools()
+    assert sorted(GIT_MUTATING_MCP_TOOLS - registered) == []
+    assert READ_ONLY_MCP_CALL in registered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", SHELL_GIT_BLOCKED_SEATS)
+async def test_seat_barred_from_shell_git_mutation_cannot_mutate_git_through_mcp(
+    temp_db: HubDatabase, name: str
+) -> None:
+    engine = _seat_git_engine(temp_db, name)
+    session = _mcp_call(*READ_ONLY_MCP_CALL).session_id
+
+    decisions = {
+        f"{server}:{tool}": (
+            await engine.evaluate(_mcp_call(server, tool), session_id=session, variables={})
+        ).decision
+        for server, tool in sorted(GIT_MUTATING_MCP_TOOLS)
+    }
+    read_only = await engine.evaluate(
+        _mcp_call(*READ_ONLY_MCP_CALL), session_id=session, variables={}
+    )
+
+    assert decisions == dict.fromkeys(decisions, "block"), name
+    assert read_only.decision == "allow", read_only.reason

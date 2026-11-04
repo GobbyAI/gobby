@@ -24,12 +24,15 @@ Everything in this directory is a **template**, not active enforcement.
 ## Session Messaging Contract
 
 Cross-session message content has no wake semantics. Omitting `wake` requests
-immediate processing for direct `session`, `parent`, and `agent` targets and for
-`global` fanout; `project` fanout stays queued without live wakes. `wake=true` requests
-immediate processing for any target and may steer an active turn. `wake=false`
-queues without a live wake. Sessions that are interrupted,
-awaiting input, awaiting approval, or awaiting handoff retain the durable mailbox row
-without daemon input until provider evidence makes wake safe.
+immediate processing for direct `session`, `parent`, and `agent` targets. Fanout
+(`global`, and `project` with `wake=true`) live-wakes only active recipients and
+recipients holding a claimed task; an idle, paused, or waiting recipient with no
+claimed task keeps its message queued for its next turn. Otherwise `project` fanout
+stays queued without live wakes, and `wake=false` queues any target without a live
+wake. `wake=true` on a direct target requests immediate processing and may steer an
+active turn. Sessions that are interrupted, awaiting input, awaiting approval, or
+awaiting handoff retain the durable mailbox row without daemon input until provider
+evidence makes wake safe.
 
 Recipient admission comes from installed agent definitions. A recipient's
 `message_sender_capabilities` requires any listed capability from the sender's
@@ -43,7 +46,7 @@ every message to the Orchestrator with `wake=true`, including digests. Omitted
 
 Use a targetless `project` broadcast for coordination inside the current repository.
 Use targetless `global` only for machine-local coordination across projects. The
-daemon announces its own restarts and cutovers with waking system globals: a hold
+daemon announces its own restarts and cutovers with system globals: a hold
 notice before it stops and DAEMON BACK once it is healthy; no session sends them. Direct
 `session` and `agent` sends require `target_id`. AGY sessions interrupted
 through direct tmux input remain unconfirmed and therefore active; positive

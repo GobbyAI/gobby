@@ -32,10 +32,10 @@ def render_summary_prompt(prompt_template: str, context: Mapping[str, Any]) -> s
 
     formatted_context = _format_summary_context(context)
     if "{{" in prompt_template or "{%" in prompt_template or "{#" in prompt_template:
-        from jinja2 import Environment
         from jinja2.exceptions import TemplateError
+        from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-        env = Environment(autoescape=False)  # nosec B701 # generating text prompts
+        env = ImmutableSandboxedEnvironment(autoescape=False)  # nosec B701 # generating text prompts
         try:
             return str(env.from_string(prompt_template).render(**formatted_context))
         except TemplateError as exc:

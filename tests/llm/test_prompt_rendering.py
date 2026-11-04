@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from jinja2.exceptions import SecurityError
 
 from gobby.llm.prompt_rendering import render_summary_prompt
 
@@ -38,6 +39,13 @@ def test_render_summary_prompt_with_format_template() -> None:
 def test_render_summary_prompt_raises_without_template() -> None:
     with pytest.raises(ValueError, match="prompt_template is required"):
         render_summary_prompt("", {})
+
+
+def test_render_summary_prompt_refuses_attribute_escape() -> None:
+    with pytest.raises(ValueError, match="Failed to render summary prompt") as excinfo:
+        render_summary_prompt("{{ ''.__class__.__mro__ }}", {})
+
+    assert isinstance(excinfo.value.__cause__, SecurityError)
 
 
 def test_render_summary_prompt_includes_extra_context_keys() -> None:

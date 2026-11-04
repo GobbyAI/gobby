@@ -18,6 +18,7 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+from gobby.sessions.mailbox import MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager, coordination_wait_payload
 from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -421,6 +422,63 @@ async def test_listener_restart_and_duplicate_delivery(harness: CoordinationHarn
         await recovered.process(second["id"])
         assert len(payloads) == 2
         assert harness.row(second["id"])["delivered_at"] is not None
+    finally:
+        await recovered.stop()
+
+
+@pytest.mark.asyncio
+async def test_parked_waiter_without_a_task_resumes_its_wait_past_a_global_notice(
+    harness: CoordinationHarness,
+) -> None:
+    """A parked waiter with no claimed task resumes its committed wait after a restart.
+
+    The global notice queues for it without a live wake, so the resume must come from
+    the durable wait itself.
+    """
+    harness.db.execute("UPDATE sessions SET status = 'waiting' WHERE id = %s", (harness.waiter,))
+    row = harness.wait(coordination_key="restart-park")
+    harness.release("restart-park")  # committed while the daemon is down
+
+    notice_calls: list[str] = []
+
+    class NoticeDispatcher:
+        async def dispatch_live_wake(
+            self, session_id: str, *, priority: str = "normal"
+        ) -> dict[str, Any]:
+            notice_calls.append(session_id)
+            return {"session_id": session_id, "delivered": True, "method": "fake"}
+
+    mailbox = MailboxService(
+        db=harness.db,
+        message_manager=harness.messages,
+        session_manager=SessionManager(harness.db),
+        wake_dispatcher=NoticeDispatcher(),
+    )
+    notice = await mailbox.send(
+        from_session_id=harness.owner, target="global", content="DAEMON BACK"
+    )
+    assert harness.waiter in notice.recipient_session_ids
+    assert harness.waiter not in notice_calls
+
+    payloads: list[dict[str, Any]] = []
+
+    async def wake(session: str, message: str, payload: dict[str, Any]) -> dict[str, bool]:
+        assert session == harness.waiter
+        payloads.append(payload)
+        return {"ism_persisted": True}
+
+    recovered = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await recovered.start()
+    try:
+        await asyncio.wait_for(recovered._queue.join(), 5)
+        assert [payload["outcome"] for payload in payloads] == ["released"]
+        assert payloads[0]["completion_id"] == row["id"]
+        assert harness.row(row["id"])["delivered_at"] is not None
     finally:
         await recovered.stop()
 

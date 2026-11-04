@@ -47,6 +47,43 @@ def test_resolves_with_base_sha(tmp_path: Path) -> None:
     assert "target_branch" not in bundle.rows[0].detail
 
 
+@pytest.mark.parametrize("sync", [("merge", "--no-edit"), ("rebase",)], ids=["merge", "rebase"])
+def test_diff_starts_at_the_fork_after_the_base_moves_in(
+    tmp_path: Path, sync: tuple[str, ...]
+) -> None:
+    repo = _git_repo(tmp_path / "repo")
+    fork = _commit_file(repo, "base.txt", "base\n", "base")
+    _git(repo, "checkout", "-b", "task")
+    _commit_file(repo, "own.txt", "own\n", "own")
+    _git(repo, "checkout", "main")
+    _commit_file(repo, "upstream.txt", "upstream\n", "upstream")
+    _git(repo, "checkout", "task")
+    _git(repo, *sync, "main")
+    ctx = EvidenceContext(
+        repo_root=tmp_path,
+        artifacts={"worktree_path": str(repo), "base_commit_sha": fork, "base_branch": "main"},
+    )
+
+    bundle = resolve_evidence("worktree-diff:#13252", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.resolved
+    assert bundle.rows[0].artifacts_touched == ("own.txt",)
+
+
+def test_unresolvable_base_branch_keeps_the_recorded_base(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo")
+    fork = _commit_file(repo, "base.txt", "base\n", "base")
+    _commit_file(repo, "own.txt", "own\n", "own")
+    ctx = EvidenceContext(
+        repo_root=tmp_path,
+        artifacts={"worktree_path": str(repo), "base_commit_sha": fork, "base_branch": "gone"},
+    )
+
+    bundle = resolve_evidence("worktree-diff:#13252", ctx=ctx)
+
+    assert bundle.rows[0].artifacts_touched == ("own.txt",)
+
+
 def test_invalid_when_artifacts_missing(tmp_path: Path) -> None:
     bundle = resolve_evidence("worktree-diff:#13252", ctx=EvidenceContext(tmp_path, None))
 

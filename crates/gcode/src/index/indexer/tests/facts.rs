@@ -1137,6 +1137,63 @@ mod serial_db {
         not(gcode_postgres_tests),
         ignore = "requires a PostgreSQL test database URL"
     )]
+    fn pending_local_import_calls_promote_in_one_pass() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-batch-promote");
+        let bar = foo_symbol(&project_id, "Bar", 0, "type", None);
+        let mut bar_new = foo_symbol(&project_id, "new", 20, "method", Some(&bar));
+        bar_new.qualified_name = "Bar::new".to_string();
+        let helper = foo_symbol(&project_id, "helper", 40, "function", None);
+        let method_id = bar_new.id.clone();
+        let helper_id = helper.id.clone();
+        write_foo_symbols(&mut conn, &project_id, vec![bar, bar_new, helper]);
+        write_mixed_local_import_calls(&mut conn, &project_id);
+
+        let resolved = resolve_local_import_calls(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/app.rs".to_string()],
+        )
+        .expect("resolve mixed pending calls");
+        assert_eq!(
+            resolved, 2,
+            "type member and helper resolve; missing does not"
+        );
+
+        let new_row = call_row(&mut conn, &project_id, "new");
+        assert_eq!(new_row.target_kind, "symbol");
+        assert_eq!(new_row.symbol_id.map(|id| id.to_string()), Some(method_id));
+        let helper_row = call_row(&mut conn, &project_id, "helper");
+        assert_eq!(helper_row.target_kind, "symbol");
+        assert_eq!(
+            helper_row.symbol_id.map(|id| id.to_string()),
+            Some(helper_id)
+        );
+        let missing_row = call_row(&mut conn, &project_id, "missing");
+        assert_eq!(missing_row.target_kind, "unresolved");
+        assert!(missing_row.symbol_id.is_none());
+
+        let project_uuid = db::id_param(&project_id).expect("uuid");
+        let pending: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM code_calls
+                 WHERE project_id = $1 AND callee_target_kind = 'local_import'",
+                &[&project_uuid],
+            )
+            .expect("count pending calls")
+            .get(0);
+        assert_eq!(
+            pending, 0,
+            "every pending local-import row is promoted or retired"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
     fn inheritance_rows_are_retained_per_content_hash_across_reindex() {
         let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-reindex");
         write_derived_pending(&mut conn, &project_id, "hash-d1");
@@ -1608,6 +1665,29 @@ mod serial_db {
     struct CallRow {
         target_kind: String,
         symbol_id: Option<uuid::Uuid>,
+    }
+
+    fn write_mixed_local_import_calls(conn: &mut postgres::Client, project_id: &str) {
+        let rel = "src/app.rs";
+        let hash = "hash-app";
+        let go = type_symbol(project_id, rel, hash, "go", 0, "rust", "function");
+        let foo = vec!["src/foo.rs".to_string(), "src/foo/mod.rs".to_string()];
+        let calls = vec![
+            CallRelation::new(go.id.clone(), "new".to_string(), rel.to_string(), 4)
+                .with_local_type_member_target("new".to_string(), "Bar", foo.clone()),
+            CallRelation::new(go.id.clone(), "helper".to_string(), rel.to_string(), 5)
+                .with_local_import_target("helper".to_string(), foo.clone()),
+            CallRelation::new(go.id.clone(), "missing".to_string(), rel.to_string(), 6)
+                .with_local_import_target("missing".to_string(), foo),
+        ];
+        let parse = ParseResult {
+            symbols: vec![go],
+            imports: Vec::new(),
+            calls,
+            inheritance: Vec::new(),
+            source: b"use crate::foo::{Bar, helper, missing};\nfn go() {\n    Bar::new();\n    helper();\n    missing();\n}\n".to_vec(),
+        };
+        write_facts(conn, project_id, rel, "rust", hash, parse);
     }
 
     fn call_row(conn: &mut postgres::Client, project_id: &str, callee_name: &str) -> CallRow {

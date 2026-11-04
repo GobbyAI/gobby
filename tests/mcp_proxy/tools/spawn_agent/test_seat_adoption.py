@@ -63,11 +63,19 @@ class _Harness:
         return _invocation_id(self.execution_id, step)
 
     def pipeline_session(self, execution_id: str, project_id: str | None = None) -> Session:
+        """The executor's child session, launched by an operator terminal as runs are."""
+        launcher = self.sessions.register(
+            external_id=f"launcher-{execution_id}",
+            machine_id=self.machine_id,
+            source="claude",
+            project_id=project_id or self.project_id,
+        )
         return self.sessions.register(
             external_id=f"pipeline-{execution_id}",
             machine_id=self.machine_id,
             source="pipeline",
             project_id=project_id or self.project_id,
+            parent_session_id=launcher.id,
         )
 
     def execution(self, status: ExecutionStatus, project_id: str | None = None) -> str:

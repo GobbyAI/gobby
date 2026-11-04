@@ -545,6 +545,11 @@ repository coordination. System-originated
 project sends must provide `project_id`; ordinary sessions derive their project and
 must not override it. `session` and `agent` require `target_id`.
 
+Fanout (`global`, and `project` with `wake=true`) live-wakes only active recipients and
+recipients holding a claimed task. An idle, paused, or waiting recipient with no claimed
+task keeps its message queued and reads it on its next turn; a direct `session`,
+`parent`, or `agent` send still wakes it.
+
 Message text never triggers a wake. Set `wake=true` only when immediate processing is
 intended; it may steer an active turn. Interrupted sessions and sessions awaiting input,
 approval, or handoff retain the durable message without daemon input. Before typing
