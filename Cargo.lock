@@ -2396,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.104"
+version = "0.1.105"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.101"
+version = "1.9.102"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.131"
+version = "0.4.132"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.65"
+version = "0.9.66"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.29"
+version = "0.1.30"
 dependencies = [
  "anyhow",
  "clap",

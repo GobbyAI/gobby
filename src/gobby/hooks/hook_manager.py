@@ -19,6 +19,7 @@ from gobby.hooks.agent_run_ingress import (
     validate_managed_agent_hook,
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
+from gobby.hooks.codex_seat import codex_stored_clear_context
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import (
@@ -40,6 +41,7 @@ from gobby.hooks.session_materialize import activate_deferred_session, has_defer
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.subagent_boundary import subagent_boundary_signal
+from gobby.hooks.terminal_context import configure_codex_seat_index
 from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.telemetry.tracing import create_span
 
@@ -155,6 +157,13 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         self._webhook_dispatcher = components.webhook_dispatcher
         self._session_manager = cast(HookSessionManager, components.session_manager)
         self._project_id_resolver.session_manager = self._session_manager
+        # Codex seat resolution decides /clear successors from their stored rows.
+        local_machine_id = self.get_machine_id()
+        configure_codex_seat_index(
+            codex_stored_clear_context(self._session_manager.db, local_machine_id)
+            if local_machine_id
+            else None
+        )
         self._session_coordinator = components.session_coordinator
         self._session_end_auto_link_worker = components.session_end_auto_link_worker
         self._health_monitor = components.health_monitor

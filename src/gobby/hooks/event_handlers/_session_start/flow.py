@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import psycopg
 
+from gobby.hooks.codex_seat import codex_clear_seat_search
 from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
@@ -18,12 +19,14 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     hook_sandbox_enabled,
     is_gobby_acp_child,
+    sync_codex_seat,
 )
 from gobby.storage.session_activity import (
     ProviderIdentityRebind,
     reconcile_compact_session_activity,
 )
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY
 
 from .agents import _seed_parent_turn_seq
 from .claims import rehydrate_found_work_gate_arm
@@ -45,6 +48,7 @@ from .materialize import (
     _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
     _schedule_tmux_window_rename_for_session,
+    record_deferred_codex_startup,
     session_start_should_defer,
 )
 from .profile import seed_user_profile_content
@@ -137,9 +141,30 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     existing_session = None
     raw_terminal_context = input_data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+    seat_thread_id: str | None = external_id
+    cleared_seat_owner = None
+    clear_origin: str | None = None
+    if session_source == "clear" and cli_source == "codex" and handler._session_manager:
+        # Only a thread a seat TUI minted may adopt that seat; any other is tracked
+        # without a pane, and an unwritten rollout is checked again on later activity.
+        raw_transcript_path = input_data.get("transcript_path")
+        search = codex_clear_seat_search(
+            handler._session_manager.db,
+            machine_id,
+            raw_transcript_path if isinstance(raw_transcript_path, str) else None,
+            external_id,
+        )
+        seat_thread_id, cleared_seat_owner = search.thread_id, search.owner
+        clear_origin = search.origin
     terminal_context = enrich_terminal_context_with_cwd(
-        terminal_context, cwd, external_id=external_id, machine_id=machine_id
+        terminal_context,
+        cwd,
+        external_id=seat_thread_id,
+        cleared_seat_owner=cleared_seat_owner,
+        machine_id=machine_id,
     )
+    if clear_origin is not None:
+        terminal_context = {**(terminal_context or {}), CODEX_CLEAR_ORIGIN_KEY: clear_origin}
 
     if is_gobby_acp_child(terminal_context):
         handler.logger.info(
@@ -319,8 +344,12 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     )
     if resolution.blocked_reason:
         return HookResponse(decision="block", reason=resolution.blocked_reason)
+    reported_source = session_source
     session_source = resolution.session_source
-    if session_start_should_defer(event, resolution.session, session_source):
+    if session_start_should_defer(
+        event, resolution.session, session_source, reported_source=reported_source
+    ):
+        record_deferred_codex_startup(handler, event, reported_source)
         return HookResponse(decision="allow")
     parent_session_id = input_data.get("parent_session_id")
 
@@ -427,6 +456,14 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             agent_depth=agent_depth_val,
             sandbox_enabled=sandbox_enabled_val,
         )
+        if clear_origin is not None and session_id:
+            # A clear-start that lost to a settled origin wrote nothing: bind from the row.
+            registered = handler._session_manager.get(session_id)
+            if registered is not None:
+                terminal_context = registered.terminal_context or {}
+                # The thread's cached seat is the one storage kept, or none.
+                if external_id:
+                    sync_codex_seat(external_id, terminal_context)
 
     if handler._session_manager and session_source == "compact":
         if not session_id:
