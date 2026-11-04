@@ -53,6 +53,9 @@ pub(super) fn apply_job_outcome(
         } => return apply_kills(workspace, chrome, killed, kept, result),
         // A host grant is real whichever generation asked for it, so it lands.
         result @ JobResult::HostGrant { .. } => result,
+        // A relayed theme and a focus report are real whichever generation
+        // sent them, as the host grant is.
+        result @ (JobResult::ThemeRelayed { .. } | JobResult::FocusReported { .. }) => result,
         // A chain's committed answer lands or is orphaned whichever generation
         // issued it; the arms below decide which.
         result @ (JobResult::Spawned { .. }
@@ -119,6 +122,23 @@ pub(super) fn apply_job_outcome(
             grant,
             revoked,
         } => apply_outage_grant(workspace, chrome, jobs, pane, &attachment, grant, revoked),
+        JobResult::ThemeRelayed {
+            pane,
+            theme,
+            result,
+        } => {
+            // A failed relay leaves the pane undeclared, so the next tick relays it again.
+            if result.is_ok() {
+                if let Some(pane) = workspace.panes.get_mut(&pane) {
+                    pane.declared_theme = Some(theme);
+                }
+            }
+        }
+        JobResult::FocusReported { result } => {
+            if result.is_err() {
+                jobs.focus_report_refused();
+            }
+        }
         JobResult::Spawned {
             then,
             project,

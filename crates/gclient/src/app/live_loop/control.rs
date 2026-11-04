@@ -33,6 +33,14 @@ pub const READ_ONLY_INPUT: &str =
 pub const INPUT_QUEUE_FULL: &str = "too much typed while acquiring control; the rest was dropped";
 pub const HELD_BY_PEER: &str =
     "another viewer holds control: take control again or take back (prefix+shift+a) to type";
+/// Status shown when a key lands in a native pane on the daemon's proxy. Its
+/// keys belong on its host stream, so the pane reattaches there and this key
+/// is dropped (#25653).
+pub const PROXY_NATIVE_INPUT: &str =
+    "this terminal's input runs on its host stream; reattaching it, so the key was not sent";
+/// The gterm refusal for a grant request that did not displace the pane's peer
+/// (`takeover: false`).
+const PEER_HELD_GRANT: &str = "input_held_by_peer";
 /// Status shown when input reaches a pane whose release is still on its way.
 pub const FOCUS_MOVED_INPUT: &str = "Focus moved; input not sent.";
 /// Reported when typed input left gclient but its delivery is unknown.
@@ -94,6 +102,14 @@ fn flush_pending_input(
     pane_id: PaneId,
     pending: Vec<PendingInput>,
 ) {
+    // Keys queued before this pane resolved to the daemon's proxy are not
+    // relayed through the daemon any more (B2): the pane reattaches to its host,
+    // and the keys are dropped visibly.
+    if !pending.is_empty() && workspace.pane(pane_id).native_proxy() {
+        chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
+        workspace.pane_mut(pane_id).promote_now();
+        return;
+    }
     for input in pending {
         let (data, paste) = input.parts();
         if let Err(error) = send_live_write(workspace, jobs, pane_id, data, paste) {
@@ -162,12 +178,18 @@ pub(super) fn apply_control_outcome(
         if granted {
             pane.release_done = None;
         }
+        // A host grant this pane already holds is the host's decision. The
+        // daemon's answer to the take does not revoke it, and the keys queued
+        // for it go to the host now (ruling b59e4ce9).
+        let host_granted = pane.direct_input();
         if !granted {
-            pane.clear_pending_input();
             chrome.notify(Toast::warning(refusal_reason));
-            return;
+            if !host_granted {
+                pane.clear_pending_input();
+                return;
+            }
         }
-        if !pane.apply_host_grant(host_input_granted) {
+        if granted && !host_granted && !pane.apply_host_grant(host_input_granted) {
             // The lease is ours and the host grant is not, so there is
             // nowhere to type. This is the terminal being gone for input
             // rather than an ordinary pane, and take-back is the only thing
@@ -338,25 +360,41 @@ pub(super) fn send_live_input(
     if workspace.exit_reason().is_some() {
         return Ok(());
     }
-    // A restored host stream or an already-held direct grant can keep typing
-    // while the daemon is away. The host remains authoritative for refusal;
-    // an outage never acquires a grant for an observing or ungranted pane.
-    let pane = workspace.pane(pane_id);
-    if pane.direct_input()
-        && (workspace.host_recovered.contains(&pane_id)
-            || (!workspace.daemon_ready() && pane.writable()))
-    {
+    // A key the host granted types onto the host's stream without asking the
+    // daemon, which may be away or slow (ruling b59e4ce9).
+    if types_on_host(workspace, pane_id) {
         return send_live_write(workspace, jobs, pane_id, data, paste);
     }
+    // An ungranted native pane asks the host for its grant on the stream it
+    // holds. The daemon's take runs beside that request, not in front of it.
+    let pane = workspace.pane(pane_id);
+    if pane.direct_native() && pane.is_live() {
+        request_host_grant(workspace, chrome, jobs, pane_id, data, paste);
+        return Ok(());
+    }
     if !workspace.daemon_ready() {
-        send_during_outage(workspace, chrome, jobs, pane_id, data, paste);
+        refuse_during_outage(workspace, pane_id);
+        return Ok(());
+    }
+    // A lost lease and an unknown write outcome say what is wrong before the
+    // key goes anywhere else (#22573).
+    let acquiring = workspace.awaiting_control(pane_id);
+    if let Some(refusal) = control_refusal(&workspace.pane(pane_id).control, acquiring) {
+        chrome.notify(Toast::warning(refusal));
+        return Ok(());
+    }
+    // A native pane on the daemon's proxy has no host stream of its own here.
+    // The daemon no longer relays its keys: the pane reattaches to its host,
+    // and this key is dropped visibly.
+    if workspace.pane(pane_id).native_proxy() {
+        chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
+        workspace.pane_mut(pane_id).promote_now();
         return Ok(());
     }
     let pane = workspace.pane(pane_id);
     if pane.writable() && (!pane.direct_native() || pane.direct_input()) {
         return send_live_write(workspace, jobs, pane_id, data, paste);
     }
-    let acquiring = workspace.awaiting_control(pane_id);
     let pane = workspace.pane(pane_id);
     // A key typed while the pane re-attaches, or while a recovery detaches it
     // to attach again, is its ask for control, as it would be a moment later
@@ -368,20 +406,7 @@ pub(super) fn send_live_input(
     {
         return Ok(());
     }
-    // A lost lease and an unknown write outcome both wait on a person, so
-    // typing into them says what is wrong instead of queueing. Once that
-    // person has asked for control, the decision is made and the keys they
-    // type next belong in the queue like any other (#22573).
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    let refusal = match pane.control {
-        ControlState::LeaseLost if !acquiring => Some(LEASE_LOST_INPUT),
-        ControlState::UncertainReadOnly if !acquiring => Some(READ_ONLY_INPUT),
-        _ => None,
-    };
-    if let Some(refusal) = refusal {
-        chrome.notify(Toast::warning(refusal));
-        return Ok(());
-    }
     if !pane.queue_input(data, paste) {
         chrome.notify(Toast::warning(INPUT_QUEUE_FULL));
         return Ok(());
@@ -392,10 +417,40 @@ pub(super) fn send_live_input(
     Ok(())
 }
 
-/// Input typed while the daemon is away. A direct pane asks the host's control
-/// socket for its grant, and the key waits for the answer. Any other pane
-/// cannot be reached, and says so (#24815).
-fn send_during_outage(
+/// Whether a key goes straight onto the pane's host stream. The host's grant
+/// decides. The daemon's lease only refuses when it reports the lease lost or
+/// unconfirmed, since those wait on a person (#22573). A host-local recovery
+/// keeps typing whatever the lease says (#23076).
+fn types_on_host(workspace: &Workspace<LiveDaemon>, pane_id: PaneId) -> bool {
+    let pane = workspace.pane(pane_id);
+    pane.direct_input()
+        && (workspace.host_recovered.contains(&pane_id)
+            || (pane.is_live()
+                && !pane.is_terminating()
+                && !matches!(
+                    pane.control,
+                    ControlState::LeaseLost | ControlState::UncertainReadOnly
+                )))
+}
+
+/// The refusal a key gets while the daemon's lease is lost or its write outcome
+/// unknown. Both wait on a person, so typing into them says what is wrong
+/// instead of queueing. Once that person has asked for control, the decision is
+/// made and the keys they type belong in the queue like any other (#22573).
+fn control_refusal(control: &ControlState, acquiring: bool) -> Option<&'static str> {
+    match control {
+        ControlState::LeaseLost if !acquiring => Some(LEASE_LOST_INPUT),
+        ControlState::UncertainReadOnly if !acquiring => Some(READ_ONLY_INPUT),
+        _ => None,
+    }
+}
+
+/// Asks the host for the grant an ungranted native pane types on, and queues
+/// the key until the host answers. Nothing here waits on the daemon. A host
+/// that refuses because a peer holds the grant drops the key visibly
+/// (`apply_outage_grant`), and only this keypress asks without displacing one
+/// (#25653).
+fn request_host_grant(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     jobs: &mut LoopJobs,
@@ -404,25 +459,21 @@ fn send_during_outage(
     paste: bool,
 ) {
     let acquiring = workspace.awaiting_control(pane_id);
-    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    if !pane.is_live() || !pane.direct_native() {
-        pane.status_message = Some(DAEMON_DOWN_INPUT.to_string());
-        return;
-    }
     // A lost lease and an unknown write outcome wait on a person, as they do
     // with the daemon (#22573).
-    let refusal = match pane.control {
-        ControlState::LeaseLost if !acquiring => Some(LEASE_LOST_INPUT),
-        ControlState::UncertainReadOnly if !acquiring => Some(READ_ONLY_INPUT),
-        _ => None,
-    };
-    if let Some(refusal) = refusal {
+    if let Some(refusal) = control_refusal(&workspace.pane(pane_id).control, acquiring) {
         chrome.notify(Toast::warning(refusal));
         return;
     }
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     if !pane.queue_input(data, paste) {
         chrome.notify(Toast::warning(INPUT_QUEUE_FULL));
         return;
+    }
+    // The daemon's take runs beside the host's grant, not in front of it. A
+    // keypress never displaces a peer, so the take does not takeover (#25653).
+    if workspace.daemon_ready() {
+        workspace.request_control(pane_id, false);
     }
     jobs.offer(
         workspace,
@@ -430,6 +481,14 @@ fn send_during_outage(
         JobKey::HostGrant(pane_id),
         Pending::HostGrant(pane_id),
     );
+}
+
+/// Input typed while the daemon is away and the pane has no live host stream
+/// to type on. Nothing is sent, and the status says so (#24815).
+fn refuse_during_outage(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+    if let Some(pane) = workspace.panes.get_mut(&pane_id) {
+        pane.status_message = Some(DAEMON_DOWN_INPUT.to_string());
+    }
 }
 
 /// Applies an outage grant's answer. Each revoke that landed clears its pane,
@@ -468,6 +527,13 @@ pub(super) fn apply_outage_grant(
             let pending = pane.take_pending_input();
             flush_pending_input(workspace, chrome, jobs, pane_id, pending);
         }
+        // A peer holds the host's grant. The key is dropped visibly, and the
+        // pane keeps its daemon control: nothing here displaces the peer
+        // (#25653).
+        Ok(GrantOutcome::Refused(code)) if code == PEER_HELD_GRANT => {
+            pane.clear_pending_input();
+            chrome.notify(Toast::warning(HELD_BY_PEER));
+        }
         Ok(GrantOutcome::Refused(_)) => {
             pane.apply_host_grant(Some(false));
         }
@@ -486,10 +552,19 @@ pub(super) fn apply_outage_grant(
 /// dropped without a toast, because pointer motion would make a storm of them.
 pub(super) fn send_live_report(
     workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
     jobs: &LoopJobs,
     pane_id: PaneId,
     data: &[u8],
 ) -> Result<(), FrameError> {
+    // A wheel's arrow keys and pointer reports are input too. A native pane on
+    // the daemon's proxy refuses them on the stream like a key (ruling
+    // b59e4ce9), so they never reach the daemon one report at a time.
+    if workspace.pane(pane_id).native_proxy() {
+        chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
+        workspace.pane_mut(pane_id).promote_now();
+        return Ok(());
+    }
     if workspace.pane(pane_id).writable() {
         return send_live_write(workspace, jobs, pane_id, data, false);
     }
@@ -537,9 +612,8 @@ pub(super) fn send_live_write(
     // later daemon outage cleared its lease: the carried grant lives at
     // the host, which enforces it, and the daemon was never part of that
     // reconnect (#23076).
-    let host_recovered = workspace.host_recovered.contains(&pane_id);
+    let direct = types_on_host(workspace, pane_id);
     let pane = workspace.pane(pane_id);
-    let direct = pane.direct_input() && (host_recovered || pane.writable());
     if !direct && !pane.writable() {
         if pane.release_pending || pane.pending_release().is_some() {
             let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");

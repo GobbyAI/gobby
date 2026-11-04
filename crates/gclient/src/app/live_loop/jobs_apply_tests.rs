@@ -178,7 +178,10 @@ async fn observation_window() {
 #[tokio::test]
 async fn a_held_terminal_create_keeps_direct_loop_frames_input_and_ticks_live_then_places() {
     let mock = MockDaemon::start("local-token").await;
-    let host = host::DirectHost::start("epoch-1").await;
+    let mut host = host::DirectHost::start("epoch-1").await;
+    // The ungranted direct key asks the host's control socket for its grant
+    // (#25653), so the host serves one.
+    host.serve_gterm_control("control-token");
     mock.seed_workspace("project-1", &[(&["existing"], "existing")]);
     let (mut workspace, _home) =
         host::live_workspace_on_direct_host_terminals(&mock, &host, &["existing"]).await;

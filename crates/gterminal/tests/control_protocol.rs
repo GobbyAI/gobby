@@ -943,6 +943,105 @@ fn attach_input_frames(
 }
 
 #[test]
+fn auto_grant_refuses_a_peer_held_pane_and_an_explicit_grant_displaces_it() {
+    let dir = temp_socket_dir();
+    let token = "control-token-takeover";
+    write_token(dir.path(), token);
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {}\n", embed_support::LOCAL),
+    )
+    .unwrap();
+    let (mut child, mut requests) = authed(dir.path(), token);
+    let mut events = connect(&dir.path().join(CONTROL_SOCKET));
+    send_json(
+        &mut events,
+        &json!({
+            "method": "hello",
+            "id": "takeover-hello",
+            "protocol_version": 1,
+            "control_token": token,
+        }),
+    );
+    assert_eq!(recv_json(&mut events)["ok"], true);
+
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "reserve_observer",
+            "id": "takeover-reserve",
+            "terminal_id": "takeover-terminal",
+            "reserve_key": "takeover-terminal",
+        }),
+    );
+    let reserved = recv_json(&mut requests);
+    let reservation_id = reserved["reservation_id"].as_str().unwrap();
+    let prepared = seq_spawn(
+        &mut requests,
+        1,
+        json!({
+            "terminal_id": "takeover-terminal",
+            "spawn_key": "takeover-spawn",
+            "reservation_id": reservation_id,
+            "reserve_key": "takeover-terminal",
+            "argv": ["/bin/cat"],
+            "cwd": dir.path().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "spawn_commit",
+            "id": "takeover-commit",
+            "terminal_id": "takeover-terminal",
+            "spawn_key": "takeover-spawn",
+        }),
+    );
+    assert_eq!(recv_json(&mut requests)["ok"], true);
+
+    let (_old_frames, old_host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
+    let (_frames, host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
+
+    // A keypress grant takes a pane nobody holds...
+    let first = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a", "host_attachment_id": old_host_attachment_id, "takeover": false}),
+    );
+    assert_eq!(first["granted"], true, "{first}");
+    // ...but a second keypress grant from a peer is refused on the stream.
+    let refused = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id, "takeover": false}),
+    );
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["error"], "input_held_by_peer", "{refused}");
+    assert!(refused.get("previous").is_none(), "{refused}");
+    // The holder asking again keeps the grant.
+    let again = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a", "host_attachment_id": old_host_attachment_id, "takeover": false}),
+    );
+    assert_eq!(again["granted"], true, "{again}");
+    // An explicit grant without `takeover` still displaces the holder.
+    let explicit = rpc(
+        &mut requests,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
+    );
+    assert_eq!(explicit["granted"], true, "{explicit}");
+    assert_eq!(explicit["previous"], "att-a", "{explicit}");
+}
+
+#[test]
 fn grant_input_binds_one_holder_and_emits_input_activity() {
     use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 
