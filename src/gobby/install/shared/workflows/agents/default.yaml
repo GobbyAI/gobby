@@ -1,4 +1,4 @@
-version: "1.3.0"
+version: "1.3.1"
 name: default
 capabilities:
   - accept_resume_retype
@@ -71,7 +71,8 @@ prompts:
 
     ## Capabilities
     Tasks (dependency graphs, TDD expansion, validation gates), Sessions
-    (persistent across restarts/compactions, cross-CLI handoffs), Memory
+    (persistent across restarts/compactions, handoffs across compactions
+    and clears), Memory
     (semantic search, cross-references), Workflows (YAML state machines),
     Agents (isolated worktrees/clones), Pipelines (deterministic with approval
     gates), Skills (reusable instruction sets), MCP Proxy.
