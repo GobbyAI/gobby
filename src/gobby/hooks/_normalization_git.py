@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.hooks import checkout_reads
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
+from gobby.hooks._normalization_git_apply import classify_git_apply
 from gobby.hooks._normalization_operands import (
     _git_add_positional_args_after,
     _git_grep_is_revision_scoped,
@@ -347,131 +348,6 @@ def git_mutation_cwd(parts: list[str], cwd: str | None, base_cwd: Path | None) -
     return git_cwd
 
 
-def _git_apply_word_may_become_option(word: str) -> bool:
-    """Whether a word's expansion may yield an option such as ``--apply``.
-
-    Any expansion may word-split or carry a leading dash; a glob or brace can only
-    produce one when it leads the word, so ``p*.diff`` and ``--include=src/*`` stay
-    proven while ``*`` and ``{a,--apply}`` do not.
-    """
-    return _contains_unexpanded_shell_reference(word) or word[:1] in {"*", "?", "[", "{"}
-
-
-def _git_apply_flags(arguments: list[str]) -> set[str] | None:
-    """Prove apply options without treating their values or operands as flags."""
-    value_options = {
-        "--include",
-        "--exclude",
-        "--directory",
-        "--whitespace",
-        "--build-fake-ancestor",
-        "-p",
-        "-C",
-    }
-    switches = {
-        "--stat",
-        "--numstat",
-        "--summary",
-        "--check",
-        "--index",
-        "--cached",
-        "--apply",
-        "--3way",
-        "--ours",
-        "--theirs",
-        "--union",
-        "--intent-to-add",
-        "--unsafe-paths",
-        "--allow-empty",
-        "--no-add",
-        "--reverse",
-        "--reject",
-        "--binary",
-        "--allow-binary-replacement",
-        "--inaccurate-eof",
-        "--recount",
-        "--ignore-space-change",
-        "--ignore-whitespace",
-        "--verbose",
-        "--quiet",
-        "--help",
-        "-3",
-        "-N",
-        "-R",
-        "-z",
-        "-v",
-        "-q",
-        "-h",
-    }
-    flags: set[str] = set()
-    index = 0
-    while index < len(arguments):
-        argument = arguments[index]
-        index += 1
-        if argument == "--":
-            # Operands after ``--`` cannot become options, however they expand.
-            break
-        if _git_apply_word_may_become_option(argument):
-            return None
-        if not argument.startswith("-") or argument == "-":
-            continue
-        if argument.startswith("--"):
-            option, separator, value = argument.partition("=")
-            if option in value_options:
-                if not separator:
-                    if index == len(arguments):
-                        return None
-                    value = arguments[index]
-                    index += 1
-                    if _git_apply_word_may_become_option(value):
-                        return None
-                if not value:
-                    return None
-            elif option not in switches or separator:
-                return None
-            flags.add(option)
-            continue
-        for offset, character in enumerate(argument[1:], start=1):
-            option = f"-{character}"
-            if option in value_options:
-                value = argument[offset + 1 :]
-                if not value:
-                    if index == len(arguments):
-                        return None
-                    value = arguments[index]
-                    index += 1
-                if not value.isdecimal():
-                    return None
-                flags.add(option)
-                break
-            if option not in switches:
-                return None
-            flags.add(option)
-    return flags
-
-
-def _classify_git_apply(arguments: list[str], unknown_selector: bool) -> _ShellSegmentMetadata:
-    flags = _git_apply_flags(arguments)
-    unknown_write = _ShellSegmentMetadata("write", repo_mutation=True)
-    if flags is None or unknown_selector:
-        return unknown_write
-    if flags & {"-h", "--help"}:
-        return _ShellSegmentMetadata("execute")
-    # This writes a separate index file even in inspection modes. Its destination
-    # is deliberately left unproven until it has its own complete scope handling.
-    if "--build-fake-ancestor" in flags:
-        return unknown_write
-    if "--apply" not in flags and flags & {"--check", "--stat", "--numstat", "--summary"}:
-        return _ShellSegmentMetadata("execute")
-    if "--reject" in flags:
-        # Rejected hunks create worktree .rej files even with --cached.
-        return unknown_write
-    if "--cached" in flags:
-        # Like git add/restore --staged: require a task, without claiming file edits.
-        return _ShellSegmentMetadata("execute", repo_mutation=True)
-    return unknown_write
-
-
 def git_command_is_read_only(parts: list[str]) -> bool:
     """Prove ordinary Git inspection without resolving executable aliases or config."""
     if parts[1:] in (["--version"], ["--help"], ["--exec-path"]):
@@ -705,7 +581,8 @@ def classify_git_mutation(
     ):
         return _ShellSegmentMetadata("execute", repo_mutation=True)
     if operation == "apply":
-        return _classify_git_apply(arguments, unknown)
+        root = checkout_root(_checkout_probe(git_cwd)) if git_cwd and not unknown else None
+        return classify_git_apply(arguments, unknown, git_cwd, root)
     if operation in {"add", "checkout", "restore", "rm", "mv"}:
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)

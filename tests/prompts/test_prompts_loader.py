@@ -2,6 +2,7 @@
 
 import pytest
 from jinja2 import UndefinedError
+from jinja2.exceptions import SecurityError
 
 from gobby.prompts import PromptLoader, PromptTemplate, parse_frontmatter
 from gobby.prompts.sync import sync_bundled_prompts
@@ -176,6 +177,13 @@ class TestPromptLoader:
         """PromptLoader requires its owner to inject a database."""
         with pytest.raises(TypeError, match="db"):
             PromptLoader()  # type: ignore[call-arg]
+
+    def test_render_refuses_attribute_escape(self, db: HubDatabase) -> None:
+        """Prompt templates cannot reach Python internals through attribute chains."""
+        loader = PromptLoader(db=db)
+
+        with pytest.raises(SecurityError):
+            loader._render_jinja("{{ ''.__class__.__mro__ }}", {})
 
 
 class TestPromptTemplate:

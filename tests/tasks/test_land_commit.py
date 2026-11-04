@@ -236,6 +236,7 @@ async def test_refuses_unlinked_candidate(case: LandingCase) -> None:
     refused = await case.land(task, sha)
     assert "candidate_not_linked" in refused["blockers"]
     assert case.git("rev-parse", "trunk") == case.base
+    assert case.git("rev-parse", "lane") == sha
     # Stored short links are resolved through Git, not compared as SHA prefixes.
     case.link(task, sha[:12])
     landed = await case.land(task, sha)
@@ -731,6 +732,8 @@ async def test_clean_merge_of_moved_shared_path_still_requires_base_update(
     assert result["blockers"] == ["base_update_required"]
     assert result["shared_paths"] == ["docs/shared.md"]
     assert case.git("rev-parse", "trunk") == tip
+    # The refusal leaves the base update to the author: the candidate branch never moves.
+    assert case.git("rev-parse", "lane") == sha
 
 
 async def test_criss_cross_merge_paths_equal_to_tip_are_not_shared(case: LandingCase) -> None:

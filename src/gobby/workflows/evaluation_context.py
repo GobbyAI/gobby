@@ -84,8 +84,10 @@ def refresh_evaluation_variables(
 ) -> None:
     """Refresh only values replaced by effects, retaining every unchanged frozen value.
 
-    Rule writes replace values through write_rule_variable; template and expression
-    inputs cannot mutate their nested contents. Sources stay outside the exposed
+    The refresh compares by identity, so a write must replace a value, never mutate
+    it in place. Rule writes go through write_rule_variable, which raises
+    RuleVariableAliasError for a container written back as itself; template and
+    expression inputs cannot mutate their nested contents. Sources stay outside the exposed
     context and exist only for this event's rule passes.
     """
     updates = {

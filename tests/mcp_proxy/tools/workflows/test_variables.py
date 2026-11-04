@@ -26,7 +26,8 @@ def _reserved_refusal(name: str) -> str:
     """The write-authority refusal for a runtime-reserved variable (#25487)."""
     return (
         "Rule enforced by Gobby: [native-variable-authority]\n"
-        f"Native set_variable may not change the reserved variable {name!r}."
+        f"Native set_variable may not change the reserved variable {name!r}. "
+        "set_variable remains available for other permitted variables."
     )
 
 

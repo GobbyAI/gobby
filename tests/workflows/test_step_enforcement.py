@@ -850,7 +850,8 @@ async def test_reserved_variable_denial_is_variable_specific(
     if event_data["tool_name"] == "mcp__gobby__set_variable":
         assert response.reason == (
             "Rule enforced by Gobby: [native-variable-authority]\n"
-            "Native set_variable may not change the reserved variable 'tool_block_pending'."
+            "Native set_variable may not change the reserved variable 'tool_block_pending'. "
+            "set_variable remains available for other permitted variables."
         )
     else:
         assert "Abandon only this write to variable 'tool_block_pending'" in response.reason
@@ -3028,6 +3029,61 @@ class TestStepBeforeMcpHandlers:
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 3
         assert instance.variables["merge_resolve_attempts"].count("mc-two") == 1
+
+    @pytest.mark.asyncio
+    async def test_on_mcp_before_handler_cannot_write_reserved_variable(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        workflow = {
+            "name": "reserved-before-test",
+            "version": "1.0",
+            "steps": [
+                {
+                    "name": "merge",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-merge:merge_resolve"],
+                    "on_mcp_before": [
+                        {
+                            "server": "gobby-merge",
+                            "tool": "merge_resolve",
+                            "action": "set_variable",
+                            "variable": "unlocked_tools",
+                            "value": ["gobby-tasks"],
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="merge",
+            workflow_data=workflow,
+        )
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-merge",
+                    "tool_name": "merge_resolve",
+                    "arguments": {"conflict_id": "mc-one"},
+                },
+            }
+        )
+        variables: dict[str, Any] = {}
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert response.decision == "allow"
+        assert "unlocked_tools" not in variables
+        instance = instance_mgr.get_for_session(SESSION_ID)
+        assert instance is not None
+        assert instance.variables.get("unlocked_tools") is None
 
     @pytest.mark.asyncio
     async def test_merge_retry_counter_ignores_retry_later_tool_results(

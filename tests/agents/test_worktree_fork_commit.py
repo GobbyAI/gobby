@@ -170,7 +170,7 @@ async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) ->
     assert result.status == "deferred"
     assert result.base_commit_sha == fork
     assert result.deferred is not None
-    assert result.deferred.reason == "merge_conflict"
+    assert result.deferred.reason == "branch_diverged"
     assert result.deferred.pending_base_sha == selected
     assert git(child, "rev-parse", "HEAD") == candidate
     assert (child / "modified.txt").read_text() == "candidate bytes\n"
@@ -278,28 +278,34 @@ async def test_repair_refuses_provider_copy_when_tracked_files_are_unavailable(
     assert git(child, "status", "--porcelain", "--", ".codex") == ""
 
 
-async def test_refresh_preserves_workspace_ancestry(repo: Path, tmp_path: Path) -> None:
+async def test_reuse_never_merges_into_a_candidate_with_its_own_commits(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A clean merge would still write a commit the author never made."""
     child = tmp_path / "reuse"
     git(repo, "worktree", "add", "-b", "candidate", str(child))
     (child / "candidate.txt").write_text("candidate work")
     git(child, "add", ".")
     git(child, "commit", "-m", "candidate")
     candidate = git(child, "rev-parse", "HEAD")
+    fork = git(child, "rev-parse", "HEAD^")
     (repo / "base.txt").write_text("selected base")
     git(repo, "add", ".")
     git(repo, "commit", "-m", "base advances")
     selected = git(repo, "rev-parse", "HEAD")
-    git(repo, "commit", "--allow-empty", "-m", "base moves after selection")
     result = await sync_reused_worktree_to_base(
         git_manager=WorktreeGitManager(repo),
         worktree_path=str(child),
         base_branch="main",
         base_commit_sha=selected,
     )
-    assert result.base_commit_sha == selected
-    assert git(child, "rev-parse", "HEAD^1") == candidate
-    assert git(child, "rev-parse", "HEAD^2") == selected
-    assert (child / "candidate.txt").read_text() == "candidate work"
+    assert result.status == "deferred"
+    assert result.base_commit_sha == fork
+    assert result.deferred is not None
+    assert result.deferred.reason == "branch_diverged"
+    assert result.deferred.pending_base_sha == selected
+    assert git(child, "rev-parse", "HEAD") == candidate
+    assert not (child / "base.txt").exists()
 
 
 @pytest.mark.parametrize("base", [None, "main"])

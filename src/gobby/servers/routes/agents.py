@@ -960,9 +960,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         await _require_definition_operator(http_request)
         try:
             from gobby.agents.sync import get_bundled_agents_path
+            from gobby.utils.strict_yaml import load_strict_yaml
             from gobby.workflows.definitions import AgentDefinitionBody
 
-            # Load from bundled agents directory
             agents_path = get_bundled_agents_path()
             yaml_path = _bundled_definition_path(agents_path, name)
             if not yaml_path.exists():
@@ -970,7 +970,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     status_code=404,
                     detail=f"File-based agent definition '{name}' not found",
                 )
-            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            data = load_strict_yaml(yaml_path.read_text(encoding="utf-8"))
             data["name"] = data.get("name", name)
             body = AgentDefinitionBody.model_validate(data)
             manager = _get_manager()

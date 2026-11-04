@@ -577,7 +577,7 @@ class EvaluationMixin:
             )
             ctx["event"] = freeze_evaluation_value(evaluation.event)
             project_snapshot = evaluation.rule_project_snapshot
-        protected_keys = {"variables", "event", "tool_input", "source", "project"}
+        protected_keys = {"variables", "event", "tool_input", "source", "project", "block_state"}
         protected_keys.update(evaluation.eval_context or {})
 
         for row, body in rules:
@@ -972,6 +972,7 @@ class EvaluationMixin:
                         row=gate.row,
                         delivery=gate.delivery,
                         staged=evaluation.staged_variable_updates,
+                        writer="acknowledge_variable",
                     )
             _apply_staged_effects_metadata(meta, evaluation)
             return HookResponse(

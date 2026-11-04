@@ -226,7 +226,6 @@ class TestSpawnAgentResolvesWorktreeReferences:
         assert result["deferred_base_sync"] == {
             "reason": "uncommitted_changes",
             "pending_base_sha": "base-sha",
-            "detail": None,
         }
         assert execute_spawn.await_args is not None
         prompt = execute_spawn.await_args.args[0].prompt

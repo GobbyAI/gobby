@@ -43,6 +43,7 @@ import yaml
 from yaml.events import AliasEvent
 
 from gobby.skills import limits
+from gobby.utils.strict_yaml import load_strict_yaml
 
 # Pattern to extract YAML frontmatter (content between --- delimiters)
 # Allows empty frontmatter (---\n---) or content between delimiters
@@ -266,7 +267,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         )
         if aliases > limits.MAX_YAML_ALIASES:
             raise SkillParseError(f"YAML frontmatter exceeds {limits.MAX_YAML_ALIASES} alias limit")
-        frontmatter = yaml.safe_load(frontmatter_yaml)
+        frontmatter = load_strict_yaml(frontmatter_yaml)
     except (RecursionError, yaml.YAMLError) as e:
         raise SkillParseError(f"Invalid YAML in frontmatter: {e}") from e
 

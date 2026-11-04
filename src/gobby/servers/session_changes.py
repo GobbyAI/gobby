@@ -10,8 +10,9 @@ Resolution order:
 
 1. Load the session and its project (the default repo).
 2. If the session claimed a task with an isolated workspace (worktree/clone),
-   prefer that path and diff against the recorded ``base_commit_sha`` so
-   committed work still appears.
+   prefer that path and diff against its fork from the base branch (the
+   recorded ``base_commit_sha`` when the branch is unknown) so committed work
+   still appears and merged-in base changes do not.
 3. Otherwise diff the project repo against ``HEAD`` (uncommitted changes).
 """
 
@@ -28,6 +29,7 @@ import psycopg
 
 from gobby.storage.tasks import TaskArtifactConstraintError
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.worktrees.base_branch import isolation_base_branch
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ class SessionWorkspace:
     working_dir: str
     base_ref: str
     checkout_mode: str  # "none" | "worktree" | "clone"
+    base_branch: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -204,8 +207,34 @@ def _resolve_isolated_workspace(task_manager: Any, session_id: str) -> SessionWo
         if iso_path and Path(iso_path).is_dir():
             base = artifacts.base_commit_sha or "HEAD"
             kind = "worktree" if artifacts.worktree_path else "clone"
-            return SessionWorkspace(working_dir=iso_path, base_ref=base, checkout_mode=kind)
+            return SessionWorkspace(
+                working_dir=iso_path,
+                base_ref=base,
+                checkout_mode=kind,
+                base_branch=_isolation_base_branch(task_manager, artifacts),
+            )
     return None
+
+
+def _isolation_base_branch(task_manager: Any, artifacts: Any) -> str | None:
+    """Return the isolated workspace's base branch; a lookup failure keeps base_ref."""
+    try:
+        return isolation_base_branch(task_manager.db, artifacts.worktree_id, artifacts.clone_id)
+    except _RECOVERABLE_WORKSPACE_ERRORS:
+        logger.debug("Failed to resolve the isolation base branch", exc_info=True)
+        return None
+
+
+async def _diff_base(workspace: SessionWorkspace) -> str:
+    """Return the fork from the base branch, which moves when the base is merged in."""
+    if workspace.base_branch:
+        ref = f"refs/heads/{workspace.base_branch}"
+        result = await daemon_git.run(
+            ["merge-base", "HEAD", ref], cwd=workspace.working_dir, timeout=_GIT_TIMEOUT
+        )
+        if isinstance(result, GitOk) and result.stdout.strip():
+            return result.stdout.strip()
+    return workspace.base_ref
 
 
 async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFile]:
@@ -215,7 +244,7 @@ async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFi
     so HTTP routes can classify them at the boundary.
     """
     cwd = workspace.working_dir
-    base = workspace.base_ref
+    base = await _diff_base(workspace)
     files: dict[str, str] = {}
 
     out, out_untracked = await asyncio.gather(
@@ -257,11 +286,11 @@ async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFi
 async def compute_session_file_diff(workspace: SessionWorkspace, path: str) -> str:
     """Compute the unified diff for a single file relative to the base ref."""
     cwd = workspace.working_dir
-    base = workspace.base_ref
     if not is_safe_relative_path(cwd, path):
         raise ValueError(
             f"unsafe or not a safe relative path: path={path!r} under working_dir={cwd!r}"
         )
+    base = await _diff_base(workspace)
 
     out = await _git(cwd, ["diff", base, "--", path])
     if out and out.strip():

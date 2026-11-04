@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+from gobby.mcp_proxy.tools.worktrees._sync import SCHEMA_IDENTITY_PATH, create_sync_registry
+from gobby.tasks.close_receipts import LANDING, CloseReceipt
 from gobby.worktrees.git import WorktreeGitManager
 from tests.mcp_proxy.tools.test_merge_landscape import _commit_file, _init_git_repo
 
@@ -272,3 +273,74 @@ async def test_reconciliation_uses_captured_source_when_branch_advances(tmp_path
     assert _git(source_path, "rev-parse", "HEAD") != source_sha
     assert not (repo / "later.txt").exists()
     ctx.worktree_storage.mark_merged.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_changes_identity", [False, True])
+async def test_cutover_advisory_ignores_identity_changes_merged_in_from_the_base(
+    tmp_path: Path, source_changes_identity: bool
+) -> None:
+    repo, source_path, git_manager, ctx = _repo_with_feature(tmp_path)
+    fork = _git(repo, "rev-parse", "main")
+    (repo / SCHEMA_IDENTITY_PATH).parent.mkdir(parents=True)
+    _commit_file(repo, SCHEMA_IDENTITY_PATH, '{"base": 2}\n')
+    _git(source_path, "merge", "--no-edit", "main")
+    if source_changes_identity:
+        (source_path / SCHEMA_IDENTITY_PATH).write_text('{"source": 1}\n', encoding="utf-8")
+        _git(source_path, "commit", "-am", "source identity")
+    worktree = ctx.worktree_storage.get.return_value
+    worktree.task_id = "task-1"
+    ctx.task_manager.artifacts.get_artifacts.return_value.base_commit_sha = fork
+
+    landed = await _merge(ctx, git_manager)
+    worktree.status = "merged"
+    retried = await _merge(ctx, git_manager)
+
+    assert landed["landing"] == "merge"
+    assert landed["cutover_required"] is source_changes_identity
+    assert retried["reconciled"] is True
+    assert retried["cutover_required"] is source_changes_identity
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_changes_identity", [False, True])
+async def test_retried_fast_forward_advisory_starts_at_the_receipt_integration_base(
+    tmp_path: Path, source_changes_identity: bool
+) -> None:
+    repo, source_path, git_manager, ctx = _repo_with_feature(tmp_path)
+    fork = _git(repo, "rev-parse", "main")
+    (repo / SCHEMA_IDENTITY_PATH).parent.mkdir(parents=True)
+    _commit_file(repo, SCHEMA_IDENTITY_PATH, '{"base": 2}\n')
+    _git(source_path, "merge", "--no-edit", "main")
+    if source_changes_identity:
+        (source_path / SCHEMA_IDENTITY_PATH).write_text('{"source": 1}\n', encoding="utf-8")
+        _git(source_path, "commit", "-am", "source identity")
+    pre_landing_tip = _git(repo, "rev-parse", "main")
+    (repo / "staged.txt").write_text("staged\n", encoding="utf-8")
+    _git(repo, "add", "staged.txt")
+    worktree = ctx.worktree_storage.get.return_value
+    worktree.task_id = "task-1"
+    ctx.task_manager.artifacts.get_artifacts.return_value.base_commit_sha = fork
+
+    landed = await _merge(ctx, git_manager)
+    worktree.status = "merged"
+    receipt = CloseReceipt(
+        id="receipt-1",
+        task_id="task-1",
+        author_session_id="lander",
+        kind=LANDING,
+        commit_sha=str(landed["merge_sha"]),
+        facts={"integration_base": pre_landing_tip, "landed_tip": str(landed["merge_sha"])},
+        recorded_at="2026-11-04T00:00:00Z",
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._landing_fork.list_close_receipts",
+        return_value=[receipt],
+    ) as receipts:
+        retried = await _merge(ctx, git_manager)
+
+    assert landed["landing"] == "fast-forward"
+    assert landed["cutover_required"] is source_changes_identity
+    assert retried["reconciled"] is True
+    assert retried["cutover_required"] is source_changes_identity
+    receipts.assert_called_once_with(ctx.task_manager.db, "task-1")

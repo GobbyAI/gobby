@@ -519,6 +519,7 @@ def build_condition_helpers(
         wrapped_validation_command,
     )
     from .condition_helpers_definition_pins import projected_definition_pins
+    from .condition_helpers_git_tools import git_mutating_mcp_call
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
     from .condition_helpers_selection import pending_selection_fence_calls
     from .condition_helpers_sessions import session_condition_helpers
@@ -564,6 +565,7 @@ def build_condition_helpers(
                 task_manager, session_id, tool_input
             ),
             "touches_ui_design_path": touches_ui_design_path,
+            "git_mutating_mcp_call": git_mutating_mcp_call,
             **PATH_CONDITION_HELPERS,
             **session_condition_helpers(session_manager),
         }

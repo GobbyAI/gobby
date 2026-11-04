@@ -57,8 +57,8 @@ def test_validation_guidance_is_provider_neutral_and_reviewable() -> None:
     ):
         assert expected in implementation
     for expected in (
-        "Record exact commands, results, limitations and nonapplicability truthfully",
-        "test-quality, type and suppression checks",
+        "Record exact commands and results, limitations and nonapplicability truthfully",
+        "test-types and test-quality audits and the suppression ratchet",
         "independent review",
         "acceptance criteria",
         "There is no fixed Python checklist",
@@ -83,16 +83,17 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     positions = [content.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "preview=true" in content
-    assert "preview leaves links unchanged" in content
-    assert "review task memories" in content[positions[-1] :]
+    assert "Preview leaves task state and commit links unchanged" in content
+    assert "review_task_memories" in content[positions[-1] :]
     overview = (SKILL_DIR / "overview.md").read_text()
     for topic in ("creation", "implementation", "closing"):
         assert topic in overview
 
 
-def test_close_guidance_leaves_gates_to_selected_rules() -> None:
+def test_close_guidance_delegates_gates_to_selected_rules() -> None:
     content = _flat(SKILL_PATH)
-    assert not [line for line in SKILL_PATH.read_text().splitlines() if line.startswith("| `")]
+    gate_rows = [line for line in SKILL_PATH.read_text().splitlines() if line.startswith("| `")]
+    assert gate_rows == []
     assert "selected rules choose the evidence and conditions for closing" in content
     assert "These are YAML policies, not task-engine assumptions" in content
     for retired in (
@@ -210,10 +211,13 @@ def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
         "repeated `capture_output`",
     ):
         assert expected in agents
+    closing = SKILL_PATH.read_text()
+    assert "does not score transcripts" in closing
+    assert "independent reviewers" in closing
+    assert "`closed=true`" in closing
     live_work = _flat(SKILL_DIR / "live-work.md")
     assert "Use the applicable event-driven wait" in live_work
     assert "do not create a wait merely to end a turn" in live_work
-    assert "`closed=true`" in SKILL_PATH.read_text()
 
 
 def test_guides_document_deterministic_preview_then_real_close() -> None:

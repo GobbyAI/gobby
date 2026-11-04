@@ -24,6 +24,7 @@ from gobby.storage.definitions.variables import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import VariableDefinitionBody
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -381,6 +382,14 @@ def get_variable_definition(
     return {"success": True, "variable": _variable_summary(row)}
 
 
+def _reserved_authoring_error(name: str) -> str:
+    """Refuse a definition for a runtime-owned name; seeded defaults would reach sessions."""
+    return (
+        f"Variable '{name}' is a reserved runtime name and cannot be authored as a definition. "
+        "Choose a different name."
+    )
+
+
 def create_variable(
     def_manager: SessionVariableDefaultManager,
     name: str,
@@ -406,6 +415,9 @@ def create_variable(
     Returns:
         Dict with success and created variable, or error
     """
+    if is_reserved_workflow_variable(name):
+        return {"success": False, "error": _reserved_authoring_error(name)}
+
     try:
         VariableDefinitionBody(variable=name, value=value, description=description)
     except Exception as e:
@@ -479,6 +491,9 @@ def update_variable(
     Returns:
         Dict with success and updated variable, or error
     """
+    if is_reserved_workflow_variable(name):
+        return {"success": False, "error": _reserved_authoring_error(name)}
+
     row = def_manager.get_by_name(name)
     if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}

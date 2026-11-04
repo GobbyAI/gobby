@@ -145,6 +145,36 @@ def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
     return chain
 
 
+# A launcher walk crosses at most this many pipeline sessions (the agent depth limit).
+_PIPELINE_LAUNCHER_MAX_HOPS = 5
+
+
+def spawn_authority_session(session_manager: SessionManager, caller_ref: Any) -> str:
+    """The session whose spawn authority ``caller_ref`` exercises.
+
+    A pipeline executor session acts for whoever launched it, so it resolves to its
+    first non-pipeline ancestor. Any other session is its own authority. A missing
+    parent, a cycle or a chain past the depth limit raises, failing closed.
+    """
+    if not isinstance(caller_ref, str) or not caller_ref:
+        raise ValueError("spawn scope needs the caller session")
+    session_id = session_manager.resolve_session_reference(caller_ref)
+    crossed: set[str] = set()
+    for _ in range(_PIPELINE_LAUNCHER_MAX_HOPS + 1):
+        session = session_manager.get(session_id)
+        if session is None:
+            raise ValueError(f"Caller session {session_id} not found")
+        if session.source != "pipeline" or session.agent_run_id is not None:
+            return session.id
+        if session.id in crossed:
+            raise ValueError(f"Pipeline session {session.id} is in a launcher cycle")
+        crossed.add(session.id)
+        if not session.parent_session_id:
+            raise ValueError(f"Pipeline session {session.id} has no launching session")
+        session_id = session.parent_session_id
+    raise ValueError(f"Pipeline launcher chain from {caller_ref} exceeds the depth limit")
+
+
 def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Session, str | None]:
     """The verified caller session and its agent run's definition name, None for a root.
 
@@ -313,13 +343,15 @@ def spawn_target_allowed(
     be allowed. Without a resolved target project, a before_tool rule checks
     only requested names. Admission passes the launch's target project to check
     its fallback chain as well. A team manager may also resume an existing seat of
-    its own team, which is the one spawn its definition does not list. Anything
-    unresolvable raises and fails closed.
+    its own team, which is the one spawn its definition does not list. A pipeline
+    session spawns with its launcher's authority. Anything unresolvable raises and
+    fails closed.
     """
     if session_manager is None:
         raise RuntimeError("spawn target scope needs a session manager")
     from gobby.workflows.agent_resolver import session_agent_definition
 
+    caller_ref = spawn_authority_session(session_manager, caller_ref)
     caller, agent_name = _spawn_caller(session_manager, caller_ref)
     if agent_name is None:
         if operator_session(session_manager, caller_ref):
