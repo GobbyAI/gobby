@@ -48,8 +48,10 @@ from gobby.workflows.definitions import (
 from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.block_batching import (
+    agent_context_key,
     clear_block_scopes,
     close_response_batch,
+    drop_block_scope,
     register_blocked_attempt,
 )
 from gobby.workflows.engine.blocked_tool_recovery import (
@@ -413,6 +415,11 @@ class RuleEngine(
                 # State is scoped to the agent context named by the payload so
                 # concurrent subagents sharing one session id keep separate budgets.
                 block_state = evaluation.block_state
+                # A subagent's own SubagentStop is its turn end for edit/write recovery and is
+                # held by its own scope. Without an agent context it never reads the parent's.
+                subagent_stop = raw_event_value == HookEventType.SUBAGENT_STOP.value and bool(
+                    agent_context_key(event.data)
+                )
                 if is_before_tool and block_state.get("_last_blocked_tool"):
                     if _is_pipeline_direct_mcp_event(event):
                         # Synthetic pipeline MCP events clear block state so the next real user tool starts from 0.
@@ -635,8 +642,9 @@ class RuleEngine(
                     )
 
                 # Block stop when this agent context's edit/write is pending (failed or
-                # in-flight). A subagent's pending write holds only its own stop.
-                elif is_turn_end and block_state.get("edit_write_pending"):
+                # in-flight), at its turn end or its own SubagentStop. A subagent's pending
+                # write holds only its own stop.
+                elif (is_turn_end or subagent_stop) and block_state.get("edit_write_pending"):
                     edit_stop_blocks = block_state.get("edit_write_stop_blocks", 0)
                     if edit_write_outcome_lost(block_state):
                         _clear_edit_write_state(block_state)
@@ -651,6 +659,10 @@ class RuleEngine(
                     else:
                         # Circuit breaker tripped — clear and allow stop
                         _clear_edit_write_state(block_state)
+
+                if subagent_stop and override_decision != "block":
+                    # The subagent's terminal stop ends its blocked-tool and edit/write state.
+                    drop_block_scope(variables, agent_context_key(event.data))
 
                 if not rules:
                     # Auto-manage tool_block_pending on after_tool execution results.
