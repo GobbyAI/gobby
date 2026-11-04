@@ -136,7 +136,7 @@ class MailboxService:
         content: str,
         target_id: str | None = None,
         message_id: str | None = None,
-        wake: bool | None = False,
+        wake: bool | None = None,
         priority: str = "normal",
         message_type: str = "message",
         metadata: Mapping[str, Any] | None = None,
@@ -147,9 +147,10 @@ class MailboxService:
     ) -> MailboxSendResult:
         """Send a mailbox message to an explicit resolved target selector.
 
-        ``wake=None`` takes the target default: direct targets wake and fanout stays
-        queued. Recipient definitions declare required sender capabilities; direct
-        targets refuse unauthorized senders and fanout withholds those recipients.
+        ``wake=None`` takes the target default: direct and global targets wake, and
+        project fanout stays queued. Recipient definitions declare required sender
+        capabilities; direct targets refuse unauthorized senders and fanout withholds
+        those recipients.
         """
         if not preserve_content:
             content = content.strip()
@@ -191,7 +192,7 @@ class MailboxService:
                     },
                 )
             if wake is None:
-                wake = not resolution.fanout
+                wake = not resolution.fanout or resolution.target == "global"
             if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
                 raise ValueError("message_id requires exactly one direct recipient")
             broadcast_id = str(uuid.uuid4()) if resolution.fanout else None

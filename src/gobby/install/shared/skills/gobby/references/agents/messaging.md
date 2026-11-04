@@ -18,9 +18,11 @@ must supply project scope. Preserve the returned message IDs and inspect partial
 broadcast/wake failures before retrying.
 
 Content never implies wake. Omitting `wake` requests immediate processing for direct
-`session`, `parent`, and `agent` targets. `project` and `global` fanout
+`session`, `parent`, and `agent` targets and for `global` fanout. `project` fanout
 stays queued without live wakes unless `wake=true` is explicit. Set `wake=false`
-to queue any target without a live wake. A requested wake may steer active work;
+to queue any target without a live wake. The daemon sends restart and cutover
+notices itself as waking system globals: a hold before it stops and DAEMON BACK
+once healthy. Never compose them by hand. A requested wake may steer active work;
 interrupted or input/approval/handoff-waiting sessions retain the message without
 unsafe daemon input. A successful send is durable queuing, not evidence that the
 recipient read or acted on it. Use `get_inter_session_message` for a message ID
@@ -108,5 +110,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 1.3.0_
-_Last verified: 2026-11-02_
+_Version: 2.0.0_
+_Last verified: 2026-11-03_

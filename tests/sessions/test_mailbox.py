@@ -498,6 +498,7 @@ class TestMailboxDirectSend:
             target="session",
             target_id=recipient.id,
             content="Routine notice",
+            wake=False,
         )
 
         assert result.success is True
@@ -572,7 +573,7 @@ class TestMailboxDirectSend:
         assert json.loads(row["metadata_json"]) == {
             "purpose": "regression",
             "redirected_from": predecessor.id,
-            "wake_requested": False,
+            "wake_requested": True,
         }
 
         get_session = session_manager.get
