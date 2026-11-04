@@ -48,6 +48,10 @@ pub(crate) fn kill_group(pgid: i32, signal: i32) -> Result<(), KillGroupError> {
 
 /// Bound on waiting for a SIGKILLed group to be reaped before reporting it alive.
 const KILL_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Bound on the PTY output drain before an exit settles. It outlasts the reader's
+/// own drain bound, so a slow reader still delivers its bytes first.
+#[cfg(any(feature = "vt-engine", test))]
+const EXIT_DRAIN_WAIT: Duration = Duration::from_secs(1);
 
 /// Whether `pgid` still has members; a permission refusal counts as alive.
 fn group_alive(pgid: i32) -> bool {
@@ -734,6 +738,19 @@ impl HostState {
         exit_code: Option<u32>,
     ) -> bool {
         let _gate = self.mutation_gate.read().await;
+        // The leader's last writes are already queued on its PTY, and the exit tail
+        // is read from the terminal the reader feeds. Wait for the reader to take them.
+        let drain = self
+            .inner
+            .lock()
+            .await
+            .terminals
+            .get(identity)
+            .filter(|slot| slot.host_terminal_id == host_terminal_id)
+            .and_then(|slot| slot.child.as_ref()?.runtime.request_output_drain());
+        if let Some(drain) = drain {
+            let _ = tokio::time::timeout(EXIT_DRAIN_WAIT, drain).await;
+        }
         let mut inner = self.inner.lock().await;
         if let Some(slot) = inner
             .terminals

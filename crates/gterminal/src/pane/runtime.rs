@@ -280,6 +280,16 @@ impl PaneRuntime {
         })
     }
 
+    /// Asks the PTY reader to take the output the child already wrote. `None`
+    /// when there is no PTY reader to ask.
+    pub(crate) fn request_output_drain(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        match &self.io {
+            PaneRuntimeIo::Actor(actor) => actor.request_output_drain(),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { .. } => None,
+        }
+    }
+
     /// Leaves an exit that arrives from now on unreaped, so it survives an
     /// exec for the next image's waiter.
     #[cfg(unix)]

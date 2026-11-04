@@ -739,6 +739,47 @@ fn exited_terminal_keeps_its_final_output_for_snapshot() {
 }
 
 #[test]
+fn exit_tail_keeps_output_written_just_before_the_exit() {
+    // Far more than one PTY read of output, with the last line written right
+    // before the exit. The retained tail must end with that line, so the
+    // exit has to wait for the reader to take what the child already wrote.
+    let (_dir, mut host, mut stream) = test_host("control-token-exit-drain");
+    let (terminal_id, spawn_key, host_terminal_id, _) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "exit-drain",
+        &[
+            "/bin/sh",
+            "-c",
+            "i=0; while [ $i -lt 4000 ]; do printf 'row %04d padding padding padding\\n' $i; i=$((i+1)); done; printf 'codex: final marker\\n'; exit 1",
+        ],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    wait_for_no_terminals(&mut stream);
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "snapshot",
+            "host_terminal_id": host_terminal_id,
+            "mode": "text",
+            "max_lines": 40,
+        }),
+    );
+    let snapshot = recv_json(&mut stream);
+    assert_eq!(snapshot["ok"], true, "{snapshot}");
+    let text = snapshot["text"].as_str().unwrap_or_default();
+    assert_eq!(
+        text.lines().last(),
+        Some("codex: final marker"),
+        "{snapshot}"
+    );
+}
+
+#[test]
 fn host_death_releases_prepared_child() {
     let (_dir, mut host, mut stream) = test_host("control-token-host-death");
     let (_, _, _, pid) = prepare_terminal(

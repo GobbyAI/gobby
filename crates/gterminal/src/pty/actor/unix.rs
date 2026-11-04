@@ -18,6 +18,9 @@ use crate::pty::fd;
 const ACTOR_IDLE_POLL_MS: i32 = 1000;
 const ACTOR_COMMAND_BUFFER: usize = 1024;
 const HANDOFF_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// Bounds the output drain after an exit, so a descendant that keeps writing
+/// cannot hold the exit settlement.
+const EXIT_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActorState {
@@ -83,6 +86,7 @@ enum PtyIoControlCommand {
     ReleaseAfterCommit(std_mpsc::Sender<std::io::Result<()>>),
     ResumeRestored,
     ArmHandoffAckFault(HandoffAckFault),
+    DrainOutput(tokio::sync::oneshot::Sender<()>),
     Shutdown,
 }
 
@@ -280,6 +284,17 @@ impl PtyIoActorHandle {
                 ))
             }
         }
+    }
+
+    /// Asks the reader to take every byte already queued on the PTY. The receiver
+    /// resolves once it has. `None` means the reader already stopped.
+    pub(crate) fn request_output_drain(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        self.control_tx
+            .send(PtyIoControlCommand::DrainOutput(done_tx))
+            .ok()?;
+        self.wake_actor();
+        Some(done_rx)
     }
 
     pub(crate) fn duplicate_for_handoff(&self) -> std::io::Result<RawFd> {
@@ -683,6 +698,10 @@ impl PtyIoActorRunner {
             }
             PtyIoControlCommand::ResumeRestored => self.state = ActorState::Running,
             PtyIoControlCommand::ArmHandoffAckFault(fault) => self.ack_fault = Some(fault),
+            PtyIoControlCommand::DrainOutput(done) => {
+                self.drain_output();
+                let _ = done.send(());
+            }
             PtyIoControlCommand::Shutdown => return true,
         }
         false
@@ -762,6 +781,35 @@ impl PtyIoActorRunner {
             self.nudge(nudge);
         }
         self.enqueue_terminal_responses(terminal_responses);
+    }
+
+    /// Reads every byte already queued on the PTY, so a caller that saw the child
+    /// exit gets its final output. Stops at the first empty poll, at EOF, or at
+    /// the deadline, so a descendant that keeps writing cannot hold it.
+    fn drain_output(&mut self) {
+        let deadline = Instant::now() + EXIT_DRAIN_TIMEOUT;
+        while self.live() && Instant::now() < deadline {
+            let readiness = match fd::poll_pty_and_wake(
+                self.file.as_raw_fd(),
+                self.wake_read_fd.as_raw_fd(),
+                true,
+                false,
+                0,
+            ) {
+                Ok(readiness) => readiness,
+                Err(err) => {
+                    debug!(pane = self.pane_id, err = %err, "PTY actor drain poll failed");
+                    return;
+                }
+            };
+            if !readiness.pty_read_ready {
+                return;
+            }
+            if !self.read_once() {
+                self.hang_up();
+                return;
+            }
+        }
     }
 
     fn read_once(&mut self) -> bool {
