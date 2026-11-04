@@ -863,7 +863,8 @@ def test_administration_and_documentation(command: str) -> None:
         "claude please help",
         "codex exec help",
         "claude mcp add --scope user --help",
-        # app-server takes launch options; only its bare help form is exempt.
+        # Trailing `help` never exempts a group; only --help and -h do, and launch
+        # options stay blocked.
         "codex app-server",
         "codex app-server help",
         "codex app-server --listen stdio:// --help",
@@ -873,6 +874,109 @@ def test_administration_and_documentation(command: str) -> None:
 )
 def test_help_does_not_exempt_launch_operands(command: str) -> None:
     assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+# Every real subcommand codex's --help lists (aliases included) and each nested one
+# its zsh completion lists. Internal, hidden, and [internal] entries are excluded.
+CODEX_HELP_SUBCOMMANDS = [
+    "agents",
+    "exec",
+    "e",
+    "exec fork",
+    "exec resume",
+    "exec review",
+    "review",
+    "login",
+    "login status",
+    "logout",
+    "mcp",
+    "mcp add",
+    "mcp get",
+    "mcp list",
+    "mcp login",
+    "mcp logout",
+    "mcp remove",
+    "plugin",
+    "plugin add",
+    "plugin list",
+    "plugin marketplace",
+    "plugin marketplace add",
+    "plugin marketplace list",
+    "plugin marketplace remove",
+    "plugin marketplace upgrade",
+    "plugin remove",
+    "app-server",
+    "app-server daemon",
+    "app-server daemon bootstrap",
+    "app-server daemon disable-remote-control",
+    "app-server daemon enable-remote-control",
+    "app-server daemon restart",
+    "app-server daemon start",
+    "app-server daemon stop",
+    "app-server daemon update",
+    "app-server daemon version",
+    "app-server generate-json-schema",
+    "app-server generate-ts",
+    "app-server proxy",
+    "remote-control",
+    "remote-control pair",
+    "remote-control start",
+    "remote-control stop",
+    "app",
+    "completion",
+    "update",
+    "doctor",
+    "sandbox",
+    "sandbox uninstall",
+    "debug",
+    "debug app-server",
+    "debug app-server send-message-v2",
+    "debug models",
+    "debug prompt-input",
+    "debug trace-reduce",
+    "apply",
+    "a",
+    "resume",
+    "queue",
+    "archive",
+    "delete",
+    "migrate-rollouts",
+    "migrate-nfs-db",
+    "unarchive",
+    "fork",
+    "cloud",
+    "cloud apply",
+    "cloud diff",
+    "cloud exec",
+    "cloud list",
+    "cloud status",
+    "exec-server",
+    "exec-server forward",
+    "features",
+    "features disable",
+    "features enable",
+    "features list",
+]
+
+
+@pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
+def test_codex_subcommand_help_is_exempt(subcommand: str) -> None:
+    for flag in ("--help", "-h"):
+        command = f"codex {subcommand} {flag}"
+        assert not blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
+def test_codex_subcommand_launch_stays_blocked(subcommand: str) -> None:
+    # A positional prompt, a launch option, a chained launch, and a trailing `help`
+    # word each keep the path a launch.
+    for form in (
+        f"codex {subcommand} hi",
+        f"codex {subcommand} --json",
+        f"codex {subcommand} --help && codex exec hi",
+        f"codex {subcommand} help",
+    ):
+        assert blocks_direct_provider_launch("Bash", {"command": form}), form
 
 
 @pytest.mark.parametrize(
