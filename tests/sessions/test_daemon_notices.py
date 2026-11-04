@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,6 +24,10 @@ from gobby.sessions.daemon_notices import (
     send_hold_notice_if_restarting,
 )
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
+from gobby.storage.hub.operation_deadline import (
+    DatabaseOperationDeadline,
+    current_database_operation_deadline,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager, system_session_id
 
@@ -94,6 +101,87 @@ async def test_notice_failure_never_raises(caplog: pytest.LogCaptureFixture) -> 
     await send_daemon_notice(runner, HOLD_NOTICE)
 
     assert "Daemon notice failed" in caplog.text
+
+
+class StalledHub:
+    """A hub whose transaction blocks past any notice bound, as a stalled pool wait does."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.entered = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.deadline: DatabaseOperationDeadline | None = None
+
+    def transaction(self) -> NoReturn:
+        self.thread = threading.current_thread()
+        self.deadline = current_database_operation_deadline()
+        self.entered.set()
+        self.release.wait(timeout=5)
+        raise RuntimeError("stalled transaction released")
+
+
+@pytest.mark.asyncio
+async def test_stalled_persistence_never_stalls_the_event_loop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    hub = StalledHub()
+    runner = _runner(database=hub, session_manager=MagicMock(), wake_dispatcher=None)
+    started = time.monotonic()
+    notice = asyncio.create_task(send_daemon_notice(runner, HOLD_NOTICE, timeout_seconds=0.1))
+    try:
+        assert await asyncio.to_thread(hub.entered.wait, 5)
+        # The loop runs this test while the transaction is still stalled.
+        assert not notice.done()
+        await notice
+        elapsed = time.monotonic() - started
+        assert not hub.release.is_set()
+    finally:
+        hub.release.set()
+
+    assert elapsed < 1.0
+    assert hub.thread is not threading.main_thread()
+    assert hub.deadline is not None
+    assert hub.deadline.expires_at <= started + 0.1 + 0.05
+    assert "Daemon notice exceeded" in caplog.text
+
+
+class SlowWakeDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
+        self.calls.append(session_id)
+        await asyncio.Event().wait()
+        return {"session_id": session_id, "delivered": True, "method": "fake"}
+
+
+@pytest.mark.asyncio
+async def test_slow_wake_is_bounded_after_the_notice_commits(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    recipient = session_manager.register(
+        external_id="slow-seat",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+        title="slow-seat",
+    ).id
+    dispatcher = SlowWakeDispatcher()
+    runner = _runner(database=temp_db, session_manager=session_manager, wake_dispatcher=dispatcher)
+
+    started = time.monotonic()
+    await send_daemon_notice(runner, HOLD_NOTICE, timeout_seconds=0.2)
+
+    assert time.monotonic() - started < 1.0
+    assert dispatcher.calls == [recipient]
+    rows = temp_db.fetchall("SELECT to_session, content FROM inter_session_messages")
+    assert [(row["to_session"], row["content"]) for row in rows] == [(recipient, HOLD_NOTICE)]
+    assert "Daemon notice exceeded" in caplog.text
 
 
 def test_hold_text_names_the_tools_that_stay_allowed() -> None:

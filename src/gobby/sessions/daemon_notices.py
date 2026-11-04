@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.mailbox import MailboxService
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import system_session_id
 
@@ -28,11 +29,14 @@ HOLD_NOTICE = (
 )
 BACK_NOTICE = "DAEMON BACK: the daemon is healthy. Resume task work."
 NOTICE_MESSAGE_TYPE = "daemon_notice"
-# Bounds the wake dispatch so a slow terminal never stalls shutdown or startup.
+# Bounds persistence and wake dispatch so a stalled hub or slow terminal never
+# stalls shutdown or startup.
 NOTICE_TIMEOUT_SECONDS = 5.0
 
 
-async def send_daemon_notice(runner: GobbyRunner, content: str) -> None:
+async def send_daemon_notice(
+    runner: GobbyRunner, content: str, *, timeout_seconds: float = NOTICE_TIMEOUT_SECONDS
+) -> None:
     """Send one system global with live wakes; failures are logged, never raised."""
     database: Any = getattr(runner, "database", None)
     session_manager = getattr(runner, "session_manager", None)
@@ -46,16 +50,22 @@ async def send_daemon_notice(runner: GobbyRunner, content: str) -> None:
         wake_dispatcher=getattr(runner, "wake_dispatcher", None),
     )
     try:
-        async with asyncio.timeout(NOTICE_TIMEOUT_SECONDS):
-            result = await mailbox.send(
-                from_session_id=system_session_id(),
-                target="global",
-                content=content,
-                wake=True,
-                message_type=NOTICE_MESSAGE_TYPE,
-            )
+        async with asyncio.timeout(timeout_seconds):
+            # Persistence is synchronous, so it runs in a worker under a database
+            # deadline: a stalled pool wait or lock then neither blocks the event loop
+            # nor outlives the bound, and the deadline frees the worker on time.
+            with database_operation_deadline(timeout_seconds=timeout_seconds):
+                result = await asyncio.to_thread(
+                    mailbox.persist,
+                    from_session_id=system_session_id(),
+                    target="global",
+                    content=content,
+                    wake=True,
+                    message_type=NOTICE_MESSAGE_TYPE,
+                )
+            result.wake_results = await mailbox.dispatch_wakes(result)
     except TimeoutError:
-        logger.warning("Daemon notice wakes exceeded %.0fs", NOTICE_TIMEOUT_SECONDS)
+        logger.warning("Daemon notice exceeded %.1fs", timeout_seconds)
         return
     except Exception:
         logger.warning("Daemon notice failed", exc_info=True)

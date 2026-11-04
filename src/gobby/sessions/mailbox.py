@@ -68,6 +68,8 @@ class MailboxSendResult:
     target_id: str | None = None
     selector_metadata: dict[str, Any] | None = None
     wake_results: list[dict[str, Any]] = field(default_factory=list)
+    # Whether committed rows still owe live wakes; ``dispatch_wakes`` delivers them.
+    wake_requested: bool = False
     failed_broadcasts: list[dict[str, Any]] = field(default_factory=list)
     error_code: str | None = None
     error: str | None = None
@@ -151,6 +153,47 @@ class MailboxService:
         project fanout stays queued. Recipient definitions declare required sender
         capabilities; direct targets refuse unauthorized senders and fanout withholds
         those recipients.
+        """
+        result = self.persist(
+            from_session_id=from_session_id,
+            target=target,
+            content=content,
+            target_id=target_id,
+            message_id=message_id,
+            wake=wake,
+            priority=priority,
+            message_type=message_type,
+            metadata=metadata,
+            project_id=project_id,
+            preserve_content=preserve_content,
+            replace_composer=replace_composer,
+            attachment=attachment,
+        )
+        if result.wake_requested:
+            result.wake_results = await self.dispatch_wakes(result, priority=priority)
+        return result
+
+    def persist(
+        self,
+        *,
+        from_session_id: str,
+        target: str,
+        content: str,
+        target_id: str | None = None,
+        message_id: str | None = None,
+        wake: bool | None = None,
+        priority: str = "normal",
+        message_type: str = "message",
+        metadata: Mapping[str, Any] | None = None,
+        project_id: str | None = None,
+        preserve_content: bool = False,
+        replace_composer: bool = False,
+        attachment: AttachmentDraft | None = None,
+    ) -> MailboxSendResult:
+        """Commit a send's rows without live side effects; ``send`` documents the arguments.
+
+        Synchronous so a caller that must bound a stalled database can run it in a
+        worker under a database operation deadline, then call ``dispatch_wakes``.
         """
         if not preserve_content:
             content = content.strip()
@@ -251,18 +294,6 @@ class MailboxService:
                 if attachment is not None:
                     self._attachment_manager.create(message.id, attachment)
 
-        wake_results: list[dict[str, Any]] = []
-        if wake:
-            # Persistence is complete. The dispatcher owns live-wake policy and
-            # channel-specific bounds; an outer timeout can interrupt tmux submission.
-            wake_results = await dispatch_mailbox_wakes(
-                self._wake_dispatcher,
-                self._session_manager,
-                messages,
-                recipient_ids,
-                priority=priority,
-            )
-
         return MailboxSendResult(
             messages=messages,
             recipient_session_ids=recipient_ids,
@@ -270,7 +301,21 @@ class MailboxService:
             target=resolution.target,
             target_id=resolution.target_id,
             selector_metadata=resolution.selector_metadata,
-            wake_results=wake_results,
+            wake_requested=wake,
+        )
+
+    async def dispatch_wakes(
+        self, result: MailboxSendResult, *, priority: str = "normal"
+    ) -> list[dict[str, Any]]:
+        """Wake the recipients of rows ``persist`` committed."""
+        # Persistence is complete. The dispatcher owns live-wake policy and
+        # channel-specific bounds; an outer timeout can interrupt tmux submission.
+        return await dispatch_mailbox_wakes(
+            self._wake_dispatcher,
+            self._session_manager,
+            result.messages,
+            result.recipient_session_ids,
+            priority=priority,
         )
 
     async def wake_committed(self, message_id: str) -> list[dict[str, Any]]:
