@@ -25,7 +25,7 @@
       "grant": {
         "version": 2,
         "api_contract": 1,
-        "config_revision": 2,
+        "config_revision": 1,
         "deployment": {
           "token": "@secret@",
           "fencing_epoch": "@mask@"
