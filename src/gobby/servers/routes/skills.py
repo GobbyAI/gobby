@@ -95,7 +95,7 @@ class SkillCreateRequest(BaseModel):
     allowed_tools: list[str] | None = Field(default=None, description="Allowed tool patterns")
     metadata: dict[str, Any] | None = Field(default=None, description="Free-form metadata")
     enabled: bool = Field(default=True, description="Whether skill is active")
-    always_apply: bool = Field(default=False, description="Always inject at session start")
+    always_apply: bool = Field(default=False, description="Recommend at session start")
     injection_format: str = Field(default="summary", description="Injection format")
     project_id: str | None = Field(default=None, description="Project scope (None for global)")
 

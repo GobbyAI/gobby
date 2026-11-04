@@ -9,7 +9,7 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     "gdaemon": "0.4.130",
     "gterm": "0.1.18",
     "gclient": "0.1.102",
-    "gmcp": "0.1.27",
+    "gmcp": "0.1.28",
 }
 
 UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient", "gmcp"})
