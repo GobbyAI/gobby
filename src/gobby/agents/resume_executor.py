@@ -635,7 +635,7 @@ async def resume_agent_run(
                 prompt,
                 run_id,
                 runner.run_storage,
-                spawn_request.placement_releaser,
+                placement_releaser=spawn_request.placement_releaser,
             )
     runner.run_storage.merge_resume_metadata(
         run_id,

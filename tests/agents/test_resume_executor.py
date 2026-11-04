@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 import uuid
@@ -14,6 +15,7 @@ import pytest
 
 from gobby.agents import resume_executor
 from gobby.agents.resume_placement import launch_resume
+from gobby.agents.spawn_executor_support import schedule_codex_prompt_delivery
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.config.ai import GenerationEndpointConfig
@@ -263,9 +265,12 @@ async def test_placed_codex_resume_hands_its_releaser_to_delivery(
 
     assert result.success is True
     mock_codex_prompt_delivery.assert_called_once()
-    delivery_args = mock_codex_prompt_delivery.call_args.args
-    assert len(delivery_args) == 6, "resume must hand the placement releaser to delivery"
-    assert delivery_args[5] is releaser
+    call = mock_codex_prompt_delivery.call_args
+    # Bind against the real signature: the releaser must reach placement_releaser by name,
+    # not by position into cleanup_agent.
+    bound = inspect.signature(schedule_codex_prompt_delivery).bind(*call.args, **call.kwargs)
+    assert bound.arguments.get("placement_releaser") is releaser
+    assert bound.arguments.get("cleanup_agent") is None
 
 
 @pytest.mark.asyncio
