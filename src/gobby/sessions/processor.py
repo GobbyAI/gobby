@@ -22,11 +22,13 @@ if TYPE_CHECKING:
 
 from gobby.sessions.context_usage import snapshot_from_token_usage, snapshot_from_window_metadata
 from gobby.sessions.message_stats import MessageStats
+from gobby.sessions.processor_ledger import ProcessorLedgerMixin
 from gobby.sessions.processor_lifecycle import ProcessorLifecycleMixin, TurnCompletion
 from gobby.sessions.processor_stats import ProcessorStatsMixin
 from gobby.sessions.processor_transcripts import ProcessorTranscriptMixin
 from gobby.sessions.processor_types import WebSocketServer
 from gobby.sessions.processor_usage import ProcessorUsageMixin
+from gobby.sessions.subagent_usage import SubagentCursor
 from gobby.sessions.transcript_index import TranscriptIndexAppender
 from gobby.sessions.transcript_renderer import RenderState
 from gobby.sessions.transcripts.base import TokenUsage, TranscriptParser
@@ -38,6 +40,7 @@ from gobby.telemetry.instruments import inc_counter
 
 class SessionMessageProcessor(
     ProcessorLifecycleMixin,
+    ProcessorLedgerMixin,
     ProcessorStatsMixin,
     ProcessorUsageMixin,
     ProcessorTranscriptMixin,
@@ -101,6 +104,9 @@ class SessionMessageProcessor(
         # Incremental stat accumulators per session
         self._stats: dict[str, MessageStats] = {}
         self._stats_hydration_skipped: set[str] = set()
+
+        # Claude subagent read cursors: session_id -> {subagent path: cursor} (plan 2.2)
+        self._subagent_cursors: dict[str, dict[str, SubagentCursor]] = {}
 
         self._running = False
         self._stopped = False

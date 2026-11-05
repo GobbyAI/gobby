@@ -15,6 +15,7 @@ import click
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
+from gobby.sessions.subagent_usage import read_subagent_events
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.hub.protocol import HubDatabase
@@ -200,6 +201,15 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
         derived, last_model = _messages_to_events(
             session_id, session, _load_session_messages(session_id, session)
         )
+        # Subagent calls carry agent-scoped ids, so they cannot collide with parent keys.
+        if isinstance(session.transcript_path, str):
+            subagent_events, _ = read_subagent_events(
+                session_id,
+                session.project_id if isinstance(session.project_id, str) else None,
+                session.transcript_path,
+                {},
+            )
+            derived.extend(subagent_events)
 
         # Retention archives events older than the cutoff into token_event_retention_totals
         # and deletes their rows. An expired event with no stored row was pruned, so it is

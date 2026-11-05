@@ -27,6 +27,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.message_stats import compute_message_stats
+from gobby.sessions.subagent_usage import read_subagent_events
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
@@ -372,7 +373,9 @@ class TranscriptProcessingMixin:
 
         # Parse and index outside the transaction; only usage replacement holds the lock.
         with token_event_retention_transaction(self.db):
-            return self._persist_session_token_usage(session_id, session, messages, session_source)
+            return self._persist_session_token_usage(
+                session_id, session, messages, session_source, transcript_path
+            )
 
     def _persist_session_token_usage(
         self,
@@ -380,6 +383,7 @@ class TranscriptProcessingMixin:
         session: Session,
         messages: list[ParsedMessage],
         session_source: str | None,
+        transcript_path: str,
     ) -> list[dict[str, Any]]:
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.
@@ -394,6 +398,10 @@ class TranscriptProcessingMixin:
         running_totals = self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
+        # Subagent calls join the parent ledger through the same reader as the live path.
+        subagent_events, _ = read_subagent_events(
+            session_id, session_project_id, transcript_path, {}
+        )
         session_source = session_source or "unknown"
         session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None
@@ -557,10 +565,14 @@ class TranscriptProcessingMixin:
         # Pass 2: one batched insert for every event (#20885). The returned
         # flags preserve the per-event dedup feedback.
         pending_events = [entry for entry in snapshot_plan if isinstance(entry, _PendingTokenEvent)]
+        # Subagent rows follow the parent's, so the parent's flags keep their positions.
+        batch = [entry.event for entry in pending_events] + subagent_events
+        if subagent_events:
+            saw_usage = True
         inserted_flags: list[bool] = []
-        if pending_events:
+        if batch:
             inserted_flags = self.token_event_store.record_batch(
-                [entry.event for entry in pending_events], retention_cutoff=retention_cutoff
+                batch, retention_cutoff=retention_cutoff
             )
 
         # Pass 3: replay the sequential semantics in message order — a window

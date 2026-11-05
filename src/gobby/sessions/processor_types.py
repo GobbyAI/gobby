@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
     from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.sessions.processor_lifecycle import SessionFlushResult, TurnCompletion
+    from gobby.sessions.subagent_usage import SubagentCursor
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
     from gobby.storage.unmodeled_observations import UnmodeledObservationStore
@@ -70,6 +71,7 @@ class ProcessorHost(Protocol):
     _observation_store: UnmodeledObservationStore
     _stats: dict[str, MessageStats]
     _stats_hydration_skipped: set[str]
+    _subagent_cursors: dict[str, dict[str, SubagentCursor]]
     _running: bool
     _stopped: bool
     _task: asyncio.Task[None] | None
@@ -168,6 +170,10 @@ class ProcessorHost(Protocol):
         *,
         publish_occupancy: bool = True,
     ) -> MessageStats: ...
+
+    async def _persist_ledger_batch(
+        self, session_id: str, transcript_path: str, source: str | None
+    ) -> None: ...
 
     async def _persist_usage_events(
         self,

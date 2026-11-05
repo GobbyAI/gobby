@@ -287,6 +287,12 @@ class ProcessorTranscriptMixin:
 
         if not new_lines:
             latch_quota_end(self._quota_caught_up, session_id, caught_up)
+            # An idle parent still ingests subagent appends (plan 2.2.5).
+            idle_parser = self._parsers.get(session_id)
+            if idle_parser is not None:
+                await self._persist_ledger_batch(
+                    session_id, transcript_path, _parser_source(idle_parser)
+                )
             return True
 
         await self._run_db(self._revive_expired_terminal_session, session_id)
@@ -404,6 +410,7 @@ class ProcessorTranscriptMixin:
             await collect_live_quota(self, session_id, parser_source, positioned)
 
         if not stats_records:
+            await self._persist_ledger_batch(session_id, transcript_path, parser_source)
             if pending_appender is not None:
                 self._index_appenders[session_id] = pending_appender
             if latest_parsed_index > last_index:
@@ -434,6 +441,7 @@ class ProcessorTranscriptMixin:
                 parser.hydrate_state(parser_state)
             raise
 
+        await self._persist_ledger_batch(session_id, transcript_path, parser_source)
         if pending_appender is not None:
             pending_appender.index.session_stats = stats
             self._index_appenders[session_id] = pending_appender
