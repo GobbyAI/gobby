@@ -22,6 +22,10 @@ pub struct RosterEntry {
     /// Set only while the subject is blocked; the daemon sends `null` otherwise.
     pub attention: Option<Attention>,
     pub task: Option<TaskRef>,
+    /// The session's one-line status about its work, set by the session for
+    /// itself; absent or `null` when it has none.
+    #[serde(default)]
+    pub status_line: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     /// The model's name as its provider prints it (`Claude Fable 5.1`),

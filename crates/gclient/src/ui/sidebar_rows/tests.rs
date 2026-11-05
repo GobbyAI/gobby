@@ -275,7 +275,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
     assert_eq!(
         line_text(&row_third_line(&rows[0], 34, &Chrome::dark())),
-        "   No assigned task"
+        "   "
     );
     // The model takes the theme's model colour in every palette, grays
     // included, and never a state hue (#23416's model-line board).
@@ -522,10 +522,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     }
     let bare = SidebarRow { task: None, ..row };
     assert_eq!(line_text(&row_second_line(&bare, 60, &chrome)), "   gpt-5");
-    assert_eq!(
-        line_text(&row_third_line(&bare, 60, &chrome)),
-        "   No assigned task"
-    );
+    assert_eq!(line_text(&row_third_line(&bare, 60, &chrome)), "   ");
 }
 
 #[test]
@@ -557,7 +554,7 @@ fn parents_connect_to_their_first_child_on_both_continuation_lines() {
         );
         assert_eq!(
             line_text(&row_third_line(row, 60, &chrome)),
-            format!("{prefix}No assigned task")
+            prefix.to_string()
         );
         for width in 0..12 {
             for line in [
@@ -864,7 +861,7 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         sessions: [(
             "proj-alpha".to_string(),
             vec![
-                session("sess-named", "#77", "Assistant", Some("manual")),
+                session("sess-named", "#77", "synthetic", Some("manual")),
                 session("sess-bare-ref", "#78", "alpha#78", Some("manual")),
                 session("sess-auto", "#79", "alpha#79: Codex", Some("provisional")),
                 session("sess-suffix", "#80", "Release #80", Some("manual")),
@@ -914,7 +911,7 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         line_text(&row_line(row, 34, &chrome, 0))
     };
 
-    assert_eq!(line_one("sess-named"), " ○ #77: Assistant");
+    assert_eq!(line_one("sess-named"), " ○ #77: synthetic");
     assert_eq!(
         line_one("sess-bare-ref"),
         " ○ #78: Codex",
@@ -1075,7 +1072,7 @@ fn sidebar_rows_paint_the_option_b_roles() {
         let second = row_second_line(&idle, 30, &chrome);
         assert_role(&second, "gpt-5-codex-high", p.model, false, case);
         let third = row_third_line(&idle, 30, &chrome);
-        assert_role(&third, "No assigned task", p.subtext0, false, case);
+        assert!(line_text(&third).trim().is_empty(), "{case}");
 
         let machine = SidebarRow {
             kind: RowKind::Machine,
@@ -1162,10 +1159,76 @@ fn a_scrolling_task_line_keeps_text_and_subtext_roles() {
 /// Agent line two is the model under the title and line three the task
 /// status under the model (#24895).
 #[test]
+fn an_agent_without_a_task_shows_its_status_line_on_line_three() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        status_line: Some("Reviewing the ticker".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_third_line(&row, 40, &chrome)),
+        "   Reviewing the ticker"
+    );
+    assert_eq!(row_travel(&row, 40), 0);
+}
+
+#[test]
+fn a_status_line_longer_than_the_row_scrolls_across_line_three() {
+    let mut chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        status_line: Some("Reviewing the sidebar ticker across the whole row".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    let first = line_text(&row_third_line(&row, 24, &chrome));
+    assert_eq!(first, "   Reviewing the sidebar");
+    assert!(row_travel(&row, 24) > 0);
+    chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
+    let later = line_text(&row_third_line(&row, 24, &chrome));
+    assert_ne!(later, first);
+    assert!(later.starts_with("   "), "{later}");
+}
+
+#[test]
+fn an_agent_with_neither_task_nor_status_line_leaves_line_three_blank() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(line_text(&row_third_line(&row, 40, &chrome)).trim(), "");
+    assert_eq!(row_travel(&row, 40), 0);
+}
+
+#[test]
+fn a_task_takes_line_three_over_the_status_line() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        task: Some(("#24895".into(), "gclient sidebar".into())),
+        status_line: Some("Reviewing the ticker".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_third_line(&row, 40, &chrome)),
+        "   Working task 24895 gclient sidebar"
+    );
+}
+
+#[test]
 fn an_agent_puts_the_model_on_line_two_and_the_task_on_line_three() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
-        definition: "Assistant".into(),
+        definition: "synthetic".into(),
         reference: "#15976".into(),
         task: Some(("#24895".into(), "gclient sidebar".into())),
         model_slug: "claude-opus-5.5-medium".into(),
@@ -1187,7 +1250,7 @@ fn an_agent_puts_the_model_on_line_two_and_the_task_on_line_three() {
 fn a_sandboxed_agent_marks_its_model_line_and_only_its_model_line() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
-        definition: "Assistant".into(),
+        definition: "synthetic".into(),
         reference: "#15976".into(),
         model_slug: "claude-opus-5.5-medium".into(),
         kind: RowKind::Agent,
@@ -1195,14 +1258,14 @@ fn a_sandboxed_agent_marks_its_model_line_and_only_its_model_line() {
         ..SidebarRow::default()
     };
     let first = line_text(&row_line(&row, 40, &chrome, 0));
-    assert!(first.ends_with(" #15976: Assistant"), "{first}");
+    assert!(first.ends_with(" #15976: synthetic"), "{first}");
     assert!(!first.contains('\u{f023}'), "{first}");
     let plain = SidebarRow {
         sandbox_mark: None,
         ..row.clone()
     };
     let plain_first = line_text(&row_line(&plain, 40, &chrome, 0));
-    assert!(plain_first.ends_with(" #15976: Assistant"), "{plain_first}");
+    assert!(plain_first.ends_with(" #15976: synthetic"), "{plain_first}");
     let model = line_text(&row_second_line(&row, 40, &chrome));
     assert!(
         model.ends_with("\u{f023} claude-opus-5.5-medium"),

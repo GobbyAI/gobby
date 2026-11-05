@@ -973,7 +973,13 @@ fn projects_agents_golden() {
         "an attention row carries its state glyph: {:?}",
         rows[entry]
     );
-    assert!(rows[entry + 2].contains("No assigned task"));
+    // The sidebar is its default 26 columns; the art to its right is the main pane.
+    const SIDEBAR_COLUMNS: usize = 26;
+    let line_three: String = rows[entry + 2].chars().take(SIDEBAR_COLUMNS).collect();
+    assert!(
+        line_three.trim().is_empty(),
+        "a held-task-less attention row leaves sidebar line three blank: {line_three:?}"
+    );
     assert!(
         !rendered.contains("[«]") && !rendered.contains("[Menu]"),
         "no footer or menu band remains\n{rendered}"

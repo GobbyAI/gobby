@@ -32,6 +32,7 @@ from gobby.storage.attention import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
@@ -1178,3 +1179,58 @@ def test_roster_exposes_provider_error_before_attention_blocks(
     assert run_entries[0]["entry_id"] == "run:provider-error-run"
     assert run_entries[0]["attention"]["reason"] == "provider_error"
     assert run_entries[0]["provider_error"]["attempts"] == 4
+
+
+def test_roster_run_entries_carry_the_status_line_of_their_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    child = session_manager.register(
+        external_id="roster-status-line-run",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    session_manager.set_status_line(child.id, "Reviewing the ticker")
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+    )
+    manager.start(run.id)
+
+    entry = _live_roster_entry(temp_db, f"run:{run.id}")
+
+    assert entry["status_line"] == "Reviewing the ticker"
+
+
+def test_roster_session_rows_carry_the_status_line_or_null(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    with_line = session_manager.register(
+        external_id="roster-status-line-session",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    bare = session_manager.register(
+        external_id="roster-status-line-bare",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    session_manager.set_status_line(with_line.id, "Idle until review lands")
+
+    rows = AttentionStateManager(temp_db).load_roster_rows(
+        live_session_statuses=LIVE_SESSION_STATUS_ORDER
+    )
+    lines = {row.session_id: row.status_line for row in rows if row.kind == "session"}
+
+    assert lines[with_line.id] == "Idle until review lands"
+    assert lines[bare.id] is None

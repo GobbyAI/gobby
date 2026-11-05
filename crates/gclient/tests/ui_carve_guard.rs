@@ -205,13 +205,7 @@ fn carve_matches_upstream_map_and_renders_data() {
     let side = screen(&terminal);
     // The sidebar stacks its bands and lists the attention entry under the
     // agents band with its three-line row.
-    for needle in [
-        " Machines",
-        " Projects",
-        " Agents",
-        "Unknown",
-        "No assigned task",
-    ] {
+    for needle in [" Machines", " Projects", " Agents", "Unknown"] {
         assert!(side.contains(needle), "sidebar lacks {needle:?}:\n{side}");
     }
 
@@ -276,7 +270,6 @@ fn render_workspace_composes_imported_chrome() {
         for needle in [
             "term-alpha",
             "term-beta",
-            "No assigned task",
             "second",
             "term-alpha · Focused",
             "close",

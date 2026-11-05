@@ -1,4 +1,4 @@
-version: "3.0.0"
+version: "3.1.0"
 tags: [roles, runbook, enforcement, gobby]
 
 rules:
@@ -22,6 +22,7 @@ rules:
           - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it; other work stays paused.
           - Push: operator approves exact SHA; Orchestrator alone runs/directs it.
           - Work: claimed task, stop gate, handoff; no native goals.
+          - Status line: keep your session's one-line status current with gobby-sessions:set_status_line (a short phrase for what you are doing now). Set it when your focus changes and clear it with an empty value when you finish or stop. The sidebar shows it while you hold no task.
           - Operator text: #NNNNN needs title/phrase; healthy="Systems nominal".
           - Combine aligned tasks. Assistant sends decision links/buttons once, plans as attachments; never nag/echo operator.
           - Definitions never name terminal backends.

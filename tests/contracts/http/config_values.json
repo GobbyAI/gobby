@@ -17,7 +17,7 @@
       "content-type": "application/json"
     },
     "body": {
-      "revision": 2,
+      "revision": 1,
       "desired": {
         "clones_dir": "~/.gobby/clones",
         "cors_origins": [

@@ -114,6 +114,8 @@ pub struct AgentEntry {
     pub task_ref: Option<String>,
     /// The roster task's title: a run's task, or the open task a session holds.
     pub task_title: Option<String>,
+    /// The session's one-line status, drawn on line three while no task is held.
+    pub status_line: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
     pub session_ref: Option<String>,
     /// The session the entry runs as: the roster's, else a run's child
@@ -394,6 +396,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 model_display_name: concrete_model(entry.model_display_name.as_deref()),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 task_title: entry.task.as_ref().and_then(|task| task.title.clone()),
+                status_line: entry.status_line.clone(),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 session_id: entry
                     .session_id

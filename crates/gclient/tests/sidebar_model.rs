@@ -866,6 +866,32 @@ fn build_carries_definition_name_and_task_title() {
 }
 
 #[test]
+fn build_carries_the_roster_status_line_into_the_agent_row() {
+    let from_wire: RosterEntry = serde_json::from_value(json!({
+        "entry_id": "session:sess-wire",
+        "status_line": "Waiting on review"
+    }))
+    .expect("a roster entry with a status line should deserialize");
+    assert_eq!(from_wire.status_line.as_deref(), Some("Waiting on review"));
+    let bare: RosterEntry = serde_json::from_value(json!({"entry_id": "session:sess-bare"}))
+        .expect("a roster entry without a status line should deserialize");
+    assert_eq!(bare.status_line, None);
+
+    let mut session = entry("session:sess-status", Some("terminal-status"));
+    session.session_id = Some("sess-status".to_string());
+    session.provider = Some("codex".to_string());
+    session.status_line = Some("Reviewing the ticker".to_string());
+
+    let model = model(&SidebarRows::default(), &[session], &[]);
+
+    assert_eq!(
+        model.agents[0].status_line.as_deref(),
+        Some("Reviewing the ticker")
+    );
+    assert_eq!(model.agents[0].task_title, None);
+}
+
+#[test]
 fn roster_seat_title_survives_task_titles_and_missing_run_rows() {
     let mut seat = entry("session:s", Some("terminal-s"));
     seat.session_id = Some("s".into());
