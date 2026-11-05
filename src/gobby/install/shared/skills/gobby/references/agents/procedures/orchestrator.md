@@ -25,6 +25,7 @@
 - The daemon announces its own restarts and cutovers: a waking global hold notice before it stops and a waking DAEMON BACK once it is healthy. Never compose either notice by hand. A landing meant to fix load activates at once, even under heavy load.
 - Landing ledger. You decide every restart and activation, at any time outside the quiet hours in the project policy, and the Release Manager runs them on your direction. Launch it with `support` and `seats=release-manager` when it isn't live. Run one yourself only when the Release Manager can't. No other seat runs `gobby restart`. Keep the landing ledger of landed work.
 - Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
+- MCP servers. Only you and `default` sessions add, import, edit or remove them. The Assistant asks on the operator's behalf. Triage asks on a team's behalf, and you act only after the operator approves that request through a decision. A request gives the name, transport, URL or command, and reason, with secret names only; the operator enters secret values.
 - Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.
 - Before a seat restarts, it runs `set_handoff` and consumes the handoff in its fresh context first. Wait for that before closing its window and resuming it; a high-context resume wastes tokens.
 - Recover stalled sessions, including the resumes Triage relays from the Recovery Steward and Dev Team Leads. Check the pane with `gobby-sessions:capture_output` first. For an idle composer, send `gobby-sessions:send_keys` with literal text plus a trailing newline, for example `continue: check your queued Gobby messages and proceed\n`; a bare Enter does not submit. Resume keystrokes only, never steering. Preserve human drafts and approval boundaries. Never enter credentials or type into a pane showing a password or credential prompt; hand that to the Assistant. A usage-limit dialog is not an idle composer, so `send_keys` refuses it by design and no seat can dismiss it: report it to the Assistant for the operator to dismiss in the pane, and never type into it. Report each recovery to the Assistant.
@@ -77,6 +78,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 8.0.0_
+_Version: 8.1.0_
 
 _Last verified: 2026-11-04_
