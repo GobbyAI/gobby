@@ -123,10 +123,24 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
     }
     let mut held = Vec::new();
     for (tab_id, pane_id) in workspace.take_placed_panes() {
-        let on_bar = chrome.tabs().tabs.iter().any(|tab| tab.id == tab_id);
-        let Some(slot) = chrome.viewer.panes.slot(&pane_id).filter(|_| on_bar) else {
-            // Another project's tab: the placement waits for its bar while
-            // the daemon still has the tab.
+        // A slot is placed only once the tab shows it. A pane whose terminal has
+        // not landed has no slot in the tab yet, and focusing it now would be
+        // undone by the stale-slot pass in `sync_live_chrome`.
+        let Some(slot) = chrome
+            .tabs()
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| {
+                chrome
+                    .viewer
+                    .panes
+                    .slot(&pane_id)
+                    .filter(|slot| tab.slots.contains_key(slot))
+            })
+        else {
+            // Another project's tab, or a pane still landing: the placement
+            // waits while the daemon still has the tab.
             if workspace
                 .workspace_model()
                 .is_some_and(|model| model.tab(&tab_id).is_some())
