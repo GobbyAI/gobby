@@ -1,4 +1,4 @@
-"""Mechanical checks on one chunk map (read-only). Generalizes judge-work/bin/dagcheck.py.
+"""Mechanical checks on one chunk map (read-only).
 
 Usage: python3 -I mapcheck.py <map.json> <open-nodes.json> [--checkpoints CP-RUNNER,CP-MCP,...]
 
@@ -7,7 +7,7 @@ Checks:
 - oracle text cites only self or upstream chunk ids
 - tree ownership: each open #21542 node resolves to exactly one chunk through its deepest
   listed ancestor-or-self in tree_nodes (orphans and double-listed refs are reported; an
-  orphan is fine only when Phase 2b disposes it, so they are counted, not failed)
+  orphan is fine only when a disposition covers it, so they are counted, not failed)
 - required fields non-empty
 - every decision_refs id resolves to a decisions[].id
 - with --checkpoints: each named checkpoint chunk exists, and every chunk listed after it in
