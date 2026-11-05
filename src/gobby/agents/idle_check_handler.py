@@ -120,7 +120,9 @@ class IdleCheckHandler:
 
     def set_provider_capacity_service(self, service: ProviderCapacityService | None) -> None:
         """Attach the shared capacity service; spawned-run pane hints go through it."""
-        self._provider_quota_monitor = None if service is None else ProviderQuotaMonitor(service)
+        self._provider_quota_monitor = (
+            None if service is None else ProviderQuotaMonitor(service, owner="spawned")
+        )
 
     @property
     def attention_tracker(self) -> AgentAttentionTracker:
@@ -180,7 +182,7 @@ class IdleCheckHandler:
             for _run, terminal, provider in targets:
                 live.setdefault(provider, set()).add(pane_generation(terminal))
             try:
-                await monitor.retire_dead(live, owner="spawned")
+                await monitor.retire_dead(live)
             except Exception:
                 logger.warning("Failed to retire pane quota generations", exc_info=True)
         checked = 0

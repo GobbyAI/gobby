@@ -113,6 +113,7 @@ def transition_hint(
     hint: PaneQuotaHint,
     *,
     generation: str,
+    owner: str,
     now: datetime,
 ) -> AlertTransition:
     """Record one pane hint's occurrence for its live generation and return the edge it raises.
@@ -128,7 +129,7 @@ def transition_hint(
     digest = hashlib.sha256(hint.occurrence.encode()).hexdigest()
     if digest in seen:
         return AlertTransition(details=state, duplicate=True)
-    generations[generation] = {"digests": [*seen, digest]}
+    generations[generation] = {"digests": [*seen, digest], "owner": owner}
     last = _parse_time(state.get("notified_at"))
     if last is not None and now - last < HINT_COOLDOWN:
         return AlertTransition(details=state)
@@ -140,12 +141,22 @@ def transition_hint(
 def retire_pane_hint_generations(
     section: Mapping[str, object],
     live: Collection[str],
+    *,
+    owner: str,
 ) -> dict[str, object]:
-    """Return the pane-hint section without the generations whose terminal is no longer live."""
+    """Return the section without this owner's generations whose terminal is no longer live.
+
+    Each generation records the owner that observed it, so an owner retires only its own
+    generations, including digests persisted before a restart that it has not re-reported yet.
+    """
     state: dict[str, object] = copy.deepcopy(dict(section))
     generations = state.get("generations")
     if isinstance(generations, dict):
-        for generation in [name for name in generations if name not in live]:
+        for generation in [
+            name
+            for name, entry in generations.items()
+            if name not in live and isinstance(entry, dict) and entry.get("owner") == owner
+        ]:
             del generations[generation]
     return state
 

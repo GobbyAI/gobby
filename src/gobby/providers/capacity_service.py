@@ -160,8 +160,6 @@ class ProviderCapacityService:
         self._run_db = run_db
         self._alert_sink = alert_sink
         self._inflight: dict[tuple[str, str], asyncio.Task[ProviderCapacitySnapshot]] = {}
-        # Each pane-scan owner's last reported live generations, per provider.
-        self._pane_live: dict[tuple[str, str], frozenset[str]] = {}
         self._write_locks: dict[str, asyncio.Lock] = {}
 
     @classmethod
@@ -251,25 +249,17 @@ class ProviderCapacityService:
     async def retire_pane_generations(
         self, provider: str, live: Collection[str], *, owner: str = ""
     ) -> None:
-        """Drop pane-hint generations that no pane-scan owner still reports live.
+        """Drop this owner's pane-hint generations that it no longer reports live.
 
-        Each owner (the spawned-run and placed-seat scans) reports its own live set, so
-        one owner's pass never drops a generation the other owner is still watching.
+        Each generation is tagged with the owner that observed it, so one owner's pass never
+        drops another owner's generations, including digests persisted before a restart.
         """
         name = _provider_name(provider)
         async with self._write_lock(name):
-            self._pane_live[(name, owner)] = frozenset(live)
-            keep = frozenset().union(
-                *(
-                    gens
-                    for (provider_name, _), gens in self._pane_live.items()
-                    if provider_name == name
-                )
-            )
             for _ in range(_MAX_CAS_ATTEMPTS):
                 record = await self._run_store(self.storage.get, name)
                 section = _row_section(record, HINT_SECTION)
-                retired = retire_pane_hint_generations(section, keep)
+                retired = retire_pane_hint_generations(section, live, owner=owner)
                 if retired == section:
                     return
                 components, pane_hints = _decode(record)
@@ -286,7 +276,9 @@ class ProviderCapacityService:
                     return
             raise QuotaWriteContentionError(name)
 
-    async def observe_pane_hint(self, hint: PaneQuotaHint, *, generation: str) -> bool:
+    async def observe_pane_hint(
+        self, hint: PaneQuotaHint, *, generation: str, owner: str = ""
+    ) -> bool:
         """Record one pane hint for its live generation; False when its occurrence is a replay."""
         provider = _provider_name(hint.provider)
         edges: tuple[AlertEdge, ...] = ()
@@ -295,7 +287,11 @@ class ProviderCapacityService:
                 record = await self._run_store(self.storage.get, provider)
                 components, pane_hints = _decode(record)
                 alerts = transition_hint(
-                    _row_details(record), hint, generation=generation, now=self._clock()
+                    _row_details(record),
+                    hint,
+                    generation=generation,
+                    owner=owner,
+                    now=self._clock(),
                 )
                 if alerts.duplicate:
                     return False

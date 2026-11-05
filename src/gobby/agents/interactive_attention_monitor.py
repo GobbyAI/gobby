@@ -71,7 +71,7 @@ class InteractiveAttentionMonitor:
         self._quota_monitor = (
             None
             if provider_capacity_service is None
-            else ProviderQuotaMonitor(provider_capacity_service)
+            else ProviderQuotaMonitor(provider_capacity_service, owner="interactive")
         )
         self._poll_interval = poll_interval
         self._session_manager = session_manager
@@ -295,7 +295,7 @@ class InteractiveAttentionMonitor:
         if quota is not None and lookups_complete:
             # A failed lookup leaves liveness unknown, so this pass retires nothing.
             try:
-                await quota.retire_dead(live_generations, owner="interactive")
+                await quota.retire_dead(live_generations)
             except Exception:
                 logger.warning("Failed to retire interactive pane quota generations", exc_info=True)
 
