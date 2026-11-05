@@ -127,21 +127,16 @@ _KEYWORD_SQL = "SELECT word FROM pg_get_keywords() WHERE catcode = 'R'"
 # EXISTS is a column-name keyword (catcode C). Unqualified exists(...) never reaches function
 # lookup; it parses as the EXISTS sublink, so it counts as a keyword here too.
 _EXTRA_KEYWORDS = frozenset({"exists"})
-# Lexed as PostgreSQL lexes, so text in a comment, a string, an E-string or a dollar quote is
-# never code, and code is never hidden inside one. A line comment ends at a newline or a carriage
-# return, as in PostgreSQL. A block comment ends at its first "*/". PostgreSQL nests them, so this
-# lexer can only see more code than PostgreSQL does: it refuses more and never less.
-_TOKEN = re.compile(
-    r"(?P<space>\s+)"
-    r"|(?P<comment>--[^\n\r]*|/\*.*?\*/)"
-    r"|(?P<estring>e'(?:[^'\\]|\\.|'')*')"
-    r"|(?P<dollar>\$(?P<tag>(?:[a-z_][a-z0-9_]*)?)\$.*?\$(?P=tag)\$)"
-    r"|(?P<string>'(?:[^']|'')*')"
-    r'|(?P<quoted>"(?:[^"]|"")*")'
-    r"|(?P<word>[a-z_][a-z0-9_$]*)"
-    r"|(?P<punct>.)",
-    re.DOTALL,
-)
+# The lexer follows PostgreSQL's scanner with standard_conforming_strings on, which the statement
+# pins before it runs. Text in a comment, a literal or a quoted name is never code, and code is
+# never text. Block comments nest. Dollar tags are case-sensitive and close at the first exact tag.
+# An E-string keeps its backslash escapes across a newline continuation, which PostgreSQL joins to
+# it. A block comment, literal, quoted name or dollar quote that never closes is a syntax error, so
+# the lexer reads it to the statement's end and nothing runs.
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+_LINE_BREAK = re.compile(r"[\n\r]")
+_BLANK = frozenset(" \t\n\r\f\v")
 _UNICODE_ESCAPE = re.compile(r"\bu&", re.IGNORECASE)
 _STATEMENT_START = re.compile(r"(select|with)\b", re.IGNORECASE)
 
@@ -187,26 +182,122 @@ class _Token(NamedTuple):
     quoted: bool = False
 
 
-def _tokens(statement: str) -> list[_Token]:
-    """Split a lowercased statement into names, punctuation and opaque literals.
+def _line_end(statement: str, start: int) -> int:
+    match = _LINE_BREAK.search(statement, start)
+    return len(statement) if match is None else match.start()
 
-    Whitespace and comments separate tokens and carry no meaning. Strings, E-strings and dollar
-    quotes are opaque values. A quoted identifier is a name with its quotes removed.
+
+def _block_comment_end(statement: str, start: int) -> int:
+    """Index past the block comment opened at start. PostgreSQL nests block comments."""
+    depth = 0
+    pos = start
+    while pos < len(statement):
+        if statement.startswith("/*", pos):
+            depth += 1
+            pos += 2
+        elif statement.startswith("*/", pos):
+            depth -= 1
+            pos += 2
+            if depth == 0:
+                return pos
+        else:
+            pos += 1
+    return len(statement)
+
+
+def _quote_end(statement: str, quote: int, *, backslash: bool) -> int:
+    """Index past the quote that closes the literal opened at quote, or the statement's end.
+
+    A doubled quote is an escaped quote. With backslash, a backslash escapes the character after it.
+    """
+    mark = statement[quote]
+    pos = quote + 1
+    while pos < len(statement):
+        char = statement[pos]
+        if backslash and char == "\\":
+            pos += 2
+        elif char != mark:
+            pos += 1
+        elif statement.startswith(mark, pos + 1):
+            pos += 2
+        else:
+            return pos + 1
+    return len(statement)
+
+
+def _continuation_quote(statement: str, pos: int) -> int | None:
+    """The opening quote PostgreSQL joins to the literal that ends at pos, or None.
+
+    PostgreSQL joins literals that are separated by whitespace holding a newline. A line comment
+    counts as whitespace. The joined literal keeps the escape rules of the literal before it.
+    """
+    newline = False
+    while pos < len(statement):
+        char = statement[pos]
+        if statement.startswith("--", pos):
+            pos = _line_end(statement, pos)
+        elif char in "\n\r":
+            newline = True
+            pos += 1
+        elif char in " \t\f" or (newline and char in _BLANK):
+            pos += 1
+        else:
+            break
+    if newline and statement.startswith("'", pos):
+        return pos
+    return None
+
+
+def _e_string_end(statement: str, quote: int) -> int:
+    """Index past the E-string opened at quote, with each continuation PostgreSQL joins to it."""
+    stop = _quote_end(statement, quote, backslash=True)
+    while (next_quote := _continuation_quote(statement, stop)) is not None:
+        stop = _quote_end(statement, next_quote, backslash=True)
+    return stop
+
+
+def _tokens(statement: str) -> list[_Token]:
+    """Split a statement into names, punctuation and opaque literals, as PostgreSQL lexes it.
+
+    Blanks and comments separate tokens and carry no meaning. Strings, E-strings and dollar quotes
+    are opaque "other" tokens. Bare and quoted names are lowercased. Lowercasing a quoted name can
+    only match more catalog names, never fewer, because catalog names are lowercased too.
     """
     tokens: list[_Token] = []
-    for match in _TOKEN.finditer(statement):
-        kind = match.lastgroup
-        text = match.group()
-        if kind in {"space", "comment"}:
-            continue
-        if kind in {"string", "estring", "dollar"}:
-            tokens.append(_Token("other", text))
-        elif kind == "quoted":
-            tokens.append(_Token("name", text[1:-1].replace('""', '"'), quoted=True))
-        elif kind == "word":
-            tokens.append(_Token("name", text))
+    pos = 0
+    while pos < len(statement):
+        char = statement[pos]
+        if char in _BLANK:
+            pos += 1
+        elif statement.startswith("--", pos):
+            pos = _line_end(statement, pos)
+        elif statement.startswith("/*", pos):
+            pos = _block_comment_end(statement, pos)
+        elif char in "eE" and statement.startswith("'", pos + 1):
+            stop = _e_string_end(statement, pos + 1)
+            tokens.append(_Token("other", statement[pos:stop]))
+            pos = stop
+        elif char == "'":
+            stop = _quote_end(statement, pos, backslash=False)
+            tokens.append(_Token("other", statement[pos:stop]))
+            pos = stop
+        elif char == '"':
+            stop = _quote_end(statement, pos, backslash=False)
+            name = statement[pos + 1 : stop].removesuffix('"').replace('""', '"')
+            tokens.append(_Token("name", name.lower(), quoted=True))
+            pos = stop
+        elif char == "$" and (opener := _DOLLAR_OPEN.match(statement, pos)) is not None:
+            delimiter = opener.group()
+            close = statement.find(delimiter, opener.end())
+            stop = len(statement) if close < 0 else close + len(delimiter)
+            tokens.append(_Token("other", statement[pos:stop]))
+            pos = stop
+        elif (word := _WORD.match(statement, pos)) is not None:
+            tokens.append(_Token("name", word.group().lower()))
+            pos = word.end()
         else:
-            tokens.append(_Token("punct", text))
+            tokens.append(_Token("punct", char))
+            pos += 1
     return tokens
 
 
@@ -219,7 +310,7 @@ def _references(statement: str, keywords: frozenset[str]) -> tuple[set[str], set
     values, not text. A bare name that is not called, such as an alias, never reaches function
     lookup.
     """
-    tokens = _tokens(statement.lower())
+    tokens = _tokens(statement)
     called: set[str] = set()
     dotted: set[str] = set()
     for index, token in enumerate(tokens):

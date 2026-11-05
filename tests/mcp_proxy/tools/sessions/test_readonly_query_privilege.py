@@ -487,6 +487,11 @@ HARMLESS_TEXT_SHAPES = {
     "dollar_in_literal": "SELECT '$' AS note, 1 AS score",
     "dollar_quote_names_a_call": "SELECT $$run_text('SELECT 1')$$ AS v",
     "e_string_escaped_quote_then_alias": r"SELECT E'it\'s' AS note, 1 AS score",
+    "mixed_case_dollar_tag_literal": "SELECT $A$'$a$' $A$ AS v",
+    "nested_comment_literal": "SELECT '' /* outer /* inner */ ' */ AS v",
+    "nested_comment_names_a_call": "SELECT 1 /* outer /* run_text('x') */ still comment */ AS v",
+    "e_string_continuation_literal": "SELECT E'x'\n'y\\'' AS v",
+    "e_string_continuation_after_comment_literal": "SELECT E'x' -- c\n'y\\'' AS v",
 }
 
 
@@ -542,6 +547,13 @@ CALL_FORMS = {
     "extension_comment_before_paren": "SELECT score/**/(1)::text AS v",
     "dollar_quote_hides_quote": "SELECT $$'$$ || {schema}.run_text('SELECT 1')::text AS v",
     "tagged_dollar_quote_hides_quote": "SELECT $a$'$a$ || run_text('SELECT 1')::text AS v",
+    "mixed_case_dollar_tag_hides_quote": "SELECT $A$'$a$' $A$ || run_text('SELECT 1')::text AS v",
+    "mixed_case_dollar_tag_qualified": "SELECT $A$'$a$' $A$ || {schema}.run_text('SELECT 1')::text AS v",
+    "nested_comment_hides_call": "SELECT '' /* outer /* inner */ ' */ || run_text('SELECT 1')::text AS v",
+    "nested_comment_qualified": "SELECT '' /* outer /* inner */ ' */ || {schema}.run_text('SELECT 1')::text AS v",
+    "e_string_continuation_hides_call": "SELECT E'x'\n'y\\'' || run_text('SELECT 1')::text AS v",
+    "e_string_continuation_qualified": "SELECT E'x'\n'y\\'' || {schema}.run_text('SELECT 1')::text AS v",
+    "e_string_continuation_after_comment": "SELECT E'x' -- c\n'y\\'' || run_text('SELECT 1')::text AS v",
     "e_string_quote_before_call": r"SELECT E'\'' || {schema}.run_text('SELECT 1')::text AS v",
     "e_string_backslash_before_call": r"SELECT E'\\' || run_text('SELECT 1')::text AS v",
     "e_string_quote_before_extension": r"SELECT E'\'', pdb.score(1)::text AS v",
