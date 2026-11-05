@@ -27,7 +27,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `review-learning` | `review-learning/` | 3 | Inject confirmed planning and review lessons into matching work, and require complete verified findings from the configured review source |
 | `impeccable` | `impeccable/` | 2 | Run the Impeccable design detector after UI file edits, and its full-rule deep pass at turn end |
 | `integrations` | `integrations/` | 1 | Rewrite shell commands through stock RTK before native permission handling |
-| `roles` | `roles/` | 30 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research and digest scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
+| `roles` | `roles/` | 31 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research and digest scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
 
 Definitions may explicitly select `name:no-git-push` or `name:no-agent-spawn`.
 These strict policies cover persona and spawned sessions, including team managers.
