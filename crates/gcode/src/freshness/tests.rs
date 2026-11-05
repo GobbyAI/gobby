@@ -1023,6 +1023,15 @@ fn git_in(dir: &Path, hooks: &Path, args: &[&str]) -> String {
 /// Parent indexed at the seed; worktree overlay indexed at the seed; the parent
 /// commits `MERGED_SOURCE` without reindexing; the worktree fast-forwards onto it.
 fn merged_worktree_pair(label: &str) -> (tempfile::TempDir, Context, Context) {
+    merged_worktree_pair_via(label, false)
+}
+
+/// The parent's commit lands in the worktree by fast-forward, or by a merge commit when the
+/// worktree has its own commit to join.
+fn merged_worktree_pair_via(
+    label: &str,
+    merge_commit: bool,
+) -> (tempfile::TempDir, Context, Context) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hooks = tmp.path().join("hooks");
     std::fs::create_dir_all(&hooks).expect("create hooks dir");
@@ -1082,6 +1091,16 @@ fn merged_worktree_pair(label: &str) -> (tempfile::TempDir, Context, Context) {
     write_marker(&seed_sha);
     pin_parent_versions(&overlay_ctx, &parent_ctx, &[rel]);
 
+    if merge_commit {
+        // Seat work on a file the parent does not touch makes the merge non-fast-forward.
+        std::fs::write(
+            overlay_root.join("src").join("seat.rs"),
+            "pub fn seat() {}\n",
+        )
+        .expect("write seat source");
+        git_in(&overlay_root, &hooks, &["add", "src/seat.rs"]);
+        git_in(&overlay_root, &hooks, &["commit", "-q", "-m", "seat work"]);
+    }
     // The parent commits the change; its index does not follow the new HEAD.
     std::fs::write(parent_root.join(rel), MERGED_SOURCE).expect("write merged source");
     git_in(
@@ -1090,12 +1109,13 @@ fn merged_worktree_pair(label: &str) -> (tempfile::TempDir, Context, Context) {
         &["commit", "-q", "-am", "parent change"],
     );
     full_index(&parent_ctx);
-    // The worktree fast-forwards onto the parent's commit.
+    // The worktree takes the parent's commit: fast-forward, or a merge commit.
     let merged_sha = git_in(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    let merge_flag = if merge_commit { "--no-ff" } else { "--ff-only" };
     git_in(
         &overlay_root,
         &hooks,
-        &["merge", "-q", "--ff-only", &merged_sha],
+        &["merge", "-q", merge_flag, "-m", "merge parent", &merged_sha],
     );
     // The merged file's mtime must be newer than the overlay's index time.
     backdate_project_index(&overlay_ctx, 3600.0);
@@ -1164,6 +1184,164 @@ fn merged_worktree_grep_finds_every_current_caller() {
 
     invalidate_test_project(&overlay_ctx);
     invalidate_test_project(&parent_ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn merged_overlay_without_registered_checkout_serves_symbol_at() {
+    let (tmp, parent_ctx, overlay_ctx) = merged_worktree_pair("gcode-merge-unregistered");
+    // Production never registers a worktree overlay, so its checkout row is absent.
+    remove_checkout_row(&overlay_ctx);
+    let rel = "src/lib.rs";
+    let status = ensure_fresh(
+        &overlay_ctx,
+        FreshnessScope::Files(vec![PathBuf::from(rel)]),
+    )
+    .expect("symbol-at freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+
+    let source = std::fs::read(tmp.path().join("overlay").join(rel)).expect("read merged source");
+    let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect readonly");
+    let symbols = visibility::visible_symbols_for_file(&mut conn, &overlay_ctx, rel)
+        .expect("visible symbols");
+    let body = symbols
+        .iter()
+        .find(|symbol| symbol.name == "current_body")
+        .expect("current_body is visible");
+    let snippet = String::from_utf8_lossy(
+        source
+            .get(body.byte_start..body.byte_end)
+            .unwrap_or_default(),
+    )
+    .into_owned();
+    assert_eq!(
+        snippet.trim_end(),
+        "pub fn current_body() -> u8 {\n    2\n}",
+        "symbol-at must slice the merged file with the rows' current byte range"
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn merged_worktree_outline_lines_match_symbol_at_and_the_file() {
+    let (tmp, parent_ctx, overlay_ctx) = merged_worktree_pair_via("gcode-merge-outline", true);
+    let rel = "src/lib.rs";
+    // The outline arm checks freshness for its file before it reads the symbol rows.
+    let status = ensure_fresh(
+        &overlay_ctx,
+        FreshnessScope::Files(vec![PathBuf::from(rel)]),
+    )
+    .expect("outline freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+
+    let overlay_root = tmp.path().join("overlay");
+    let source = std::fs::read(overlay_root.join(rel)).expect("read merged source");
+    let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect readonly");
+    let outline =
+        visibility::visible_symbols_for_file(&mut conn, &overlay_ctx, rel).expect("outline rows");
+    assert!(
+        !outline.is_empty(),
+        "the merged file must have outline rows"
+    );
+    assert_outline_lines_match_the_file(&outline, &source);
+
+    let body = outline
+        .iter()
+        .find(|symbol| symbol.name == "current_body")
+        .expect("current_body is in the outline");
+    let located = crate::commands::symbol_at::symbol_at_repo(
+        &overlay_ctx,
+        &mut conn,
+        &overlay_root,
+        &format!("{rel}:{}", body.line_start),
+        None,
+    )
+    .expect("symbol-at the merged body");
+    assert_eq!(
+        located.symbol.line_start, body.line_start,
+        "symbol-at must agree with outline"
+    );
+    assert_eq!(
+        located.symbol.byte_start, body.byte_start,
+        "symbol-at must agree with outline"
+    );
+    assert_eq!(
+        located.snippet.trim_end(),
+        "pub fn current_body() -> u8 {\n    2\n}",
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn merged_worktree_outline_while_refresh_is_busy_matches_the_file() {
+    let (tmp, parent_ctx, overlay_ctx) = merged_worktree_pair_via("gcode-merge-outline-busy", true);
+    let rel = "src/lib.rs";
+    let holder = hold_project_lock(&overlay_ctx);
+    let status = ensure_fresh(
+        &overlay_ctx,
+        FreshnessScope::Files(vec![PathBuf::from(rel)]),
+    )
+    .expect("outline freshness status");
+    drop(holder);
+    assert!(
+        matches!(status, FreshnessStatus::SkippedBusy(_)),
+        "a held lock must skip the refresh, got {status:?}"
+    );
+
+    let overlay_root = tmp.path().join("overlay");
+    let source = std::fs::read(overlay_root.join(rel)).expect("read merged source");
+    let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect readonly");
+    let outline =
+        visibility::visible_symbols_for_file(&mut conn, &overlay_ctx, rel).expect("outline rows");
+    assert_outline_lines_match_the_file(&outline, &source);
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+/// Every outline row must start on the line its byte offset falls on in the file.
+fn assert_outline_lines_match_the_file(outline: &[crate::models::Symbol], source: &[u8]) {
+    for symbol in outline {
+        let file_line = source[..symbol.byte_start]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1;
+        assert_eq!(
+            symbol.line_start, file_line,
+            "outline must report the file's line for {}",
+            symbol.qualified_name
+        );
+    }
+}
+
+fn remove_checkout_row(ctx: &Context) {
+    let mut conn = db::connect_readwrite(&ctx.database_url).expect("connect readwrite");
+    let machine_id = uuid::Uuid::parse_str(&ctx.machine_id).expect("parse machine id");
+    let project_id = uuid::Uuid::parse_str(&ctx.project_id).expect("parse overlay project id");
+    conn.execute(
+        "DELETE FROM project_checkouts WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_id, &project_id],
+    )
+    .expect("delete overlay checkout row");
 }
 
 /// `grep -w` over the overlay must name every current line that mentions `current_body`.
