@@ -1425,7 +1425,9 @@ async fn python_seed_matches_python_steps() -> Result<()> {
 
     // A sync past its timeout is abandoned, not awaited.
     let workspace = python_workspace(&source, &home, "timeout", true, true)?;
-    let (uv_bin, uv_log) = fake_uv(&root.path().join("uv-timeout"), &cache, "sleep 5")?;
+    // The fake sync outlives the bound by a wide margin, so an awaited sync cannot pass. The bound
+    // covers the whole repair, which slows under load, so it is not the 200 ms seed timeout itself.
+    let (uv_bin, uv_log) = fake_uv(&root.path().join("uv-timeout"), &cache, "sleep 60")?;
     let env = RepairEnv {
         uv: Some(uv_bin.as_path()),
         seed_timeout: Duration::from_millis(200),
@@ -1434,7 +1436,7 @@ async fn python_seed_matches_python_steps() -> Result<()> {
     let started = Instant::now();
     repair::repair(&source, &workspace, "codex", &env).await?;
     assert!(
-        started.elapsed() < Duration::from_secs(4),
+        started.elapsed() < Duration::from_secs(30),
         "a timed-out sync is abandoned, not awaited"
     );
     assert!(!sync_block(&uv_log).is_empty(), "timeout: sync ran");
