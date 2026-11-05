@@ -79,7 +79,7 @@ filter = 'package(gobby-runtime) & (binary(config) | binary(grant) | binary(hand
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(host_handover) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env) | binary(link_artifacts))'
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(host_handover) | binary(control_protocol) | binary(frame_protocol) | binary(embed))'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
