@@ -531,6 +531,47 @@ def test_live_seats_are_skipped_only_when_opted_in(env: _Env) -> None:
     assert (plain.launch, dict(plain.live)) == (("lead", "dev"), {})
 
 
+def test_the_newest_same_task_run_is_the_one_mapped(env: _Env) -> None:
+    """Two live runs of one seat for one task map the newer run, whatever the listing order."""
+    mine = _team_task(env, "Mine")
+    my_run = _pipeline_child(env, inputs={"task": f"#{mine.seq_num}"})
+    _, older_run = _seat_session(env, "lead-agent", parent=my_run)
+    newer, newer_run = _seat_session(env, "lead-agent", parent=my_run)
+    for run_id, stamp in ((older_run, "2026-01-01"), (newer_run, "2026-02-01")):
+        env.db.execute(
+            "UPDATE agent_runs SET created_at = %s, started_at = %s WHERE id = %s",
+            (f"{stamp}T00:00:00+00:00", f"{stamp}T00:00:00+00:00", run_id),
+        )
+
+    partial = check_runbook_seats(
+        env.stores,
+        caller_session_id=my_run,
+        workspace=env.workspace_id,
+        requested="dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert dict(partial.live) == {"lead": newer}
+
+
+def test_a_taskless_run_reports_live_only_for_its_requested_seats(env: _Env) -> None:
+    """Without a task, live covers only the requested seats, never the whole catalogue."""
+    caller = _pipeline_child(env)
+    _seat_session(env, "lead-agent")
+
+    partial = check_runbook_seats(
+        env.stores,
+        caller_session_id=caller,
+        workspace=env.workspace_id,
+        requested="dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert (partial.launch, dict(partial.live)) == (("dev",), {})
+
+
 def test_a_partial_run_sees_only_its_own_tasks_live_seats(env: _Env) -> None:
     """Live seats count only for the run's task, and a seat not requested still reports live."""
     mine, theirs = _team_task(env, "Mine"), _team_task(env, "Theirs")
