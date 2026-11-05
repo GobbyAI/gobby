@@ -12,12 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
-from gobby.agents.team_admission_records import TeamBinding
 from gobby.agents.team_teardown import (
     SEAT_NOT_ENDED,
     TeamRunTerminator,
     TeamSeatNotEndedError,
-    TeamTreeDeleter,
 )
 from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.clones.git import CloneGitManager, GitOperationResult
@@ -48,7 +46,6 @@ from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
-    WorktreeDeletionResult,
     delete_worktree_transaction,
 )
 from gobby.worktrees.executor import (
@@ -310,29 +307,6 @@ def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
         )
 
     return terminate
-
-
-def team_tree_deleter(db: HubDatabase, executor: WorktreeDeleteExecutor | None) -> TeamTreeDeleter:
-    """Delete a closed team's tree through the safe deletion transaction."""
-
-    async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
-        if binding.worktree_id is None:  # a treeless team has no tree to delete
-            return WorktreeDeletionResult(success=True, found=False)
-        request = WorktreeDeletionRequest(
-            binding.worktree_id, DeletionSurface.TEARDOWN, merged_into=binding.base_branch
-        )
-        return await run_worktree_delete(
-            executor,
-            partial(
-                delete_worktree_transaction,
-                request=request,
-                worktree_storage=LocalWorktreeManager(db),
-                resolve_git_manager=partial(_worktree_git, db),
-                task_manager=LocalTaskManager(db),
-            ),
-        )
-
-    return delete
 
 
 def _worktree_git(db: HubDatabase, worktree: Worktree) -> WorktreeGitManager:

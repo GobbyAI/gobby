@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_git_hygiene import blocking_status_lines
+from gobby.storage.isolation_cleanup import IsolationRemovalBusyError
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
@@ -36,11 +37,10 @@ class DeletionSurface(Enum):
     MCP = "mcp"
     HTTP = "http"
     MAINTENANCE = "maintenance"
-    TEARDOWN = "teardown"
 
 
 # Daemon-owned deletions lock the row and prove the tree's branch before Git runs.
-_DAEMON_SURFACES = frozenset({DeletionSurface.MAINTENANCE, DeletionSurface.TEARDOWN})
+_DAEMON_SURFACES = frozenset({DeletionSurface.MAINTENANCE})
 
 
 @dataclass(frozen=True)
@@ -83,48 +83,55 @@ async def delete_worktree_transaction(
 ) -> WorktreeDeletionResult:
     """Perform lookup, nonblocking Git mutation, storage cleanup, and event emission."""
     context = contextvars.copy_context()
-    if request.surface in _DAEMON_SURFACES:
-        # A closed team's tree is due at once; only maintenance waits for the expiry.
-        guard = worktree_storage.lock_for_cleanup(
+    # Every surface holds the row through its removal, so a racing removal reads as busy
+    # rather than as dirty. A daemon surface also refuses a row that is not yet due.
+    daemon = request.surface in _DAEMON_SURFACES
+    guard = (
+        worktree_storage.lock_for_cleanup(
             request.worktree_id, expired_only=request.surface is DeletionSurface.MAINTENANCE
         )
-        entered = False
+        if daemon
+        else worktree_storage.lock_for_removal(request.worktree_id)
+    )
+    entered = False
 
-        def enter_guard() -> Worktree | None:
-            nonlocal entered
-            worktree = guard.__enter__()
-            entered = True
-            return worktree
+    def enter_guard() -> Worktree | None:
+        nonlocal entered
+        worktree = guard.__enter__()
+        entered = True
+        return worktree
 
-        try:
-            worktree = await run_thread_to_completion(context.run, enter_guard)
-            if worktree is None:
+    try:
+        worktree = await run_thread_to_completion(context.run, enter_guard)
+    except IsolationRemovalBusyError:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error="Worktree is being removed by another operation",
+            error_code="worktree_removal_in_progress",
+        )
+    try:
+        if worktree is None:
+            if daemon:
                 return WorktreeDeletionResult(
                     success=False,
                     git_deleted=False,
                     error="Worktree is no longer eligible",
                     error_code="worktree_not_eligible",
                 )
-            return await _delete_worktree(
-                boundary,
-                request,
-                worktree,
-                worktree_storage,
-                resolve_git_manager,
-                task_manager,
-                context,
-            )
-        finally:
-            if entered:
-                await run_thread_to_completion(context.run, guard.__exit__, *sys.exc_info())
-    worktree = await run_thread_to_completion(
-        context.run, worktree_storage.get, request.worktree_id
-    )
-    if worktree is None:
-        return WorktreeDeletionResult(success=True, found=False)
-    return await _delete_worktree(
-        boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager, context
-    )
+            return WorktreeDeletionResult(success=True, found=False)
+        return await _delete_worktree(
+            boundary,
+            request,
+            worktree,
+            worktree_storage,
+            resolve_git_manager,
+            task_manager,
+            context,
+        )
+    finally:
+        if entered:
+            await run_thread_to_completion(context.run, guard.__exit__, *sys.exc_info())
 
 
 async def _delete_worktree(

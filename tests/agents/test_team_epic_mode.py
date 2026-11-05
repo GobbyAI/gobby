@@ -11,14 +11,13 @@ import pytest
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
 from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_lifecycle import seat_team
-from gobby.agents.team_teardown import reconcile_team_teardowns
+from gobby.agents.team_teardown import TEARDOWN_KEY, reconcile_team_teardowns
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import AgentRun
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
-from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.fixtures.agent_sessions import AgentSessions
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import SLUG, TITLE, TeamWorld, git_in, make_team_world
@@ -415,32 +414,31 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
         tags=["root-close"],
     )
 
-    deleted: list[TeamBinding] = []
-
     async def terminate(_run: AgentRun, _closed_reason: str | None) -> bool:
         return True
 
-    async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
-        deleted.append(binding)
-        return WorktreeDeletionResult(success=True)
-
-    async def teardown_pass() -> list[TeamBinding]:
-        deleted.clear()
+    async def teardown_pass() -> int:
         later = datetime.now(UTC) + timedelta(minutes=5)
-        await reconcile_team_teardowns(db, terminate=terminate, delete=delete, now=later)
-        return list(deleted)
+        return await reconcile_team_teardowns(db, terminate=terminate, now=later)
+
+    def outcome() -> object:
+        return world.admit_step_output(runbook).get(TEARDOWN_KEY)
 
     # Closing a nested leaf cascades its phase epic closed; neither close tears the team down.
     tasks.close_task(nested_leaf.id, reason="done", closed_in_session_id=owner)
     assert tasks.get_task(phase.id).closed_at is not None
-    assert await teardown_pass() == []
+    assert await teardown_pass() == 0
+    assert outcome() is None
     # Selected policy reserves the bound root for explicit completion.
     tasks.close_task(root_leaf.id, reason="done", closed_in_session_id=owner)
     assert tasks.get_task(epic.id).closed_at is None
-    assert await teardown_pass() == []
-    # Closing the bound epic queues exactly one teardown.
+    assert await teardown_pass() == 0
+    assert outcome() is None
+    # Closing the bound epic records exactly one teardown; the tree stays for its owner.
     tasks.close_task(epic.id, reason="done", closed_in_session_id=owner)
-    assert [binding.team_id for binding in await teardown_pass()] == [team.team_id]
+    assert await teardown_pass() > 0
+    assert outcome() == {"outcome": "retained"}
+    assert await teardown_pass() == 0
 
     # Non-epic containers are valid traversal nodes, with implementation leaves beneath them.
     bad = new_task(world, "Malformed epic", epic=True)

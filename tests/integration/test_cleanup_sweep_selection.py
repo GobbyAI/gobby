@@ -8,6 +8,7 @@ import pytest
 
 from gobby.storage.clones import CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.isolation_cleanup import IsolationRemovalBusyError
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -229,3 +230,28 @@ def test_clone_sweeps_exclude_claimed_and_ineligible_rows(
     assert claimed_merged.id not in expired_ids
     assert claimed_stale.id not in stale_ids
     assert merged_stale.id not in stale_ids
+
+
+def test_removal_lock_reports_a_busy_row_apart_from_a_missing_one(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    project_id = str(sample_project["id"])
+    manager = LocalWorktreeManager(temp_db)
+    workspace = manager.create(project_id, "in-flight", "/tmp/worktree/in-flight")
+
+    def lock_again() -> None:
+        with manager.lock_for_removal(workspace.id):
+            pass
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with manager.lock_for_removal(workspace.id) as locked:
+            assert locked is not None
+            with pytest.raises(IsolationRemovalBusyError):
+                executor.submit(lock_again).result(timeout=2)
+        with manager.lock_for_removal(workspace.id) as locked:
+            assert locked is not None
+
+    manager.delete(workspace.id)
+    with manager.lock_for_removal(workspace.id) as locked:
+        assert locked is None

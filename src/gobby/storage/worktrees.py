@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.isolation_cleanup import (
     CLOSED_TASK_CLEANUP_PREDICATE,
     lock_isolation_for_cleanup,
+    lock_isolation_for_removal,
 )
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.workspace_machine_scope import (
@@ -761,6 +762,12 @@ class LocalWorktreeManager:
         with lock_isolation_for_cleanup(
             self.db, "worktrees", worktree_id, expired_only=expired_only
         ) as row:
+            yield Worktree.from_row(row) if row is not None else None
+
+    @contextmanager
+    def lock_for_removal(self, worktree_id: str) -> Iterator[Worktree | None]:
+        """Hold a worktree row against any other removal; a busy row raises."""
+        with lock_isolation_for_removal(self.db, worktree_id) as row:
             yield Worktree.from_row(row) if row is not None else None
 
     def cleanup_stale(

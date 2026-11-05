@@ -24,7 +24,6 @@ from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools import agent_cancellation
-from gobby.runner_maintenance.isolation import team_tree_deleter
 from gobby.sessions.handoff_records import (
     get_agent_end_handoff,
 )
@@ -38,7 +37,6 @@ from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
-from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.postgres import TEST_USER_ID
@@ -106,7 +104,8 @@ async def test_closed_task_teardown_records_success_without_user_cancellation(
         expected = ("success", None) if reason == "done" else ("cancelled", f"task_closed:{reason}")
         assert (run.status, run.terminal_reason) == expected
         assert get_agent_end_handoff(db, run_id)
-    assert not tree_of(team.binding).exists()
+    assert tree_of(team.binding).is_dir()
+    assert branch_exists(world, team.binding.branch)
 
 
 @pytest.mark.asyncio
@@ -254,10 +253,10 @@ async def test_close_collapses_all_team_seats(
         sha,
     )
     assert world.case.git("merge-base", "--is-ancestor", sha, "trunk") == ""
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not tree_of(team.binding).exists()
-    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
-    assert not branch_exists(world, team.binding.branch)
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
+    assert branch_exists(world, team.binding.branch)
     with pytest.raises(TeamAdmissionRefused) as refused:
         check_team_spawn(db, team.runbook, SeatTarget(project_path=team.binding.worktree_path))
     assert refused.value.code == "team_closed"
@@ -286,54 +285,40 @@ async def test_teardown_recovers_after_restart(
         await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
     assert len(terminations.calls) == 1
 
-    # The next start ends the remaining seats, then stops before deleting the tree.
+    # The next start ends the remaining seats and records the tree as retained.
     terminations.stop_after = None
-
-    async def stopped(binding: TeamBinding) -> WorktreeDeletionResult:
-        raise asyncio.CancelledError
-
-    with pytest.raises(asyncio.CancelledError):
-        await teardown_pass(db, runner, datetime.now().astimezone(), stopped)
-    assert terminations.ended() == sorted(team.seats)
-    assert teardown(world, team) == {}
-
-    # The tree was deleted, then the daemon stopped before the outcome was written.
-    assert (await team_tree_deleter(db, None)(team.binding)).success
     await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
     assert terminations.ended() == sorted(team.seats)
-    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert teardown(world, team) == {"outcome": "retained"}
     assert await teardown_pass(db, runner, datetime.now().astimezone()) == 0
 
-    # A refusal files no task, so a restart re-derives it from the tree and records it alone.
+    # A retained tree files no task, so a restart records its outcome alone.
     tasks_before = project_task_ids(world)
     close(world, refused, commit(refused, "unmerged.py"), minutes_ago=1)
     await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
     await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
 
     assert terminations.ended() == sorted([*team.seats, *refused.seats])
-    assert teardown(world, refused) == {
-        "outcome": "refused",
-        "code": "branch_not_merged_into_target",
-    }
+    assert teardown(world, refused) == {"outcome": "retained"}
     assert project_task_ids(world) == tasks_before
     assert tree_of(refused.binding).is_dir()
 
 
-async def test_teardown_converges_after_git_removed_the_tree(
+async def test_teardown_never_touches_a_tree_git_already_removed(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = world.case.db
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
     team = await admitted_team(world, "Crashed teardown team")
     task = close(world, team, land(world, team, "crash.py"))
-    # Git removed the tree, then the daemon stopped before the tree row was deleted.
+    # Git removed the tree; the teardown retires no seat's tree and leaves the row and branch.
     world.case.git("worktree", "remove", "--force", str(tree_of(team.binding)))
 
     await teardown_pass(db, daemon(db), closed_at(task) + TEARDOWN_GRACE)
 
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
-    assert not branch_exists(world, team.binding.branch)
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
+    assert branch_exists(world, team.binding.branch)
 
 
 async def test_teardown_leaves_another_machines_tree_alone(
@@ -351,15 +336,15 @@ async def test_teardown_leaves_another_machines_tree_alone(
         (elsewhere, team.binding.worktree_id),
     )
 
-    # Only the daemon on the tree's machine can prove and delete it.
+    # Only the daemon on the tree's machine can end its seats and record its outcome.
     assert await teardown_pass(db, daemon(db), closed_at(task) + TEARDOWN_GRACE) == 0
 
     assert terminations.calls == []
     assert teardown(world, team) == {}
 
 
-async def test_cleanup_preserves_unsafe_trees(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+async def test_teardown_keeps_every_team_tree_whatever_its_state(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = world.case.db
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
@@ -386,25 +371,14 @@ async def test_cleanup_preserves_unsafe_trees(
     ]
 
     tasks_before = project_task_ids(world)
-    with caplog.at_level(logging.WARNING, logger=TEARDOWN_LOGGER):
-        await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
+    await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
     assert project_task_ids(world) == tasks_before
 
-    assert teardown(world, eligible) == {"outcome": "cleaned"}
-    assert not tree_of(eligible.binding).exists()
-    assert not branch_exists(world, eligible.binding.branch)
-    refusals = (
-        (dirty, "uncommitted_changes"),
-        (occupied, "worktree_in_use"),
-        (mismatched, "worktree_identity_mismatch"),
-        (unmerged, "branch_not_merged_into_target"),
-    )
-    for team, code in refusals:
-        assert teardown(world, team) == {"outcome": "refused", "code": code}
+    for team in (eligible, dirty, occupied, mismatched, unmerged):
+        assert teardown(world, team) == {"outcome": "retained"}
         assert tree_of(team.binding).is_dir()
         assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
         assert branch_exists(world, team.binding.branch)
-    assert sorted(refusal_codes(caplog)) == sorted(code for _, code in refusals)
     assert edited.read_text() == "edited after the merge\n"
     assert git_in(tree_of(mismatched.binding), "branch", "--show-current") == (
         "operator-experiment"
@@ -462,10 +436,10 @@ async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
     assert {session_status(db, child) for child in team.seats[:3]} == {"active"}
 
 
-async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
+async def test_teardown_keeps_the_tree_a_parked_seat_stopped_occupying(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#25165: a seat parked by a daemon stop, its process gone, must not hold the closed tree."""
+    """#25165: a seat parked by a daemon stop, its process gone, must not block the closed team."""
     db = world.case.db
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
     team = await admitted_team(world, "Parked seat team")
@@ -474,30 +448,32 @@ async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
 
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not tree_of(team.binding).exists()
-    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
-    assert not branch_exists(world, team.binding.branch)
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
+    assert branch_exists(world, team.binding.branch)
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     run = LocalAgentRunManager(db).get(parked.id)
     assert run is not None and run.status == "cancelled"
 
 
-async def test_delete_ignores_a_parked_seat_whose_run_went_terminal(world: TeamWorld) -> None:
-    """#25162: the seats had ended, yet the delete was refused for a parked seat's paused row."""
+async def test_teardown_records_a_team_whose_seats_ended_beside_a_parked_row(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#25162: the seats had ended, yet a parked seat's paused row blocked the closed team."""
     db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
     team = await admitted_team(world, "Ended seats team")
     park(db, team, 1)
     for session in team.seats:
         if session != team.seats[1]:
             SessionManager(db).update_status(session, "expired")
-    close(world, team, land(world, team, "ended.py"))
+    closed = close(world, team, land(world, team, "ended.py"))
 
-    result = await team_tree_deleter(db, None)(team.binding)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
-    assert (result.success, result.error_code, result.error) == (True, None, None)
-    assert not tree_of(team.binding).exists()
-    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
 
 
 async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
@@ -533,9 +509,9 @@ async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
 
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not tree_of(team.binding).exists()
-    assert not branch_exists(world, team.binding.branch)
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
+    assert branch_exists(world, team.binding.branch)
     assert session_status(db, team.seats[1]) == "expired"
 
 
@@ -566,7 +542,7 @@ async def test_recovery_does_not_relaunch_a_torn_down_seat(
 
 
 @pytest.mark.asyncio
-async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_refusing(
+async def test_team_close_ends_a_dispatched_seat_and_keeps_the_tree_without_refusing(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A seat the Dev Team Lead dispatched is not a runbook child, so the run list misses it."""
@@ -585,15 +561,15 @@ async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_re
     await teardown_pass(db, daemon(db), later)
     assert terminations.ended() == sorted([*team.seats, dispatched])
     assert session_status(db, dispatched) == "expired"
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not tree_of(team.binding).exists()
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
 
 
 @pytest.mark.asyncio
 async def test_team_close_retries_while_a_dispatched_seat_is_still_exiting(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A seat that is signalled but has not exited keeps its tree; a later pass deletes it."""
+    """A seat that is signalled but has not exited keeps the team due; a later pass records it."""
     db = world.case.db
 
     async def signal_only(**_kwargs: Any) -> dict[str, Any]:
@@ -611,8 +587,8 @@ async def test_team_close_retries_while_a_dispatched_seat_is_still_exiting(
 
     SessionManager(db).update_status(dispatched, "expired")
     await teardown_pass(db, daemon(db), later)
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not tree_of(team.binding).exists()
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
 
 
 @pytest.mark.asyncio
@@ -652,15 +628,9 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     treeless_seat = seat(world, runbook, binding, "fixture-definition-3588bb72", manages=task)
     team = Team(task, runbook, binding, [treeless_seat])
     closed = close(world, team, commit(team, "report.md"))
-    deleted: list[TeamBinding] = []
 
-    async def no_tree_delete(binding: TeamBinding) -> WorktreeDeletionResult:
-        deleted.append(binding)
-        return WorktreeDeletionResult(success=False, error_code="worktree_not_found")
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
-    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE, delete=no_tree_delete)
-
-    assert deleted == []
     assert terminations.ended() == [treeless_seat]
     assert teardown(world, team) == {"outcome": "cleaned"}
 
@@ -731,14 +701,14 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
     assert {session_status(db, session) for session in (manager, other, reassigned.id)} == {
         "expired"
     }
-    assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not tree_of(team.binding).exists()
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert tree_of(team.binding).is_dir()
 
 
-async def test_team_teardown_refusal_creates_no_task(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+async def test_team_teardown_keeps_a_dirty_tree_and_files_no_task(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#25656: a refused tree deletion keeps the tree and files no task; it logs a WARNING."""
+    """#25656: a dirty tree survives its team's teardown with its edits, and files no task."""
     db = world.case.db
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
     dirty = await admitted_team(world, "Dirty teardown team")
@@ -747,15 +717,14 @@ async def test_team_teardown_refusal_creates_no_task(
     closed = close(world, dirty, sha, minutes_ago=1)
     before = project_task_ids(world)
 
-    with caplog.at_level(logging.WARNING, logger="gobby.agents.team_teardown"):
-        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
-        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
     assert project_task_ids(world) == before
-    assert teardown(world, dirty) == {"outcome": "refused", "code": "uncommitted_changes"}
+    assert teardown(world, dirty) == {"outcome": "retained"}
     assert tree_of(dirty.binding).is_dir()
+    assert (tree_of(dirty.binding) / "dirty.py").read_text() == "edited after the merge\n"
     assert LocalWorktreeManager(db).get(tree_id_of(dirty.binding)) is not None
-    assert refusal_codes(caplog) == ["uncommitted_changes"]
 
 
 async def test_runbook_seat_refusal_creates_no_task_and_stops_retrying(
