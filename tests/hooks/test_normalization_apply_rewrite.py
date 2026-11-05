@@ -128,6 +128,67 @@ def test_refused_shapes_never_read_the_patch_or_rewrite(tmp_path: Path, shape: s
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+def test_literal_cached_apply_with_a_validated_patch_stays_rewritten(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    patch = tmp_path / "set-aside.patch"
+    patch.write_text(_PATCH, encoding="utf-8")
+
+    data = _bash(repo, f"git apply --cached {patch}")
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "+two" in data[_REWRITE]
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        pytest.param("two-operands", id="two-operands"),
+        pytest.param("quoted", id="quoted"),
+        pytest.param("dynamic", id="dynamic"),
+        pytest.param("compound", id="compound"),
+    ],
+)
+def test_refused_cached_shapes_report_unknown_scope(tmp_path: Path, shape: str) -> None:
+    repo = _repo(tmp_path)
+    patch = tmp_path / "set-aside.patch"
+    patch.write_text(_PATCH, encoding="utf-8")
+    command = {
+        "two-operands": f"git apply --cached {patch} {patch}",
+        "quoted": f'git apply --cached "{patch}"',
+        "dynamic": "git apply --cached $PATCH",
+        "compound": f"git apply --cached {patch} && true",
+    }[shape]
+
+    data = _bash(repo, command)
+
+    assert _REWRITE not in data
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_cached_apply_over_the_cap_reports_unknown_scope(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    patch = tmp_path / "set-aside.patch"
+    patch.write_bytes(b"x" * (16 * 1024 * 1024 + 1))
+
+    data = _bash(repo, f"git apply --cached {patch}")
+
+    assert _REWRITE not in data
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_cached_apply_for_a_provider_that_cannot_rewrite_reports_unknown_scope(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    patch = tmp_path / "set-aside.patch"
+    patch.write_text(_PATCH, encoding="utf-8")
+
+    data = _bash(repo, f"git apply --cached {patch}", can_rewrite_input=False)
+
+    assert _REWRITE not in data
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 @pytest.mark.parametrize(
     ("content", "id_"),
     [

@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks import grok_pending_context
+from gobby.hooks._normalization_apply_rewrite import APPLY_REWRITE_KEY
 from gobby.hooks.agent_run_ingress import (
     TERMINAL_INGRESS_HOOK_TYPES,
     session_end_targets_live_cli,
@@ -636,6 +637,7 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         # observer and broadcast payloads.
         event.data.pop("_input_coerced", None)
         event.data.pop("_raw_tool_input", None)
+        carries_validated_apply = event.data.pop(APPLY_REWRITE_KEY, None) is not None
 
         # Propagate rewrite_input from rule evaluation to response (PreToolUse)
         if "_modified_input" in event.metadata:
@@ -665,10 +667,17 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             observer_response.decision = original_decision
             observer_response.reason = original_reason
 
+        # A validated apply carries the patch body in modified_input. Broadcasts and
+        # webhooks get a copy without it; the returned response keeps it for the CLI.
+        exported = observer_response
+        if carries_validated_apply:
+            exported = copy.copy(observer_response)
+            exported.modified_input = None
+
         schedule_hook_broadcast(
             self.broadcaster,
             event,
-            observer_response,
+            exported,
             self._loop,
             self.logger,
         )
@@ -676,7 +685,7 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         # Dispatch non-blocking webhooks (fire-and-forget)
         if not suppress_webhooks:
             try:
-                self._dispatch_webhooks_async(event, observer_response)
+                self._dispatch_webhooks_async(event, exported)
             except Exception as e:
                 self.logger.warning("Non-blocking webhook dispatch failed: %s", e)
 

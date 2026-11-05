@@ -182,11 +182,11 @@ def classify_git_apply(
         return unknown_write
     if "--cached" in flags:
         # Like git add/restore --staged: require a task, without claiming file edits.
-        # A validated literal patch is rewritten to the bytes checked here; otherwise the
-        # index-only classification stands as before.
+        # Only a validated literal patch has a known scope: it is rewritten to the bytes
+        # checked here. Any other --cached apply lets git read the patch path at run time.
         text = _validated_patch_text(operands, arguments, git_cwd)
         if text is None:
-            return _ShellSegmentMetadata("execute", repo_mutation=True)
+            return unknown_write
         return _ShellSegmentMetadata(
             "execute", repo_mutation=True, extra={VALIDATED_APPLY_TEXT: text}
         )
