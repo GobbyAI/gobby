@@ -32,6 +32,26 @@ def daemon_bootstrap_path() -> Path:
     return _daemon_bootstrap if _daemon_bootstrap is not None else bootstrap_path()
 
 
+def account_home() -> Path | None:
+    """The account's home from its passwd entry; no environment variable selects it."""
+    try:
+        from pwd import getpwuid
+
+        return Path(getpwuid(os.getuid()).pw_dir)
+    except (ImportError, AttributeError, KeyError):
+        return None
+
+
+def operator_bootstrap_path() -> Path | None:
+    """The operator's bootstrap credential at the account's canonical location.
+
+    Only the passwd entry selects it. GOBBY_HOME and HOME are environment variables a caller can
+    set, so neither can redirect the operator credential that activation trusts.
+    """
+    home = account_home()
+    return None if home is None else home / ".gobby" / "bootstrap.yaml"
+
+
 MANAGED_TOKEN_KEY_LABEL = b"gobby-managed-token-v1"
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +26,7 @@ from gobby.servers.middleware import auth as middleware_auth
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.admin import _lifecycle as lifecycle_routes
 from gobby.servers.routes.signed_request import create_signed_request_router
+from gobby.utils import local_token
 from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
 
 pytestmark = pytest.mark.unit
@@ -124,6 +126,16 @@ def holds(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return state
 
 
+def _client_for(server: FakeServer) -> TestClient:
+    router = APIRouter(prefix="/api/admin")
+    lifecycle_routes.register_lifecycle_routes(router, cast(Any, server))
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=cast(Any, server))
+    app.include_router(router)
+    app.include_router(create_signed_request_router())
+    return TestClient(app)
+
+
 @pytest.fixture
 def client(
     monkeypatch: pytest.MonkeyPatch,
@@ -133,14 +145,38 @@ def client(
     monkeypatch.setattr(AuthService, "managed_signing_key", lambda _self: SIGNING_KEY)
     monkeypatch.setattr(AuthService, "_managed_capability_is_live", lambda _self, _claims: True)
     monkeypatch.setattr(middleware_auth, "require_hub_database", lambda _db: object())
-    server = FakeServer(AuthService(MagicMock()))
-    router = APIRouter(prefix="/api/admin")
-    lifecycle_routes.register_lifecycle_routes(router, cast(Any, server))
-    app = FastAPI()
-    app.add_middleware(AuthMiddleware, server=cast(Any, server))
-    app.include_router(router)
-    app.include_router(create_signed_request_router())
-    return TestClient(app)
+    return _client_for(FakeServer(AuthService(MagicMock())))
+
+
+def test_a_managed_token_minted_under_a_redirected_home_key_is_refused_before_any_stop(
+    monkeypatch: pytest.MonkeyPatch, stops: MagicMock, tmp_path: Path
+) -> None:
+    """The daemon checks bearers against the bootstrap it bound at startup, not GOBBY_HOME."""
+    daemon_dir = tmp_path / "daemon-home"
+    daemon_dir.mkdir()
+    daemon_bootstrap = daemon_dir / "bootstrap.yaml"
+    daemon_bootstrap.write_text("api_key: operator-key\n")
+    forged_dir = tmp_path / "forged-home"
+    forged_dir.mkdir()
+    (forged_dir / "bootstrap.yaml").write_text("api_key: forged-by-caller\n")
+    monkeypatch.setenv("GOBBY_HOME", str(forged_dir))
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", daemon_bootstrap)
+    monkeypatch.setattr(middleware_auth, "require_hub_database", lambda _db: object())
+    forged = issue_agent_api_token(
+        derive_managed_signing_key("forged-by-caller"),
+        agent_run_id="exec-1",
+        session_id="session-1",
+        project_id="project-1",
+        machine_id=MACHINE_ID,
+        timeout_seconds=600,
+    )
+    server = FakeServer(AuthService(MagicMock(), bootstrap_file=daemon_bootstrap))
+    client = _client_for(server)
+
+    response = client.post(RESTART, headers={"Authorization": f"Bearer {forged}"})
+
+    assert response.status_code == 401
+    stops.assert_not_called()
 
 
 def test_signed_restart_by_an_activating_seat_stops_the_daemon_once(

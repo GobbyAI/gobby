@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 from unittest.mock import MagicMock
 
+import click
 import pytest
 import yaml
 from click.testing import CliRunner
@@ -19,13 +20,27 @@ from gobby.cli.runtime import CliRuntime
 from gobby.releases import activation
 from gobby.releases.activation import agent_activation_refusal, claims_may_activate
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils import local_token
+from gobby.utils.local_token import (
+    GOBBY_AGENT_API_TOKEN_ENV,
+    AgentApiTokenClaims,
+    derive_managed_signing_key,
+    issue_agent_api_token,
+)
 
 CLAIMS = AgentApiTokenClaims(
     "session-1", "project-1", "machine-1", 1, 9999999999, agent_run_id="run-1"
 )
 # The guard only forwards this handle to the stubbed capability lookup, so a sentinel suffices.
 HUB_DATABASE = cast(HubDatabase, object())
+# Captured before the autouse fixture stubs the check, so the real check can be exercised.
+_REAL_CREDENTIAL_CHECK = activation.operator_credential_readable
+_SPAWN_MARKERS = (
+    "GOBBY_AGENT_RUN_ID",
+    "GOBBY_MANAGED_EXECUTION_ID",
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+)
+_FORGED_KEY = "forged-by-caller"
 
 
 @pytest.fixture(autouse=True)
@@ -331,3 +346,107 @@ def test_activation_starts_the_daemon_it_stopped(
 
     assert stopped == [True], result.output
     assert start_probe.called, result.output
+
+
+@pytest.fixture
+def marker_cleared_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Spawn markers cleared and GOBBY_HOME redirected to a readable forged bootstrap.
+
+    Returns the account's ``.gobby`` directory, which holds no operator bootstrap yet.
+    """
+    for name in (*_SPAWN_MARKERS, GOBBY_AGENT_API_TOKEN_ENV):
+        monkeypatch.delenv(name, raising=False)
+    forged = tmp_path / "forged-home"
+    forged.mkdir()
+    (forged / "bootstrap.yaml").write_text(f"api_key: {_FORGED_KEY}\n")
+    monkeypatch.setenv("GOBBY_HOME", str(forged))
+    account = tmp_path / "account" / ".gobby"
+    account.mkdir(parents=True)
+    monkeypatch.setattr(local_token, "account_home", lambda: account.parent)
+    monkeypatch.setattr(activation, "operator_credential_readable", _REAL_CREDENTIAL_CHECK)
+    return account
+
+
+def _must_not_reach(name: str) -> Callable[..., NoReturn]:
+    def reached(*_args: object, **_kwargs: object) -> NoReturn:
+        pytest.fail(f"{name} reached the daemon from a caller whose spawn markers were cleared")
+
+    return reached
+
+
+_ENTRY_POINTS: dict[str, click.Command] = {
+    "start": daemon_start.start,
+    "stop": daemon_lifecycle.stop,
+    "restart": daemon_lifecycle.restart,
+    "cutover": cutover_cli.cutover,
+}
+
+
+@pytest.mark.parametrize("command", ["start", "stop", "restart", "cutover"])
+@pytest.mark.parametrize(
+    "setting",
+    ["forged-home", "forged-home-with-token", "operator-credential-with-token"],
+)
+def test_marker_cleared_caller_never_reaches_the_daemon(
+    marker_cleared_caller: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    setting: str,
+) -> None:
+    if setting != "forged-home":
+        monkeypatch.setenv(GOBBY_AGENT_API_TOKEN_ENV, "forged-by-caller-token")
+    if setting == "operator-credential-with-token":
+        (marker_cleared_caller / "bootstrap.yaml").write_text("api_key: operator-key\n")
+    monkeypatch.setattr(
+        daemon_lifecycle, "stop_singleton_gate", _must_not_reach("stop_singleton_gate")
+    )
+    monkeypatch.setattr(daemon_lifecycle, "_restart_backend", _must_not_reach("_restart_backend"))
+    monkeypatch.setattr(
+        daemon_start, "worktree_daemon_refusal", _must_not_reach("worktree_daemon_refusal")
+    )
+    monkeypatch.setattr(cutover_cli, "run_cutover", _must_not_reach("run_cutover"))
+
+    result = CliRunner().invoke(_ENTRY_POINTS[command], [], obj=CliRuntime(config_file=None))
+
+    assert result.exit_code != 0, result.output
+    assert "spawned_agent_refused" in result.output
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "open (#25723 rework): a marked cutover verifies the signature and the capability lookup "
+        "from state the caller controls (GOBBY_HOME, its envelope grant); the trust root for "
+        "spawned cutover needs a lead decision: a daemon-decided route, or refusal"
+    ),
+)
+def test_marked_cutover_is_not_admitted_by_a_key_under_a_redirected_home(
+    marker_cleared_caller: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A capability minted under the redirected home's key, with a database that grants it, is refused.
+
+    The signature and the capability lookup both read env-selected state, so this models a
+    marked caller that controls its own home. Refusal here is the spawned-cutover trust root.
+    """
+    token = issue_agent_api_token(
+        derive_managed_signing_key(_FORGED_KEY),
+        agent_run_id="run-1",
+        session_id="session-1",
+        project_id="project-1",
+        machine_id="machine-1",
+        timeout_seconds=600,
+    )
+    envelope = tmp_path / "envelope.json"
+    envelope.write_text(
+        json.dumps({"managed_api_token": token, "principal": {"execution_id": "run-1"}})
+    )
+    envelope.chmod(0o600)
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(envelope))
+    monkeypatch.setattr(activation, "CliRuntime", _HubRuntime)
+    monkeypatch.setattr(activation, "claims_may_activate", lambda _db, _claims, _op: True)
+
+    refusal = agent_activation_refusal("cutover")
+
+    assert refusal is not None
+    assert refusal.startswith("spawned_agent_refused")

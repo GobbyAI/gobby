@@ -20,9 +20,10 @@ from gobby.config.bootstrap import BootstrapConfigError
 from gobby.storage.project_checkouts import require_root
 from gobby.utils.daemon_url import DaemonUrlError, validate_daemon_url
 from gobby.utils.local_token import (
+    GOBBY_AGENT_API_TOKEN_ENV,
     AgentApiTokenClaims,
     classify_agent_api_token,
-    daemon_bootstrap_path,
+    operator_bootstrap_path,
     read_managed_api_token,
     read_managed_signing_key,
 )
@@ -40,10 +41,13 @@ _GRANTABLE_OPERATIONS = frozenset({"restart", "cutover"})
 # A marked caller's restart is decided by the daemon route; only cutover, which has no route,
 # is verified on the seat itself.
 _LOCALLY_VERIFIED_OPERATIONS = frozenset({"cutover"})
+# The API token is a run credential that only a spawned seat is given; daemon_auth_headers would
+# send it as a bearer, so its presence marks the caller as spawned rather than as the operator.
 _SPAWNED_ENV_NAMES = (
     "GOBBY_AGENT_RUN_ID",
     "GOBBY_MANAGED_EXECUTION_ID",
     "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+    GOBBY_AGENT_API_TOKEN_ENV,
 )
 _REFUSED = "spawned_agent_refused"
 
@@ -63,14 +67,18 @@ def claims_may_activate(db: HubDatabase, claims: AgentApiTokenClaims, operation:
 
 
 def operator_credential_readable() -> bool:
-    """Whether this process can open the operator's daemon bootstrap credential.
+    """Whether this process can open the operator's bootstrap credential at its canonical path.
 
-    Readability is the test, not validity: a malformed bootstrap still belongs to the operator,
-    and the start path reports its error. The sandbox denies this file to spawned seats, so a
-    caller that cleared its markers and cannot open it is refused.
+    The path comes from the passwd entry only, so no environment variable can point this check at
+    a file the caller chose. Readability is the test, not validity: a malformed bootstrap still
+    belongs to the operator, and the start path reports its error. The sandbox denies this file to
+    spawned seats, so a caller that cleared its markers and cannot open it is refused.
     """
+    path = operator_bootstrap_path()
+    if path is None:
+        return False
     try:
-        with daemon_bootstrap_path().open("rb"):
+        with path.open("rb"):
             pass
     except OSError:
         return False

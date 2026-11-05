@@ -151,7 +151,9 @@ def seat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[MagicMock]
     monkeypatch.setenv("GOBBY_DAEMON_URL", DAEMON_URL)
     monkeypatch.delenv("GOBBY_AGENT_RUN_ID", raising=False)
     monkeypatch.setattr("gobby.utils.local_token.daemon_bootstrap_path", _forbidden("bootstrap"))
-    monkeypatch.setattr("gobby.releases.activation.daemon_bootstrap_path", _forbidden("bootstrap"))
+    monkeypatch.setattr(
+        "gobby.releases.activation.operator_bootstrap_path", _forbidden("bootstrap")
+    )
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", _forbidden("runtime"))
     monkeypatch.setattr(lifecycle, "restart_start_refusal", _forbidden("start proof"))
     stop = _forbidden("local stop")
