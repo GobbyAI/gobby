@@ -222,7 +222,7 @@ checks. The current bundled catalogue is:
 | `code-reviewer` | Independently reviews and validates the exact candidate; claim_flow hands approved work to the lead |
 | `security-auditor` | Reviews candidate security, audits trust boundaries, and drafts security_paths for operator approval via Assistant and Orchestrator application |
 | `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
-| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed; the Orchestrator owns every daemon restart and activation |
+| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed, and runs daemon restarts and cutovers only when the Orchestrator directs them; it reports to Triage |
 | `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts Triage on quiet DevTeams |
 | `researcher` | Answers bounded research requests |
 | `research-team-lead` | Leads one research team: relays the researcher and research reviewer that the research-team runbook launches for one research task, and delivers the reviewed report to its report target. Writes no research or code; blocks `kill_agent` and `stop_agent` |

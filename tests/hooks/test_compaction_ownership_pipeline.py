@@ -34,6 +34,7 @@ pytestmark = pytest.mark.unit
 SESSION_ID = "18b6d896-29ef-483f-86f3-110271af4374"
 CONTEXT_MARKER = "synthetic-session-start-context"
 PRE_CONTEXT_MARKER = "synthetic-pre-compact-context"
+HANDOFF_MARKER = "synthetic-handoff-context"
 PRE = HookEventType.PRE_COMPACT
 START = HookEventType.SESSION_START
 POST = HookEventType.POST_COMPACT
@@ -90,6 +91,15 @@ SYNTHETIC_RULES: list[tuple[str, dict[str, Any]]] = [
             "event": "pre_compact",
             "priority": 20,
             "effects": [{"type": "inject_context", "template": PRE_CONTEXT_MARKER}],
+        },
+    ),
+    (
+        "inject-handoff-on-compact-start",
+        {
+            "event": "session_start",
+            "when": "event.data.get('source') in ['compact']",
+            "priority": 20,
+            "effects": [{"type": "inject_context", "template": HANDOFF_MARKER}],
         },
     ),
 ]
@@ -228,13 +238,21 @@ def send(request: pytest.FixtureRequest, session: _Session) -> Callable[[HookEve
 def test_parent_manual_compaction_runs_the_rules_immediately(
     session: _Session, send: Callable[[HookEvent], HookResponse]
 ) -> None:
+    # The manual PreCompact runs its rules at once. Its SessionStart is held until the parent's
+    # compact_boundary is written and the next main-thread event settles it.
     assert send(session.event(PRE, trigger="manual")).decision == "allow"
     assert session.variables.get("pre_compact_seen") is True
 
+    session.parent_boundary("manual-boundary")
     send(session.event(START, source="compact"))
 
+    assert session.variables["unlocked_tools"] == ["mcp__gobby__call_tool"]
+    assert session.kinds == [PRE]
+
+    send(session.event(BEFORE, prompt="continue"))
+
     assert session.variables["unlocked_tools"] == []
-    assert session.kinds == [PRE, START]
+    assert session.kinds == [PRE, START, BEFORE]
 
 
 def test_parent_clear_still_resets_through_the_rules(
@@ -397,8 +415,13 @@ def test_parent_manual_compaction_still_resets_after_a_subagent_batch(
     send(session.event(START, source="compact"))
     send(session.event(BEFORE, prompt="subagent batch settles"))
 
+    # The batch wrote no parent boundary, so its held hooks were dropped and nothing reset.
+    assert session.variables["unlocked_tools"] == ["mcp__gobby__call_tool"]
+
     send(session.event(PRE, trigger="manual"))
+    session.parent_boundary("manual-boundary")
     send(session.event(START, source="compact"))
+    send(session.event(BEFORE, prompt="continue"))
 
     assert session.variables["unlocked_tools"] == []
     assert session.variables["pre_compact_seen"] is True
@@ -407,8 +430,8 @@ def test_parent_manual_compaction_still_resets_after_a_subagent_batch(
 def test_manual_compaction_context_is_not_repeated_by_a_later_settle(
     session: _Session, send: Callable[[HookEvent], HookResponse]
 ) -> None:
-    # Held subagent hooks settle before the manual PreCompact. The manual boundary is verified at
-    # its tails, so a later main event does not replay the reset context a second time.
+    # The manual compaction's SessionStart and PostCompact settle once, at the next main-thread
+    # event. A later main event does not replay the reset context again.
     send(session.event(PRE, trigger="auto"))
     send(session.event(START, source="compact"))
     send(session.event(PRE, trigger="manual"))
@@ -416,10 +439,12 @@ def test_manual_compaction_context_is_not_repeated_by_a_later_settle(
 
     manual_start = send(session.event(START, source="compact"))
     send(session.event(POST, trigger="manual"))
-    later = send(session.event(BEFORE, prompt="continue"))
+    settled = send(session.event(BEFORE, prompt="continue"))
+    later = send(session.event(BEFORE, prompt="continue again"))
 
-    assert session.kinds == [PRE, START, POST, BEFORE]
-    assert CONTEXT_MARKER in _context(manual_start)
+    assert session.kinds == [PRE, START, POST, BEFORE, BEFORE]
+    assert CONTEXT_MARKER not in _context(manual_start)
+    assert CONTEXT_MARKER in _context(settled)
     assert CONTEXT_MARKER not in _context(later)
 
 
@@ -438,9 +463,11 @@ def test_subagent_pre_compact_inside_a_manual_compaction_skips_the_pre_rules(
     assert CONTEXT_MARKER in _context(response)
 
 
-def test_a_held_parent_lifecycle_settles_before_a_manual_compaction(
+def test_a_held_lifecycle_and_a_manual_compaction_settle_as_one(
     session: _Session, send: Callable[[HookEvent], HookResponse]
 ) -> None:
+    # The held auto pair and the manual compaction are one parent lifecycle. The manual PreCompact
+    # ran its rules at once, so the settle replays only SessionStart, once, at the next main event.
     send(session.event(PRE, trigger="auto"))
     session.parent_boundary("auto-boundary")
     send(session.event(START, source="compact"))
@@ -449,10 +476,13 @@ def test_a_held_parent_lifecycle_settles_before_a_manual_compaction(
     session.parent_boundary("manual-boundary")
     send(session.event(START, source="compact"))
     later = send(session.event(BEFORE, prompt="continue"))
+    again = send(session.event(BEFORE, prompt="again"))
 
-    assert session.kinds == [PRE, START, PRE, START, BEFORE]
-    assert CONTEXT_MARKER in _context(pre_response)
-    assert CONTEXT_MARKER not in _context(later)
+    assert session.kinds == [PRE, START, BEFORE, BEFORE]
+    assert PRE_CONTEXT_MARKER in _context(pre_response)
+    assert CONTEXT_MARKER not in _context(pre_response)
+    assert CONTEXT_MARKER in _context(later)
+    assert CONTEXT_MARKER not in _context(again)
 
 
 def test_a_manual_boundary_written_before_a_subagent_pre_compact_still_settles(
@@ -470,6 +500,50 @@ def test_a_manual_boundary_written_before_a_subagent_pre_compact_still_settles(
 
     assert session.kinds == [PRE, START, POST, BEFORE]
     assert CONTEXT_MARKER in _context(later)
+
+
+def test_the_live_ordering_settles_the_parent_once_at_its_next_main_event(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # Live order (2026-11-04, task #25683): a subagent's auto PreCompact is held, the parent's manual
+    # PreCompact arrives with no parent boundary yet, the subagent's boundary lands in its own
+    # transcript, and the subagent's SessionStart(compact) arrives. Then the parent's boundary and its
+    # SessionStart arrive. Only the parent's boundary may reset, once, on the next main-thread event.
+    send(session.event(PRE, trigger="auto", custom_instructions=None))
+    send(session.event(PRE, trigger="manual", custom_instructions=None))
+    session.subagent_boundary("subagent-boundary-1", datetime.now(UTC))
+    subagent_start = send(session.event(START, source="compact"))
+
+    assert session.kinds == [PRE]
+    assert CONTEXT_MARKER not in _context(subagent_start)
+
+    session.parent_boundary("manual-boundary")
+    parent_start = send(session.event(START, source="compact"))
+
+    assert session.kinds == [PRE]
+    assert CONTEXT_MARKER not in _context(parent_start)
+
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(later)
+
+
+def test_a_manual_compact_hands_its_session_start_context_to_the_next_main_event(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # The handoff is set before a manual compact and delivered by its compact SessionStart. The
+    # settle waits for the next main-thread event, so that event must return the handoff context.
+    send(session.event(PRE, trigger="manual", custom_instructions=None))
+    session.parent_boundary("manual-boundary")
+    start = send(session.event(START, source="compact"))
+
+    assert HANDOFF_MARKER not in _context(start)
+
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, BEFORE]
+    assert HANDOFF_MARKER in _context(later)
 
 
 def _fail_transcript_reads(monkeypatch: pytest.MonkeyPatch, times: int) -> None:
@@ -510,23 +584,25 @@ def test_a_failed_transcript_read_at_settle_replays_on_the_next_main_event(
     assert session.variables["unlocked_tools"] == []
 
 
-def test_a_failed_read_at_a_manual_pre_compact_keeps_the_earlier_parent_reset(
+def test_a_failed_read_at_a_main_event_retries_at_the_next_one(
     session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     send(session.event(PRE, trigger="auto"))
     send(session.event(START, source="compact"))
     session.parent_boundary("boundary-1")
-    _fail_transcript_reads(monkeypatch, times=1)
-
     send(session.event(PRE, trigger="manual"))
     session.parent_boundary("manual-boundary")
     send(session.event(START, source="compact"))
-    later = send(session.event(BEFORE, prompt="continue"))
+    _fail_transcript_reads(monkeypatch, times=1)
 
-    # Each parent compaction gets one PreCompact and one SessionStart: the manual pair ran
-    # immediately, and the earlier auto pair replays at the next main-thread event.
-    assert session.kinds == [PRE, START, PRE, START, BEFORE]
-    assert CONTEXT_MARKER in _context(later)
+    failed = send(session.event(BEFORE, prompt="first"))
+    recovered = send(session.event(BEFORE, prompt="second"))
+
+    # The failed read changes nothing: that main event runs with no replay, and the next one
+    # settles the held lifecycle once. The manual PreCompact already ran, so only SessionStart replays.
+    assert CONTEXT_MARKER not in _context(failed)
+    assert session.kinds == [PRE, BEFORE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(recovered)
 
 
 def test_a_parent_boundary_written_after_an_unknown_baseline_counts(
@@ -575,30 +651,30 @@ def test_a_parent_boundary_written_before_an_unknown_baseline_is_not_replayed(
     assert session.variables["unlocked_tools"] == ["mcp__gobby__call_tool"]
 
 
-def test_a_failed_manual_tails_read_keeps_the_subagent_lifecycle_held(
+def test_a_failed_read_keeps_the_held_lifecycle_for_a_later_boundary(
     session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    tails = datetime(2026, 11, 4, 12, 0, 0, tzinfo=UTC)
-    _fix_clock(monkeypatch, tails)
     send(session.event(PRE, trigger="manual"))
-    session.parent_boundary("manual-boundary", at=tails - timedelta(seconds=1))
-    _fail_transcript_reads(monkeypatch, times=1)
+    session.parent_boundary("manual-boundary")
     send(session.event(START, source="compact"))
-
     send(session.event(PRE, trigger="auto"))
     send(session.event(START, source="compact"))
-    settled = send(session.event(BEFORE, prompt="continue"))
+    _fail_transcript_reads(monkeypatch, times=1)
 
-    # The manual pair ran immediately. The subagent's held pair never runs: the manual boundary
-    # was written before the failed read, so the main event settles with nothing new to replay.
-    assert session.kinds == [PRE, START, BEFORE]
-    assert CONTEXT_MARKER not in _context(settled)
+    failed = send(session.event(BEFORE, prompt="first"))
+    settled = send(session.event(BEFORE, prompt="second"))
+
+    # The failed read leaves the held hooks in place. The retry settles them once against the
+    # manual boundary; the manual PreCompact already ran, so only SessionStart replays.
+    assert session.kinds == [PRE, BEFORE, START, BEFORE]
+    assert CONTEXT_MARKER not in _context(failed)
+    assert CONTEXT_MARKER in _context(settled)
 
     send(session.event(PRE, trigger="auto"))
     session.parent_boundary("parent-boundary")
     send(session.event(BEFORE, prompt="parent"))
 
-    assert session.kinds == [PRE, START, BEFORE, PRE, BEFORE]
+    assert session.kinds == [PRE, BEFORE, START, BEFORE, PRE, BEFORE]
 
 
 def test_a_boundary_in_the_first_hooks_millisecond_counts_as_new(
