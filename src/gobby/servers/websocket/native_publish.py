@@ -7,7 +7,7 @@ import ipaddress
 import logging
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -98,6 +98,9 @@ class NativePublisher:
         # The place the latest publish or subscribe took in the queue order. Each call enqueues
         # after the place before it, so ops keep the order their calls were made in.
         self._turn: asyncio.Future[None] | None = None
+        # Calls still waiting for their turn or encoding, keyed by their turn. A call leaves once
+        # it enqueues, so queued ops are not counted twice and stop can cancel only these.
+        self._preparing: dict[asyncio.Future[None], asyncio.Task[None]] = {}
 
     @property
     def front_door_secret(self) -> str:
@@ -175,19 +178,31 @@ class NativePublisher:
         encoded = json_dumps({"op": "subscribe", "leg": leg, "events": list(events)}).encode()
         return self._sequence(_ready([encoded]))
 
-    def _sequence(self, ops: Awaitable[list[bytes]]) -> asyncio.Future[None]:
+    def _sequence(self, ops: Coroutine[Any, Any, list[bytes]]) -> asyncio.Future[None]:
         """Take this call's place in the queue order now, and queue its ops when they are ready.
 
         Encoding yields to the loop, so a later call can finish encoding first. Each call
-        still enqueues after every call made before it.
+        still enqueues after every call made before it, even when an earlier call is cancelled.
         """
+        generation = self._generation
+        # A call that is waiting to enqueue holds a task, a turn and its ops, so it counts
+        # against the caps that queued ops count against. Over the caps, it fails the
+        # generation before any of that is built.
+        waiting = len(self._preparing) + self._retained_ops + 1
+        if waiting > MAX_RETAINED_OPS or waiting > MAX_WAITING_FUTURES:
+            ops.close()
+            logger.warning("Native WS publish budget exceeded; failing generation %s", generation)
+            self.fail_generation(generation)
+            refused: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            refused.set_result(None)
+            return refused
         previous = self._turn
         turn: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._turn = turn
-        task = asyncio.ensure_future(self._queue_turn(previous, turn, self._generation, ops))
-        # A task that ends without reaching its release, such as one cancelled before it
-        # starts, must not hold up the calls queued behind it.
-        task.add_done_callback(lambda _: _release(turn))
+        task = asyncio.ensure_future(self._queue_turn(previous, turn, generation, ops))
+        self._preparing[turn] = task
+        # A task cancelled before it starts never runs _queue_turn, so this callback ends the call.
+        task.add_done_callback(lambda _: self._unprepare(turn, previous, ops))
         return task
 
     async def _queue_turn(
@@ -195,15 +210,35 @@ class NativePublisher:
         previous: asyncio.Future[None] | None,
         turn: asyncio.Future[None],
         generation: str | None,
-        ops: Awaitable[list[bytes]],
+        ops: Coroutine[Any, Any, list[bytes]],
     ) -> None:
         try:
+            # Shielded: cancelling this call must not cancel the turn it is waiting for.
             if previous is not None:
-                await previous
+                await asyncio.shield(previous)
             futures = [self._enqueue(op, generation) for op in await ops]
         finally:
-            _release(turn)
+            self._unprepare(turn, previous, ops)
         await _settle_all(futures)
+
+    def _unprepare(
+        self,
+        turn: asyncio.Future[None],
+        previous: asyncio.Future[None] | None,
+        ops: Coroutine[Any, Any, list[bytes]],
+    ) -> None:
+        """End a call's preparation, and release its place once the place before it is released.
+
+        A cancelled call releases only after its predecessor, so a later call cannot enqueue
+        ahead of an earlier one that is still waiting.
+        """
+        self._preparing.pop(turn, None)
+        # Closes the ops of a call that never started; a finished coroutine is unaffected.
+        ops.close()
+        if previous is None or previous.done():
+            _release(turn)
+        else:
+            previous.add_done_callback(lambda _: _release(turn))
 
     def fail_generation(self, generation: str | None) -> None:
         """Retire the current generation without retrying its work, then rebind."""
@@ -216,7 +251,8 @@ class NativePublisher:
         self._stopped = True
         self._generation = None
         self._drop_queued(lambda op: True)
-        tasks: list[asyncio.Task[Any]] = [*self._background]
+        # Calls still preparing are cancelled. Calls already queued settle through _drop_queued.
+        tasks: list[asyncio.Task[Any]] = [*self._background, *self._preparing.values()]
         if self._in_flight is not None:
             batch, request = self._in_flight
             self._settle(batch)

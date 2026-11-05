@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import json
 import tracemalloc
+import warnings
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -1171,6 +1173,111 @@ async def test_large_publish_keeps_its_place_before_later_calls(supervisor_token
         assert labels == ["big", "subscribe", "small"]
     finally:
         await publisher.stop()
+
+
+def _hold_encodes(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Keep every publish's encoding pending until the returned event is set."""
+    gate = asyncio.Event()
+    encode = native_publish._publish_ops
+
+    async def held(filter_json: str, sources: Any) -> list[bytes]:
+        await gate.wait()
+        return await encode(filter_json, sources)
+
+    monkeypatch.setattr(native_publish, "_publish_ops", held)
+    return gate
+
+
+async def test_cancelled_waiter_keeps_later_calls_behind_its_predecessor(
+    supervisor_token: str,
+) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        big = publisher.publish(
+            {"type": "big"},
+            [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+        )
+        waiter = publisher.publish({"type": "waiter"})
+        # One loop turn lets big start encoding and the waiter block on big's place.
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        small = publisher.publish({"type": "small"})
+        await asyncio.wait_for(asyncio.gather(big, small), 2.0)
+        labels = [op.get("filter", {}).get("type", op.get("op")) for op in daemon.ops(GEN1)]
+        assert labels == ["big", "small"]
+    finally:
+        await publisher.stop()
+
+
+async def test_call_cancelled_before_it_starts_leaves_no_op_coroutine(
+    supervisor_token: str,
+) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        big = publisher.publish(
+            {"type": "big"},
+            [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+        )
+        cancelled = publisher.publish({"type": "cancelled"})
+        cancelled.cancel()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled
+            gc.collect()
+        after = publisher.publish({"type": "after"})
+        await asyncio.wait_for(asyncio.gather(big, after), 2.0)
+        assert [str(w.message) for w in caught if "never awaited" in str(w.message)] == []
+        labels = [op.get("filter", {}).get("type", op.get("op")) for op in daemon.ops(GEN1)]
+        assert labels == ["big", "after"]
+    finally:
+        await publisher.stop()
+
+
+async def test_preparations_over_the_waiting_cap_fail_the_generation(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_WAITING_FUTURES", 2)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.2)
+    gate = _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        held = [publisher.publish({"type": "held", "n": n}) for n in range(2)]
+        # Both held calls wait for encoding and count as waiting, so the third is refused
+        # without building any op.
+        refused = publisher.publish({"type": "refused"})
+        assert refused.done() and refused.result() is None
+        assert publisher.generation is None
+        gate.set()
+        await asyncio.wait_for(asyncio.gather(*held), 2.0)
+        assert daemon.ops(GEN1) == []
+        assert publisher.retained_ops == 0
+    finally:
+        await publisher.stop()
+
+
+async def test_stop_cancels_calls_still_preparing(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    first = publisher.publish({"type": "first"})
+    second = publisher.publish({"type": "second"})
+    await _turns()
+    await asyncio.wait_for(publisher.stop(), 2.0)
+    assert first.cancelled() and second.cancelled()
+    assert publisher.retained_ops == 0
+    assert daemon.ops(GEN1) == []
 
 
 async def test_bind_token_poll_stays_inside_token_wait_while_large_events_encode(

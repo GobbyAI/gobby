@@ -226,12 +226,21 @@ When a publisher is attached:
 - `publish` and `subscribe` are synchronous and return a future. Each call takes its
   place in the queue order when it is made, and its operations enqueue after every
   earlier call's, even when encoding yields to the loop. The future resolves to `None`
-  when its operations are settled or dropped.
+  when its operations are settled or dropped. Cancelling a call before it queues its
+  operations leaves none behind. A later call still enqueues after every earlier call,
+  including one cancelled while it waits for its place.
 - A call captures the publisher's generation when it is made. An operation whose
   generation has ended by the time it enqueues is dropped, and its future resolves to
   `None`.
 - A frame that fails to encode fails its call with the encoding error. No operation of
   that call is queued.
+- Calls waiting for their place or encoding, plus queued operations, count against both
+  `MAX_RETAINED_OPS` and `MAX_WAITING_FUTURES`. A call over either cap fails the
+  generation before it encodes, and its future resolves to `None`.
+- `stop()` cancels calls still waiting for their place or encoding, so awaiting their
+  futures raises `CancelledError`. Calls whose operations are queued settle to `None`.
+  `BroadcastMixin.broadcast` catches only `TypeError` and `ValueError`, so a broadcast
+  that `stop()` cancels raises `CancelledError` in its caller.
 - A workspace event is encoded by `canonical_json_async`, which yields to the loop about
   every 64 Ki characters of output (`CANONICAL_PIECE_CHARS`). Its bytes equal
   `canonical_json`'s, and its fragment frames equal `fragment_event`'s over those bytes,
