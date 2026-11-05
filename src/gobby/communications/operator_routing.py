@@ -12,7 +12,10 @@ from gobby.workflows.agent_resolver import session_has_capability
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.session_models import Session
+
+OPERATOR_ATTACH_CAPABILITY = "auto_attach_operator_conversations"
 
 
 def _operator_sender(channel: ChannelConfig) -> str | None:
@@ -44,16 +47,21 @@ def is_terminal_session(session: Session) -> bool:
     )
 
 
+def is_operator_seat(db: HubDatabase, session: Session) -> bool:
+    """Live terminal the operator may select: unspawned, or granted by its definition."""
+    if session.status not in LIVE_SESSION_STATUSES or not is_terminal_session(session):
+        return False
+    unspawned = (
+        getattr(session, "agent_depth", 0) == 0 and getattr(session, "agent_run_id", None) is None
+    )
+    return unspawned or session_has_capability(db, session.id, OPERATOR_ATTACH_CAPABILITY)
+
+
 def can_auto_attach(manager: CommunicationsManager, session: Session) -> bool:
-    """Read the current definition's grant for an eligible terminal seat."""
-    return (
-        session.status in LIVE_SESSION_STATUSES
-        and is_terminal_session(session)
-        and session.agent_depth == 0
-        and session.agent_run_id is None
-        and session_has_capability(
-            manager.store.db, session.id, "auto_attach_operator_conversations"
-        )
+    """Automatic attachment also needs the definition's grant, spawned or not."""
+    db = manager.store.db
+    return is_operator_seat(db, session) and session_has_capability(
+        db, session.id, OPERATOR_ATTACH_CAPABILITY
     )
 
 
