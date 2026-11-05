@@ -1,10 +1,8 @@
 //! A4b outcome-gate tests. The transport produces the real outcome; tests
 //! change its generation only to control the ordering at the apply gate.
 
-#[path = "../../../tests/mock_daemon/transport.rs"]
-mod mock_daemon;
-
 use crate as client;
+use crate::app::live_loop::mock_daemon;
 #[path = "../../../tests/mock_daemon/draw.rs"]
 mod draw;
 #[path = "../../../tests/mock_daemon/host.rs"]
@@ -14,6 +12,8 @@ use super::*;
 
 #[path = "jobs_held_placement_tests.rs"]
 mod held_placement;
+#[path = "jobs_apply_orphan_tests.rs"]
+mod orphan_inventory;
 #[path = "jobs_snapshot_order_tests.rs"]
 mod snapshot_order;
 use crate::app::live_loop::jobs;

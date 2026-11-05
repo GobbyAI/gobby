@@ -17,6 +17,7 @@ use super::control::{
 };
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
+use super::orphans::{apply_orphans_destroyed, show_orphan_inventory};
 
 #[cfg(test)]
 #[path = "jobs_apply_tests.rs"]
@@ -56,6 +57,11 @@ pub(super) fn apply_job_outcome(
         // A relayed theme and a focus report are real whichever generation
         // sent them, as the host grant is.
         result @ (JobResult::ThemeRelayed { .. } | JobResult::FocusReported { .. }) => result,
+        // The destroy's kills happened whichever generation issued them.
+        result @ JobResult::OrphansDestroyed { .. } => result,
+        // The inventory answers the request it is tagged with, so an earlier
+        // generation's answer still opens the dialog while that request is pending.
+        result @ JobResult::OrphanInventory { .. } => result,
         // A chain's committed answer lands or is orphaned whichever generation
         // issued it; the arms below decide which.
         result @ (JobResult::Spawned { .. }
@@ -162,6 +168,12 @@ pub(super) fn apply_job_outcome(
         }
         JobResult::Disposed { orphan, outcome } => {
             chain_apply::apply_disposed(workspace, chrome, jobs, orphan, outcome);
+        }
+        JobResult::OrphanInventory { request, result } => {
+            show_orphan_inventory(workspace, chrome, request, result);
+        }
+        JobResult::OrphansDestroyed { summary } => {
+            apply_orphans_destroyed(workspace, chrome, &summary);
         }
         JobResult::Responded { pending, result } => {
             apply_response(workspace, chrome, pending, result);

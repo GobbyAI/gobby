@@ -34,6 +34,7 @@ use super::super::{PaneId, Workspace};
 use super::chain_apply;
 use super::focus_hints::{self, FocusMemo, ShownFocus};
 use super::mouse::Placement;
+use super::orphans::DestroySummary;
 use super::outage_grant::{self, GrantOutcome};
 
 #[cfg(test)]
@@ -210,6 +211,15 @@ pub enum JobResult {
         orphan: Orphan,
         outcome: DisposalOutcome,
     },
+    /// The orphan inventory behind the destroy dialog, tagged with the request
+    /// that asked for it. It opens the dialog only while that request is still
+    /// pending.
+    OrphanInventory {
+        request: u64,
+        result: Result<Vec<TerminalRow>, DaemonError>,
+    },
+    /// The destroy dialog's kills, one result per requested orphan.
+    OrphansDestroyed { summary: DestroySummary },
 }
 
 /// What an owned shell's create chain committed.
