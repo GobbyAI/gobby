@@ -477,17 +477,21 @@ def test_seats_sharing_a_title_admit(env: _Env) -> None:
     assert [seat.name for seat in seats] == ["researcher-1", "researcher-2"]
 
 
-def _seat_session(env: _Env, agent: str) -> tuple[str, str]:
-    """Run ``agent`` with its own live child session; return the session and run ids."""
+def _seat_session(env: _Env, agent: str, *, parent: str | None = None) -> tuple[str, str]:
+    """Run ``agent`` with its own live child session; return the session and run ids.
+
+    ``parent`` is the session that launched the run, a pipeline child for a runbook seat.
+    """
+    launcher = parent or env.parent_session_id
     child = SessionManager(env.db).register(
         external_id=f"seat-{uuid.uuid4()}",
         machine_id=AGENT_TEST_MACHINE_ID,
         source="claude",
         project_id=env.project_id,
-        parent_session_id=env.parent_session_id,
+        parent_session_id=launcher,
     )
     run = LocalAgentRunManager(env.db).create(
-        parent_session_id=env.parent_session_id,
+        parent_session_id=launcher,
         provider="claude",
         prompt="seat",
         agent_name=agent,
@@ -525,6 +529,26 @@ def test_live_seats_are_skipped_only_when_opted_in(env: _Env) -> None:
     assert (skipped.launch, dict(skipped.live)) == (("dev",), {"lead": lead})
     assert [seat.name for seat in skipped.seats] == ["lead", "dev"]
     assert (plain.launch, dict(plain.live)) == (("lead", "dev"), {})
+
+
+def test_a_partial_run_sees_only_its_own_tasks_live_seats(env: _Env) -> None:
+    """Live seats count only for the run's task, and a seat not requested still reports live."""
+    mine, theirs = _team_task(env, "Mine"), _team_task(env, "Theirs")
+    their_run = _pipeline_child(env, inputs={"task": f"#{theirs.seq_num}"})
+    _seat_session(env, "lead-agent", parent=their_run)
+    my_run = _pipeline_child(env, inputs={"task": f"#{mine.seq_num}"})
+    my_lead, _ = _seat_session(env, "lead-agent", parent=my_run)
+
+    partial = check_runbook_seats(
+        env.stores,
+        caller_session_id=my_run,
+        workspace=env.workspace_id,
+        requested="dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert (partial.launch, dict(partial.live)) == (("dev",), {"lead": my_lead})
 
 
 def _finished_run(env: _Env, session_id: str, run_id: str) -> None:

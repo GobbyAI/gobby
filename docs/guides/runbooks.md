@@ -117,9 +117,10 @@ last, and `seat_pane` adds seats to an existing pane.
 When `task` has no open planning child, the runbook creates one under it, and the
 Plan Writer claims that child before writing `.gobby/plans/task-<seq>.md`. Each seat's
 prompt names the task, the plan path and its teammates' session refs, and the lead's
-launch prompt names every seat. The runbook then sends each seat its lead's session ref
-and its teammates' refs, so the seats report to the lead. Until that connect message,
-they report to `report_to`. The lead relays the exchange and delivers the reviewed plan,
+launch prompt names every team seat, launched or already live. The runbook then sends each
+team seat its lead's session ref and its teammates' refs, so the seats report to the lead;
+a live lead gets the team's refs in a message. A partial rerun reconnects the whole roster.
+Until that connect message, the seats report to `report_to`. The lead relays the exchange and delivers the reviewed plan,
 its stamped plan and open objections to `report_to`, which Triage digests.
 
 The operator can launch the four-seat `plan-team` runbook directly:

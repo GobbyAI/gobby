@@ -1,6 +1,6 @@
 name: research-team
 type: pipeline
-version: "4.0.0"
+version: "4.0.1"
 description: |
   Research runbook: admits a treeless team for the task and launches a Researcher, a Research
   Reviewer and a Research Team Lead into one 'Research Team - #<task>' tab in the shared checkout.
@@ -20,7 +20,8 @@ description: |
   report_to.
   Relaunch missing seats, including the lead, with a fresh run that names them in `seats`; a failed
   runbook execution is never resumed. Supply seat_pane to add seats to an existing tab across runs.
-  A run that finds a live lead connects the seats it launches to that lead.
+  A run connects every seat of the team, launched or already live for the same task, to the team's
+  lead, and the lead to every seat, so a partial run reconnects the whole roster.
 tags: [runbook]
 resume_on_restart: true
 
@@ -188,8 +189,8 @@ steps:
         reserved_run_id: "${{ invocation_id }}"
         prompt: |
           You are the research team lead for task ${{ inputs.task }}.
-          ${{ ('Researcher session: ' ~ (steps['researcher'].output.child_session_id if steps['researcher'].output else steps.guard.output.live.get('researcher')) ~ '.') if 'researcher' in inputs.seats.split(',') else '' }}
-          ${{ ('Research reviewer session: ' ~ (steps['research-reviewer'].output.child_session_id if steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer')) ~ '.') if 'research-reviewer' in inputs.seats.split(',') else '' }}
+          ${{ ('Researcher session: ' ~ (steps['researcher'].output.child_session_id if 'researcher' in steps and steps['researcher'].output else steps.guard.output.live.get('researcher')) ~ '.') if ('researcher' in steps.guard.output.launch or 'researcher' in steps.guard.output.live) else '' }}
+          ${{ ('Research reviewer session: ' ~ (steps['research-reviewer'].output.child_session_id if 'research-reviewer' in steps and steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer')) ~ '.') if ('research-reviewer' in steps.guard.output.launch or 'research-reviewer' in steps.guard.output.live) else '' }}
           Stay in the main checkout; write no research and no code. Read project_policy and load your procedure through get_skill_file before work. Deliver the reviewed report to report_to session ${{ inputs.report_to }}. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target="session", target_id="${{ inputs.report_to }}"). With no assigned work, wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines.
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane,
@@ -200,32 +201,34 @@ steps:
           if steps.guard.output.get('tab_exists') or len(steps.guard.output.launch) > 1
           else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
-  # Each seat learns its team lead and its teammate in one message. A seat that is live from an
-  # earlier run gets the same message, so a re-run reconnects it. The connect steps run only when
-  # the lead is part of this run's team; without a lead, seats keep reporting to report_to.
+  # Each seat learns its team lead and its teammate in one message. The team is every seat this
+  # run launches or finds live for the task, so a seat live from an earlier run gets the same
+  # message and a re-run reconnects it. The connect steps run only when the lead is on the team;
+  # without a lead, seats keep reporting to report_to.
   - id: connect-researcher
-    condition: "${{ 'researcher' in inputs.seats.split(',') and 'research-team-lead' in inputs.seats.split(',') }}"
+    condition: "${{ ('researcher' in steps.guard.output.launch or 'researcher' in steps.guard.output.live) and ('research-team-lead' in steps.guard.output.launch or 'research-team-lead' in steps.guard.output.live) }}"
     mcp:
       server: gobby-agents
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ steps['researcher'].output.child_session_id if steps['researcher'].output else steps.guard.output.live.get('researcher') }}"
+        target_id: "${{ steps['researcher'].output.child_session_id if 'researcher' in steps and steps['researcher'].output else steps.guard.output.live.get('researcher') }}"
         content: |
-          Your team lead for task ${{ inputs.task }} is session ${{ steps['research-team-lead'].output.child_session_id if steps['research-team-lead'].output else steps.guard.output.live.get('research-team-lead') }}. Send EVENT=CANDIDATE to your reviewer and to it, and EVENT=READY_TO_CLOSE to it. ${{ ('Your research reviewer is session ' ~ (steps['research-reviewer'].output.child_session_id if steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer')) ~ '.') if 'research-reviewer' in inputs.seats.split(',') else '' }}
+          Your team lead for task ${{ inputs.task }} is session ${{ steps['research-team-lead'].output.child_session_id if 'research-team-lead' in steps and steps['research-team-lead'].output else steps.guard.output.live.get('research-team-lead') }}. Send EVENT=CANDIDATE to your reviewer and to it, and EVENT=READY_TO_CLOSE to it. ${{ ('Your research reviewer is session ' ~ (steps['research-reviewer'].output.child_session_id if 'research-reviewer' in steps and steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer')) ~ '.') if ('research-reviewer' in steps.guard.output.launch or 'research-reviewer' in steps.guard.output.live) else '' }}
 
   - id: connect-reviewer
-    condition: "${{ 'research-reviewer' in inputs.seats.split(',') and 'research-team-lead' in inputs.seats.split(',') }}"
+    condition: "${{ ('research-reviewer' in steps.guard.output.launch or 'research-reviewer' in steps.guard.output.live) and ('research-team-lead' in steps.guard.output.launch or 'research-team-lead' in steps.guard.output.live) }}"
     mcp:
       server: gobby-agents
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ steps['research-reviewer'].output.child_session_id if steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer') }}"
+        target_id: "${{ steps['research-reviewer'].output.child_session_id if 'research-reviewer' in steps and steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer') }}"
         content: |
-          Your team lead for task ${{ inputs.task }} is session ${{ steps['research-team-lead'].output.child_session_id if steps['research-team-lead'].output else steps.guard.output.live.get('research-team-lead') }}. Send each CANDIDATE_VERDICT to it and to the researcher. ${{ ('Your researcher is session ' ~ (steps['researcher'].output.child_session_id if steps['researcher'].output else steps.guard.output.live.get('researcher')) ~ '.') if 'researcher' in inputs.seats.split(',') else '' }}
+          Your team lead for task ${{ inputs.task }} is session ${{ steps['research-team-lead'].output.child_session_id if 'research-team-lead' in steps and steps['research-team-lead'].output else steps.guard.output.live.get('research-team-lead') }}. Send each CANDIDATE_VERDICT to it and to the researcher. ${{ ('Your researcher is session ' ~ (steps['researcher'].output.child_session_id if 'researcher' in steps and steps['researcher'].output else steps.guard.output.live.get('researcher')) ~ '.') if ('researcher' in steps.guard.output.launch or 'researcher' in steps.guard.output.live) else '' }}
 
-  # A lead that was already live gets the seats this run launched, since its launch prompt cannot.
+  # A lead that was already live gets every seat of the team, launched or live, since its launch
+  # prompt cannot name them.
   - id: connect-lead
     condition: "${{ 'research-team-lead' in steps.guard.output.live and len(steps.guard.output.launch) > 0 }}"
     mcp:
@@ -235,7 +238,7 @@ steps:
         target: session
         target_id: "${{ steps.guard.output.live.get('research-team-lead') }}"
         content: |
-          Seats launched for task ${{ inputs.task }} and connected to you: ${{ ('Researcher session: ' ~ steps['researcher'].output.child_session_id ~ '.') if 'researcher' in steps.guard.output.launch else '' }} ${{ ('Research reviewer session: ' ~ steps['research-reviewer'].output.child_session_id ~ '.') if 'research-reviewer' in steps.guard.output.launch else '' }} Relay their exchange and report READY_TO_CLOSE and verdicts to report_to session ${{ inputs.report_to }}.
+          Seats on task ${{ inputs.task }} connected to you: ${{ ('Researcher session: ' ~ (steps['researcher'].output.child_session_id if 'researcher' in steps and steps['researcher'].output else steps.guard.output.live.get('researcher')) ~ '.') if ('researcher' in steps.guard.output.launch or 'researcher' in steps.guard.output.live) else '' }} ${{ ('Research reviewer session: ' ~ (steps['research-reviewer'].output.child_session_id if 'research-reviewer' in steps and steps['research-reviewer'].output else steps.guard.output.live.get('research-reviewer')) ~ '.') if ('research-reviewer' in steps.guard.output.launch or 'research-reviewer' in steps.guard.output.live) else '' }} Relay their exchange and report READY_TO_CLOSE and verdicts to report_to session ${{ inputs.report_to }}.
 
   # Tiles the tab the launched seats joined, by the tab_ref their placement returned. A supplied
   # seat_pane can sit in a tab with any title, so the tab is named by ref, not by title. A refused

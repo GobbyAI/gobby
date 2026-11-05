@@ -1,6 +1,6 @@
 name: plan-team
 type: pipeline
-version: "4.0.0"
+version: "4.0.1"
 description: |
   Planning runbook: launches the plan writer, plan advocate, plan adversary and plan team lead
   into one 'Plan Team - #<task>' tab in the shared checkout. Each seat runs its own agent
@@ -18,7 +18,8 @@ description: |
   open objections to report_to.
   Relaunch missing seats, including the lead, with a fresh run that names them in `seats`; a failed
   runbook execution is never resumed. Supply seat_pane to add seats to an existing tab across runs.
-  A run that finds a live lead connects the seats it launches to that lead.
+  A run connects every seat of the team, launched or already live for the same task, to the team's
+  lead, and the lead to every seat, so a partial run reconnects the whole roster.
   Planning child: the run reuses the task's open planning child or creates one, and the plan
   writer claims it before writing the plan file. Before end_agent_run the Writer records an
   approved implementation attestation on that child with the full final plan commit SHA and
@@ -220,7 +221,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan adversary seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}. ${{ ('Your Plan Writer is session ' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '\").') if 'plan-writer' in inputs.seats.split(',') else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Until the connect message names your team lead, use report_to for every send and wait; after it, use your team lead. With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan adversary seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}. ${{ ('Your Plan Writer is session ' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '\").') if ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Until the connect message names your team lead, use report_to for every send and wait; after it, use your team lead. With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref
           if 'plan-writer' in steps.guard.output.launch else none),
@@ -244,7 +245,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan advocate seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}. ${{ ('Your Plan Writer is session ' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '\").') if 'plan-writer' in inputs.seats.split(',') else '' }} ${{ ('Your Plan Adversary is session ' ~ (steps['plan-adversary'].output.child_session_id if steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ (steps['plan-adversary'].output.child_session_id if steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '\").') if 'plan-adversary' in inputs.seats.split(',') else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Complete your installed required-skill bootstrap order before filesystem reads. For standing coordination, follow your installed wait protocol for each live planning seat and report_to=\"${{ inputs.report_to }}\"; discover a seat through report_to if it was not launched here. Until the connect message names your team lead, use report_to for every send and wait; after it, use your team lead. Cancel the other waits when any source replies, and never automatically repeat an hourly timeout cycle. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan advocate seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}. ${{ ('Your Plan Writer is session ' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '\").') if ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) else '' }} ${{ ('Your Plan Adversary is session ' ~ (steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ (steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '\").') if ('plan-adversary' in steps.guard.output.launch or 'plan-adversary' in steps.guard.output.live) else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Complete your installed required-skill bootstrap order before filesystem reads. For standing coordination, follow your installed wait protocol for each live planning seat and report_to=\"${{ inputs.report_to }}\"; discover a seat through report_to if it was not launched here. Until the connect message names your team lead, use report_to for every send and wait; after it, use your team lead. Cancel the other waits when any source replies, and never automatically repeat an hourly timeout cycle. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref
           if 'plan-writer' in steps.guard.output.launch else steps['plan-adversary'].output.pane_ref),
@@ -273,9 +274,9 @@ steps:
         reserved_run_id: "${{ invocation_id }}"
         prompt: |
           You are the plan team lead for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}.
-          ${{ ('Plan writer session: ' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if 'plan-writer' in inputs.seats.split(',') else '' }}
-          ${{ ('Plan adversary session: ' ~ (steps['plan-adversary'].output.child_session_id if steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if 'plan-adversary' in inputs.seats.split(',') else '' }}
-          ${{ ('Plan advocate session: ' ~ (steps['plan-advocate'].output.child_session_id if steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if 'plan-advocate' in inputs.seats.split(',') else '' }}
+          ${{ ('Plan writer session: ' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) else '' }}
+          ${{ ('Plan adversary session: ' ~ (steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if ('plan-adversary' in steps.guard.output.launch or 'plan-adversary' in steps.guard.output.live) else '' }}
+          ${{ ('Plan advocate session: ' ~ (steps['plan-advocate'].output.child_session_id if 'plan-advocate' in steps and steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if ('plan-advocate' in steps.guard.output.launch or 'plan-advocate' in steps.guard.output.live) else '' }}
           Stay in the shared checkout; write no plan text and no code. Read project_policy and load your procedure through get_skill_file before work. Deliver the reviewed plan and every open objection to report_to session ${{ inputs.report_to }}. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target="session", target_id="${{ inputs.report_to }}"). With no assigned work, wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines.
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane,
@@ -286,43 +287,45 @@ steps:
           if steps.guard.output.tab_exists or len(steps.guard.output.launch) > 1
           else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
-  # Each seat learns its team lead and its teammates in one message. A seat that is live from an
-  # earlier run gets the same message, so a re-run reconnects it. The connect steps run only when
-  # the lead is part of this run's team; without a lead, seats keep reporting to report_to.
+  # Each seat learns its team lead and its teammates in one message. The team is every seat this
+  # run launches or finds live for the task, so a seat live from an earlier run gets the same
+  # message and a re-run reconnects it. The connect steps run only when the lead is on the team;
+  # without a lead, seats keep reporting to report_to.
   - id: connect-writer
-    condition: "${{ 'plan-writer' in inputs.seats.split(',') and 'plan-team-lead' in inputs.seats.split(',') }}"
+    condition: "${{ ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) and ('plan-team-lead' in steps.guard.output.launch or 'plan-team-lead' in steps.guard.output.live) }}"
     mcp:
       server: gobby-agents
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer') }}"
+        target_id: "${{ steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer') }}"
         content: |
-          Your team lead for task ${{ inputs.task }} is session ${{ steps['plan-team-lead'].output.child_session_id if steps['plan-team-lead'].output else steps.guard.output.live.get('plan-team-lead') }}. Send it the planning-child ref, stamped plan, full SHA and attestation ID. ${{ ('Plan Adversary: session ' ~ (steps['plan-adversary'].output.child_session_id if steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if 'plan-adversary' in inputs.seats.split(',') else '' }} ${{ ('Plan Advocate: session ' ~ (steps['plan-advocate'].output.child_session_id if steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if 'plan-advocate' in inputs.seats.split(',') else '' }} Send them your edits and findings with gobby-agents:send_message(target="session", target_id=<their session>).
+          Your team lead for task ${{ inputs.task }} is session ${{ steps['plan-team-lead'].output.child_session_id if 'plan-team-lead' in steps and steps['plan-team-lead'].output else steps.guard.output.live.get('plan-team-lead') }}. Send it the planning-child ref, stamped plan, full SHA and attestation ID. ${{ ('Plan Adversary: session ' ~ (steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if ('plan-adversary' in steps.guard.output.launch or 'plan-adversary' in steps.guard.output.live) else '' }} ${{ ('Plan Advocate: session ' ~ (steps['plan-advocate'].output.child_session_id if 'plan-advocate' in steps and steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if ('plan-advocate' in steps.guard.output.launch or 'plan-advocate' in steps.guard.output.live) else '' }} Send them your edits and findings with gobby-agents:send_message(target="session", target_id=<their session>).
 
   - id: connect-adversary
-    condition: "${{ 'plan-adversary' in inputs.seats.split(',') and 'plan-team-lead' in inputs.seats.split(',') }}"
+    condition: "${{ ('plan-adversary' in steps.guard.output.launch or 'plan-adversary' in steps.guard.output.live) and ('plan-team-lead' in steps.guard.output.launch or 'plan-team-lead' in steps.guard.output.live) }}"
     mcp:
       server: gobby-agents
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ steps['plan-adversary'].output.child_session_id if steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary') }}"
+        target_id: "${{ steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary') }}"
         content: |
-          Your team lead for task ${{ inputs.task }} is session ${{ steps['plan-team-lead'].output.child_session_id if steps['plan-team-lead'].output else steps.guard.output.live.get('plan-team-lead') }}. Send your findings and completed objections to it. ${{ ('Plan Writer: session ' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if 'plan-writer' in inputs.seats.split(',') else '' }} ${{ ('Plan Advocate: session ' ~ (steps['plan-advocate'].output.child_session_id if steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if 'plan-advocate' in inputs.seats.split(',') else '' }} Send them your edits and findings with gobby-agents:send_message(target="session", target_id=<their session>).
+          Your team lead for task ${{ inputs.task }} is session ${{ steps['plan-team-lead'].output.child_session_id if 'plan-team-lead' in steps and steps['plan-team-lead'].output else steps.guard.output.live.get('plan-team-lead') }}. Send your findings and completed objections to it. ${{ ('Plan Writer: session ' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) else '' }} ${{ ('Plan Advocate: session ' ~ (steps['plan-advocate'].output.child_session_id if 'plan-advocate' in steps and steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if ('plan-advocate' in steps.guard.output.launch or 'plan-advocate' in steps.guard.output.live) else '' }} Send them your edits and findings with gobby-agents:send_message(target="session", target_id=<their session>).
 
   - id: connect-advocate
-    condition: "${{ 'plan-advocate' in inputs.seats.split(',') and 'plan-team-lead' in inputs.seats.split(',') }}"
+    condition: "${{ ('plan-advocate' in steps.guard.output.launch or 'plan-advocate' in steps.guard.output.live) and ('plan-team-lead' in steps.guard.output.launch or 'plan-team-lead' in steps.guard.output.live) }}"
     mcp:
       server: gobby-agents
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ steps['plan-advocate'].output.child_session_id if steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate') }}"
+        target_id: "${{ steps['plan-advocate'].output.child_session_id if 'plan-advocate' in steps and steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate') }}"
         content: |
-          Your team lead for task ${{ inputs.task }} is session ${{ steps['plan-team-lead'].output.child_session_id if steps['plan-team-lead'].output else steps.guard.output.live.get('plan-team-lead') }}. Send your findings and completed objections to it. ${{ ('Plan Writer: session ' ~ (steps['plan-writer'].output.child_session_id if steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if 'plan-writer' in inputs.seats.split(',') else '' }} ${{ ('Plan Adversary: session ' ~ (steps['plan-adversary'].output.child_session_id if steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if 'plan-adversary' in inputs.seats.split(',') else '' }} Send them your edits and findings with gobby-agents:send_message(target="session", target_id=<their session>).
+          Your team lead for task ${{ inputs.task }} is session ${{ steps['plan-team-lead'].output.child_session_id if 'plan-team-lead' in steps and steps['plan-team-lead'].output else steps.guard.output.live.get('plan-team-lead') }}. Send your findings and completed objections to it. ${{ ('Plan Writer: session ' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) else '' }} ${{ ('Plan Adversary: session ' ~ (steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if ('plan-adversary' in steps.guard.output.launch or 'plan-adversary' in steps.guard.output.live) else '' }} Send them your edits and findings with gobby-agents:send_message(target="session", target_id=<their session>).
 
-  # A lead that was already live gets the seats this run launched, since its launch prompt cannot.
+  # A lead that was already live gets every seat of the team, launched or live, since its launch
+  # prompt cannot name them.
   - id: connect-lead
     condition: "${{ 'plan-team-lead' in steps.guard.output.live and len(steps.guard.output.launch) > 0 }}"
     mcp:
@@ -332,7 +335,7 @@ steps:
         target: session
         target_id: "${{ steps.guard.output.live.get('plan-team-lead') }}"
         content: |
-          Seats launched for task ${{ inputs.task }} and connected to you: ${{ ('Plan writer session: ' ~ steps['plan-writer'].output.child_session_id ~ '.') if 'plan-writer' in steps.guard.output.launch else '' }} ${{ ('Plan adversary session: ' ~ steps['plan-adversary'].output.child_session_id ~ '.') if 'plan-adversary' in steps.guard.output.launch else '' }} ${{ ('Plan advocate session: ' ~ steps['plan-advocate'].output.child_session_id ~ '.') if 'plan-advocate' in steps.guard.output.launch else '' }} Relay their exchange and deliver the reviewed plan to report_to session ${{ inputs.report_to }}.
+          Seats on task ${{ inputs.task }} connected to you: ${{ ('Plan writer session: ' ~ (steps['plan-writer'].output.child_session_id if 'plan-writer' in steps and steps['plan-writer'].output else steps.guard.output.live.get('plan-writer')) ~ '.') if ('plan-writer' in steps.guard.output.launch or 'plan-writer' in steps.guard.output.live) else '' }} ${{ ('Plan adversary session: ' ~ (steps['plan-adversary'].output.child_session_id if 'plan-adversary' in steps and steps['plan-adversary'].output else steps.guard.output.live.get('plan-adversary')) ~ '.') if ('plan-adversary' in steps.guard.output.launch or 'plan-adversary' in steps.guard.output.live) else '' }} ${{ ('Plan advocate session: ' ~ (steps['plan-advocate'].output.child_session_id if 'plan-advocate' in steps and steps['plan-advocate'].output else steps.guard.output.live.get('plan-advocate')) ~ '.') if ('plan-advocate' in steps.guard.output.launch or 'plan-advocate' in steps.guard.output.live) else '' }} Relay their exchange and deliver the reviewed plan to report_to session ${{ inputs.report_to }}.
 
   # Tiles the tab the launched seats joined, by the tab_ref their placement returned. A supplied
   # seat_pane can sit in a tab with any title, so the tab is named by ref, not by title. When no

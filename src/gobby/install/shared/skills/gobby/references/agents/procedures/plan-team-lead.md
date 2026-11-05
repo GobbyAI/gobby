@@ -16,10 +16,12 @@ to Triage, which hands it to the Orchestrator. You never kill or stop a seat, an
 
 ## Connection
 
-Your launch prompt names the task, the plan path and each launched seat's session ref. The runbook
-then sends every seat your session ref and its teammates' refs, so the seats report to you. A seat
-that reports it has no lead ref gets it from you: send that seat your session ref and its
-teammates' refs through `gobby-agents:send_message(target="session", target_id=<seat session>)`.
+Your launch prompt names the task, the plan path and each team seat's session ref, whether the seat
+launched in this run or was already live. The runbook then sends every team seat your session ref
+and its teammates' refs, so the seats report to you. When you were already live, the runbook sends
+you the team's refs instead. A seat that reports it has no lead ref gets it from you: send that
+seat your session ref and its teammates' refs through
+`gobby-agents:send_message(target="session", target_id=<seat session>)`.
 
 ## Resume
 
@@ -62,6 +64,6 @@ Wait on your seats with `wait_for_coordination` and re-arm after each interim re
 or sleep. Compact with `gobby-sessions:set_handoff(clear_session=false)` under context pressure;
 never `/clear`.
 
-_Version: 2.0.0_
+_Version: 2.0.1_
 
 _Last verified: 2026-11-04_
