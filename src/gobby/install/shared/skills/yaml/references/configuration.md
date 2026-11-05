@@ -41,3 +41,5 @@
   and schema files when the YAML contract changes.
 - When a config file controls production behavior, identify the rollback or
   compatibility concern before changing defaults.
+
+_Version: 1.0.0_

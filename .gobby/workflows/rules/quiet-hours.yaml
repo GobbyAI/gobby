@@ -1,0 +1,25 @@
+version: "1.0.0"
+
+# Operator directive, 2026-11-02: no daemon restart or cutover during this project's
+# quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): 04:00-05:00
+# America/Chicago daily, extended to 04:00-06:00 on Mondays. Keep these windows in
+# step with project_policy.quiet_hours. Every hooked session is blocked; the
+# operator's own shell runs outside hooks and stays unaffected.
+rules:
+  quiet-hours-daemon-management:
+    description: "Block daemon start, stop, restart and cutover for every session during project quiet hours"
+    tags: [default, project-policy]
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: >
+      time_in_windows([
+        {'tz': 'America/Chicago', 'start': '04:00', 'end': '05:00'},
+        {'tz': 'America/Chicago', 'start': '04:00', 'end': '06:00', 'days': ['mon']}
+      ])
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:gobby\s+(?:start|stop|restart|cutover)\b|python[0-9.]*\s+-m\s+gobby\.runner\b|curl\b.*/api/admin/(?:restart|shutdown))'
+        reason: "Project quiet hours (04:00-05:00 America/Chicago daily; 04:00-06:00 on Mondays): no daemon start, stop, restart or cutover. Retry after the window closes."

@@ -355,7 +355,7 @@ async def test_wake_and_handoff_writes_never_concatenate_across_providers(
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
 @pytest.mark.parametrize("command", ["/compact", "/clear"])
 @pytest.mark.parametrize("blocked", [False, True], ids=["draft", "unknown"])
-async def test_wake_and_handoff_preserve_operator_draft_and_durable_message(
+async def test_wake_keeps_operator_draft_while_set_handoff_wipes_it(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -376,13 +376,17 @@ async def test_wake_and_handoff_preserve_operator_draft_and_durable_message(
         composer_ledger.block(runtime.terminal_id, "provider_limit")
     try:
         wake = await dispatcher.dispatch_live_wake(session_id)
-        compact = await _send_command(pane, command, session_id, cli_source)
         assert wake["delivered"] is False
         assert wake["skipped"] == ("composer_unconfirmed" if blocked else "composer_occupied")
-        assert compact[0] is False
         assert runtime.write_log == []
         assert runtime.buffer == "operator's unfinished word"
-        assert runtime.submitted == []
+        assert len(messages.get_undelivered_wake_messages(session_id)) == 1
+
+        # set_handoff owns the composer (#25595): it wipes the draft and sends its command.
+        compact = await _send_command(pane, command, session_id, cli_source)
+        assert compact[0] is True, compact
+        assert runtime.buffer == ""
+        assert runtime.submitted == [command]
         assert len(messages.get_undelivered_wake_messages(session_id)) == 1
     finally:
         await _cancel_retries(dispatcher)

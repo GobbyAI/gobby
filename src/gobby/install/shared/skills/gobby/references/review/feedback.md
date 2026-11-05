@@ -61,3 +61,5 @@ these examples only with isolated state. CLI readers are `feedback observations`
 `feedback status` the unreviewed backlog, latest run and review schedule, backed by
 `GET /api/feedback/entries`, `/runs` and `/status`; details are in the
 [CLI guide](../../../../../../../../docs/guides/cli-commands.md#feedback-review).
+
+_Version: 1.0.0_

@@ -53,7 +53,8 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
             branch_name: Name for the new branch.
             base_branch: Local branch or explicit origin ref; omitted uses caller HEAD.
             task_id: Optional task ID to link to this worktree.
-            worktree_path: Optional custom path (defaults to ../{branch_name}).
+            worktree_path: Optional path inside ~/.gobby/worktrees; any other path is
+                refused. Defaults to ~/.gobby/worktrees/{project}/{branch_name}.
             create_branch: Whether to create a new branch (default: True).
             project_path: Path to project directory (pass cwd from CLI).
             provider: CLI provider to install hooks for (claude, codex, droid).

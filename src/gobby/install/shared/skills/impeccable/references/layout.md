@@ -75,3 +75,5 @@ Variation is not a goal by itself. Repetition should support recognition; break 
 Answer each item with rendered or source evidence, then rerun the scan. Do not substitute a bare “yes” for verification.
 
 When the structure holds, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`).
+
+_Version: 1.0.0_

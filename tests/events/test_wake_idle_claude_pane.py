@@ -182,6 +182,6 @@ async def test_claude_wake_waits_for_open_turn_then_delivers_once_idle(
 
         pane.sender.assert_awaited_once()
         row = session_manager.get(pane.session_id)
-        assert row is not None and row.status == "paused"
+        assert row is not None and row.status == "idle"
     finally:
         await _cancel_followups(pane.dispatcher)

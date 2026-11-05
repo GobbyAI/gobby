@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [default, worker-safety, enforcement, gobby]
 
 rules:

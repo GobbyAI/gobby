@@ -26,4 +26,6 @@ Do not hand-build V1 fences, repair a snapshot, silently drop a failure, or synt
 
 See [Optional adversarial review](../../../../../../../../docs/guides/plans-and-plan-mode.md#optional-adversarial-review).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

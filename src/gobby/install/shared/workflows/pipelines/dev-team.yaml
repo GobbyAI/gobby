@@ -1,6 +1,6 @@
 name: dev-team
 type: pipeline
-version: 4.0.0
+version: 4.1.0
 description: 'One DevTeam for a task or epic: developer, independent reviewer and dev-team-lead. A leaf
   run under a parent team launches no lead; the epic''s Dev Team Lead leads the leaf.'
 tags:
@@ -79,7 +79,7 @@ steps:
       seat_models:
         developer: ${{ inputs.developer_model }}
         code-reviewer: ${{ inputs.reviewer_model }}
-        dev-team-lead: ${{ inputs.lead_model or inputs.reviewer_model }}
+        dev-team-lead: ${{ inputs.lead_model }}
       catalogue:
       - name: developer
         title: Developer
@@ -175,9 +175,9 @@ steps:
       agent: dev-team-lead
       task_id: ${{ steps.admit.output.task_id }}
       claim: false
-      provider: ${{ inputs.lead_provider or inputs.reviewer_provider }}
-      model: ${{ inputs.lead_model or inputs.reviewer_model }}
-      reasoning_effort: ${{ inputs.lead_reasoning_effort or inputs.reviewer_reasoning_effort }}
+      provider: ${{ inputs.lead_provider }}
+      model: ${{ inputs.lead_model }}
+      reasoning_effort: ${{ inputs.lead_reasoning_effort }}
       execution_mode: interactive
       checkout_mode: none
       project_path: ${{ steps.admit.output.main_project_path }}

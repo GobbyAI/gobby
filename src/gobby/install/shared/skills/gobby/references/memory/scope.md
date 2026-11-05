@@ -25,4 +25,6 @@ using these surfaces for operator work. Agent persistent memory stays on MCP.
 
 Guide: [Scope](../../../../../../../../docs/guides/memory.md#scope).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

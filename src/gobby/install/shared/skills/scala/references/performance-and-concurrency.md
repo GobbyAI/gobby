@@ -38,3 +38,5 @@
 Record the baseline, changed result, workload, runtime/toolchain, and variance.
 Keep a regression test or benchmark when the performance characteristic is part
 of the contract.
+
+_Version: 1.0.0_

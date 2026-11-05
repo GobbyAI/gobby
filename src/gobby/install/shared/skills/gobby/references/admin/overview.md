@@ -29,3 +29,5 @@ daemon state for mutating verification. Installed database rows determine active
 rules, profiles, workflows, and configuration; bundled files are templates.
 
 See [admin operations](../../../../../../../../docs/guides/admin-operations.md).
+
+_Version: 1.0.0_

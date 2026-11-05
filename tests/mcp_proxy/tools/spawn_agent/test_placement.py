@@ -1268,7 +1268,7 @@ async def test_messageless_placed_failure_names_exception(
         monkeypatch.setattr(impl, "prepare_terminal_spawn", fail)
     elif boundary == "initial_step":
         overrides["agent_body"] = make_agent_definition(
-            name="default",
+            name="seat",
             model="claude-sonnet-5",
             prompts={"agent": "Work the task"},
             step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="work")]),

@@ -48,14 +48,19 @@ from gobby.workflows.definitions import (
 from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.block_batching import (
-    clear_block_scopes,
+    agent_context_key,
     close_response_batch,
+    drop_block_scope,
     register_blocked_attempt,
 )
 from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
-    format_consecutive_tool_block_reason,
+    escalate_retry_limit,
     is_blocked_tool_recovery_remediation,
+)
+from gobby.workflows.engine.definition_binding import (
+    UNRESOLVED_DEFINITION_RULE,
+    unresolved_definition_block,
 )
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
@@ -73,10 +78,12 @@ from gobby.workflows.engine.event_utils import (
     _is_write_like_event_data,
     _project_id_from_event,
     _resolve_rule_events,
+    edit_write_outcome_lost,
+    mark_edit_write_pending,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHooksMixin
 from gobby.workflows.engine.templating import TemplatingMixin, is_resolved_project
-from gobby.workflows.selectors import rule_matches_agent
+from gobby.workflows.selectors import binds_named_definition, rule_matches_agent
 from gobby.workflows.session_feedback_survey import inject_survey_active
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -407,6 +414,11 @@ class RuleEngine(
                 # State is scoped to the agent context named by the payload so
                 # concurrent subagents sharing one session id keep separate budgets.
                 block_state = evaluation.block_state
+                # A subagent's own SubagentStop is its turn end for edit/write recovery and is
+                # held by its own scope. Without an agent context it never reads the parent's.
+                subagent_stop = raw_event_value == HookEventType.SUBAGENT_STOP.value and bool(
+                    agent_context_key(event.data)
+                )
                 if is_before_tool and block_state.get("_last_blocked_tool"):
                     if _is_pipeline_direct_mcp_event(event):
                         # Synthetic pipeline MCP events clear block state so the next real user tool starts from 0.
@@ -423,37 +435,15 @@ class RuleEngine(
                                 # Every sibling of one assistant response repeats the
                                 # same denial before the agent can read any of them,
                                 # so the whole batch buys one remediation attempt.
-                                count = register_blocked_attempt(
-                                    block_state,
-                                    source=event.source,
-                                )
-                                max_attempts = int(
-                                    variables.get("max_consecutive_blocked_tool_attempts", 5)
-                                )
-                                total_attempts = count + 1
-                                if total_attempts >= max_attempts:
-                                    resp = HookResponse(
-                                        decision="block",
-                                        reason=format_consecutive_tool_block_reason(
-                                            tool_name=tool_name,
-                                            total_attempts=total_attempts,
-                                            variables=block_state,
-                                        ),
-                                    )
-                                    return await self._finalize_block_response(
-                                        resp,
-                                        evaluation,
-                                        span,
-                                        source="retry-limit",
-                                        rule_name="consecutive-tool-block",
-                                    )
+                                # Retry-limit rules decide when this count escalates.
+                                register_blocked_attempt(block_state, source=event.source)
                         else:
                             # Different tool — reset counter, let it through to rule evaluation
                             block_state["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):
-                        variables["edit_write_pending"] = True
+                        mark_edit_write_pending(block_state)
 
                 elif raw_event_value == HookEventType.POST_TOOL_BATCH.value:
                     # This agent context's response closed its tool batch, so the
@@ -464,7 +454,6 @@ class RuleEngine(
                     blocked_turn_feedback = variables.pop("_blocked_turn_end_pending", False)
                     variables["consecutive_tool_blocks"] = 0
                     clear_blocked_tool_recovery_state(variables)
-                    clear_block_scopes(variables)
                     variables["tool_block_pending"] = False
                     if not blocked_turn_feedback:
                         variables["stop_attempts"] = 0
@@ -497,7 +486,7 @@ class RuleEngine(
                             "stop_attempts": variables["stop_attempts"],
                             "task_claimed": variables.get("task_claimed"),
                             "claimed_tasks": variables.get("claimed_tasks"),
-                            "edit_write_pending": variables.get("edit_write_pending"),
+                            "edit_write_pending": block_state.get("edit_write_pending"),
                             "tool_block_pending": variables.get("tool_block_pending"),
                             "active_agent_wait": active_agent_wait,
                             "active_coordination_wait": active_coordination_wait,
@@ -532,27 +521,48 @@ class RuleEngine(
                         [rule_event.value for rule_event in resolved_rule_events],
                     )
 
-                # 4b. Agent-level tool enforcement (broadest scope, preempts everything)
+                # 4a. Retry-limit rules escalate a repeated denial before any other gate.
                 if is_before_tool:
+                    retry_rules = [rule for rule in rules if rule[1].retry_limit]
+                    rules = [rule for rule in rules if not rule[1].retry_limit]
+                    retry_block = await escalate_retry_limit(
+                        self, retry_rules, evaluation, span, aggregate_blocks=aggregate_blocks
+                    )
+                    if retry_block is not None:
+                        return retry_block
+
+                # 4b. Agent-level tool enforcement (broadest scope, preempts everything).
+                # A named seat whose definition is gone acts on nothing; it may still stop.
+                if is_before_tool:
+                    agent_rule = UNRESOLVED_DEFINITION_RULE
                     agent_block = await offload(
-                        self._check_agent_tool_enforcement,
-                        event,
+                        unresolved_definition_block,
+                        self,
                         session_id,
                         variables,
-                        bool((eval_context or {}).get("base_merge_write")),
+                        _project_id_from_event(event),
                     )
+                    if agent_block is None:
+                        agent_rule = "agent-tool-enforcement"
+                        agent_block = await offload(
+                            self._check_agent_tool_enforcement,
+                            event,
+                            session_id,
+                            variables,
+                            bool((eval_context or {}).get("base_merge_write")),
+                        )
                     await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:
                         if _is_write_like_event_data(event.data):
-                            _clear_edit_write_state(variables)
+                            _clear_edit_write_state(block_state)
                         return await self._finalize_block_response(
                             agent_block,
                             evaluation,
                             span,
                             source="step-enforcement",
-                            rule_name="agent-tool-enforcement",
+                            rule_name=agent_rule,
                             fallback_reason=(
-                                "Rule enforced by Gobby: [agent-tool-enforcement]\n"
+                                f"Rule enforced by Gobby: [{agent_rule}]\n"
                                 "Agent-level tool enforcement blocked this tool for the "
                                 "current session."
                             ),
@@ -571,7 +581,7 @@ class RuleEngine(
                     if step_block is not None:
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
-                            _clear_edit_write_state(variables)
+                            _clear_edit_write_state(block_state)
                         return await self._finalize_block_response(
                             step_block,
                             evaluation,
@@ -620,20 +630,25 @@ class RuleEngine(
                     else:
                         override_decision = "allow"
 
-                # Auto-block stop when a tool just failed (self-clearing)
-                elif is_turn_end and variables.get("tool_block_pending"):
-                    variables["tool_block_pending"] = False
+                # Auto-block stop when this agent context's tool just failed (self-clearing),
+                # at its turn end or its own SubagentStop.
+                elif (is_turn_end or subagent_stop) and block_state.get("tool_block_pending"):
+                    block_state["tool_block_pending"] = False
                     override_decision = "block"
                     override_reason = (
                         "Rule enforced by Gobby: [tool-failure-recovery]\n"
                         "A tool just failed. Read the error and recover — do not stop."
                     )
 
-                # Block stop when edit/write is pending (failed or in-flight)
-                elif is_turn_end and variables.get("edit_write_pending"):
-                    edit_stop_blocks = variables.get("edit_write_stop_blocks", 0)
-                    if edit_stop_blocks < 3:  # Circuit breaker
-                        variables["edit_write_stop_blocks"] = edit_stop_blocks + 1
+                # Block stop when this agent context's edit/write is pending (failed or
+                # in-flight), at its turn end or its own SubagentStop. A subagent's pending
+                # write holds only its own stop.
+                elif (is_turn_end or subagent_stop) and block_state.get("edit_write_pending"):
+                    edit_stop_blocks = block_state.get("edit_write_stop_blocks", 0)
+                    if edit_write_outcome_lost(block_state):
+                        _clear_edit_write_state(block_state)
+                    elif edit_stop_blocks < 3:  # Circuit breaker
+                        block_state["edit_write_stop_blocks"] = edit_stop_blocks + 1
                         override_decision = "block"
                         override_reason = (
                             "Rule enforced by Gobby: [edit-write-recovery]\n"
@@ -642,7 +657,11 @@ class RuleEngine(
                         )
                     else:
                         # Circuit breaker tripped — clear and allow stop
-                        _clear_edit_write_state(variables)
+                        _clear_edit_write_state(block_state)
+
+                if subagent_stop and override_decision != "block":
+                    # The subagent's terminal stop ends its blocked-tool and edit/write state.
+                    drop_block_scope(variables, agent_context_key(event.data))
 
                 if not rules:
                     # Auto-manage tool_block_pending on after_tool execution results.
@@ -729,7 +748,7 @@ class RuleEngine(
                         await self._flush_pending_terminal_denial(session_id)
                         if agent_block is not None:
                             if _is_write_like_event_data(event.data):
-                                _clear_edit_write_state(variables)
+                                _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 agent_block,
                                 evaluation,
@@ -747,7 +766,7 @@ class RuleEngine(
                         await self._flush_pending_terminal_denial(session_id)
                         if step_block is not None:
                             if _is_write_like_event_data(event.data):
-                                _clear_edit_write_state(variables)
+                                _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 step_block,
                                 evaluation,
@@ -928,8 +947,12 @@ class RuleEngine(
             ]
 
         # The cached names are a projection, not authority after definition removal.
+        # Only an unbound session gets the baseline; a named one keeps mandatory rules only.
+        baseline = not binds_named_definition(variables.get("_agent_type"))
         return [
-            (row, body) for row, body in rules if body.mandatory or "default" in (row.tags or [])
+            (row, body)
+            for row, body in rules
+            if body.mandatory or (baseline and "default" in (row.tags or []))
         ]
 
     def _load_active_agent_definition(

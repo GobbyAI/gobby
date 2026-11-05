@@ -22,3 +22,5 @@ only the change authorized by the request. Installation, daemon lifecycle,
 and external Collector setup are operator procedures.
 
 See the [observability guide](../../../../../../../../docs/guides/observability.md).
+
+_Version: 1.0.0_

@@ -120,11 +120,16 @@ Some safety behaviors live in the rule engine itself rather than YAML.
 If the same tool is blocked repeatedly without recovery:
 
 - the engine tracks the blocked tool identity
-- retries of the same tool increment a counter
-- repeated retries eventually trigger a stronger hard-coded block
+- retries of the same tool increment `consecutive_tool_blocks`
+- the bundled `error-recovery/consecutive-tool-block` rule (`retry_limit: true`,
+  mandatory) blocks once `consecutive_tool_blocks + 1` reaches
+  `max_consecutive_blocked_tool_attempts` (default 5), quoting the original
+  block reason
 
-This is meant to break bad retry loops and push the agent toward a different
-recovery action.
+The engine only counts; the threshold and the escalation wording live in that
+YAML rule. Rules see the counter through `block_state`, the issuing agent's
+blocked-retry scope. This is meant to break bad retry loops and push the agent
+toward a different recovery action.
 
 For MCP calls routed through `call_tool`, the tracked identity is
 `server:tool`. A repeated block on `gobby-tasks:close_task` does not make every
@@ -176,7 +181,10 @@ On `turn_start`, the engine resets transient stop-cycle state such as:
 - `tool_block_pending`
 - `stop_attempts`
 - `_block_reasons_shown`
-- `_last_blocked_scopes`
+
+`_last_blocked_scopes` is not reset here. A live subagent keeps its scope until
+its own terminal SubagentStop, so a parent turn start clears only the main
+context.
 
 `consecutive_tool_blocks` counts remediation attempts, not denials. A provider
 that closes each assistant response with a tool-batch event (Claude Code's
@@ -184,9 +192,12 @@ that closes each assistant response with a tool-batch event (Claude Code's
 denials, because none of those siblings could act on the first denial; the
 boundary event re-arms counting for the next response. A provider without that
 boundary counts every denial. When a hook payload names the issuing agent
-(`agent_id`), that context's counter and `_block_reasons_shown` live in its own
-`_last_blocked_scopes` slot, so concurrent subagents sharing one session id
-never spend each other's budget.
+(`agent_id`), that context's counter, `_last_blocked_tool`, `tool_block_pending`
+and `_block_reasons_shown` live in its own `_last_blocked_scopes` slot, so
+concurrent subagents sharing one session id never spend each other's budget,
+and a subagent's failed call never holds the parent's turn end. A parent turn
+start clears only the main context's state; a subagent's scope is dropped only
+at its own terminal SubagentStop that the gates release.
 
 On the first turn where `servers_listed` is false, the engine also queues the
 hard-coded auto-discovery MCP call that seeds available Gobby MCP servers.

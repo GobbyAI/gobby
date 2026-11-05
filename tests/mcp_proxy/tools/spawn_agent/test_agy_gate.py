@@ -77,7 +77,7 @@ _MODEL_FOR_PROVIDER = {
 def _agent_body(provider: str) -> AgentDefinitionBody:
     return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-        name="default",
+        name="seat",
         provider=provider,
         model=_MODEL_FOR_PROVIDER[provider],
     )

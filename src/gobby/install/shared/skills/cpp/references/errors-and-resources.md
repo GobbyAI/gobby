@@ -41,3 +41,5 @@ or resource-owning APIs.
 - Do not log secrets, raw tokens, large buffers, or personally sensitive data.
 - Keep assertions for programmer invariants; return or throw for runtime
   failures callers can encounter.
+
+_Version: 1.0.0_

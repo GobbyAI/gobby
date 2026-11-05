@@ -31,3 +31,5 @@ their projects are selectable ordinary checkouts.
 For database errors, retain the exact error and restore service health before
 retrying. See [hub queries](../../../../../../../../docs/guides/shared-stack.md#hub-queries)
 for result scope and operator boundaries.
+
+_Version: 1.0.0_

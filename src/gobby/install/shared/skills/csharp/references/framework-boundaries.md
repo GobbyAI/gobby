@@ -40,3 +40,5 @@ Keep framework code thin and domain code portable.
 - Log at boundaries with structured context and no secrets.
 - Emit metrics/traces for queue, HTTP, database, and external service latency.
 - Keep correlation IDs and cancellation context flowing across async calls.
+
+_Version: 1.0.0_

@@ -18,9 +18,14 @@ must supply project scope. Preserve the returned message IDs and inspect partial
 broadcast/wake failures before retrying.
 
 Content never implies wake. Omitting `wake` requests immediate processing for direct
-`session`, `parent`, and `agent` targets. `project` and `global` fanout
-stays queued without live wakes unless `wake=true` is explicit. Set `wake=false`
-to queue any target without a live wake. A requested wake may steer active work;
+`session`, `parent`, and `agent` targets. Fanout (`global`, and `project` with
+`wake=true`) live-wakes only active recipients and recipients holding a claimed task;
+an idle, paused, or waiting recipient with no claimed task keeps its message queued
+for its next turn, so send it a direct message to wake it. Otherwise `project` fanout
+stays queued without live wakes, and `wake=false` queues any target without a live
+wake. The daemon sends restart and cutover notices itself as system globals: a hold
+before it stops and DAEMON BACK once healthy. Active seats and seats holding a claimed
+task wake on them. Never compose them by hand. A requested wake may steer active work;
 interrupted or input/approval/handoff-waiting sessions retain the message without
 unsafe daemon input. A successful send is durable queuing, not evidence that the
 recipient read or acted on it. Use `get_inter_session_message` for a message ID
@@ -72,10 +77,16 @@ hold with a durable `coordination_release` message to you containing the
 matching `metadata.coordination_key`; ordinary message text does not release a
 keyed hold. A reply wait is the primitive for a requested parent reply: it
 resolves `replied` on the next durable message that owner sends you after
-registration, and omitting `owner_session` waits on the session that spawned
+registration. Daemon receipts written in the owner's name (`agent_started`,
+`agent_recovery`) never resolve it. Omitting `owner_session` waits on the session that spawned
 you. Messages already sent never resolve it, so send the question and register
 in the same turn. A registered wait holds off idle and stuck cleanup until it
 resolves, times out, or is cancelled.
+To yield while your own provider background task runs (a background shell,
+monitor or workflow that re-invokes you when it finishes), register
+`background_task_id=<the provider's task id>` with no `owner_session` and a
+timeout that covers the job's next report. Your next prompt clears it; expiry
+wakes you to check the job and register again if it still runs.
 The default timeout is 900 seconds, maximum 3600. While waiting, repeating the same
 owner and condition returns the original wait and expiry. After completion,
 repeating the same owner and condition creates a new wait. Preserve `wait_id` and
@@ -103,5 +114,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 1.2.0_
-_Last verified: 2026-11-02_
+_Version: 2.2.0_
+_Last verified: 2026-11-04_

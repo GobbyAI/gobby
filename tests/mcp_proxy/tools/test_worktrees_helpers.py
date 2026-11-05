@@ -17,21 +17,17 @@ pytestmark = pytest.mark.unit
 class TestGetWorktreeBaseDir:
     """Tests for _get_worktree_base_dir helper."""
 
-    def test_unix_path(self, tmp_path: Path) -> None:
-        """Test path uses ~/.gobby/worktrees."""
-        with patch("gobby.mcp_proxy.tools.worktrees._helpers.Path.home", return_value=tmp_path):
-            path = _get_worktree_base_dir()
-            assert str(path) == str(tmp_path / ".gobby" / "worktrees")
-            assert path.exists()
+    def test_returns_and_creates_the_managed_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The base dir is the managed worktree root, created on demand."""
+        managed_root = tmp_path / "fakehome" / ".gobby" / "worktrees"
+        monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
 
-    def test_creates_directory(self, tmp_path: Path) -> None:
-        """Test that the directory is created if it doesn't exist."""
-        mock_home = tmp_path / "fakehome"
-        mock_home.mkdir()
-        with patch("gobby.mcp_proxy.tools.worktrees._helpers.Path.home", return_value=mock_home):
-            path = _get_worktree_base_dir()
-            assert str(path) == str(mock_home / ".gobby" / "worktrees")
-            assert path.exists()
+        path = _get_worktree_base_dir()
+
+        assert path == managed_root
+        assert path.is_dir()
 
 
 class TestGenerateWorktreePath:

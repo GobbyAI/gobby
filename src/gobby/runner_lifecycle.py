@@ -34,6 +34,7 @@ from gobby.runner_pid_file import (
     PidOwnershipResolution,
     SupervisedPidOwnership,
 )
+from gobby.sessions.daemon_notices import BACK_NOTICE, send_daemon_notice
 from gobby.shutdown_intent import clear_active_shutdown_intent
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.telemetry import shutdown_telemetry
@@ -69,13 +70,18 @@ def get_startup_tracker() -> StartupTracker | None:
 
 
 async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> None:
-    """Compatibility wrapper for progressive subsystem initialization."""
+    """Initialize subsystems progressively, then announce DAEMON BACK to every live session.
+
+    Every healthy start announces once: a restart, a cutover, and a relaunch after an
+    unclean exit alike. Only the daemon sends it.
+    """
     await init_subsystems(
         runner,
         rebuild_vector_store,
         _startup_tracker,
         reconcile_agent_runs_after_restart=_reconcile_agent_runs_after_restart,
     )
+    await send_daemon_notice(runner, BACK_NOTICE)
 
 
 def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:

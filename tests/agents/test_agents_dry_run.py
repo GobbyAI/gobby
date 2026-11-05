@@ -8,7 +8,9 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.agents import dry_run
 from gobby.agents.dry_run import SpawnEvaluation, evaluate_spawn
+from gobby.agents.model_defaults import ModelDefaults
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.definitions import (
@@ -28,12 +30,14 @@ def _create_agent(
     pipeline: str | None = None,
     base_branch: str = "main",
     project_id: str | None = None,
+    model: str | None = "claude-sonnet-5",
 ) -> None:
-    """Create an agent definition in the typed table."""
+    """Create an agent definition in the typed table. A launch needs a model to resolve."""
     body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         provider=provider,
+        model=model,
         checkout_mode=checkout_mode,
         base_branch=base_branch,
         workflows=make_agent_workflows(pipeline=pipeline),
@@ -474,6 +478,28 @@ class TestHappyPath:
         assert result.agent_found is True
         assert result.effective_workflow == "worker"
         assert len(result.errors) == 0
+
+
+class TestProjectPolicy:
+    @pytest.mark.asyncio
+    async def test_unreadable_policy_refuses_with_no_model_resolved(
+        self, definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unreadable policy refuses here exactly as the real spawn refuses, so no launch model
+        is reported: a definition model the spawn would never run must not look resolved."""
+        _create_agent(definition_db)
+
+        def unreadable(db: object, project_id: str | None) -> ModelDefaults:
+            raise ValueError("project_policy cannot be read")
+
+        monkeypatch.setattr(dry_run, "load_model_defaults", unreadable)
+
+        result = await evaluate_spawn(agent="test-agent", db=definition_db)
+
+        codes = [item.code for item in result.items]
+        assert result.can_spawn is False
+        assert "PROJECT_POLICY_UNREADABLE" in codes
+        assert "MODEL_RESOLVED" not in codes
 
 
 class TestToDict:

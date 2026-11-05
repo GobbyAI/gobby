@@ -16,9 +16,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.model_defaults import ModelDefaults
 from gobby.agents.team_communications import recipient_admits
 from gobby.agents.team_lifecycle import seat_team
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
@@ -87,6 +88,7 @@ def check_runbook_seats(
     tab_title: str | None = None,
     task: str | None = None,
     seat_models: Mapping[str, str | None] | None = None,
+    model_defaults_for: Callable[[str], ModelDefaults] | None = None,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
@@ -102,7 +104,10 @@ def check_runbook_seats(
 
     ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each requested
     seat whose agent already has an active run on this machine with a live session in this
-    project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
+    project. ``live`` maps every catalogue seat with such a run, requested or not, to that session,
+    so a partial run reports its whole roster; with a ``task``, only runs that a pipeline
+    execution launched for that same task count, so another task's seats are never mapped. With
+    ``team_id``, ``live`` covers
     every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
     reviewer's request still reports its team's live Dev Team Lead; only runs admitted to that team
     count. With ``parent_team_id``, or a ``team_id`` admitted under a parent team, seats whose
@@ -111,7 +116,8 @@ def check_runbook_seats(
     the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
     ``tab_exists`` says whether the workspace has that tab; two such tabs refuse.
     ``seat_models`` maps each seat to the model its launch takes; with it, a launching seat that
-    has no model there and none on its agent definition refuses.
+    has no model there, no ``agent_model_defaults`` entry from ``model_defaults_for``, and no model
+    on its agent definition refuses.
     """
     if (require_report_to and report_to is None) or (
         report_to is not None and not report_to.strip()
@@ -144,6 +150,7 @@ def check_runbook_seats(
             task=task,
             seat_models=seat_models,
             report_to=report_to,
+            model_defaults_for=model_defaults_for,
         )
     except RunbookSeatRefusal:
         raise
@@ -201,6 +208,7 @@ def _admit(
     task: str | None,
     seat_models: Mapping[str, str | None] | None,
     report_to: str | None,
+    model_defaults_for: Callable[[str], ModelDefaults] | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
     if (
@@ -231,7 +239,13 @@ def _admit(
     if team_id is not None:
         live = _live_seats(stores, session, catalogue, team_id=team_id)
     elif skip_live_seats:
-        live = _live_seats(stores, session, seats, team_id=None)
+        live = _live_seats(
+            stores,
+            session,
+            catalogue,
+            team_id=None,
+            task=_launch_task(stores.tasks, execution, project_id),
+        )
     else:
         live = {}
     tab_task = task
@@ -275,7 +289,14 @@ def _admit(
         launching = tuple(seat for seat in seats if seat.name in launch)
         _refuse_unreachable_report_to(stores, report_to, project_id=project_id, seats=launching)
     if seat_models is not None:
-        _refuse_unmodeled_launches(stores.definitions, project_id, seats, launch, seat_models)
+        _refuse_unmodeled_launches(
+            stores.definitions,
+            project_id,
+            seats,
+            launch,
+            seat_models,
+            model_defaults=_policy_for(model_defaults_for, project_id),
+        )
     tab = _runbook_tab_title(stores.tasks, project_id, tab_title, tab_task)
     return AdmittedSeats(
         workspace_id=workspace_id,
@@ -293,8 +314,12 @@ def _live_seats(
     seats: Sequence[CatalogueSeat],
     *,
     team_id: str | None,
+    task: str | None = None,
 ) -> dict[str, str]:
-    """Map each seat whose agent runs here with a live session in the project to that session."""
+    """Map each seat whose agent runs here with a live session in the project to that session.
+
+    With ``task`` (a resolved task id), only runs launched by a pipeline execution for that task count.
+    """
     runs = stores.runs.list_active_for_machine(caller.machine_id, limit=READ_BOUND + 1)
     _refuse_truncated(runs, "active agent run")
     live: dict[str, str] = {}
@@ -312,9 +337,31 @@ def _live_seats(
                     team = seat_team(stores.sessions.db, child.id)
                     if team is None or team.team_id != team_id:
                         continue
+                if task is not None and _run_task(stores, caller.project_id, run) != task:
+                    continue
                 live[seat.name] = child.id
                 break
     return live
+
+
+def _run_task(stores: RunbookSeatStores, project_id: str, run: AgentRun) -> str | None:
+    """The task of the pipeline execution that launched ``run``; None when it launched for none."""
+    launcher = stores.sessions.get(run.parent_session_id)
+    if (
+        launcher is None
+        or launcher.source != "pipeline"
+        or not launcher.external_id.startswith(PIPELINE_CHILD_PREFIX)
+    ):
+        return None
+    execution = stores.executions(project_id).get_execution(
+        launcher.external_id.removeprefix(PIPELINE_CHILD_PREFIX)
+    )
+    if execution is None:
+        return None
+    try:
+        return _launch_task(stores.tasks, execution, project_id)
+    except RunbookSeatRefusal:
+        return None
 
 
 def _runbook_tab_title(
@@ -487,23 +534,38 @@ def _refuse_unresolved_agents(
         raise RunbookSeatRefusal("; ".join(unresolved))
 
 
+def _policy_for(
+    model_defaults_for: Callable[[str], ModelDefaults] | None, project_id: str
+) -> ModelDefaults | None:
+    """The project's model policy, or a refusal when the policy cannot be read."""
+    if model_defaults_for is None:
+        return None
+    try:
+        return model_defaults_for(project_id)
+    except ValueError as exc:
+        raise RunbookSeatRefusal(str(exc)) from exc
+
+
 def _refuse_unmodeled_launches(
     definitions: AgentDefinitionManager,
     project_id: str,
     seats: Sequence[CatalogueSeat],
     launch: Sequence[str],
     seat_models: Mapping[str, str | None],
+    model_defaults: ModelDefaults | None = None,
 ) -> None:
-    """Refuse a launching seat with neither a model input nor a model on its definition."""
+    """Refuse a launching seat with no model input, no definition model, and no policy entry."""
     unmodeled: list[str] = []
     for seat in seats:
         if seat.name not in launch or seat_models.get(seat.name):
             continue
+        if model_defaults is not None and model_defaults.entry_for(seat.agent) is not None:
+            continue
         row = definitions.get_by_name(seat.agent, project_id=project_id)
         if row is not None and not row.definition_json.get("model"):
             unmodeled.append(
-                f"seat '{seat.name}' launches with no model: set its model input or a model "
-                f"on agent definition '{seat.agent}'"
+                f"seat '{seat.name}' launches with no model: set its model input, a model "
+                f"on agent definition '{seat.agent}', or an agent_model_defaults entry for it"
             )
     if unmodeled:
         raise RunbookSeatRefusal("; ".join(unmodeled))

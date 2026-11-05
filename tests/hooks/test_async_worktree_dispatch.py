@@ -4,12 +4,13 @@ import asyncio
 import logging
 import threading
 from datetime import UTC, datetime
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.hooks.compaction_ownership import CompactionOwnership
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 
@@ -35,14 +36,14 @@ async def test_async_handler_runs_on_request_loop_after_threaded_preparation(
         preparation_threads.append(threading.get_ident())
         return handle()
 
-    manager = cast(
-        HookManager,
-        SimpleNamespace(
-            _health_monitor=None,
-            logger=logging.getLogger(__name__),
-            _handle_after_daemon_ready=prepare,
-        ),
+    manager = SimpleNamespace(
+        _health_monitor=None,
+        logger=logging.getLogger(__name__),
+        _compaction_ownership=CompactionOwnership(),
+        _handle_after_daemon_ready=prepare,
     )
+    manager._run_replays_async = MethodType(HookManager._run_replays_async, manager)
+    manager._handle_routed_async = MethodType(HookManager._handle_routed_async, manager)
     monkeypatch.setattr(
         "gobby.hooks.hook_manager.ensure_daemon_ready_async", AsyncMock(return_value=None)
     )
@@ -54,7 +55,9 @@ async def test_async_handler_runs_on_request_loop_after_threaded_preparation(
         data={},
         machine_id="21000000-0000-4000-8000-000000000002",
     )
-    request = asyncio.create_task(HookManager._handle_internal_async(manager, event))
+    request = asyncio.create_task(
+        HookManager._handle_internal_async(cast(HookManager, manager), event)
+    )
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
         assert not request.done()

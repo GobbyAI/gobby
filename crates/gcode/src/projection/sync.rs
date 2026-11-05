@@ -699,6 +699,9 @@ impl VectorProjectionState<'_> {
                 pinned::PinnedVectorSync::SourceChanged => {
                     ProjectionFileSyncOutcome::SkippedSourceChanged
                 }
+                pinned::PinnedVectorSync::SourceMissing => {
+                    ProjectionFileSyncOutcome::SkippedMissingIndexedFile
+                }
             });
         };
         let symbols =
@@ -772,6 +775,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
         VectorLifecycleError::EmbeddingInput(_) => "embedding_input",
         VectorLifecycleError::IndexedSourceChanged { .. } => "indexed_source_changed",
+        VectorLifecycleError::IndexedSourceMissing { .. } => "indexed_source_missing",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",
         VectorLifecycleError::QdrantOperation(_) => "qdrant_operation",
         VectorLifecycleError::InvalidCollectionName(_) => "invalid_collection_name",

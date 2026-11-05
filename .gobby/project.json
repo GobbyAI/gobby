@@ -7,7 +7,7 @@
   },
   "task_protection_policy": {
     "foreign_claims": true,
-    "labels": ["deferred-by-josh"],
+    "labels": ["deferred-by-user"],
     "subtree_roots": ["#22978", "#22225"]
   },
   "verification": {

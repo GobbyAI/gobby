@@ -40,6 +40,8 @@ from tests.fixtures.team_case import make_team_world
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
+SEAT_MODEL = "claude-sonnet-5"
+
 
 @dataclass
 class CrashedTeam:
@@ -66,6 +68,8 @@ def _seat(
 ) -> None:
     # A seat resumes only as the definition it was launched with, recorded as its agent type.
     SessionVariableManager(db).set_variable(session_id, "_agent_type", role)
+    # A launched seat's session records the model it runs on; a resume launches on that model.
+    db.execute("UPDATE sessions SET model = %s WHERE id = %s", (SEAT_MODEL, session_id))
     LocalAgentRunManager(db).create(
         parent_session_id=runbook,
         provider="claude",

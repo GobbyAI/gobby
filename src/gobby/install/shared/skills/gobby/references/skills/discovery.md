@@ -26,4 +26,6 @@ Use HTTP/CLI listing only for operator management; it does not record a load.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#internal-skills).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

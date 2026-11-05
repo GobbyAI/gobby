@@ -144,3 +144,5 @@ export { createClient } from "./client";
 ```
 
 Do not re-export private helpers just because a barrel file is convenient. Public types become compatibility commitments.
+
+_Version: 1.0.0_

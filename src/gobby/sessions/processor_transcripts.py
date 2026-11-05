@@ -316,7 +316,11 @@ class ProcessorTranscriptMixin:
                     floor = attachment_floor
                     self._mirror_start_offsets[session_id] = floor
                     self._mirror_eligible_ids.pop(session_id, None)
-            eligible = self._mirror_eligible_ids.setdefault(session_id, set())
+                    self._mirror_eligible_lines.pop(session_id, None)
+            # A rendered turn spans many records and keeps its first record's id, so
+            # eligibility is per record: text written after an attachment that
+            # landed mid-turn is still mirrored when that turn completes.
+            eligible = self._mirror_eligible_lines.setdefault(session_id, set())
             for parsed_message in parsed_messages:
                 line = parsed_message.source_line
                 offset = (
@@ -325,9 +329,7 @@ class ProcessorTranscriptMixin:
                     else last_offset
                 )
                 if parsed_message.role == "assistant" and offset >= floor:
-                    eligible.add(
-                        f"{session_id}-assistant-{parsed_message.message_id or parsed_message.index}"
-                    )
+                    eligible.add(parsed_message.index)
 
             latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
             parsed_messages = self._filter_session_title_messages(parsed_messages)

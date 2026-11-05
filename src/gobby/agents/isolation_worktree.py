@@ -19,6 +19,7 @@ from gobby.agents.isolation_models import (
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
+from gobby.worktrees import creation
 from gobby.worktrees.base_branch import select_worktree_base
 
 logger = logging.getLogger("gobby.agents.isolation")
@@ -121,7 +122,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                         config.task_id,
                         worktree_path=existing.worktree_path,
                         worktree_id=existing.id,
-                        base_commit_sha=base_commit_sha,
+                        base_commit_sha=sync_result.base_commit_sha,
                         clone_path=None,
                         clone_id=None,
                     )
@@ -129,6 +130,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                     "main_repo_path": str(self._git_manager.repo_path),
                     "base_branch": base_branch,
                     "base_commit_sha": sync_result.base_commit_sha,
+                    **sync_result.isolation_extra(),
                 }
                 # Use existing worktree
                 self._partial_worktrees.pop(state_key, None)
@@ -297,6 +299,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             "\n"
             "Changes in this worktree are isolated from the main repository.\n"
             "Commit your changes to the worktree branch when done.\n"
+            f"{worktree_reuse.deferred_base_sync_notice(ctx.extra)}"
             "\n"
             "---\n"
             "\n"
@@ -309,4 +312,4 @@ class WorktreeIsolationHandler(IsolationHandler):
         """Generate a unique worktree path in ~/.gobby/worktrees/; ``dir_name`` wins if given."""
         # Sanitize branch name for use in path
         safe_branch = dir_name or branch_name.replace("/", "-").replace("\\", "-")
-        return str(Path.home() / ".gobby" / "worktrees" / project_name / safe_branch)
+        return str(creation.WORKTREES_ROOT / project_name / safe_branch)

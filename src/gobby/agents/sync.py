@@ -9,11 +9,8 @@ stays sticky across syncs.
 """
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
-
-import yaml
+from typing import Any
 
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
@@ -21,43 +18,12 @@ from gobby.storage.definitions.agents import parent_body as agent_parent_body
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.utils.json_helpers import json_equal
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.definitions import AgentDefinitionBody
 
 __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
 
 logger = logging.getLogger(__name__)
-
-
-class _AgentDefinitionLoader(yaml.SafeLoader):
-    """Reject duplicate declarations while retaining YAML merge precedence."""
-
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        declared: set[Any] = set()
-        construct_object = cast(Callable[[yaml.Node, bool], Any], self.construct_object)
-        for key_node, _ in node.value:
-            key = (
-                "<<"
-                if key_node.tag == "tag:yaml.org,2002:merge"
-                else construct_object(key_node, deep)
-            )
-            try:
-                duplicate = key in declared
-                declared.add(key)
-            except TypeError as error:
-                raise yaml.constructor.ConstructorError(
-                    "while constructing a mapping",
-                    node.start_mark,
-                    "found an unhashable key",
-                    key_node.start_mark,
-                ) from error
-            if duplicate:
-                raise yaml.constructor.ConstructorError(
-                    "while constructing a mapping",
-                    node.start_mark,
-                    f"duplicate mapping key {key!r}",
-                    key_node.start_mark,
-                )
-        return super().construct_mapping(node, deep=deep)
 
 
 def _is_sync_managed_bundled_agent(existing: AgentDefinitionRow) -> bool:
@@ -152,7 +118,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     for yaml_file in sorted(agents_path.glob("*.yaml")):
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
-            data = _AgentDefinitionLoader(raw_content).get_single_data()
+            data = load_strict_yaml(raw_content)
 
             if not isinstance(data, dict):
                 logger.warning("Skipping non-dict YAML file: %s", yaml_file)

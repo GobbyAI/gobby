@@ -50,4 +50,6 @@ Recover through effect diagnostics and isolated failure tests. Load
 
 Guide: [Effect notes](../../../../../../../../docs/guides/rules.md#effect-notes).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

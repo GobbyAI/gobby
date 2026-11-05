@@ -150,6 +150,10 @@ fn dynamic_segment_codec_matches_python() {
         );
     }
     assert!(encode_dynamic_segment("").is_err());
-    assert!(is_registered_runtime_key("launch_defaults.dot%2Esegment"));
-    assert!(!is_registered_runtime_key("launch_defaults.dot.segment"));
+    assert!(is_registered_runtime_key(
+        "hooks.additional_context_limits.dot%2Esegment"
+    ));
+    assert!(!is_registered_runtime_key(
+        "hooks.additional_context_limits.dot.segment"
+    ));
 }

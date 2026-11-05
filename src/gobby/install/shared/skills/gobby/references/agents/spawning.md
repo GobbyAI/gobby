@@ -82,4 +82,6 @@ unmanaged replacement for a denied managed spawn.
 
 Guide: [Runtime tools](../../../../../../../../docs/guides/agents.md#runtime-tools).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-23_

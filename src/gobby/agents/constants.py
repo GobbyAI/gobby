@@ -122,6 +122,12 @@ CLAUDE_MANAGED_AGENT_ENV = {
     "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
 }
 
+# Settings every managed Claude launch carries in its single `--settings`
+# payload, on spawn and on resume; they win over any other settings source.
+# Operator sessions and the web chat never receive them. Idle compaction would
+# compact a parked agent's context while it waits for a wake.
+CLAUDE_MANAGED_AGENT_SETTINGS = {"idleCompaction": False}
+
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""

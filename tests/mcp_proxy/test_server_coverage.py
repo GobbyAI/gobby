@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from tests.mcp_proxy.caller_principal_support import operator_caller
 
 pytestmark = pytest.mark.unit
 
@@ -100,12 +101,13 @@ class TestCallToolSessionResolution:
         """External_id argument resolves to platform UUID before hitting tool_proxy.call_tool."""
         handler, _ = self._make_handler(resolve_to="platform-uuid-7")
 
-        await handler.call_tool(
-            server_name="gobby-tasks",
-            tool_name="suggest_next_task",
-            arguments={"parent_task_id": "#1"},
-            session_id="11111111-1111-1111-1111-111111111111",
-        )
+        with operator_caller():
+            await handler.call_tool(
+                server_name="gobby-tasks",
+                tool_name="suggest_next_task",
+                arguments={"parent_task_id": "#1"},
+                session_id="11111111-1111-1111-1111-111111111111",
+            )
 
         # tool_proxy.call_tool takes session_id as the 4th positional arg today
         # (signature: call_tool(server_name, tool_name, arguments, session_id)).

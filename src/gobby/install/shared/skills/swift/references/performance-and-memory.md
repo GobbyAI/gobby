@@ -48,3 +48,5 @@ parsers, rendering loops, actor-heavy paths, or interop code.
 - Document ownership, lifetime, alignment, thread-safety, and aliasing invariants
   near unsafe code.
 - Add tests around unsafe wrappers and prefer small audited modules.
+
+_Version: 1.0.0_

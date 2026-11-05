@@ -6,11 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use postgres::error::SqlState;
 
-use super::{PinSource, apply_pin, derive_gaps, persisted_gaps};
+use super::{HUB_STATEMENTS, PinSource, apply_pin, derive_gaps, persisted_gaps, replace_pins};
 use crate::db;
 use crate::index::api;
 use crate::models::{IndexedFile, IndexedProject};
 use crate::test_env::seed_test_checkout;
+use crate::visibility::catalog::EffectiveSelector;
 
 const MISSING_COMMIT: &str = "0000000000000000000000000000000000000001";
 const MISMATCHED_BLOB: &str = "ffffffffffffffffffffffffffffffffffffffff";
@@ -898,5 +899,54 @@ fn pin_writes_under_scoped_capability_role() {
     assert!(
         principal_pin_rows(&mut scoped, &bound_overlay).is_empty(),
         "the cold replacement clears the inherited rows",
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn replace_pins_issues_a_constant_statement_count() {
+    const PINS: usize = 1000;
+    const GAPS: usize = 500;
+
+    let mut fx = Fixture::new();
+    let source = fx.project("pin-batch-source");
+    let overlay = fx.project("pin-batch-overlay");
+    let machine_id = fx.machine_id.clone();
+    let mut pins = Vec::with_capacity(PINS);
+    for index in 0..PINS {
+        let file_path = format!("src/batch_{index:04}.rs");
+        let content_hash = format!("hash-batch-{index:04}");
+        api::upsert_file(
+            &mut fx.conn,
+            &indexed_file(&source, &file_path, &content_hash),
+        )
+        .expect("index source file");
+        pins.push(EffectiveSelector {
+            file_path,
+            source_project_id: source.clone(),
+            content_hash,
+            git_blob_id: (index % 2 == 0).then(|| format!("blob-batch-{index:04}")),
+        });
+    }
+    let gaps: Vec<String> = (0..GAPS)
+        .map(|index| format!("src/gap_{index:04}.rs"))
+        .collect();
+
+    HUB_STATEMENTS.with(|count| count.set(0));
+    replace_pins(&mut fx.conn, &machine_id, &overlay, &pins, &gaps).expect("replace pins");
+    let statements = HUB_STATEMENTS.with(|count| count.get());
+
+    assert_eq!(
+        statements, 4,
+        "one DELETE and one batched INSERT for each of the two tables, whatever the pin count"
+    );
+    assert_eq!(fx.pin_rows(&overlay).len(), PINS);
+    assert_eq!(
+        persisted_gaps(&mut fx.conn, &machine_id, &overlay).expect("read gaps"),
+        gaps
     );
 }

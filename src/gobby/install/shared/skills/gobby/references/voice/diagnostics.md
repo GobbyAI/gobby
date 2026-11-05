@@ -34,3 +34,5 @@ Use isolated fixtures for mutating diagnostics and preserve private recordings.
 
 See [troubleshooting](../../../../../../../../docs/guides/voice.md#troubleshooting)
 and [Crane recovery](../../../../../../../../docs/guides/crane-tts.md#restore-the-previous-local-settings).
+
+_Version: 1.0.0_

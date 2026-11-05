@@ -83,3 +83,5 @@ Respect autoplay and sound preferences. Any nonessential loop must stop when off
 - Removing an animation would lose meaning or authored character, not merely decoration.
 
 When motion earns its place, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.
+
+_Version: 1.0.0_

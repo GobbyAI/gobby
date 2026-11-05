@@ -352,3 +352,90 @@ def test_inverse_concurrent_reparents_do_not_deadlock(
     assert moved_left is not None and moved_left.parent_task_id == left.id
     assert _open(manager, left.id)
     assert _open(manager, right.id)
+
+
+def test_delete_that_empties_the_old_parent_closes_it(temp_db: HubDatabase, tmp_path: Path) -> None:
+    """Deleting the last open child closes the old parent and its emptied ancestors.
+
+    #24818 kept its closed children open after its last open placeholder was deleted:
+    a delete vacates the parent just as a reparent does, and no child close arrives.
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    grand = _create(manager, project_id, "Grand epic", task_type="epic")
+    old_parent = _create(manager, project_id, "Old epic", task_type="epic", parent_task_id=grand.id)
+    done = _create(manager, project_id, "Done child", parent_task_id=old_parent.id)
+    placeholder = _create(manager, project_id, "Placeholder", parent_task_id=old_parent.id)
+    manager.close_task(done.id)
+    assert _open(manager, old_parent.id)
+
+    assert manager.delete_task(placeholder.id)
+
+    assert not _open(manager, old_parent.id)
+    assert not _open(manager, grand.id)
+
+
+def test_cascade_delete_of_a_subtree_closes_the_emptied_parent(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """Only the deletion origin's parent is walked; the deleted subtree is gone."""
+    manager, project_id = _manager(temp_db, tmp_path)
+    old_parent = _create(manager, project_id, "Old epic", task_type="epic")
+    done = _create(manager, project_id, "Done child", parent_task_id=old_parent.id)
+    subtree = _create(
+        manager, project_id, "Subtree", task_type="epic", parent_task_id=old_parent.id
+    )
+    _create(manager, project_id, "Subtree leaf", parent_task_id=subtree.id)
+    manager.close_task(done.id)
+
+    assert manager.delete_task(subtree.id, cascade=True)
+
+    with pytest.raises(ValueError, match="not found"):
+        manager.get_task(subtree.id)
+    assert not _open(manager, old_parent.id)
+
+
+@pytest.mark.parametrize("guard", ["open_sibling", "hold_label", "claimed"])
+def test_delete_keeps_a_guarded_old_parent_open(
+    temp_db: HubDatabase, tmp_path: Path, guard: str
+) -> None:
+    """A delete runs the same walk as a child close, with every guard intact."""
+    manager, project_id = _manager(temp_db, tmp_path)
+    labels = ["needs-decision"] if guard == "hold_label" else None
+    old_parent = _create(manager, project_id, "Old epic", task_type="epic", labels=labels)
+    placeholder = _create(manager, project_id, "Placeholder", parent_task_id=old_parent.id)
+    if guard == "open_sibling":
+        _create(manager, project_id, "Open sibling", parent_task_id=old_parent.id)
+    if guard == "claimed":
+        owner = SessionManager(temp_db).register(
+            external_id="owner-session",
+            machine_id=get_machine_id(),
+            source="codex",
+            project_id=project_id,
+        )
+        claim_task(temp_db, old_parent.id, owner.id)
+
+    assert manager.delete_task(placeholder.id)
+
+    assert _open(manager, old_parent.id)
+
+
+def test_deleting_a_closed_child_does_not_walk_its_parent(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A closed child never held its parent open, so removing it vacates nothing."""
+    manager, project_id = _manager(temp_db, tmp_path)
+    old_parent = _create(manager, project_id, "Old epic", task_type="epic")
+    done = _create(manager, project_id, "Done child", parent_task_id=old_parent.id)
+    _create(manager, project_id, "Open sibling", parent_task_id=old_parent.id)
+    manager.close_task(done.id)
+    walked: list[str | None] = []
+
+    def record_walk(_conn: Any, parent_id: str | None, **_kwargs: Any) -> None:
+        walked.append(parent_id)
+
+    monkeypatch.setattr("gobby.storage.tasks._lifecycle.close_eligible_parent_chain", record_walk)
+
+    assert manager.delete_task(done.id)
+
+    assert walked == []
+    assert _open(manager, old_parent.id)

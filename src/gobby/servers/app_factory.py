@@ -13,8 +13,9 @@ import httpx as httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
-from starlette.applications import Starlette
+from starlette.requests import HTTPConnection
 from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gobby import ui_exposure
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
@@ -37,6 +38,8 @@ from gobby.servers._app_ui import (
     _requested_websocket_subprotocols,
 )
 from gobby.servers.exception_handlers import register_exception_handlers
+from gobby.servers.routes.mcp.endpoints.request_context import bind_request_principal
+from gobby.utils.session_context import reset_request_principal
 from gobby.utils.version import get_version
 
 if TYPE_CHECKING:
@@ -65,9 +68,31 @@ __all__ = [
 ]
 
 
-def _register_mcp_http_route(app: FastAPI, mcp_app: Starlette) -> None:
+def _register_mcp_http_route(app: FastAPI, mcp_app: ASGIApp) -> None:
     """Register the MCP sub-application at its canonical external path."""
     app.router.routes.append(Route("/mcp", endpoint=mcp_app, name="mcp", include_in_schema=False))
+
+
+class _PrincipalBoundMcpApp:
+    """Bind each /mcp request's authenticated caller for the tools it runs.
+
+    call_tool checks its wrapper session_id against this principal, and the /mcp
+    mount skips the /api/mcp request-context seeding, so it is bound here.
+    """
+
+    def __init__(self, server: "HTTPServer", app: ASGIApp) -> None:
+        self._server = server
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        token = bind_request_principal(self._server, HTTPConnection(scope))
+        try:
+            await self._app(scope, receive, send)
+        finally:
+            reset_request_principal(token)
 
 
 # The MCP SDK's loopback policy (mcp 2.2.0, lowlevel/server.py streamable_http_app), kept
@@ -187,7 +212,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
     _register_routes(app, server)
 
     if mcp_app is not None:
-        _register_mcp_http_route(app, mcp_app)
+        _register_mcp_http_route(app, _PrincipalBoundMcpApp(server, mcp_app))
         logger.debug("MCP server registered at /mcp")
 
     _mount_ws_endpoint(app, server)

@@ -73,7 +73,16 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> tuple[str, int] |
     if fd_dup:
         raw = fd_dup.group(0)
         return raw.replace("\\\n", ""), len(raw)
+    # Clobber forms: ``>|`` overrides noclobber in Bash and zsh; zsh also accepts the
+    # ``>>|``/``&>|``/``>&|``/``>>&`` families, which Bash rejects as syntax errors.
     for operator in (
+        ">>&|",
+        "&>>|",
+        ">>&",
+        ">&|",
+        "&>|",
+        ">>|",
+        ">|",
         "<<<",
         "<<-",
         "&>>",

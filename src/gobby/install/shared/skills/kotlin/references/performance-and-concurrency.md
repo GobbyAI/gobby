@@ -51,3 +51,5 @@ dispatchers, Android UI work, native/JS targets, or shared mutable state.
 - Does the change preserve cancellation, thread-safety, and lifecycle behavior?
 - Are allocations, queries, network calls, and dispatcher hops bounded?
 - Is there a rollback path if production measurements disagree?
+
+_Version: 1.0.0_

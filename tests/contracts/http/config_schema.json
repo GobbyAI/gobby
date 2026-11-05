@@ -2594,17 +2594,6 @@
           "default": 3,
           "description": "Deterministic KG failures allowed before a memory leaves the queue"
         },
-        "launch_defaults.{project_id}": {
-          "type": "object",
-          "namespace": "launch_defaults",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": [],
-          "description": "Per-project native launch defaults.",
-          "pattern": "launch_defaults.{project_id}"
-        },
         "logging.allow_audit_max_size_mb": {
           "type": "integer",
           "namespace": "logging",

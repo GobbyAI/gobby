@@ -7,3 +7,5 @@ Call `get_skill_file(name="impeccable", path="references/live-contract.md")` bef
 - For start failures, configuration, drift, exit, cleanup, or first-time setup, call `get_skill_file(name="impeccable", path="references/live-setup-recovery.md")`.
 
 Load the contract plus only the action-specific reference and recovery reference when needed. Preserve the poll contract, completion signals, verification after accept, and cleanup behavior.
+
+_Version: 1.0.0_

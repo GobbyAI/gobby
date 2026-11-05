@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +21,7 @@ from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.runner import AgentRunner
 from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_lifecycle import check_team_spawn
-from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
+from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.runner_maintenance.isolation import team_tree_deleter
@@ -33,14 +34,23 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.postgres import TEST_USER_ID
-from tests.fixtures.team_case import TeamWorld, git_in, make_team_world, running_seat
+from tests.fixtures.team_case import (
+    TeamWorld,
+    execution_id,
+    git_in,
+    make_team_world,
+    running_seat,
+)
 from tests.fixtures.team_teardown_case import (
+    TEARDOWN_LOGGER,
     Team,
     Terminations,
     admitted_team,
@@ -48,6 +58,8 @@ from tests.fixtures.team_teardown_case import (
     closed_at,
     daemon,
     dispatched_seat,
+    project_task_ids,
+    refusal_codes,
     seat,
     session_status,
     teardown,
@@ -61,7 +73,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["done", "superseded", "moot", "abandoned"])
+@pytest.mark.parametrize(
+    # Close reasons are free text; an unmapped one still reaches waiters verbatim.
+    "reason",
+    ["done", "superseded", "moot", "abandoned", "wont_do", "split into smaller tasks"],
+)
 async def test_closed_task_teardown_records_success_without_user_cancellation(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
@@ -138,7 +154,7 @@ def commit(team: Team, name: str) -> str:
 
 
 def land(world: TeamWorld, team: Team, name: str) -> str:
-    """Commit ``name`` in the team tree and merge its branch into trunk, as landing does."""
+    """Commit ``name`` in the team tree and merge its branch into trunk, as the merge step does."""
     sha = commit(team, name)
     world.case.git("merge", "--no-edit", team.binding.branch)
     return sha
@@ -147,7 +163,7 @@ def land(world: TeamWorld, team: Team, name: str) -> str:
 def close(
     world: TeamWorld, team: Team, sha: str, *, minutes_ago: int = 0, reason: str = "done"
 ) -> Task:
-    """The Dev Team Lead's committed close, optionally backdated past the teardown grace."""
+    """The team's committed close, optionally backdated past the teardown grace."""
     db = world.case.db
     db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), team.task.id))
     LocalTaskManager(db).close_task(
@@ -158,12 +174,6 @@ def close(
         (minutes_ago, team.task.id),
     )
     return LocalTaskManager(db).get_task(team.task.id)
-
-
-def finding_tasks(world: TeamWorld, team: Team) -> list[Task]:
-    return LocalTaskManager(world.case.db).list_tasks(
-        project_id=world.case.project_id, label=f"team-{team.binding.team_id}"
-    )
 
 
 def seat_run(db: HubDatabase, team: Team, index: int) -> AgentRun:
@@ -213,7 +223,7 @@ async def test_close_collapses_all_team_seats(
     terminations = Terminations(db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
     team = await admitted_team(world, "Collapse the closed team")
-    # A replacement execution joined the team and launched its own reviewer.
+    # A replacement execution joined the team and launched its own checker.
     rejoined = world.child(team.task)
     await world.admit(rejoined, team.task, team.binding.team_id)
     world.finish(rejoined)
@@ -294,22 +304,18 @@ async def test_teardown_recovers_after_restart(
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert await teardown_pass(db, runner, datetime.now().astimezone()) == 0
 
-    # A refusal's finding was filed, then the daemon stopped before the record named it.
-    filed = LocalTaskManager(db).create_task(
-        world.case.project_id,
-        "Team teardown refused",
-        labels=[FINDING_LABEL, f"team-{refused.binding.team_id}"],
-        validation_criteria="The refused team tree is deleted or kept with a reason.",
-    )
+    # A refusal files no task, so a restart re-derives it from the tree and records it alone.
+    tasks_before = project_task_ids(world)
     close(world, refused, commit(refused, "unmerged.py"), minutes_ago=1)
     await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
     await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
 
     assert terminations.ended() == sorted([*team.seats, *refused.seats])
-    record = teardown(world, refused)
-    assert (record["outcome"], record["finding"]) == ("refused", filed.id)
-    assert [task.id for task in finding_tasks(world, refused)] == [filed.id]
-    assert LocalTaskManager(db).get_task(filed.id).is_escalated
+    assert teardown(world, refused) == {
+        "outcome": "refused",
+        "code": "branch_not_merged_into_target",
+    }
+    assert project_task_ids(world) == tasks_before
     assert tree_of(refused.binding).is_dir()
 
 
@@ -328,7 +334,6 @@ async def test_teardown_converges_after_git_removed_the_tree(
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
     assert not branch_exists(world, team.binding.branch)
-    assert finding_tasks(world, team) == []
 
 
 async def test_teardown_leaves_another_machines_tree_alone(
@@ -351,11 +356,10 @@ async def test_teardown_leaves_another_machines_tree_alone(
 
     assert terminations.calls == []
     assert teardown(world, team) == {}
-    assert finding_tasks(world, team) == []
 
 
 async def test_cleanup_preserves_unsafe_trees(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     db = world.case.db
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
@@ -369,7 +373,7 @@ async def test_cleanup_preserves_unsafe_trees(
     }
     shas[unmerged.binding.team_id] = commit(unmerged, "unmerged.py")
     edited = tree_of(dirty.binding) / "README.md"
-    edited.write_text("edited after landing\n")
+    edited.write_text("edited after the merge\n")
     stranger = world.case.session("operator shell")
     db.execute(
         "UPDATE sessions SET workspace_path = %s WHERE id = %s",
@@ -381,7 +385,10 @@ async def test_cleanup_preserves_unsafe_trees(
         for team in (eligible, dirty, occupied, mismatched, unmerged)
     ]
 
-    await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
+    tasks_before = project_task_ids(world)
+    with caplog.at_level(logging.WARNING, logger=TEARDOWN_LOGGER):
+        await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
+    assert project_task_ids(world) == tasks_before
 
     assert teardown(world, eligible) == {"outcome": "cleaned"}
     assert not tree_of(eligible.binding).exists()
@@ -393,17 +400,12 @@ async def test_cleanup_preserves_unsafe_trees(
         (unmerged, "branch_not_merged_into_target"),
     )
     for team, code in refusals:
-        record = teardown(world, team)
-        assert (record["outcome"], record["code"]) == ("refused", code)
-        (finding,) = finding_tasks(world, team)
-        assert record["finding"] == finding.id
-        assert finding.is_escalated
-        assert FINDING_LABEL in (finding.labels or [])
-        assert str(tree_of(team.binding)) in (finding.description or "")
+        assert teardown(world, team) == {"outcome": "refused", "code": code}
         assert tree_of(team.binding).is_dir()
         assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
         assert branch_exists(world, team.binding.branch)
-    assert edited.read_text() == "edited after landing\n"
+    assert sorted(refusal_codes(caplog)) == sorted(code for _, code in refusals)
+    assert edited.read_text() == "edited after the merge\n"
     assert git_in(tree_of(mismatched.binding), "branch", "--show-current") == (
         "operator-experiment"
     )
@@ -411,7 +413,7 @@ async def test_cleanup_preserves_unsafe_trees(
 
 
 async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A seat that cannot be ended is a typed, reported teardown failure; its tree stays."""
     db = world.case.db
@@ -435,16 +437,17 @@ async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
     )
     sha = land(world, team, "stuck.py")
     closed = close(world, team, sha)
+    tasks_before = project_task_ids(world)
 
-    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+    with caplog.at_level(logging.WARNING, logger=TEARDOWN_LOGGER):
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
     record = teardown(world, team)
     assert record.get("outcome") == "refused"
     assert isinstance(record.get("code"), str) and record["code"]
-    (finding,) = finding_tasks(world, team)
-    assert record["finding"] == finding.id
-    assert finding.is_escalated
-    assert FINDING_LABEL in (finding.labels or [])
+    assert set(record) == {"outcome", "code"}
+    assert refusal_codes(caplog) == [record["code"]]
+    assert project_task_ids(world) == tasks_before
     assert tree_of(team.binding).is_dir()
     assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
     assert branch_exists(world, team.binding.branch)
@@ -472,7 +475,6 @@ async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
     assert teardown(world, team) == {"outcome": "cleaned"}
-    assert finding_tasks(world, team) == []
     assert not tree_of(team.binding).exists()
     assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
     assert not branch_exists(world, team.binding.branch)
@@ -532,7 +534,6 @@ async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
     assert teardown(world, team) == {"outcome": "cleaned"}
-    assert finding_tasks(world, team) == []
     assert not tree_of(team.binding).exists()
     assert not branch_exists(world, team.binding.branch)
     assert session_status(db, team.seats[1]) == "expired"
@@ -580,14 +581,12 @@ async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_re
     # The first pass may end seats; it must not refuse the tree while a seat is still in it.
     await teardown_pass(db, daemon(db), later)
     assert teardown(world, team).get("outcome") != "refused"
-    assert finding_tasks(world, team) == []
 
     await teardown_pass(db, daemon(db), later)
     assert terminations.ended() == sorted([*team.seats, dispatched])
     assert session_status(db, dispatched) == "expired"
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree_of(team.binding).exists()
-    assert finding_tasks(world, team) == []
 
 
 @pytest.mark.asyncio
@@ -609,13 +608,11 @@ async def test_team_close_retries_while_a_dispatched_seat_is_still_exiting(
     await teardown_pass(db, daemon(db), later)
     assert tree_of(team.binding).is_dir()
     assert teardown(world, team).get("outcome") != "refused"
-    assert finding_tasks(world, team) == []
 
     SessionManager(db).update_status(dispatched, "expired")
     await teardown_pass(db, daemon(db), later)
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree_of(team.binding).exists()
-    assert finding_tasks(world, team) == []
 
 
 @pytest.mark.asyncio
@@ -639,7 +636,6 @@ async def test_teardown_ends_the_seats_of_a_team_with_no_tree_without_refusing(
     assert terminations.ended() == sorted(team.seats)
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     assert teardown(world, team).get("outcome") != "refused"
-    assert finding_tasks(world, team) == []
 
 
 async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
@@ -649,12 +645,12 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     db = world.case.db
     terminations = Terminations(db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
-    task = world.case.task("Treeless research team")
+    task = world.case.task("Treeless team")
     runbook = world.child(task)
     binding = await world.admit(runbook, task, checkout_mode="none")
     world.finish(runbook)
-    researcher = seat(world, runbook, binding, "fixture-definition-3588bb72", manages=task)
-    team = Team(task, runbook, binding, [researcher])
+    treeless_seat = seat(world, runbook, binding, "fixture-definition-3588bb72", manages=task)
+    team = Team(task, runbook, binding, [treeless_seat])
     closed = close(world, team, commit(team, "report.md"))
     deleted: list[TeamBinding] = []
 
@@ -665,7 +661,7 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE, delete=no_tree_delete)
 
     assert deleted == []
-    assert terminations.ended() == [researcher]
+    assert terminations.ended() == [treeless_seat]
     assert teardown(world, team) == {"outcome": "cleaned"}
 
 
@@ -675,20 +671,20 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, parked: bool, inside_tree: bool
 ) -> None:
     db = world.case.db
-    team = await admitted_team(world, "Dispatched reviewer in the main checkout")
-    reviewer = dispatched_seat(world, team, str(world.case.repo))
+    team = await admitted_team(world, "Dispatched checker in the main checkout")
+    checker = dispatched_seat(world, team, str(world.case.repo))
     db.execute(
         "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
-        (team.task.id, reviewer),
+        (team.task.id, checker),
     )
     runs = LocalAgentRunManager(db)
-    reviewer_run = runs.get_by_session(reviewer)
-    assert reviewer_run is not None
+    checker_run = runs.get_by_session(checker)
+    assert checker_run is not None
     if parked:
-        SessionManager(db).update_terminal_pickup_metadata(reviewer, agent_run_id=reviewer_run.id)
-        runs.start(reviewer_run.id)
-        runs.merge_resume_metadata(reviewer_run.id, {"provider_native_session_id": "native-review"})
-        runs.cancel(reviewer_run.id, terminal_reason="daemon_stop")
+        SessionManager(db).update_terminal_pickup_metadata(checker, agent_run_id=checker_run.id)
+        runs.start(checker_run.id)
+        runs.merge_resume_metadata(checker_run.id, {"provider_native_session_id": "native-check"})
+        runs.cancel(checker_run.id, terminal_reason="daemon_stop")
     other_task = world.case.task("Another open assignment")
     # Preserve the manager, but still find the children it dispatched for the closing task.
     manager = team.seats[0]
@@ -713,14 +709,14 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
 
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
-    assert terminations.ended() == sorted([*team.seats[1:], *([] if parked else [reviewer])])
+    assert terminations.ended() == sorted([*team.seats[1:], *([] if parked else [checker])])
     assert session_status(db, manager) == "active"
     assert session_status(db, other) == "active"
     assert session_status(db, reassigned.id) == "active"
-    assert session_status(db, reviewer) == "expired"
-    assert get_agent_end_handoff(db, reviewer_run.id) is not None
+    assert session_status(db, checker) == "expired"
+    assert get_agent_end_handoff(db, checker_run.id) is not None
     if parked:
-        ended_run = runs.get(reviewer_run.id)
+        ended_run = runs.get(checker_run.id)
         assert ended_run is not None and ended_run.resume_metadata_json is not None
         assert ended_run.resume_metadata_json[CONSUMED_BY_KEY] == "teardown"
     assert LocalTaskManager(db).get_task(other_task.id).claimed_by_session_id == reassigned.id
@@ -730,10 +726,77 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
 
     await teardown_pass(db, daemon(db), closed_at(other_closed) + TEARDOWN_GRACE)
 
-    expected = [*team.seats, other, reassigned.id, *([] if parked else [reviewer])]
+    expected = [*team.seats, other, reassigned.id, *([] if parked else [checker])]
     assert terminations.ended() == sorted(expected)
     assert {session_status(db, session) for session in (manager, other, reassigned.id)} == {
         "expired"
     }
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree_of(team.binding).exists()
+
+
+async def test_team_teardown_refusal_creates_no_task(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#25656: a refused tree deletion keeps the tree and files no task; it logs a WARNING."""
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    dirty = await admitted_team(world, "Dirty teardown team")
+    sha = land(world, dirty, "dirty.py")
+    (tree_of(dirty.binding) / "dirty.py").write_text("edited after the merge\n")
+    closed = close(world, dirty, sha, minutes_ago=1)
+    before = project_task_ids(world)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.team_teardown"):
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert project_task_ids(world) == before
+    assert teardown(world, dirty) == {"outcome": "refused", "code": "uncommitted_changes"}
+    assert tree_of(dirty.binding).is_dir()
+    assert LocalWorktreeManager(db).get(tree_id_of(dirty.binding)) is not None
+    assert refusal_codes(caplog) == ["uncommitted_changes"]
+
+
+async def test_runbook_seat_refusal_creates_no_task_and_stops_retrying(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#25656: a runbook whose seat cannot end records a refused outcome and no task."""
+    db = world.case.db
+    definition = PipelineDefinition(
+        name="synthetic-seat-runbook",
+        tags=["runbook"],
+        steps=[
+            PipelineStep(id=ADMISSION_STEP, exec="true"),
+            PipelineStep(id="fixture-worker", exec="true"),
+        ],
+    )
+    task = world.case.task("Runbook seat cannot end")
+    runbook = world.child(task, definition)
+    planner = running_seat(world, runbook, "fixture-worker")
+    world.finish(runbook)
+    closed = LocalTaskManager(db).close_task(task.id, reason="done")
+    calls: list[str] = []
+
+    async def cannot_end(**kwargs: Any) -> dict[str, Any]:
+        run: AgentRun = kwargs["run"]
+        calls.append(run.id)
+        return {"success": False, "error_code": "test_refusal", "error": "seat cannot end"}
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", cannot_end)
+    before = project_task_ids(world)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.team_teardown"):
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert project_task_ids(world) == before
+    assert len(calls) == 1
+    assert session_status(db, planner.id) == "active"
+    outcomes = [
+        json.loads(step.output_json or "{}").get("teardown")
+        for step in world.executions.get_steps_for_execution(execution_id(runbook))
+    ]
+    assert {"outcome": "refused", "code": "test_refusal"} in outcomes
+    assert all(outcome is None or "finding" not in outcome for outcome in outcomes)
+    assert refusal_codes(caplog) == ["test_refusal"]

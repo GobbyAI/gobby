@@ -121,3 +121,5 @@ Store the task, handle failures, and cancel it during shutdown. Do not create un
 ## Async Tests
 
 Use pytest's configured async plugin. Test cancellation, timeout, retries, and partial failure with controlled tasks or fake timers. Avoid real sleeps; they make tests flaky and slow.
+
+_Version: 1.0.0_

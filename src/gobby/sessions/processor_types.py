@@ -61,6 +61,7 @@ class ProcessorHost(Protocol):
     _restored_render_sessions: set[str]
     _mirror_start_offsets: dict[str, int]
     _mirror_eligible_ids: dict[str, set[str]]
+    _mirror_eligible_lines: dict[str, set[int]]
     _pending_turn_completions: dict[str, TurnCompletion]
     _index_appenders: dict[str, TranscriptIndexAppender]
     _observation_store: UnmodeledObservationStore

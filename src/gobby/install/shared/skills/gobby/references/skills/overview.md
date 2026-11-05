@@ -20,4 +20,6 @@ actual installed name. Never treat a truncated or failed page as loaded.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#what-a-skill-is).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

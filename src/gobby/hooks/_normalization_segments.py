@@ -7,13 +7,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from gobby.hooks._normalization_operands import _shell_positional_args_after
 from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
     ShellToken,
     _shell_positional_args,
 )
 from gobby.hooks.code_navigation import (
+    HEAD_TAIL_VALUE_OPTIONS,
     MAX_NARROW_SOURCE_LINES,
+    STDIN_OPERANDS,
     count_option_line_count,
     sed_line_count,
     shell_command_name,
@@ -131,7 +134,11 @@ def _pipeline_filter_output_line_bound(parts: list[str]) -> int | None:
     """Verified output bound, in lines, of a read-only pipeline filter stage."""
     command = shell_command_name(parts[0])
     if command in {"head", "tail"}:
-        return count_option_line_count(parts)
+        bound = count_option_line_count(parts)
+        # Each stdin operand reads the stream again, so the bound applies per operand.
+        operands = _shell_positional_args_after(parts, 1, option_args=set(HEAD_TAIL_VALUE_OPTIONS))
+        repeats = sum(operand in STDIN_OPERANDS for operand in operands)
+        return None if bound is None else bound * max(1, repeats)
     if command == "sed":
         return sed_line_count(parts, _shell_positional_args(parts))
     return None

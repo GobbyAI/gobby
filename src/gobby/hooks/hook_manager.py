@@ -19,6 +19,8 @@ from gobby.hooks.agent_run_ingress import (
     validate_managed_agent_hook,
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
+from gobby.hooks.codex_seat import codex_stored_clear_context
+from gobby.hooks.compaction_ownership import CompactionOwnership, merge_replayed_context
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import (
@@ -39,6 +41,8 @@ from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
+from gobby.hooks.subagent_boundary import subagent_boundary_signal
+from gobby.hooks.terminal_context import configure_codex_seat_index
 from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.telemetry.tracing import create_span
 
@@ -154,6 +158,13 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         self._webhook_dispatcher = components.webhook_dispatcher
         self._session_manager = cast(HookSessionManager, components.session_manager)
         self._project_id_resolver.session_manager = self._session_manager
+        # Codex seat resolution decides /clear successors from their stored rows.
+        local_machine_id = self.get_machine_id()
+        configure_codex_seat_index(
+            codex_stored_clear_context(self._session_manager.db, local_machine_id)
+            if local_machine_id
+            else None
+        )
         self._session_coordinator = components.session_coordinator
         self._session_end_auto_link_worker = components.session_end_auto_link_worker
         self._health_monitor = components.health_monitor
@@ -180,6 +191,9 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             injected_sessions=self._injected_sessions,
             inter_session_msg_manager=self._inter_session_msg_manager,
         )
+
+        # Auto-compaction hooks whose owner (parent or subagent) is unknown (#25683)
+        self._compaction_ownership = CompactionOwnership()
 
         # Session lookup service (resolves platform session IDs from CLI external IDs)
         from gobby.hooks.session_lookup import SessionLookupService
@@ -282,6 +296,30 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
 
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
+        replays, held = self._compaction_ownership.route(event)
+        if held:
+            return HookResponse(decision="allow")
+        replayed = self._run_replays(replays)
+        return merge_replayed_context(self._handle_routed(event), replayed)
+
+    def _run_replays(self, replays: list[HookEvent]) -> list[HookResponse]:
+        """Run settled compaction replays before the event that settled them.
+
+        Only SessionStart responses are kept: the reset's context is returned to Claude on
+        the settling event. PreCompact and PostCompact responses are not.
+        """
+        results: list[HookResponse] = []
+        for replayed in replays:
+            try:
+                result = self._handle_internal(replayed)
+            except Exception:
+                self.logger.exception("Replaying held %s failed", replayed.event_type.value)
+                continue
+            if replayed.event_type == HookEventType.SESSION_START:
+                results.append(result)
+        return results
+
+    def _handle_routed(self, event: HookEvent) -> HookResponse:
         # A not-ready cached status makes this gate check synchronously and, for
         # critical hooks, sleep between retries on the adapter thread (#23063).
         daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
@@ -297,6 +335,29 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
 
     async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
         """Internal async handle logic wrapped by span."""
+        if self._compaction_ownership.needs_transcripts(event):
+            replays, held = await asyncio.to_thread(self._compaction_ownership.route, event)
+        else:
+            replays, held = self._compaction_ownership.route(event)
+        if held:
+            return HookResponse(decision="allow")
+        replayed = await self._run_replays_async(replays)
+        return merge_replayed_context(await self._handle_routed_async(event), replayed)
+
+    async def _run_replays_async(self, replays: list[HookEvent]) -> list[HookResponse]:
+        """Async twin of _run_replays."""
+        results: list[HookResponse] = []
+        for replayed in replays:
+            try:
+                result = await self._handle_internal_async(replayed)
+            except Exception:
+                self.logger.exception("Replaying held %s failed", replayed.event_type.value)
+                continue
+            if replayed.event_type == HookEventType.SESSION_START:
+                results.append(result)
+        return results
+
+    async def _handle_routed_async(self, event: HookEvent) -> HookResponse:
         daemon_unavailable = await ensure_daemon_ready_async(
             event,
             self._health_monitor,
@@ -318,6 +379,11 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         """Run hook preparation, returning async handlers to the calling loop."""
         if blocking_deadline is None:
             blocking_deadline = new_blocking_effect_deadline()
+        # A subagent's own compaction is not the parent's context loss: skip it
+        # before any session lookup, handler or rule can reset the parent.
+        if signal := subagent_boundary_signal(event):
+            self.logger.info("Ignoring %s from a subagent (%s)", event.event_type.value, signal)
+            return HookResponse(decision="allow")
         # SESSION_START is special: the handler establishes the canonical
         # platform session first (including pre-created web-chat rows). Doing a
         # generic lookup here can auto-register a stray duplicate before the
@@ -443,6 +509,25 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         # downstream tools get unambiguous UUIDs.
         self._resolve_session_refs_in_tool_input(event)
         self._recheck_pending_transcript(event)
+
+        if (
+            event.source == SessionSource.CODEX
+            and event.metadata.get("_native_hook_type") in {"PreToolUse", "PostToolUse"}
+            and (session_id := event.metadata.get("_platform_session_id"))
+        ):
+            from gobby.workflows.state_manager import SessionVariableManager
+            from gobby.workflows.task_tool_bindings import TaskToolBindings
+
+            bindings = TaskToolBindings(SessionVariableManager(self._database), session_id)
+            try:
+                bindings.reconcile_native_failures(event)
+                if event.event_type == HookEventType.AFTER_TOOL and bindings.is_abandoned(event):
+                    return HookResponse(decision="allow")
+            except Exception:
+                self.logger.warning("Failed to reconcile native tool bindings", exc_info=True)
+                if event.event_type == HookEventType.AFTER_TOOL:
+                    # Unknown completion state cannot authorize adoption or validation credit.
+                    return HookResponse(decision="allow")
 
         # Get handler for this event type
         handler = self._get_event_handler(event.event_type)

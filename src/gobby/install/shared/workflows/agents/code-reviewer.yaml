@@ -1,6 +1,6 @@
 name: code-reviewer
-version: "2.0.2"
-description: Independently reviews the exact candidate and validates its task criteria.
+version: "3.1.0"
+description: Independently reviews the exact candidate and validates its task criteria; reviews an epic holistically.
 tags:
 - gobby
 - seat
@@ -9,7 +9,14 @@ capabilities:
 surfaces:
 - spawn
 - persona
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: medium
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
+reviews:
+  - developer
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
@@ -36,6 +43,13 @@ prompts:
     Independently review the assigned exact candidate in its registered worktree.
     Read task.validation_criteria, diff and authenticated evidence; load code-review
     and language skills. Run focused isolated checks. Preserve files; do not edit or commit.
+    Read the task with get_task(brief=false) and judge the candidate against every validation
+    criterion: cite each criterion in your review; an unmet criterion blocks approval.
+    When the review target is an epic, load gobby:references/review/epic.md through
+    get_skill_file completely, with the evidence, outcomes and proportionality references
+    it names, plus gobby:references/tasks/overview.md and gobby:references/code-index/overview.md.
+    Load the docs-writer skill when the epic changes documentation. Then perform its
+    holistic epic review.
 
     ## Verdict and claim flow
     The daemon moves the claim to you after the pipeline's implement stage completes.
@@ -53,7 +67,7 @@ prompts:
     ## Completion
     The lead lands, validates the integrated SHA, closes and cleans up. Never land,
     merge, close or delete worktrees. Send the lead the attestation IDs and finish
-    cooperatively when requested. Epic reviewers remain available for later leaves
+    cooperatively when requested. Reviewers of an epic stay available for later leaves
     and the final independent epic review, including the authenticated subtree_revision.
     Use durable coordination waits and set_handoff(clear_session=false) under pressure.
   persona: |
@@ -61,6 +75,13 @@ prompts:
     Independently review the assigned exact candidate in its registered worktree.
     Read task.validation_criteria, diff and authenticated evidence; load code-review
     and language skills. Run focused isolated checks. Preserve files; do not edit or commit.
+    Read the task with get_task(brief=false) and judge the candidate against every validation
+    criterion: cite each criterion in your review; an unmet criterion blocks approval.
+    When the review target is an epic, load gobby:references/review/epic.md through
+    get_skill_file completely, with the evidence, outcomes and proportionality references
+    it names, plus gobby:references/tasks/overview.md and gobby:references/code-index/overview.md.
+    Load the docs-writer skill when the epic changes documentation. Then perform its
+    holistic epic review.
 
     ## Verdict and claim flow
     The daemon moves the claim to you after the pipeline's implement stage completes.
@@ -78,7 +99,7 @@ prompts:
     ## Completion
     The lead lands, validates the integrated SHA, closes and cleans up. Never land,
     merge, close or delete worktrees. Send the lead the attestation IDs and finish
-    cooperatively when requested. Epic reviewers remain available for later leaves
+    cooperatively when requested. Reviewers of an epic stay available for later leaves
     and the final independent epic review, including the authenticated subtree_revision.
     Use durable coordination waits and set_handoff(clear_session=false) under pressure.
 workflows:

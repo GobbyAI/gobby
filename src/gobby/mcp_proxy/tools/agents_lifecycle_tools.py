@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
+from gobby.agents.termination_authority import (
+    caller_may_terminate,
+    helpers_not_owned_refusal,
+    not_owned_refusal,
+)
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminate_agent_run,
@@ -14,18 +19,45 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.handoff_records import build_handoff_payload, stage_agent_end_handoff
 
 
+def _caller_may_terminate_run(
+    ctx: AgentsRegistryContext,
+    *,
+    spawner_session_id: str,
+    run_session_id: str | None,
+) -> bool:
+    """Shared stop/kill admission for the calling seat (see agents.termination_authority)."""
+    return caller_may_terminate(
+        ctx.db or ctx.agent_run_manager.db,
+        caller_session_id=ctx.get_current_session_id(),
+        spawner_session_id=spawner_session_id,
+        run_session_id=run_session_id,
+    )
+
+
 def register_agent_lifecycle_tools(
     registry: InternalToolRegistry,
     ctx: AgentsRegistryContext,
 ) -> None:
     @registry.tool(
         name="stop_agent",
-        description="Stop a running agent and mark the run cancelled.",
+        description=(
+            "Stop a running agent and mark the run cancelled. Allowed for the run's own "
+            "session, its spawner chain, or a seat whose definition declares stop_any_seat; "
+            "any other caller gets agent_stop_not_owned and nothing is signalled."
+        ),
     )
     async def stop_agent(run_id: str) -> dict[str, Any]:
         agents = facade()
+        run = ctx.runner.get_run(run_id)
+        if run is not None and not _caller_may_terminate_run(
+            ctx,
+            spawner_session_id=run.parent_session_id,
+            run_session_id=run.child_session_id,
+        ):
+            return not_owned_refusal(run_id)
         return await stop_agent_run(
             run_id=run_id,
+            run=run,
             runner=ctx.runner,
             agent_run_manager=ctx.agent_run_manager,
             db=ctx.db,
@@ -41,7 +73,9 @@ def register_agent_lifecycle_tools(
         name="cancel_stale_helpers",
         description=(
             "Cancel all still-running runs of an agent spawned by a parent session. "
-            "Used by freshness rules before parent turn delivery."
+            "Used by freshness rules before parent turn delivery. Allowed for the parent's "
+            "spawner chain or a seat whose definition declares stop_any_seat; any other caller "
+            "gets agent_stop_not_owned and nothing is cancelled."
         ),
     )
     async def cancel_stale_helpers(
@@ -57,6 +91,12 @@ def register_agent_lifecycle_tools(
             resolved_parent = ctx.resolve_session_id(parent_session_id)
         except ValueError as e:
             return {"success": False, "error": str(e)}
+        if not _caller_may_terminate_run(
+            ctx,
+            spawner_session_id=resolved_parent,
+            run_session_id=None,
+        ):
+            return helpers_not_owned_refusal(resolved_parent)
         stale = [
             run
             for run in ctx.agent_run_manager.list_by_parent(resolved_parent)
@@ -219,7 +259,9 @@ def register_agent_lifecycle_tools(
         description=(
             "Kill a running agent process and close its terminal. "
             "Use run_id (parent kills child) or session_id (self-termination). "
-            "Defaults to self-termination if no run_id or session_id provided."
+            "Defaults to self-termination if no run_id or session_id provided. Allowed for "
+            "the run's own session, its spawner chain, or a seat whose definition declares "
+            "stop_any_seat; any other caller gets agent_stop_not_owned and nothing is signalled."
         ),
     )
     async def kill_agent(
@@ -290,6 +332,12 @@ def register_agent_lifecycle_tools(
             caller_session_id = ctx.get_current_session_id()
             if caller_session_id and caller_session_id == agent_session_id:
                 is_self_termination = True
+        if not _caller_may_terminate_run(
+            ctx,
+            spawner_session_id=db_run.parent_session_id,
+            run_session_id=agent_session_id,
+        ):
+            return not_owned_refusal(resolved_run_id)
         if status == "success" and not is_self_termination:
             return {
                 "success": False,

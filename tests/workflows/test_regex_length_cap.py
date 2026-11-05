@@ -96,11 +96,19 @@ def test_bundled_templates_within_cap() -> None:
     assert all(len(pattern.pattern) <= 2048 for pattern in patterns)
 
 
+def _block_rule(command_pattern: str) -> dict[str, object]:
+    """A schema-valid rule whose only regex is ``command_pattern``."""
+    return {
+        "event": "before_tool",
+        "effects": [{"type": "block", "reason": "capped", "command_pattern": command_pattern}],
+    }
+
+
 @pytest.mark.integration
 def test_registry_rejects_before_persist(temp_db: HubDatabase) -> None:
     manager = RuleDefinitionManager(temp_db)
-    body = {"event": "before_tool", "effects": [{"type": "block", "command_pattern": "x" * 2049}]}
-    with pytest.raises(ValueError, match="registry-cap"):
+    body = _block_rule("x" * 2049)
+    with pytest.raises(ValueError, match="registry-cap.*2049.*2048"):
         manager.create("registry-cap", body)
     assert manager.get_by_name("registry-cap") is None
 
@@ -114,15 +122,16 @@ def test_registry_uses_current_config_for_create_and_sync_update(temp_db: HubDat
         patch=ConfigPatch(values={"workflow.definition_regex_max_length": 16}),
     )
     manager = RuleDefinitionManager(temp_db)
-    row = manager.create("configured-registry", {"command_pattern": "x" * 16})
+    body = _block_rule("x" * 16)
+    row = manager.create("configured-registry", body)
     mutations.patch(
         expected_revision=result.revision,
         patch=ConfigPatch(values={"workflow.definition_regex_max_length": 15}),
     )
     with pytest.raises(ValueError, match="configured-registry.*16.*15"):
-        manager.update_from_sync(row.id, definition_json={"command_pattern": "x" * 16})
+        manager.update_from_sync(row.id, definition_json=body)
     with pytest.raises(ValueError, match="lower-cap.*16.*15"):
-        manager.create("lower-cap", {"command_pattern": "x" * 16})
+        manager.create("lower-cap", body)
     assert manager.get(row.id).definition_json == row.definition_json
 
 

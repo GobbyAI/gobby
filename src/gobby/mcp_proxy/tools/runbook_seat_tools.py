@@ -10,6 +10,7 @@ from gobby.agents.team_admission_records import TeamAdmissionRefused
 from gobby.agents.team_lifecycle import admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.spawn_agent._launch_settings import load_model_defaults
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -44,9 +45,10 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "definition is missing or disabled. report_to, if supplied, is a session ref that "
             "must be live and whose definition admits every seat launched; require_report_to "
             "rejects omission. "
-            "launch names the seats to start; skip_live_seats leaves out each seat whose "
-            "agent already runs on this machine with a live session in this project and "
-            "maps it to that session under live. tab_title names the runbook tab; with task it "
+            "launch names the seats to start; skip_live_seats leaves out each requested seat whose "
+            "agent already runs on this machine with a live session in this project. live maps "
+            "every catalogue seat with such a run, requested or not, to that session; with task, "
+            "only runs launched for that same task count. tab_title names the runbook tab; with task it "
             "becomes '<tab_title> - #<seq>', and tab_exists reports that tab of the workspace. "
             "team_id limits live seats to that admitted team's runs and maps "
             "every catalogue seat with such a run under live, requested or not. "
@@ -98,6 +100,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 tab_title=tab_title,
                 task=task,
                 seat_models=seat_models,
+                model_defaults_for=lambda project_id: load_model_defaults(ctx.db, project_id),
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}

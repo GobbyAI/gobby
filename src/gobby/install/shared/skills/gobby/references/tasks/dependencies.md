@@ -28,4 +28,6 @@ owned by another active session; arbitrary message text is not a durable wait.
 
 Guide: [Dependencies and Ready Work](../../../../../../../../docs/guides/tasks.md#dependencies-and-ready-work).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

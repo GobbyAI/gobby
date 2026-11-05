@@ -100,26 +100,6 @@ def _mask_fenced_criteria(criteria: str) -> str:
     return "".join(lines)
 
 
-def malformed_test_reference_findings(criteria: str) -> tuple[str, ...]:
-    """Return diagnostics for named tests that omit a path or symbol."""
-    criteria = _mask_fenced_criteria(criteria)
-    references = extract_artifact_references(criteria, "test")
-    findings = [
-        f"{reference}: malformed test reference; expected path::test_symbol"
-        for reference in references
-        if parse_test_reference(reference) is None
-    ]
-    inert_spans = [match.span() for match in re.finditer(r"`[^`\n]*`", criteria)]
-    inert_spans.extend(match.span("quote") for match in _ILLUSTRATIVE_QUOTE_RE.finditer(criteria))
-    for match in re.finditer(r"(?<![\w-])test:[ \t]*`([^`\n]+)`", criteria, re.IGNORECASE):
-        if any(start <= match.start() < end for start, end in inert_spans):
-            continue
-        reference = match.group(1).strip().rstrip(".")
-        if reference not in references:
-            findings.append(f"{reference}: unrecognized test reference; use 'test:' at line start")
-    return tuple(dict.fromkeys(findings))
-
-
 def parse_test_reference(reference: str) -> tuple[str, str] | None:
     if "::" not in reference:
         return None

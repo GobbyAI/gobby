@@ -50,3 +50,5 @@ distribution and notarization. Neither notarization nor an unsigned development
 run is App Store approval. Use [Safari distribution](https://developer.apple.com/documentation/safariservices/distributing-your-safari-web-extension)
 for containing-app and extension signing; recheck current submission SDK/tooling
 requirements separately. Do not transfer macOS process privileges to iOS/iPadOS.
+
+_Version: 1.0.0_

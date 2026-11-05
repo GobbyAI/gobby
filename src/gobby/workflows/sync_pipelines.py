@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import ValidationError
 
 from gobby.storage.definitions.pipelines import (
@@ -18,6 +17,7 @@ from gobby.storage.definitions.pipelines import (
     PipelineDefinitionRow,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.definitions import (
     PipelineDefinition,
     normalize_workflow_definition_enabled,
@@ -131,7 +131,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
     for yaml_file in yaml_files:
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
-            data = yaml.safe_load(raw_content)
+            data = load_strict_yaml(raw_content)
 
             if not isinstance(data, dict):
                 logger.warning("Skipping non-dict YAML file", extra={"workflow": str(yaml_file)})

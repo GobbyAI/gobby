@@ -109,3 +109,5 @@ cargo test -p profile-client --doc
 ```
 
 Use workspace-wide validation only when the change intentionally crosses workspace policy or shared dependency boundaries.
+
+_Version: 1.0.0_

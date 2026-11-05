@@ -1634,7 +1634,7 @@ class TestCodexTranscriptParser:
             "success": False,
             "result": {
                 "success": False,
-                "error": "Rule enforced by Gobby: [consecutive-tool-block]",
+                "error": "Rule enforced by Gobby: [fixture-retry-limit]",
                 "error_code": "TOOL_BLOCKED",
             },
             "response_time_ms": 1.59,

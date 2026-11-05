@@ -16,7 +16,7 @@
           "<workspace>/.mcp.json",
           "--strict-mcp-config",
           "--settings",
-          "{\"sandbox\": {\"enabled\": false}}",
+          "{\"sandbox\":{\"enabled\":false},\"idleCompaction\":false}",
           "--add-dir",
           "/opt/shared",
           "implement the contract"
@@ -163,7 +163,7 @@
           "claude-resume-id",
           "--dangerously-skip-permissions",
           "--settings",
-          "{\"sandbox\": {\"enabled\": false}}",
+          "{\"sandbox\":{\"enabled\":false},\"idleCompaction\":false}",
           "implement the contract"
         ],
         "env": {

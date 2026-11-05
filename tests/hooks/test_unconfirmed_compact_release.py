@@ -18,7 +18,7 @@ from gobby.hooks.terminal_handoff_delivery import (
     resume_dead_handoff_dispatches,
     resume_unconfirmed_compact_expiries,
 )
-from gobby.sessions.compact_continuation import _HANDOFF_COMPACT_CONTINUATION_TASKS
+from gobby.sessions import compact_continuation
 from gobby.sessions.compact_markers import (
     COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -145,10 +145,29 @@ def _completion_ids(dispatcher: SimpleNamespace) -> list[str]:
     return [str(call.args[2]["completion_id"]) for call in dispatcher.wake.await_args_list]
 
 
+class _RetainedTasks(set[asyncio.Task[Any]]):
+    """The release task set, keeping finished tasks so a drain counts each one."""
+
+    def discard(self, element: asyncio.Task[Any]) -> None:
+        del element
+
+
+@pytest.fixture(autouse=True)
+def _retained_release_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A release can finish before the drain looks, e.g. while the OS holds the sweep thread.
+    monkeypatch.setattr(
+        compact_continuation, "_HANDOFF_COMPACT_CONTINUATION_TASKS", _RetainedTasks()
+    )
+
+
+def _release_tasks() -> set[asyncio.Task[Any]]:
+    return set(compact_continuation._HANDOFF_COMPACT_CONTINUATION_TASKS)
+
+
 async def _drain(before: set[asyncio.Task[Any]]) -> int:
     """Await the release tasks scheduled since ``before`` and return how many there were."""
     await asyncio.sleep(0)
-    owned = set(_HANDOFF_COMPACT_CONTINUATION_TASKS) - before
+    owned = _release_tasks() - before
     await asyncio.wait_for(asyncio.gather(*owned), timeout=10)
     return len(owned)
 
@@ -222,7 +241,7 @@ async def _settle_long_past_attempt(
     _session(hub_db, STRANDED)
     claimed = _claim(hub_db, STRANDED)
     _age(hub_db, STRANDED, LONG_PAST)
-    before = set(_HANDOFF_COMPACT_CONTINUATION_TASKS)
+    before = _release_tasks()
     with (
         patch(
             f"{_DELIVERY}.deliver_staged_compact_handoff",
@@ -296,7 +315,7 @@ async def test_reclaimed_dead_dispatch_owns_its_release(
     monkeypatch.setattr("gobby.sessions.handoff.DISPATCH_OWNER", "f" * 32)
     monkeypatch.setattr(f"{_DELIVERY}.DISPATCH_OWNER", "f" * 32)
     dispatcher = _dispatcher()
-    before = set(_HANDOFF_COMPACT_CONTINUATION_TASKS)
+    before = _release_tasks()
 
     with _app(dispatcher):
         resumed = await asyncio.to_thread(
@@ -359,7 +378,7 @@ def _seat_fleet(hub_db: HubDatabase) -> None:
 
 
 async def _sweep(hub_db: HubDatabase) -> int:
-    before = set(_HANDOFF_COMPACT_CONTINUATION_TASKS)
+    before = _release_tasks()
     armed = await asyncio.to_thread(
         resume_unconfirmed_compact_expiries,
         MACHINE_ID,

@@ -27,7 +27,7 @@ def test_reference_contract_5_2_1() -> None:
     root = get_bundled_skills_path()
     catalog = load_capability_catalog(root / "gobby")
     assert len(catalog.folded_skills) == 27
-    assert len(STANDALONE) == 43
+    assert len(STANDALONE) == 42
     for name, identity in catalog.folded_skills.items():
         assert not (root / name).exists(), name
         assert (root / "gobby" / identity.split(":", 1)[1]).is_file(), identity

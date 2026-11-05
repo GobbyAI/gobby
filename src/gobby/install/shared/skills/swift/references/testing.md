@@ -53,3 +53,5 @@ proves the change. Record any simulator, device, or server dependency.
   the order is the behavior.
 - Keep tests independent of wall-clock timing, network services, local user
   defaults, Keychain state, and the developer's selected simulator.
+
+_Version: 1.0.0_

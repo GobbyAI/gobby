@@ -51,3 +51,5 @@ Guidance here is original, researched from Apple sources. External skills were
 coverage comparisons only; their assertions and licenses are not Apple authority.
 No source text or code was adapted from either comparison baseline. Provenance and
 measured evaluations live in the repository's Apple skill scenario evidence.
+
+_Version: 1.0.0_

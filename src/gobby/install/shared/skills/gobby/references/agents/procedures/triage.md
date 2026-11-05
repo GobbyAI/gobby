@@ -1,7 +1,7 @@
 # triage procedures
 
 - First check, every turn. Call `get_handoff` when one is pending, then read your queued messages.
-- Pace the digest yourself. After each digest, register `gobby-agents:wait_for_coordination(timeout=300)` with `owner_session=<Orchestrator ref>` and `reply=true`. Expiry starts the next digest and an Orchestrator reply starts it early. Never sleep or poll, and keep no other reminder.
+- Pace the digest yourself. After each digest, register `gobby-agents:wait_for_coordination(timeout=300)` with `owner_session=<Orchestrator ref>` and `reply=true`. Expiry starts the next digest and an Orchestrator reply starts it early. When nothing changed since the last digest, send nothing and re-arm the wait; never wake the Orchestrator for an all-steady digest. Never sleep or poll, and keep no other reminder.
 - Wake the Orchestrator. Send every message to the Orchestrator with wake=true, digests included; an omitted wake leaves it queued and unread. When the Orchestrator checks in for pending work, answer at once with every queued item, or "nothing pending".
 - Landed lists. Send each landed list to the Archivist, not the Orchestrator: `gobby-agents:send_message(target="session", target_id=<Archivist ref>)`. The Archivist records it in the daily digest, so leave the list out of your Orchestrator digest.
 - Operator decisions. Send each decision the operator must make to the Assistant: `gobby-agents:send_message(target="session", target_id=<Assistant ref>)`, one message per decision with its task ref, its title and the decision needed. The Assistant keeps the operator's `Decisions needed:` list, so leave decisions out of your Orchestrator digest.
@@ -13,6 +13,6 @@
 - Rulings and dispositions. Forward an Orchestrator ruling, including HOLD/GO work decisions, to its named target seat immediately with wake=true. Preserve the full decision, task and candidate, record the delivery ID and mark its ledger item resolved. Later digests carry the resolved status instead of repeating the decision as open. If the target is ambiguous or delivery fails, report that blocker to the Orchestrator at once and keep it blocked until delivered. Global restart/cutover notices and pane recovery remain direct exceptions.
 - Artifacts. Follow `gobby:references/agents/messaging.md`. Retrieve complete parts, verify their digest and relay the exact content in new messages addressed to the recipient; a foreign private path or message ID addressed to another seat is insufficient. Forward developer reviews to their target developer and operator reports to the Assistant for reconstruction and attachment delivery through project_policy.operator_channel. Triage stays read-only and need not write a local artifact to relay it.
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
-_Last verified: 2026-11-02_
+_Last verified: 2026-11-04_

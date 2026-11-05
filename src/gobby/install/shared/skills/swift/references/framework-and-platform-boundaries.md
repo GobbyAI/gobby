@@ -59,3 +59,5 @@ platform availability.
   source files.
 - Test the actual platform or simulator when availability, entitlements,
   resources, app extensions, or SDK behavior changes.
+
+_Version: 1.0.0_

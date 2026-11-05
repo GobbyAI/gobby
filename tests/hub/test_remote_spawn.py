@@ -53,6 +53,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_USER_ID
+from tests.fixtures.provider_catalogs import serve_catalogs
 from tests.servers.conftest import (
     TEST_FRONT_DOOR_IDENTITY,
     TEST_FRONT_DOOR_SECRET,
@@ -1948,8 +1949,10 @@ async def test_remote_foreign_model_refused(
     remote_machine: str,
     node: AsyncMock,
     runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A definition model with no equivalent on the target provider refuses before any row."""
+    """A definition model the target provider does not serve refuses before any row."""
+    serve_catalogs(monkeypatch, {"claude": ("opus",)})
     before = _row_counts(temp_db)
     body = make_agent_definition(
         name="fixture-worker", prompts={"agent": "Review the branch"}, model="opus"

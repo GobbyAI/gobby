@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from gobby.agents.worktree_reuse import (
-    ReusedWorktreeSyncConflict,
+    DeferredBaseSync,
+    deferred_base_sync_notice,
     sync_reused_worktree_to_base,
 )
 from gobby.worktrees.base_branch import select_worktree_base
@@ -147,7 +148,9 @@ async def test_sync_reused_worktree_prefers_branch_over_same_named_tag(tmp_path:
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_sync_reused_worktree_merges_when_base_is_not_ancestor(tmp_path: Path) -> None:
+async def test_sync_reused_worktree_fast_forwards_a_branch_that_is_only_behind(
+    tmp_path: Path,
+) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     git = FakeGitManager(
@@ -155,6 +158,7 @@ async def test_sync_reused_worktree_merges_when_base_is_not_ancestor(tmp_path: P
             _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
             _result(["git", "status"], 0),
             _result(["git", "merge-base"], 1),
+            _result(["git", "merge-base"], 0),
             _result(["git", "merge"], 0),
         ]
     )
@@ -167,31 +171,95 @@ async def test_sync_reused_worktree_merges_when_base_is_not_ancestor(tmp_path: P
 
     assert result.status == "merged"
     assert result.base_ref == "refs/heads/0.4.7"
-    assert git.calls[3][0] == ["merge", "base-sha", "--no-edit"]
-    assert git.calls[3][1] == worktree
-    assert git.calls[3][2] == 120
+    assert git.calls[3][0] == ["merge-base", "--is-ancestor", "HEAD", "base-sha"]
+    assert git.calls[4] == (["merge", "--ff-only", "base-sha"], worktree, 120)
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_sync_reused_worktree_rejects_dirty_worktree(tmp_path: Path) -> None:
+async def test_sync_reused_worktree_hands_over_a_branch_with_its_own_commits(
+    tmp_path: Path,
+) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     git = FakeGitManager(
         [
             _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
-            _result(["git", "status"], 0, stdout=" M src/app.py\n"),
+            _result(["git", "status"], 0),
+            _result(["git", "merge-base"], 1),
+            _result(["git", "merge-base"], 1),
+            _result(["git", "merge-base"], 0, stdout="fork-sha\n"),
         ]
     )
 
-    with pytest.raises(RuntimeError, match="uncommitted changes"):
+    result = await sync_reused_worktree_to_base(
+        git_manager=git,
+        worktree_path=str(worktree),
+        base_branch="0.4.7",
+    )
+
+    assert result.status == "deferred"
+    assert result.base_commit_sha == "fork-sha"
+    assert result.deferred == DeferredBaseSync(
+        reason="branch_diverged", pending_base_sha="base-sha"
+    )
+    assert [call[0][0] for call in git.calls] == ["rev-parse", "status", *["merge-base"] * 3]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_sync_reused_worktree_raises_when_fast_forward_fails(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git = FakeGitManager(
+        [
+            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
+            _result(["git", "status"], 0),
+            _result(["git", "merge-base"], 1),
+            _result(["git", "merge-base"], 0),
+            _result(["git", "merge"], 1, stderr="untracked x would be overwritten\n"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="fast-forward.*untracked x would be overwritten"):
         await sync_reused_worktree_to_base(
             git_manager=git,
             worktree_path=str(worktree),
             base_branch="0.4.7",
         )
 
-    assert len(git.calls) == 2
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_sync_reused_worktree_defers_merge_onto_uncommitted_work(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git = FakeGitManager(
+        [
+            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
+            _result(["git", "status"], 0, stdout=" M src/app.py\n"),
+            _result(["git", "merge-base"], 1),
+            _result(["git", "merge-base"], 0, stdout="fork-sha\n"),
+        ]
+    )
+
+    result = await sync_reused_worktree_to_base(
+        git_manager=git,
+        worktree_path=str(worktree),
+        base_branch="0.4.7",
+    )
+
+    assert result.status == "deferred"
+    assert result.base_commit_sha == "fork-sha"
+    assert result.deferred == DeferredBaseSync("uncommitted_changes", "base-sha")
+    assert git.calls[3][0] == ["merge-base", "HEAD", "base-sha"]
+    assert not any(call[0][0] == "merge" for call in git.calls)
+    assert result.isolation_extra() == {
+        "deferred_base_sync": {
+            "reason": "uncommitted_changes",
+            "pending_base_sha": "base-sha",
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -295,7 +363,7 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_sync_reused_worktree_rejects_non_generated_project_metadata(
+async def test_sync_reused_worktree_hands_over_non_generated_project_metadata(
     tmp_path: Path,
 ) -> None:
     parent = tmp_path / "parent"
@@ -317,88 +385,42 @@ async def test_sync_reused_worktree_rejects_non_generated_project_metadata(
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="uncommitted changes"):
-        await sync_reused_worktree_to_base(
-            git_manager=WorktreeGitManager(parent),
-            worktree_path=str(worktree),
-            base_branch="main",
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.unit
-async def test_sync_reused_worktree_aborts_failed_merge(tmp_path: Path) -> None:
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-    git = FakeGitManager(
-        [
-            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
-            _result(["git", "status"], 0),
-            _result(["git", "merge-base"], 1),
-            _result(["git", "merge"], 1, stderr="CONFLICT\n"),
-            _result(["git", "diff"], 0, stdout="shared.txt\n"),
-            _result(["git", "merge", "--abort"], 0),
-        ]
-    )
-
-    with pytest.raises(ReusedWorktreeSyncConflict, match="aborted"):
-        await sync_reused_worktree_to_base(
-            git_manager=git,
-            worktree_path=str(worktree),
-            base_branch="0.4.7",
-        )
-
-    assert git.calls[-1][0] == ["merge", "--abort"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.unit
-async def test_sync_reused_worktree_aborts_timed_out_merge(tmp_path: Path) -> None:
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-    git = FakeGitManager(
-        [
-            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
-            _result(["git", "status"], 0),
-            _result(["git", "merge-base"], 1),
-            subprocess.TimeoutExpired(cmd=["git", "merge", "0.4.7"], timeout=120),
-            _result(["git", "merge", "--abort"], 0),
-        ]
-    )
-
-    with pytest.raises(RuntimeError, match="timed out.*aborted"):
-        await sync_reused_worktree_to_base(
-            git_manager=git,
-            worktree_path=str(worktree),
-            base_branch="0.4.7",
-        )
-
-    assert git.calls[-1] == (["merge", "--abort"], worktree, 30)
-
-
-@pytest.mark.integration
-async def test_reuse_merge_sets_gobby_merge_environment(tmp_path: Path) -> None:
-    _git(tmp_path, "init", "-b", "main")
-    _git(tmp_path, "config", "user.email", "test@example.com")
-    _git(tmp_path, "config", "user.name", "Merge Test")
-    _git(tmp_path, "commit", "--allow-empty", "-m", "initial")
-    _git(tmp_path, "checkout", "-b", "candidate")
-    (tmp_path / "candidate.txt").write_text("candidate")
-    _git(tmp_path, "add", ".")
-    _git(tmp_path, "commit", "-m", "candidate")
-    _git(tmp_path, "checkout", "main")
-    (tmp_path / "base.txt").write_text("base")
-    _git(tmp_path, "add", ".")
-    _git(tmp_path, "commit", "-m", "base")
-    base = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
-    _git(tmp_path, "checkout", "candidate")
-    hook = tmp_path / ".git" / "hooks" / "pre-merge-commit"
-    hook.write_text('#!/bin/sh\ntest "$GOBBY_MERGE" = "1"\n')
-    hook.chmod(0o755)
+    (parent / "base.txt").write_text("new base\n", encoding="utf-8")
+    _git(parent, "add", "base.txt")
+    _git(parent, "commit", "-m", "advance base")
+    head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
 
     result = await sync_reused_worktree_to_base(
-        git_manager=WorktreeGitManager(tmp_path), worktree_path=str(tmp_path), base_branch="main"
+        git_manager=WorktreeGitManager(parent),
+        worktree_path=str(worktree),
+        base_branch="main",
     )
 
-    assert result.status == "merged"
-    assert _git(tmp_path, "rev-parse", "HEAD^2").stdout.strip() == base
+    assert result.status == "deferred"
+    assert result.deferred is not None
+    assert result.deferred.reason == "uncommitted_changes"
+    assert result.base_commit_sha == head
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == head
+    assert not (worktree / "base.txt").exists()
+    assert '"edited"' in (worktree / ".gobby" / "project.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("reason", "cause"),
+    [
+        ("uncommitted_changes", "uncommitted work"),
+        ("branch_diverged", "commits that are not on the base"),
+    ],
+)
+def test_deferred_base_sync_notice_names_pending_merge(reason: str, cause: str) -> None:
+    extra = {
+        "base_branch": "0.5.0",
+        "deferred_base_sync": {"reason": reason, "pending_base_sha": "abc123"},
+    }
+
+    notice = deferred_base_sync_notice(extra)
+
+    assert cause in notice
+    assert "`git merge abc123` (0.5.0)" in notice
+    assert deferred_base_sync_notice({"base_branch": "0.5.0"}) == ""

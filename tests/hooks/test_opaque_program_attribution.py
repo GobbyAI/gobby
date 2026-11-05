@@ -34,6 +34,7 @@ from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.codex_impl.item_normalization import build_pre_tool_lifecycle_payload
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.event_handlers._tool import _call_worktree_root
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
@@ -44,7 +45,11 @@ from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict, foreign_staged_commit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
+from gobby.workflows.task_tool_bindings import (
+    TaskToolBindings,
+    cleanup_task_tool_bindings,
+    pending_fencing_calls,
+)
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
@@ -425,23 +430,31 @@ def test_script_write_in_task_worktree_is_owned_before_next_mutation(
 
 
 @pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("symlinked", [False, True])
 def test_leading_cd_script_owns_only_its_task_worktree_changes(
     mock_dependencies: dict[str, Any],
     checkout: Checkout,
     task_worktree: Checkout,
     failed: bool,
+    symlinked: bool,
 ) -> None:
     """A main-checkout hook cwd must not hide the script's proven task checkout."""
     script = checkout.repo.parent / "rewrite from outside.py"
+    cd_target = task_worktree.repo
+    output_prefix = ""
+    if symlinked:
+        cd_target = checkout.repo / "linked-output"
+        cd_target.symlink_to(task_worktree.repo / "pkg", target_is_directory=True)
+        output_prefix = "../"
     script.write_text(
         "from pathlib import Path\nimport sys\n"
-        "Path('base.txt').write_text('script write\\n')\n"
-        "Path('generated.txt').write_text('new output\\n')\n"
+        f"Path('{output_prefix}base.txt').write_text('script write\\n')\n"
+        f"Path('{output_prefix}generated.txt').write_text('new output\\n')\n"
         f"sys.exit({int(failed)})\n",
         encoding="utf-8",
     )
     command = (
-        f"cd -- {shlex.quote(str(task_worktree.repo))} && "
+        f"cd -- {shlex.quote(str(cd_target))} && "
         f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
     )
     event = replace(
@@ -455,6 +468,11 @@ def test_leading_cd_script_owns_only_its_task_worktree_changes(
     normalize_tool_fields(event.data)
     handlers = _handlers(mock_dependencies, checkout.db)
     assert not _shell_write_refused(handlers, event)
+    snapshots = (
+        SessionVariableManager(checkout.db)
+        .get_variables(checkout.session_id)
+        .get("claimed_shell_snapshots", {})
+    )
     result = subprocess.run(command, shell=True, cwd=checkout.repo, check=False)
     assert result.returncode == int(failed)
     handlers.handle_after_tool(
@@ -473,6 +491,9 @@ def test_leading_cd_script_owns_only_its_task_worktree_changes(
         assert path not in checkout.ledger()
     assert "stale.txt" not in task_worktree.ledger()
     assert UNOWNED in task_worktree.rule_3_reason("stale.txt")
+    assert {snapshot["checkout_root"] for snapshot in snapshots.values()} == {
+        str(task_worktree.repo)
+    }
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])
@@ -979,7 +1000,7 @@ def test_native_computed_cwd_reads_never_borrow_launcher_ownership(
                     metadata={**outer_after.metadata, "_platform_session_id": checkout.session_id},
                 )
             )
-    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+    assert pending_fencing_calls(manager.get_variables(checkout.session_id), None) == []
 
 
 @pytest.mark.parametrize("relative_operands", [False, True])
@@ -1066,7 +1087,7 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         assert (checkout.repo / "format_me.py").read_text() == "x=1\n"
         for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
             assert not manager.get_variables(checkout.session_id).get(key), key
-        TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+        assert pending_fencing_calls(manager.get_variables(checkout.session_id), None) == []
         assert checkout.rule_3_reason("format_me.py") == ""
         # Retry through the normal literal wrapper, with no ownership recovery.
         transcript.write_text(literal_transcript)
@@ -1453,7 +1474,7 @@ def test_git_operation_conflict_keeps_its_actionable_reason(
     )
     assert response.decision == "block"
     assert "Another live session owns the Git operation" in (response.reason or "")
-    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+    assert pending_fencing_calls(manager.get_variables(checkout.session_id), None) == []
     foreign_operations = manager.get_variables(checkout.foreign_session_id)[
         "git_operation_ownership"
     ]
@@ -1956,3 +1977,77 @@ def test_opaque_program_runs_no_status(
 
     status.assert_not_awaited()
     assert checkout.ledger() == {"owned.txt"}
+
+
+@pytest.mark.parametrize("selector", ["cwd", "git-c"])
+def test_conflicted_merge_in_task_worktree_is_resolvable_by_its_session(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, selector: str
+) -> None:
+    """A claimant's own conflicted merge and checkout --theirs leave an owned resolution."""
+    linked = task_worktree
+    main = linked.repo.parent / "repo"
+    _git(linked.repo, "config", "user.email", "t@gobby.local")
+    _git(linked.repo, "config", "user.name", "T")
+    _git(linked.repo, "checkout", "-q", "-b", "incoming")
+    linked.write("base.txt", "incoming\n")
+    _git(linked.repo, "commit", "-qm", "incoming", "base.txt")
+    _git(linked.repo, "checkout", "-q", "task-script-writes")
+    linked.write("base.txt", "local\n")
+    _git(linked.repo, "commit", "-qm", "local", "base.txt")
+    handlers = _handlers(mock_dependencies, linked.db)
+
+    def run(command: str, request_id: str, *, failed: bool) -> None:
+        # ``git -C`` names the worktree while the shell itself runs in the main checkout.
+        cwd = linked.repo if selector == "cwd" else main
+        prefix = "git" if selector == "cwd" else f"git -C {shlex.quote(str(linked.repo))}"
+        text = f"{prefix} {command}"
+        events = []
+        for event_type in (HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL):
+            data: dict[str, Any] = {
+                "tool_name": "Bash",
+                "tool_input": {"command": text, "cwd": str(cwd)},
+                "project_path": str(cwd),
+            }
+            normalize_tool_fields(data)
+            event = linked.tool_event(
+                event_type, text, failed=failed and event_type is HookEventType.AFTER_TOOL
+            )
+            events.append(replace(event, cwd=str(cwd), data=data, request_id=request_id))
+        assert handlers.handle_before_tool(events[0]).decision == "allow"
+        result = subprocess.run(
+            ["git", *shlex.split(command)],
+            cwd=linked.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert (result.returncode != 0) is failed, result.stderr
+        handlers.handle_after_tool(events[1])
+
+    run("merge incoming --no-edit", "toolu_merge", failed=True)
+    run("checkout --theirs base.txt", "toolu_theirs", failed=False)
+
+    assert linked.rule_3_reason("base.txt") == ""
+    assert linked.rule_3_reason("base.txt", command="printf 'resolved\\n' > base.txt") == ""
+    # Another live session's later write to the conflicted file stays foreign.
+    linked.write("base.txt", "foreign resolution\n")
+    SessionVariableManager(linked.db).record_edited_files(
+        linked.foreign_session_id, ["base.txt"], checkout_root=str(linked.repo)
+    )
+    assert "base.txt" in linked.rule_3_reason("base.txt")
+
+
+def test_git_mutations_in_two_checkouts_leave_the_call_without_a_root(
+    task_worktree: Checkout,
+) -> None:
+    main = task_worktree.repo.parent / "repo"
+    worktree = shlex.quote(str(task_worktree.repo))
+    single = f"git -C {worktree} add base.txt"
+    split = f"git -C {shlex.quote(str(main))} add base.txt && {single}"
+    roots = [
+        _call_worktree_root(
+            replace(task_worktree.tool_event(HookEventType.BEFORE_TOOL, command), cwd=str(main))
+        )
+        for command in (single, split)
+    ]
+    assert roots == [str(task_worktree.repo), None]

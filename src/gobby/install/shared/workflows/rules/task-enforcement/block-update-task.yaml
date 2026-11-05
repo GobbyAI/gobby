@@ -1,18 +1,21 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-enforcement, enforcement, tasks, gobby, runbook]
 
 # Task edits are granted by agent definition: a definition that may edit tasks
-# excludes this rule through its rule_selectors.
+# excludes this rule through its rule_selectors. A narrow stored capability also
+# permits additive label-only patches within an admitted team.
 rules:
   block-update-task:
     description: "Block update_task for agents whose definition does not grant task edits"
     event: before_tool
     enabled: true
     priority: 30
+    when: "not task_label_update_allowed(event.metadata.get('_platform_session_id'), tool_input)"
     effects:
       - type: block
         mcp_tools: ["gobby-tasks:update_task"]
         reason: >-
           Use gobby-agents:send_message to send the task edit to Triage for the Orchestrator.
           Your agent definition does not grant task edits, including edits to your
-          own assigned task.
+          own assigned task. A definition with add_team_task_labels may submit a
+          labels-only patch within its admitted team; existing labels are preserved.

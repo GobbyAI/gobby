@@ -4058,3 +4058,36 @@ def test_dirty_edit_refusal_names_only_remedies_that_exist() -> None:
     assert "release_task_paths" not in reason
     assert "gobby-agents.send_message" not in reason
     assert "gobby-agents:send_message" in reason
+
+
+@pytest.mark.asyncio
+async def test_session_sets_aside_and_restores_only_its_own_edits(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    h = guard_harness
+    (h.repo / "owned.txt").write_text("own change\n", encoding="utf-8")
+    (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id, _content_ledger(h, h.current_task, ["owned.txt"])
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    own_patch = workspace / "own.patch"
+    own_patch.write_text(_git(h.repo, "diff", "--", "owned.txt") + "\n", encoding="utf-8")
+    foreign_patch = workspace / "foreign.patch"
+    foreign_patch.write_text(_git(h.repo, "diff", "--", "foreign.txt") + "\n", encoding="utf-8")
+
+    set_aside = await h.handler._evaluate_rules(h.event("git checkout -- owned.txt"))
+    _git(h.repo, "checkout", "--", "owned.txt")
+    restore = h.event(f"git apply {own_patch}")
+    restored = await h.handler._evaluate_rules(restore)
+    foreign = h.event(f"git apply {foreign_patch}")
+    refused = await h.handler._evaluate_rules(foreign)
+
+    assert set_aside.decision == "allow", set_aside.reason
+    assert restored.decision == "allow", restored.reason
+    assert restore.data["canonical_file_paths"] == [str((h.repo / "owned.txt").resolve())]
+    assert not restore.data.get("canonical_repo_mutation_scope_unknown")
+    assert refused.decision == "block"
+    assert refused.reason is not None
+    assert "foreign.txt" in refused.reason

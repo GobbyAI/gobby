@@ -41,3 +41,5 @@ Keep persistence, migrations, and wire contracts explicit.
 - Check indexes, query plans, batching, and pagination for large reads.
 - Make migrations reversible or document why rollback requires a forward fix.
 - Avoid data backfills inside request paths.
+
+_Version: 1.0.0_

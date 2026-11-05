@@ -8,7 +8,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, StrictUndefined
+from jinja2 import StrictUndefined
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from gobby.plans.parser import (
     ArtifactKind,
@@ -297,7 +298,7 @@ def _find_test_files(files: Iterable[str]) -> list[str]:
 
 def _render_template(template_str: str, context: dict[str, Any]) -> str:
     """Render a Jinja template string."""
-    env = Environment(autoescape=False, undefined=StrictUndefined)
+    env = ImmutableSandboxedEnvironment(autoescape=False, undefined=StrictUndefined)
     env.filters["default"] = lambda value, default="": default if value is None else value
     return str(env.from_string(template_str).render(**context))
 

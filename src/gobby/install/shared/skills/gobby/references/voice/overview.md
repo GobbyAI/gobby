@@ -23,3 +23,5 @@ Check errors and desired versus active configuration before retrying.
 
 See the [voice guide](../../../../../../../../docs/guides/voice.md) and
 [Crane setup](../../../../../../../../docs/guides/crane-tts.md).
+
+_Version: 1.0.0_

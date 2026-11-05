@@ -52,3 +52,5 @@ Use focused project commands where available:
   compatible.
 - For gems, preserve public gemspec metadata, required Ruby version, file lists,
   executable names, and release automation.
+
+_Version: 1.0.0_

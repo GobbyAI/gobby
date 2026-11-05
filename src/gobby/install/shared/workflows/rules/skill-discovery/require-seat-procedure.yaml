@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [skill-discovery, context, gobby, runbook]
 
 rules:
@@ -36,6 +36,10 @@ rules:
       and not (
         event.data.get('mcp_server') == 'gobby-memory'
         and event.data.get('mcp_tool') in ['get_memory', 'search_memories']
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-tasks'
+        and event.data.get('mcp_tool') in ['get_task', 'team_progress']
       )
       and event.data.get('mcp_server') != 'gobby-results'
     effects:
@@ -75,6 +79,10 @@ rules:
       and not (
         event.data.get('mcp_server') == 'gobby-memory'
         and event.data.get('mcp_tool') in ['get_memory', 'search_memories']
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-tasks'
+        and event.data.get('mcp_tool') in ['get_task', 'team_progress']
       )
       and event.data.get('mcp_server') != 'gobby-results'
     effects:

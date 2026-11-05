@@ -44,3 +44,5 @@ DELETE `/api/config/secrets/{name}` rejects still-referenced credentials with
 `POST /api/config/validation-detection/preview` tests matcher composition without
 saving it. Consult current HTTP request models before using these surfaces;
 they do not inherit the generic patch's revision protocol automatically.
+
+_Version: 1.0.0_

@@ -35,4 +35,6 @@ do not satisfy instruction requirements.
 
 Guide: [Oversized results](../../../../../../../../docs/guides/mcp-tools.md#oversized-results).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

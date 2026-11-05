@@ -219,6 +219,7 @@ def test_control_client_matches_golden_corpus() -> None:
             "operation_seq": 2,
             "host_terminal_id": "ht-1",
             "grace_ms": 50,
+            "signal": "TERM",
         }
     ) == _golden("control_kill.json")
     assert encode_control_line(

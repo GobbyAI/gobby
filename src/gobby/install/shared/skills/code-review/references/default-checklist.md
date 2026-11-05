@@ -31,3 +31,5 @@ or for a previewed file whose rule group is missing.
 
 - Do critical logic paths have corresponding test cases?
 - Do test cases cover boundary conditions?
+
+_Version: 1.0.0_

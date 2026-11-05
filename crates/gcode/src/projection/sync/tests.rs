@@ -917,6 +917,101 @@ pub(crate) mod serial_db {
         }
     }
 
+    fn collection_only_vector_service(ctx: &mut Context) -> thread::JoinHandle<Vec<String>> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind collection service");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking collection service");
+        let url = format!("http://{}", listener.local_addr().expect("service address"));
+        ctx.qdrant = Some(QdrantConfig {
+            url: Some(url.clone()),
+            api_key: None,
+        });
+        ctx.embedding = Some(EmbeddingConfig {
+            api_base: format!("{url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        });
+        ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+        thread::spawn(move || {
+            let mut stream = accept_with_timeout(&listener, Duration::from_secs(5))
+                .expect("collection schema request");
+            let request = read_http_request(&mut stream);
+            respond(
+                &mut stream,
+                json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+            );
+            vec![request]
+        })
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn pinned_source_missing_retires_pin_without_retry() {
+        let database_url =
+            crate::test_env::postgres_test_database_url("pinned source missing retirement");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, _source, _source_cleanup, _overlay_cleanup, root) =
+            pinned_fixture(&mut conn, &database_url);
+        std::fs::remove_file(root.path().join(FILE)).expect("delete pinned source from checkout");
+        let server = collection_only_vector_service(&mut ctx);
+        let lifecycle = direct_vector_lifecycle(&ctx);
+        let mut state = VectorProjectionState {
+            ctx: &ctx,
+            conn,
+            lifecycle,
+        };
+        let before = crate::visibility::visible_symbols_for_file(&mut state.conn, &ctx, FILE)
+            .expect("pinned selector before retirement");
+        assert!(
+            !before.is_empty(),
+            "the pin serves the deleted file's symbols before retirement"
+        );
+
+        let outcome = state
+            .sync_file(FILE)
+            .expect("a missing pinned source retires instead of failing");
+
+        assert_eq!(
+            outcome,
+            ProjectionFileSyncOutcome::SkippedMissingIndexedFile
+        );
+        let after = crate::visibility::visible_symbols_for_file(&mut state.conn, &ctx, FILE)
+            .expect("pinned selector after retirement");
+        assert!(
+            after.is_empty(),
+            "retired pin's symbols left the pinned selector: {after:?}"
+        );
+        let requests = server.join().expect("collection service");
+        assert!(
+            requests.iter().all(|request| request.starts_with("GET ")),
+            "a missing source must not reach the vector upsert: {requests:?}"
+        );
+        let mut check = db::connect_readwrite(&database_url).expect("check connection");
+        let retained: i64 = check
+            .query_one(
+                "SELECT count(*) FROM code_overlay_pins
+                 WHERE overlay_project_id = $1 AND file_path = $2",
+                &[&db::id_param(&ctx.project_id).expect("overlay UUID"), &FILE],
+            )
+            .expect("pin count")
+            .get(0);
+        assert_eq!(
+            retained, 0,
+            "the deleted source's pin is retired, so no vector work is pending"
+        );
+        assert_eq!(
+            state.sync_file(FILE).expect("later pass"),
+            ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
+        );
+    }
+
     impl Drop for ProjectCleanup {
         fn drop(&mut self) {
             if let Ok(mut conn) = db::connect_readwrite(&self.database_url) {

@@ -43,9 +43,13 @@ def repo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def clones_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The project's managed clone directory, where creation accepts clone paths."""
     root = tmp_path / "clones"
     monkeypatch.setattr(clone_git, "CLONES_ROOT", root)
-    return root
+    projects = MagicMock()
+    projects.return_value.get.return_value = SimpleNamespace(name="project")
+    monkeypatch.setattr("gobby.mcp_proxy.tools._clones_creation.LocalProjectManager", projects)
+    return root / "project"
 
 
 @pytest.fixture

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -1137,6 +1138,54 @@ async def test_resumed_claude_launch_carries_the_managed_agent_env(
     env = runner._test_runtime.last_request.env
     assert env["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
     assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("enforced", "expected"),
+    [
+        (True, {"sandbox": {"enabled": False}, "idleCompaction": False}),
+        (False, {"idleCompaction": False}),
+    ],
+    ids=["srt", "unsandboxed"],
+)
+@pytest.mark.asyncio
+async def test_resumed_claude_launch_carries_one_settings_with_idle_compaction_off(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    enforced: bool,
+    expected: dict[str, Any],
+) -> None:
+    # Resume must match the spawn launch: SRT disables Claude's own sandbox inside
+    # the wrapper, and every managed launch turns idle compaction off.
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    metadata["cwd"] = str(tmp_path)
+    runner = _runner(storage=MagicMock())
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+    if not enforced:
+        monkeypatch.setattr(
+            resume_executor,
+            "prepare_sandbox_launch",
+            AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=False)),
+        )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = list(runner._test_runtime.last_request.command)
+    # Count only Claude's argv, never the SRT runner's own policy-file --settings.
+    claude_argv = command[command.index("--") + 1 :] if "--" in command else command
+    assert claude_argv.count("--settings") == 1, claude_argv
+    settings = json.loads(claude_argv[claude_argv.index("--settings") + 1])
+    assert settings == expected
+    assert claude_argv[-1] == "Continue"
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from gobby.hooks._normalization_git import (
     classify_git_mutation,
     classify_search_segment,
     git_command_is_read_only,
+    git_mutation_cwd,
 )
 from gobby.hooks._normalization_interpreter_segments import _python_write_segment
 from gobby.hooks._normalization_operands import (
@@ -41,6 +42,10 @@ from gobby.hooks._python_pipeline_classifier import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
+    HEAD_TAIL_VALUE_OPTIONS,
+    MAX_NARROW_SOURCE_BYTES,
+    MAX_NARROW_SOURCE_LINES,
+    STDIN_OPERANDS,
     count_option_byte_count,
     count_option_line_count,
     find_navigation_metadata,
@@ -48,7 +53,7 @@ from gobby.hooks.code_navigation import (
     source_read_navigation_metadata,
 )
 
-_UV_VALUE_OPTIONS = frozenset(
+UV_VALUE_OPTIONS = frozenset(
     "--extra --no-extra --group --no-group --only-group --no-editable-package "
     "--env-file -w --with --with-editable --with-requirements --package --python-platform "
     "--index --default-index -i --index-url --extra-index-url -f --find-links --index-strategy "
@@ -89,7 +94,7 @@ def _uv_options(
     cwd: str | None,
     *,
     interspersed: bool = False,
-    value_options: frozenset[str] = _UV_VALUE_OPTIONS,
+    value_options: frozenset[str] = UV_VALUE_OPTIONS,
 ) -> tuple[int, str | None, set[str]] | None:
     """Parse known option arities; an unknown option cannot prove the executable boundary."""
     flags: set[str] = set()
@@ -295,7 +300,7 @@ def unresolved_execution_metadata(
 
 
 _XARGS_STDIN_FLAGS = frozenset({"-0", "--null", "-r", "--no-run-if-empty"})
-# Batching options only regroup stdin into cat invocations; the value is separate or attached.
+# Batching options only regroup stdin into reader invocations; the value is separate or attached.
 _XARGS_BATCH_FLAGS = frozenset(
     {
         "-n",
@@ -312,12 +317,48 @@ _XARGS_BATCH_FLAGS = frozenset(
 )
 
 
-def xargs_runs_cat(parts: list[str]) -> bool:
-    """True when xargs directly runs cat; these flags only split stdin or skip empty input."""
+_COUNT_VALUE_OPTIONS = frozenset({"-n", "-c", "--lines", "--bytes"})
+_COUNT_FLAG_OPTIONS = frozenset({"-q", "-v", "--quiet", "--silent", "--verbose"})
+
+
+def _count_only_reader(reader: list[str]) -> bool:
+    """True when head/tail carries exactly one count option and no operands or follow mode."""
+    counts = 0
     index = 1
+    while index < len(reader):
+        word = reader[index]
+        if word in _COUNT_VALUE_OPTIONS:
+            counts, index = counts + 1, index + 2
+        elif re.fullmatch(r"-[nc]\d+|-\d+|--(?:lines|bytes)=\d+", word):
+            counts, index = counts + 1, index + 1
+        elif word in _COUNT_FLAG_OPTIONS:
+            index += 1
+        else:
+            return False
+    return counts == 1 and index == len(reader)
+
+
+def xargs_reader(parts: list[str]) -> tuple[list[str], bool] | None:
+    """The reader xargs runs directly on stdin-supplied files: cat, head, tail or nl.
+
+    These xargs flags only split stdin, substitute file names or skip empty input. None of
+    the readers can write or execute, so any options keep them reads. The flag reports
+    replace mode, where a file name can land in any reader word, so no bound holds.
+    """
+    index = 1
+    replacement: str | None = None
     while index < len(parts):
         flag = parts[index]
-        if flag in _XARGS_STDIN_FLAGS:
+        if flag == "-I":
+            replacement = parts[index + 1] if index + 1 < len(parts) else ""
+            index += 2
+        elif flag in {"-i", "--replace"}:
+            replacement, index = "{}", index + 1
+        elif flag.startswith("--replace="):
+            replacement, index = flag.partition("=")[2], index + 1
+        elif flag.startswith(("-I", "-i")):
+            replacement, index = flag[2:], index + 1
+        elif flag in _XARGS_STDIN_FLAGS:
             index += 1
         elif flag in _XARGS_BATCH_FLAGS:
             index += 2
@@ -325,7 +366,13 @@ def xargs_runs_cat(parts: list[str]) -> bool:
             index += 1
         else:
             break
-    return parts[index : index + 1] == ["cat"]
+    reader = parts[index:]
+    if reader[:1] not in (["cat"], ["head"], ["tail"], ["nl"]):
+        return None
+    # GNU xargs may substitute into the utility name itself.
+    if replacement is not None and replacement in reader[0]:
+        return None
+    return reader, replacement is not None
 
 
 def classify_base_command(
@@ -349,9 +396,11 @@ def classify_base_command(
             cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin
         )
         if not git_command_is_read_only(parts):
-            git_metadata = replace(
-                git_metadata, extra={**(git_metadata.extra or {}), "canonical_git_mutation": True}
-            )
+            extra = {**(git_metadata.extra or {}), "canonical_git_mutation": True}
+            # Shell-write attribution snapshots the checkout Git writes, not the shell's cwd.
+            if (git_cwd := git_mutation_cwd(parts, cwd, base_cwd)) is not None:
+                extra["canonical_git_mutation_cwds"] = [git_cwd]
+            git_metadata = replace(git_metadata, extra=extra)
         else:
             git_metadata = replace(git_metadata, read_only=True)
         return git_metadata
@@ -376,12 +425,10 @@ def classify_base_command(
         if parts[index : index + 1] == ["run"]:
             return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
     if cmd == "uv":
-        index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+        index = _wrapper_options_end(parts, 1, UV_VALUE_OPTIONS)
         operation = parts[index : index + 1]
         if operation in (["format"], ["sync"]):
-            value_options = _UV_VALUE_OPTIONS | (
-                {"--version"} if operation == ["format"] else set()
-            )
+            value_options = UV_VALUE_OPTIONS | ({"--version"} if operation == ["format"] else set())
             parsed = _uv_options(
                 parts, index + 1, cwd, interspersed=True, value_options=value_options
             )
@@ -404,7 +451,7 @@ def classify_base_command(
             return _ShellSegmentMetadata("write", repo_mutation=True)
         if operation == ["version"] and "--dry-run" not in parts:
             values = _shell_positional_args_after(
-                parts, index + 1, option_args=set(_UV_VALUE_OPTIONS) | {"--output-format", "--bump"}
+                parts, index + 1, option_args=set(UV_VALUE_OPTIONS) | {"--output-format", "--bump"}
             )
             if values or any(word.partition("=")[0] == "--bump" for word in parts[index + 1 :]):
                 return _ShellSegmentMetadata("write", repo_mutation=True)
@@ -475,13 +522,34 @@ def classify_base_command(
             )
         return search
 
-    if cmd == "xargs" and xargs_runs_cat(parts):
-        # Only direct cat is proven read-only; nested wrappers may write their own outputs.
+    xargs_read = xargs_reader(parts) if cmd == "xargs" else None
+    if xargs_read is not None:
+        reader, replaced = xargs_read
+        # Only direct readers are proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
-        navigation = {
+        line_count = count_option_line_count(reader)
+        byte_count = count_option_byte_count(reader)
+        # One count bound with no operands holds per file; anything else may read whole files.
+        narrow = (
+            not replaced
+            and reader[0] in {"head", "tail"}
+            and _count_only_reader(reader)
+            and (
+                (line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES)
+                or (byte_count is not None and byte_count <= MAX_NARROW_SOURCE_BYTES)
+            )
+        )
+        navigation: dict[str, object] = {
             "canonical_code_navigation_action": "read",
-            "canonical_code_navigation_broad": True,
-            "canonical_source_read_scope": "full_file",
+            "canonical_code_navigation_broad": not narrow,
+            "canonical_narrow_source_context": narrow,
+            "canonical_source_read_scope": (
+                "line_range"
+                if line_count is not None
+                else "byte_range"
+                if byte_count is not None
+                else "full_file"
+            ),
             "_canonical_code_navigation_scope_unknown": True,
         }
         return _ShellSegmentMetadata(
@@ -504,12 +572,17 @@ def classify_base_command(
 
     if cmd in {"cat", "head", "tail", "bat", "nl", "less"}:
         if cmd in {"head", "tail"}:
-            option_args = {"-n", "-c", "--lines", "--bytes"}
+            option_args = set(HEAD_TAIL_VALUE_OPTIONS)
             if cmd == "tail":
                 option_args.update(
                     {"-b", "-s", "--sleep-interval", "--pid", "--max-unchanged-stats"}
                 )
-            positional = _shell_positional_args_after(parts, 1, option_args=option_args)
+            # Stdin operands re-read the input stream; the filter bound counts them.
+            positional = [
+                operand
+                for operand in _shell_positional_args_after(parts, 1, option_args=option_args)
+                if operand not in STDIN_OPERANDS
+            ]
         else:
             positional = _shell_positional_args(parts)
         paths = _rebase_navigation_shell_paths(

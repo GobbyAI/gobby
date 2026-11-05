@@ -24,6 +24,7 @@ from gobby.sessions.handoff import (
     build_handoff_continue_prompt,
 )
 from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
+from gobby.storage.session_startup_marks import record_startup_mark
 from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 
 from .agents import _seed_parent_turn_seq
@@ -77,8 +78,15 @@ def session_start_should_defer(
     event: HookEvent,
     existing_session: Any | None,
     session_source: str | None,
+    *,
+    reported_source: str | None = None,
 ) -> bool:
-    """Return whether this startup SessionStart may defer row creation."""
+    """Return whether this startup SessionStart may defer row creation.
+
+    ``session_source`` is the resolved source; ``reported_source`` is the one the CLI
+    sent, when resolution changed it (a compaction with no row resolves to startup).
+    """
+    reported = session_source if reported_source is None else reported_source
     session_source = session_source or "startup"
     if session_source not in STARTUP_SOURCES:
         return False
@@ -89,15 +97,53 @@ def session_start_should_defer(
 
     raw_terminal_context = event.data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+    # Identity resolution has run, so a startup the CLI reported is the thread's own.
     terminal_context = enrich_terminal_context_with_cwd(
         terminal_context,
         hook_cwd(event.data, event.cwd),
         external_id=event.session_id,
         machine_id=event.machine_id,
+        startup_thread=is_cli_startup(event, reported),
     )
     if is_gobby_acp_child(terminal_context):
         return False
     return not session_start_is_nested_cli_child(event.source.value, terminal_context)
+
+
+def is_cli_startup(event: HookEvent, reported_source: str | None) -> bool:
+    """Whether the CLI itself sent this SessionStart as its thread's startup.
+
+    A start Gobby built from activity never counts, nor does a start the CLI reported
+    as anything else, such as a compaction.
+    """
+    if event.metadata.get("_synthetic_session_start"):
+        return False
+    return (reported_source or "startup") in STARTUP_SOURCES
+
+
+def record_deferred_codex_startup(
+    handler: Any, event: HookEvent, reported_source: str | None
+) -> None:
+    """Leave the durable mark that a Codex thread's own startup deferred its row (#25647).
+
+    The mark lets the thread's first registration search for its fresh seat, even
+    after a daemon restart between the startup and its first prompt.
+    """
+    if event.source.value != "codex" or not is_cli_startup(event, reported_source):
+        return
+    if handler._session_manager is None or not event.machine_id or not event.session_id:
+        return
+    try:
+        record_startup_mark(
+            handler._session_manager.db,
+            machine_id=event.machine_id,
+            source="codex",
+            external_id=event.session_id,
+        )
+    except psycopg.Error as exc:
+        handler.logger.warning(
+            "Could not record the startup mark for Codex thread %s: %s", event.session_id, exc
+        )
 
 
 def _consume_pending_handoff_compact_continuation(
@@ -293,13 +339,10 @@ def _bind_clear_successor(
             exc,
         )
     try:
-        from gobby.agents.agent_workspaces import bind_session_workspace, schedule_workspace_commit
+        from gobby.agents.agent_workspaces import bind_session_workspace
 
         bind_session_workspace(
             handler._session_manager.db, successor_id, inherit_from=predecessor_id
-        )
-        schedule_workspace_commit(
-            getattr(session_obj, "project_id", None), "clear_binding", loop=handler._event_loop
         )
     except Exception as exc:
         handler.logger.warning(

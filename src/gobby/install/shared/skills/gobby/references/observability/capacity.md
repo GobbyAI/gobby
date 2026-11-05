@@ -28,3 +28,5 @@ allow the normal refresh path to produce a new observation. Configuration or
 provider switching still requires the authority of the user's task.
 
 See the [observability guide](../../../../../../../../docs/guides/observability.md).
+
+_Version: 1.0.0_

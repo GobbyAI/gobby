@@ -27,7 +27,6 @@ from gobby.agents.spawn import PreparedSpawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
-from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
     AGY_UNPUBLISHED_REASON,
@@ -52,6 +51,8 @@ from ._failure_cleanup import (
 from ._isolation_prepare import prepare_spawn_isolation, requested_base_branch
 from ._launch_settings import (
     LaunchRefused,
+    agent_provider_for_spawn,
+    load_model_defaults,
     resolve_launch_model,
     resume_launch_defaults,
     standing_seat_suffix,
@@ -82,7 +83,12 @@ from ._spawn_guards import (
 )
 from ._spawn_phase import SpawnPhase
 from ._step_state import persist_initial_step_instance_if_resolved
-from ._worktree_reuse import prepare_resumed_worktree, prepare_reused_worktree
+from ._worktree_reuse import (
+    prepare_resumed_worktree,
+    prepare_reused_worktree,
+    refuse_foreign_task_binding,
+    resolve_reused_worktree_id,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -107,7 +113,7 @@ async def spawn_agent_impl(
     base_branch: str | None = None,
     worktree_dir_name: str | None = None,  # Epic-team sub-worktree directory, set by team dispatch
     clone_id: str | None = None,  # Reuse existing clone instead of creating new isolation
-    worktree_id: str | None = None,  # Reuse existing worktree instead of creating new isolation
+    worktree_id: str | None = None,  # Reuse an existing worktree (id, id prefix or branch)
     cleanup_isolation_on_failure: bool = False,
     worktree_storage: Any | None = None,
     git_manager: Any | None = None,
@@ -253,11 +259,11 @@ async def spawn_agent_impl(
         caller_session_id=caller_session_id,
         parent_session_id=parent_session_id,
     )
-    agent_provider = agent_body.provider if agent_body else None
     try:
+        model_defaults = await asyncio.to_thread(load_model_defaults, db, target_project_id)
         effective_provider = resolve_spawn_provider(
             explicit_provider=explicit_provider,
-            agent_provider=agent_provider,
+            agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
             default_provider=default_provider,
         )
     except ValueError as e:
@@ -280,6 +286,7 @@ async def spawn_agent_impl(
             agent_body=agent_body,
             reasoning_effort=reasoning_effort,
             reasoning_required=reasoning_required,
+            model_defaults=model_defaults,
         )
     except LaunchRefused as exc:
         return exc.response
@@ -471,7 +478,7 @@ async def spawn_agent_impl(
     isolation_started = start_spawn_phase()
     if worktree_id and worktree_storage:
         try:
-            worktree_id = worktree_storage.resolve_reference(worktree_id)
+            worktree_id = resolve_reused_worktree_id(worktree_storage, project_id, worktree_id)
         except ValueError as exc:
             return {"success": False, "error": str(exc) or type(exc).__name__}
         existing_worktree = worktree_storage.get(worktree_id)
@@ -504,6 +511,9 @@ async def spawn_agent_impl(
         try:
             # Resume preserves its recorded checkout; explicit reuse syncs its base.
             if spawn_config.preserve_existing_worktree:
+                if claim:
+                    # A claiming resume still may not move a tree onto another task.
+                    refuse_foreign_task_binding(existing_worktree, spawn_config.task_id)
                 isolation_ctx, handler = await prepare_resumed_worktree(
                     existing_worktree=existing_worktree,
                     spawn_config=spawn_config,
@@ -521,28 +531,6 @@ async def spawn_agent_impl(
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
             )
-        except ReusedWorktreeSyncConflict as exc:
-            return {
-                "success": False,
-                "error_code": "reused_worktree_merge_conflict",
-                "error": (
-                    f"Reused worktree {existing_worktree.id} could not merge base "
-                    f"{exc.base_ref}; the original worktree was preserved at "
-                    f"{existing_worktree.worktree_path}: {exc}"
-                ),
-                "worktree_id": existing_worktree.id,
-                "worktree_path": existing_worktree.worktree_path,
-                "branch_name": existing_worktree.branch_name,
-                "base_branch": existing_worktree.base_branch,
-                "merge_target": exc.base_ref,
-                "base_commit_sha": exc.base_commit_sha,
-                "preserved": True,
-                "recovery": (
-                    "Check the preserved worktree's merge state and resolve the branch against "
-                    f"'{exc.base_ref}' in the preserved worktree, then retry spawn_agent "
-                    f"with worktree_id='{existing_worktree.id}'."
-                ),
-            }
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
     elif clone_id and clone_storage:
@@ -947,6 +935,8 @@ async def spawn_agent_impl(
                 "clone_id": isolation_ctx.clone_id,
                 "reasoning": reasoning.to_dict(),
             }
+            if "deferred_base_sync" in isolation_ctx.extra:
+                response["deferred_base_sync"] = isolation_ctx.extra["deferred_base_sync"]
             return await spawn_phase.start_background(_spawn_background_tasks, response)
         except asyncio.CancelledError:
             await run_to_completion(

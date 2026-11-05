@@ -25,3 +25,5 @@ workflow; an epic verdict does not submit a feedback batch.
 The [test-quality guide](../../../../../../../../docs/guides/test-quality.md)
 explains local audit evidence. CLI and HTTP feedback review triggers are operator
 surfaces; the assigned reviewer uses MCP to read and submit its frozen batch.
+
+_Version: 1.0.0_

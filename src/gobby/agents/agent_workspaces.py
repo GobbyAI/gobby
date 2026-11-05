@@ -4,9 +4,9 @@ Layout (addendum Decision 27, P9): ``<gobby_home>/agents_workspaces/<project_id>
 work tree, ``<gobby_home>/agents_workspaces/<project_id>.git/`` its daemon-only Git directory.
 Each session writes ``<definition>/session-<seq>/``; an epic team shares ``epics/epic-<seq>/``.
 
-The daemon is the only committer. A trigger schedules a commit and returns; a failed commit is
-logged and never raised into set_handoff, compaction or session end. The nightly cron at
-03:30 local time commits whatever a trigger missed.
+The daemon is the only committer. The nightly cron at 03:30 local time is the only backup
+trigger; lifecycle events (handoff, compaction, session start or end, team teardown) never
+commit the workspace.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import logging
 import os
 import re
 import subprocess
-import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
@@ -66,12 +65,9 @@ Daemon-written. Each agent records its notes and handoff material in its own fol
 tree. Agents do not run Git here, and retention deletes nothing.
 """
 
-_PENDING: set[concurrent.futures.Future[None]] = set()
 _BACKUP_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="gobby-workspace-backup"
 )
-_SCHEDULE_LOCK = threading.Lock()
-_SCHEDULED_PROJECTS: dict[str, str | None] = {}
 _BLOCKED_UNTIL: dict[str, float] = {}
 _INDEX_LOCK_MIN_AGE_SECONDS = 120.0
 _LOCK_BACKOFF_SECONDS = 60.0
@@ -411,85 +407,6 @@ def _commit_worker(project_id: str, trigger: str) -> str | None:
     except WorkspaceGitError:
         _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
         raise
-
-
-async def _commit_logged(project_id: str, trigger: str) -> None:
-    try:
-        while True:
-            try:
-                await commit_workspace(project_id, trigger)
-            except Exception as exc:
-                await asyncio.to_thread(
-                    logger.warning,
-                    "Agent workspace commit failed (%s) for %s: %s",
-                    trigger,
-                    project_id,
-                    exc,
-                )
-            with _SCHEDULE_LOCK:
-                pending = _SCHEDULED_PROJECTS.get(project_id)
-                if pending is None:
-                    del _SCHEDULED_PROJECTS[project_id]
-                    return
-                trigger = pending
-                _SCHEDULED_PROJECTS[project_id] = None
-    except asyncio.CancelledError:
-        with _SCHEDULE_LOCK:
-            _SCHEDULED_PROJECTS.pop(project_id, None)
-        raise
-
-
-def schedule_workspace_commit(
-    project_id: str | None,
-    trigger: str,
-    *,
-    loop: asyncio.AbstractEventLoop | None = None,
-) -> None:
-    """Schedule a commit on the daemon loop and return; never raises or awaits.
-
-    Without a running loop the trigger is dropped and the nightly cron commits the tree.
-    """
-    if project_id is None:
-        return
-    target = loop
-    if target is None:
-        try:
-            target = asyncio.get_running_loop()
-        except RuntimeError:
-            target = None
-    if target is None or not target.is_running():
-        logger.debug("No daemon loop for workspace commit (%s); the cron will commit", trigger)
-        return
-    with _SCHEDULE_LOCK:
-        if project_id in _SCHEDULED_PROJECTS:
-            _SCHEDULED_PROJECTS[project_id] = trigger
-            return
-        _SCHEDULED_PROJECTS[project_id] = None
-    try:
-        future = asyncio.run_coroutine_threadsafe(_commit_logged(project_id, trigger), target)
-    except RuntimeError as exc:
-        with _SCHEDULE_LOCK:
-            _SCHEDULED_PROJECTS.pop(project_id, None)
-        logger.warning("Agent workspace commit not scheduled (%s): %s", trigger, exc)
-        return
-    with _SCHEDULE_LOCK:
-        _PENDING.add(future)
-
-    def finished(done: concurrent.futures.Future[None]) -> None:
-        with _SCHEDULE_LOCK:
-            _PENDING.discard(done)
-
-    future.add_done_callback(finished)
-
-
-async def drain_workspace_commits() -> None:
-    """Wait for every scheduled workspace commit to finish."""
-    while True:
-        with _SCHEDULE_LOCK:
-            pending = [asyncio.wrap_future(future) for future in _PENDING]
-        if not pending:
-            return
-        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _maybe_gc(project_id: str) -> None:

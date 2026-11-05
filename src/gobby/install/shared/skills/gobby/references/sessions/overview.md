@@ -21,4 +21,6 @@ through the supported lifecycle; do not repair markers or claims directly.
 
 Guide: [Session management](../../../../../../../../docs/guides/sessions.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-27_

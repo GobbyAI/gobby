@@ -53,3 +53,5 @@ typed outcomes.
   to recover.
 - Keep logs and user-facing messages separate; logs can carry operational
   context, user messages should be stable and safe.
+
+_Version: 1.0.0_

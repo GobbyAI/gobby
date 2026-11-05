@@ -31,3 +31,5 @@
   validation command, package-manager check, or fixture test file.
 - Avoid broad repository-wide commands unless the JSON change affects shared
   contracts and the repo expects broad validation.
+
+_Version: 1.0.0_

@@ -50,6 +50,7 @@ fn grant_request_names_the_terminal_and_the_attachment() {
             "host_terminal_id": "ht-1",
             "id": "grant-1",
             "method": "grant_input",
+            "takeover": false,
         })
     );
 }

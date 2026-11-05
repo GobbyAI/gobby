@@ -85,3 +85,5 @@ After Assessment B returns usable CLI findings, reuse them. Do not rerun `detect
 When both assessments are complete, call `get_skill_file(name="impeccable", path="references/critique-report.md")`. Follow it to synthesize the report, persist the snapshot, ask targeted questions, recommend repairs, and recover from persistence failures.
 
 ---
+
+_Version: 1.0.0_

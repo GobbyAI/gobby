@@ -5,11 +5,16 @@ description: |
   the created task tree and its dependencies, repairs structural drift, saves
   findings, and reports to its spawner.
 
-version: "1.5.1"
+version: "1.6.0"
 enabled: true
 priority: 20
 # Launch configuration selects the provider and model for this role.
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: medium
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
 send_message_targets: [parent, session]
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"

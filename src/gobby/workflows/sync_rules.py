@@ -7,17 +7,15 @@ while user/custom rows remain protected.
 
 import json
 import logging
-import shutil
-import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import ValidationError
 
 from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.delivery_disposition import (
     DispositionAmbiguousError,
     prepare_rule_definition_for_persist,
@@ -25,8 +23,12 @@ from gobby.workflows.delivery_disposition import (
 from gobby.workflows.delivery_disposition import (
     migrate_rule_delivery_dispositions as migrate_rule_delivery_dispositions,
 )
+from gobby.workflows.rule_authority import refuse_protected_rule_import
 
 logger = logging.getLogger(__name__)
+
+# Marks an installed project row that a project rule import wrote and owns.
+PROJECT_IMPORT_TAG = "project-workflow-import"
 
 
 def get_bundled_rules_path() -> Path:
@@ -213,7 +215,7 @@ def _sync_rule_file(
 ) -> None:
     try:
         raw_content = yaml_file.read_text(encoding="utf-8")
-        data = yaml.safe_load(raw_content)
+        data = load_strict_yaml(raw_content)
 
         if not isinstance(data, dict):
             logger.warning("Skipping non-dict YAML", extra={"file": str(yaml_file)})
@@ -319,27 +321,17 @@ def _has_gobby_rule_name_collision(
 def resolve_sync_placeholders(definition_json: str) -> str:
     """Replace sync-time placeholders in a rule definition.
 
-    Currently supports:
-    - ``{{ gobby_bin }}``: resolved to the absolute path of the ``gobby``
-      binary via ``shutil.which``, falling back to
-      ``<sys.executable> -m gobby`` when the binary isn't on PATH.
-    - ``{{ rule_digest }}``: resolved to the canonical content hash of the
-      unresolved definition, so key order does not change it. A rule that
-      stores it in a session variable re-fires in live sessions exactly when
-      its synced content changes. Sync and template-hash serialization agree.
+    ``{{ rule_digest }}`` resolves to the canonical content hash of the
+    unresolved definition, so key order does not change it. A rule that
+    stores it in a session variable re-fires in live sessions exactly when
+    its synced content changes. Sync and template-hash serialization agree.
 
-    Called once per rule during sync so the DB always stores a concrete path
-    that works regardless of whether the binary is on the CLI's PATH.
+    Placeholders derive only from rule content: a binary or interpreter path
+    captured at sync time would outlive the environment that ran sync.
     """
     if "{{ rule_digest }}" in definition_json:
         digest = compute_definition_hash(definition_json)
         definition_json = definition_json.replace("{{ rule_digest }}", digest)
-    if "{{ gobby_bin }}" in definition_json:
-        gobby_bin = shutil.which("gobby")
-        if not gobby_bin:
-            gobby_bin = f"{sys.executable} -m gobby"
-        definition_json = definition_json.replace("{{ gobby_bin }}", gobby_bin)
-
     return definition_json
 
 
@@ -373,8 +365,9 @@ def _sync_single_rule(
         "description": rule_data.get("description"),
         "enabled": rule_data.get("enabled", True),
         "priority": rule_data.get("priority", 100),
-        "tags": file_tags if file_tags is not None else [],
         **rule_data,
+        # The merged file tags carry the sync tag; a rule's own tags must not drop it.
+        "tags": file_tags if file_tags is not None else [],
     }
     defaults = {
         key: value
@@ -395,9 +388,11 @@ def _sync_single_rule(
         raise ValueError(str(exc)) from exc
     validation = validate_rule(definition_json, name=rule_name)
     validation.raise_for_errors()
-    if validation.warnings:
+    # Sync validates without runtime context, so unresolved runtime names are expected.
+    warnings = [issue for issue in validation.warnings if issue.code != "unresolved"]
+    if warnings:
         result.setdefault("warnings", []).extend(
-            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in validation.warnings
+            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in warnings
         )
     priority = metadata["priority"]
     description = metadata["description"]
@@ -417,6 +412,7 @@ def _sync_single_rule(
 
     if existing is not None and existing.deleted_at is not None:
         if override_bundled or _is_sync_managed_rule(existing, sync_tag, project_id):
+            _refuse_protected_import(manager, rule_name, existing, definition_json, sync_tag)
             update_fields = _build_rule_update_fields(
                 existing=existing,
                 definition_json=definition_json,
@@ -451,6 +447,7 @@ def _sync_single_rule(
                 project_id=project_id,
             )
             if update_fields:
+                _refuse_protected_import(manager, rule_name, existing, definition_json, sync_tag)
                 manager.update_from_sync(existing.id, **update_fields)
                 result["updated"] += 1
                 return
@@ -459,6 +456,7 @@ def _sync_single_rule(
         return
 
     # Create new installed rule directly
+    _refuse_protected_import(manager, rule_name, None, definition_json, sync_tag)
     manager.create(
         name=rule_name,
         definition_json=definition_json,
@@ -473,17 +471,33 @@ def _sync_single_rule(
     result["synced"] += 1
 
 
+def _refuse_protected_import(
+    manager: RuleDefinitionManager,
+    rule_name: str,
+    target: Any,
+    definition_json: dict[str, Any],
+    sync_tag: str,
+) -> None:
+    """Bundled sync owns protected rules; every other rule file is an import."""
+    if sync_tag != "gobby":
+        refuse_protected_rule_import(manager, rule_name, target, definition_json)
+
+
 def _is_sync_managed_rule(existing: Any, sync_tag: str, project_id: str | None) -> bool:
     """Return whether an existing row is safe for template sync to manage.
 
     A global row may be adopted (and re-scoped) by a project sync, and a row the
     syncing project already owns keeps following its YAML; a row owned by another
-    project is never touched.
+    project is never touched. A project-owned row that lost the sync tag is still
+    managed while it carries the project import marker.
     """
+    if existing.source != "installed" or existing.project_id not in (None, project_id):
+        return False
+    tags = existing.tags or []
+    if sync_tag in tags:
+        return True
     return (
-        existing.source == "installed"
-        and existing.project_id in (None, project_id)
-        and sync_tag in (existing.tags or [])
+        existing.project_id == project_id and project_id is not None and PROJECT_IMPORT_TAG in tags
     )
 
 

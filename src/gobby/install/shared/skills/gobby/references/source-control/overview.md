@@ -31,3 +31,5 @@ The source-control HTTP API exposes git-local repository status, branches,
 commits, diffs, worktrees and clones. Select the intended project before using
 that UI/operator surface. Its branch-checkout mutation changes the selected
 checkout; preserve ownership and dirty work before any branch switch.
+
+_Version: 1.0.0_

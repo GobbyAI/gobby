@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-closure-coding]
 
 rules:
@@ -73,6 +73,12 @@ rules:
       'epic-devteam' not in (task.get('labels') or []) and
       any(latest_attestation(kind).get('result') != 'approved'
           for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review'])
+    attestation_shape:
+      kinds: [test-before, implementation, test-after, validation, self-review]
+      result: approved
+      applies_when: &coding_task >-
+        task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+        'epic-devteam' not in (task.get('labels') or [])
     effects:
       - type: block
         reason: Record approved TDD, implementation, validation and OCR self-review attestations before landing.
@@ -111,6 +117,10 @@ rules:
     event: task_land
     priority: 24
     when: *coding_candidate_evidence
+    attestation_shape:
+      kinds: [implementation, test-after, validation, self-review]
+      reference: {scheme: git, value_pattern: '[0-9a-f]{40}'}
+      applies_when: *coding_task
     effects:
       - type: block
         reason: Reference this full Git candidate in implementation, passing-test, validation and OCR attestations.

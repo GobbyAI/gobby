@@ -35,4 +35,6 @@ upgrade probes isolated from the user's running daemon.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#lifecycle-and-http-management).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

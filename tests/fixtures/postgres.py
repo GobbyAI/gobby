@@ -103,6 +103,50 @@ class LiveHubConnectionRefused(RuntimeError):
     """A test tried to reach the live hub's coordinates."""
 
 
+# Teardown deletes rows and drops schemas. A transaction a test leaves open
+# would block that teardown forever at 0% CPU (#25645).
+TEARDOWN_LOCK_TIMEOUT = "30s"
+
+
+class TeardownLockWait(RuntimeError):
+    """Teardown gave up waiting for a lock another backend holds."""
+
+
+def _lock_holders(conn: psycopg.Connection[Any], schema: str) -> str:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT activity.pid, activity.application_name, activity.state,
+               lock.mode, relation.relname, left(activity.query, 200)
+        FROM pg_locks AS lock
+        JOIN pg_stat_activity AS activity ON activity.pid = lock.pid
+        JOIN pg_class AS relation ON relation.oid = lock.relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE lock.granted AND namespace.nspname = %s AND lock.pid <> pg_backend_pid()
+        ORDER BY activity.pid, relation.relname
+        """,
+        (schema,),
+    ).fetchall()
+    return "; ".join(
+        f"pid {pid} ({application or 'no application_name'}, {state}) holds {mode} "
+        f"on {relation}, last query: {query}"
+        for pid, application, state, mode, relation, query in rows
+    )
+
+
+@contextlib.contextmanager
+def _bounded_lock_waits(conn: psycopg.Connection[Any], schema: str) -> Iterator[None]:
+    """Fail a teardown lock wait after TEARDOWN_LOCK_TIMEOUT, naming the holders."""
+    conn.execute("SELECT set_config('lock_timeout', %s, false)", (TEARDOWN_LOCK_TIMEOUT,))
+    try:
+        yield
+    except psycopg.errors.LockNotAvailable as exc:
+        holders = _lock_holders(conn, schema) or "none still visible"
+        raise TeardownLockWait(
+            f"Teardown of test schema {schema} waited {TEARDOWN_LOCK_TIMEOUT} for a lock. "
+            f"Holders: {holders}"
+        ) from exc
+
+
 _ISOLATED_SCHEMA_APPLICATION_PREFIX = "gobby-isolated-schema-"
 _SCHEMA_BOOKKEEPING_TABLES = frozenset({"schema_migrations"})
 _CANONICAL_TABLES_BY_SCHEMA: dict[str, frozenset[str]] = {}
@@ -473,7 +517,7 @@ def _reset_schema(
     that is the invariant acceptance 2.2.3 enforces.
     """
     _enforce_safe_test_schema(schema)
-    with psycopg.connect(url, autocommit=True) as conn:
+    with psycopg.connect(url, autocommit=True) as conn, _bounded_lock_waits(conn, schema):
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
         all_tables = {
             row[0]
@@ -614,13 +658,14 @@ def isolated_test_schema(url: str, worker_label: str) -> Iterator[str]:
 
 def _drop_test_schema(conn: psycopg.Connection[Any], schema: str) -> None:
     # A non-public hub owns its own `<schema>_agent_auth`; drop both.
-    for name in (schema, auth_schema_for(schema)):
-        exists = conn.execute(
-            "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-            (name,),
-        ).fetchone()
-        if exists:
-            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(name)))
+    with _bounded_lock_waits(conn, schema):
+        for name in (schema, auth_schema_for(schema)):
+            exists = conn.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                (name,),
+            ).fetchone()
+            if exists:
+                conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(name)))
 
 
 @pytest.fixture(scope="session")

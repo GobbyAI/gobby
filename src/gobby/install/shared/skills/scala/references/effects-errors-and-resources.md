@@ -44,3 +44,5 @@
   and keep the terminal cause observable.
 - Distinguish fallback values from failure suppression. A fallback must satisfy
   a documented domain contract and have tests for the degraded path.
+
+_Version: 1.0.0_

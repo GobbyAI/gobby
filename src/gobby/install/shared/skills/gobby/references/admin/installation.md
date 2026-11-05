@@ -73,3 +73,5 @@ repair the named preflight or component. Load `recovery.md` for schema refusal.
 See [requirements](../../../../../../../../docs/guides/system-requirements.md),
 [install options](../../../../../../../../docs/guides/cli-commands.md#gobby-install-and-gobby-uninstall),
 and [native releases](../../../../../../../../docs/guides/release-guide.md).
+
+_Version: 1.0.0_

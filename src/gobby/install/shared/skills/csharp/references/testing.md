@@ -46,3 +46,5 @@ test names:
 dotnet test tests/Project.Tests/Project.Tests.csproj --filter FullyQualifiedName~BehaviorName
 dotnet test tests/Project.Tests/Project.Tests.csproj --no-restore --no-build
 ```
+
+_Version: 1.0.0_
