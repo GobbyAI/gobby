@@ -609,7 +609,7 @@ for that pane's seat while it is focused. Activity is a key, a paste, or a mouse
 event other than pointer motion, anywhere in gclient (scrolling and clicks count;
 moving the pointer alone does not). After `focus_hold_seconds` (default 300, set
 under `[ui]`; see [Settings](#settings)) with no activity, gclient reports the
-focused pane unfocused. The next activity reports it focused again. Moving focus to another pane reports that pane focused.
+focused pane unfocused. The next activity reports it focused again. Moving focus to another pane reports that pane focused and the pane it left unfocused.
 Focus-in and focus-out events from your terminal do not count as activity.
 
 ### Where your keystrokes go
