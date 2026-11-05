@@ -28,6 +28,12 @@ CLAIMS = AgentApiTokenClaims(
 HUB_DATABASE = cast(HubDatabase, object())
 
 
+@pytest.fixture(autouse=True)
+def operator_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unspawned pane can read the operator credential; tests that need otherwise override it."""
+    monkeypatch.setattr(activation, "operator_credential_readable", lambda: True)
+
+
 class _HubRuntime:
     def __init__(self, config_file: object = None) -> None:
         pass

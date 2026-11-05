@@ -20,6 +20,7 @@ from gobby.storage.project_checkouts import require_root
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
+    daemon_bootstrap_path,
     read_managed_api_token,
     read_managed_signing_key,
 )
@@ -56,16 +57,38 @@ def claims_may_activate(db: HubDatabase, claims: AgentApiTokenClaims, operation:
     return session_has_capability(db, claims.session_id, ACTIVATE_DAEMON)
 
 
+def operator_credential_readable() -> bool:
+    """Whether this process can open the operator's daemon bootstrap credential.
+
+    Readability is the test, not validity: a malformed bootstrap still belongs to the operator,
+    and the start path reports its error. The sandbox denies this file to spawned seats, so a
+    caller that cleared its markers and cannot open it is refused.
+    """
+    try:
+        with daemon_bootstrap_path().open("rb"):
+            pass
+    except OSError:
+        return False
+    return True
+
+
 def agent_activation_refusal(operation: str) -> str | None:
     """Refuse a daemon activation step from a spawned agent unless its verified identity admits it.
 
-    The operator's pane, the web UI and unspawned coordination carry no spawned marker and pass.
-    The run id in the environment is only that marker and grants nothing. A spawned caller is
-    refused for stop and start, and for restart and cutover unless the managed capability it
-    presents verifies and its installed definition holds activate_daemon.
+    A caller with no spawn marker passes only when it can read the operator's bootstrap
+    credential. A cleared environment is not evidence of the operator, so it is refused when
+    that credential is unreadable. The run id in the environment is only a marker and grants
+    nothing. A marked caller is refused for stop and start, and for restart and cutover unless
+    the managed capability it presents verifies and its installed definition holds
+    activate_daemon.
     """
     if not any(os.environ.get(name, "").strip() for name in _SPAWNED_ENV_NAMES):
-        return None
+        if operator_credential_readable():
+            return None
+        return (
+            f"{_REFUSED}: no spawn marker and no readable operator credential; "
+            "daemon activation follows the configured owner"
+        )
     if operation not in _GRANTABLE_OPERATIONS:
         return (
             f"{_REFUSED}: spawned agents may not stop or start the daemon; "
