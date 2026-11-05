@@ -187,9 +187,20 @@ class IdleCheckHandler:
         for run, terminal, provider in targets:
             try:
                 snapshot = await services.snapshot(run, 15)
-                pane_output = None if snapshot is None else snapshot.text
-                if pane_output is None:
-                    continue
+            except Exception:
+                logger.warning(
+                    "Failed to scan attention state for agent %s",
+                    run.id,
+                    exc_info=True,
+                )
+                snapshot = None
+            if snapshot is None:
+                # An outage ends the baseline; the next capture must not diff against old text.
+                if monitor is not None:
+                    monitor.rebaseline(terminal)
+                continue
+            try:
+                pane_output = snapshot.text
                 if monitor is not None:
                     # Isolated: observation failure never gates attention or verified failure.
                     try:
@@ -338,22 +349,28 @@ class IdleCheckHandler:
             and error.timestamp >= max(created_at, terminal.attempt_started_at)
         )
 
+    @staticmethod
+    def _quota_error_is_fresh(snapshot: WatchdogTranscriptSnapshot) -> bool:
+        """Quota exhaustion is a point-in-time signal; an older one never classifies a run."""
+        if snapshot.provider_error_terminal_reason != "provider_quota_exhausted":
+            return True
+        error = snapshot.provider_error_event
+        return (
+            error is not None
+            and error.timestamp is not None
+            and (datetime.now(UTC) - error.timestamp).total_seconds() <= FRESHNESS_SECONDS
+        )
+
     async def _fail_on_verified_quota(
         self,
         run: AgentRun,
         terminal: Terminal,
         snapshot: WatchdogTranscriptSnapshot | None,
     ) -> bool:
-        """Fail a run whose newest output is a fresh, verified usage-limit error."""
+        """Fail a run whose newest output is a verified usage-limit error."""
         if snapshot is None or not snapshot.has_current_provider_error:
             return False
-        error = snapshot.provider_error_event
-        if (
-            error is None
-            or error.timestamp is None
-            or snapshot.provider_error_terminal_reason != "provider_quota_exhausted"
-            or (datetime.now(UTC) - error.timestamp).total_seconds() > FRESHNESS_SECONDS
-        ):
+        if snapshot.provider_error_terminal_reason != "provider_quota_exhausted":
             return False
         return await self._fail_on_terminal_provider_error(run, terminal, snapshot)
 
@@ -368,6 +385,7 @@ class IdleCheckHandler:
             snapshot is None
             or not snapshot.has_conclusive_terminal_provider_error
             or not self._provider_error_postdates_run(run, terminal, snapshot)
+            or not self._quota_error_is_fresh(snapshot)
         ):
             return False
         if not await self._recovery._complete_if_work_finished(run):
@@ -401,6 +419,7 @@ class IdleCheckHandler:
             or snapshot is None
             or not snapshot.has_current_provider_error
             or not self._provider_error_postdates_run(run, terminal, snapshot)
+            or not self._quota_error_is_fresh(snapshot)
         ):
             return None
         return snapshot

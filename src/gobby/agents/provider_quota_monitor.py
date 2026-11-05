@@ -50,6 +50,10 @@ class ProviderQuotaMonitor:
             return
         await self._service.observe_pane_hint(hint, generation=generation)
 
+    def rebaseline(self, terminal: Terminal) -> None:
+        """Drop a terminal's prior capture after an outage, so its next capture starts fresh."""
+        self._tracker.rebaseline(pane_generation(terminal))
+
     async def retire_dead(self, live_by_provider: Mapping[str, Collection[str]]) -> None:
         """Retire pane generations whose terminal left the live set since the last pass.
 

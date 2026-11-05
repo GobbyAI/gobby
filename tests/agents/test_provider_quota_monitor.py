@@ -8,6 +8,7 @@ run's own terminal attempt fails the run.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -18,13 +19,19 @@ import pytest
 
 from gobby.providers.capacity_service import ProviderCapacityService
 from gobby.providers.quota_alerts import HINT_COOLDOWN, AlertEdge
-from gobby.providers.usage import ProviderUsageSnapshot, TransientUsageRefreshError
+from gobby.providers.usage import (
+    AgyUsageReporter,
+    ProviderUsageReporter,
+    ProviderUsageSnapshot,
+    TransientUsageRefreshError,
+)
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.provider_capacity import ProviderCapacityStorage
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.terminals.services import TerminalServices
 from tests.agents.test_lifecycle_monitor import _pane_text
 from tests.agents.test_lifecycle_monitor_watchdog_idle_recovery import (
     LOCAL_MACHINE_ID,
@@ -117,7 +124,7 @@ def _clocked_service(
 
 
 def _reporter_service(
-    storage: ProviderCapacityStorage, sink: _Sink, reporter: _Reporter
+    storage: ProviderCapacityStorage, sink: _Sink, reporter: ProviderUsageReporter
 ) -> ProviderCapacityService:
     return ProviderCapacityService(
         storage,
@@ -657,3 +664,143 @@ async def test_startup_quota_uses_prelaunch_identity_bounds(
         assert (first, second) == (0, 0)
         assert stored.status == "running"
         assert stored.terminal_reason is None
+
+
+@pytest.mark.asyncio
+async def test_stale_verified_quota_never_fails_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    transcript = tmp_path / "stale-quota.jsonl"
+    monitor, run = _spawned(
+        temp_db,
+        session_manager,
+        sample_project,
+        agent_run_manager,
+        transcript=transcript,
+        session_age_seconds=120,
+    )
+    # The run and its attempt both predate the error, so only freshness can reject it.
+    old = (now - timedelta(seconds=1000)).isoformat()
+    temp_db.execute("UPDATE agent_runs SET created_at = %s WHERE id = %s", (old, run.id))
+    temp_db.execute(
+        "UPDATE terminals SET attempt_started_at = %s WHERE agent_run_id = %s",
+        (old, run.id),
+    )
+    _write_codex_lifecycle_transcript(
+        transcript,
+        task_complete_error=_USAGE_ERROR,
+        event_timestamp=now - timedelta(seconds=901),
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        # Completed-turn recovery may still act on an old turn; quota must not fail it.
+        await monitor.check_idle_agents()
+
+    stored = agent_run_manager.get(run.id)
+    assert stored is not None
+    assert (stored.status, stored.terminal_reason) == ("running", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outage", ["raised_capture", "unresolved_snapshot"])
+async def test_outage_pass_rebaselines_without_emission(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    monkeypatch: pytest.MonkeyPatch,
+    outage: str,
+) -> None:
+    sink = _Sink()
+    monitor, _run = _spawned(
+        temp_db, session_manager, sample_project, agent_run_manager, child_source="codex"
+    )
+    monitor.set_provider_capacity_service(_service(temp_db, sink))
+    unresolved = {"active": False}
+    capture = TerminalServices.snapshot
+
+    async def guarded_snapshot(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if unresolved["active"]:
+            return None
+        return await capture(self, *args, **kwargs)
+
+    monkeypatch.setattr(TerminalServices, "snapshot", guarded_snapshot)
+    form = _FORMS["codex"]
+    texts: list[str | BaseException] = [_BASE]
+    if outage == "raised_capture":
+        texts.append(RuntimeError("pane gone"))
+    texts.extend([_BASE + form, _BASE + form])
+
+    with _pane_text(monitor, texts):
+        await _observe_pass(monitor)
+        unresolved["active"] = outage == "unresolved_snapshot"
+        await _observe_pass(monitor)
+        unresolved["active"] = False
+        # The form returns after the outage. Its baseline was dropped, so it is a new
+        # block against no prior capture; the redraw that follows stays silent.
+        await _observe_pass(monitor)
+        await _observe_pass(monitor)
+
+    assert sink.hints() == []
+
+
+def _agy_usage_stdout(*, remaining: float, reset_time: str) -> str:
+    """An AGY `/usage` JSON envelope with one bucket, shaped as the reporter parses it."""
+    bucket = {"name": "five_hour", "remaining_fraction": remaining, "reset_time": reset_time}
+    envelope = {
+        "status": "SUCCESS",
+        "num_turns": 0,
+        "command": {
+            "name": "usage",
+            "data": {"groups": [{"name": "Models", "buckets": [bucket]}]},
+        },
+    }
+    return json.dumps(envelope)
+
+
+@pytest.mark.asyncio
+async def test_agy_reporter_refresh_reaches_shared_sink(temp_db: HubDatabase) -> None:
+    sink = _Sink()
+
+    async def run_command(_command: tuple[str, ...]) -> tuple[int, str, str]:
+        return (0, _agy_usage_stdout(remaining=0.0, reset_time=_RESET), "")
+
+    service = _reporter_service(
+        ProviderCapacityStorage(temp_db, machine_id=LOCAL_MACHINE_ID),
+        sink,
+        AgyUsageReporter(run_command=run_command, clock=lambda: _NOW),
+    )
+
+    await service.refresh("agy")
+    await _settle()
+
+    assert [edge.provider for edge in sink.edges] == ["agy"]
+
+
+@pytest.mark.asyncio
+async def test_agy_reporter_timeout_raises_transient_and_invents_no_edges(
+    temp_db: HubDatabase,
+) -> None:
+    sink = _Sink()
+    never = asyncio.Event()
+
+    async def run_command(_command: tuple[str, ...]) -> tuple[int, str, str]:
+        await never.wait()
+        return (0, "", "")
+
+    reporter = AgyUsageReporter(run_command=run_command, timeout_seconds=0.001)
+    with pytest.raises(TransientUsageRefreshError):
+        await reporter.report()
+    service = _reporter_service(
+        ProviderCapacityStorage(temp_db, machine_id=LOCAL_MACHINE_ID), sink, reporter
+    )
+
+    await service.refresh("agy")
+    await _settle()
+
+    assert sink.edges == []
