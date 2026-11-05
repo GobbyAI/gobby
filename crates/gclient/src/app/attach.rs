@@ -395,6 +395,16 @@ impl Workspace {
                 );
             return Ok(());
         }
+        if matches!(transport, Transport::Proxy) {
+            // A proxied pane claims its writer lease without takeover, as the live attach does.
+            let terminal_id = self.panes[&pane_id].terminal_id.clone();
+            self.daemon.send_ws(json!({
+                "type": "terminal_take_control",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+                "takeover": false,
+            }))?;
+        }
         let locator = self.locator_for(pane_id);
         let (rows, cols) = self.panes[&pane_id].viewport();
         let mut source = ScriptedFrameSource::new(transport);
@@ -466,5 +476,39 @@ mod tests {
         assert_eq!(pane.scroll_offset(), 7);
         assert_eq!(pane.max_scroll, 10);
         assert!(pane.frame_source().is_none());
+    }
+
+    #[test]
+    fn a_scripted_proxy_attach_claims_the_writer_lease_without_takeover() {
+        let mut ws = Workspace::scripted();
+        let generation = Daemon::subscribe(&ws.daemon).0.generation;
+        let mut pane = Pane::new(PaneId(1), "term-proxy", Backend::Native, "epoch-1");
+        pane.begin_attaching("req-1".into(), Transport::Proxy, generation);
+        ws.panes.insert(pane.id, pane);
+        ws.order.push(PaneId(1));
+
+        ws.apply_scripted_attach_result(&json!({
+            "request_id": "req-1",
+            "success": true,
+            "attachment_id": "att-1",
+            "lease_generation": 1,
+        }))
+        .expect("attach result applies");
+
+        let claims: Vec<Value> = ws
+            .daemon()
+            .ws_sent()
+            .into_iter()
+            .filter(|message| message["type"] == "terminal_take_control")
+            .collect();
+        assert_eq!(
+            claims,
+            [json!({
+                "type": "terminal_take_control",
+                "terminal_id": "term-proxy",
+                "attachment_id": "att-1",
+                "takeover": false,
+            })]
+        );
     }
 }

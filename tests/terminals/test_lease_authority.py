@@ -114,7 +114,7 @@ async def test_an_attach_without_a_viewer_is_a_web_viewer_and_takes_the_lease() 
 
 
 @pytest.mark.asyncio
-async def test_focus_held_requires_a_focused_web_holder() -> None:
+async def test_focus_held_counts_a_focused_attachment_with_or_without_the_lease() -> None:
     registry = TerminalLeaseRegistry()
     holder = await registry.attach("focus-held-web", viewer="web")
     watcher = await registry.attach("focus-held-web", viewer="web")
@@ -127,8 +127,29 @@ async def test_focus_held_requires_a_focused_web_holder() -> None:
     assert registry.focus_held("focus-held-web") is True
 
     assert await registry.set_focus(holder.attachment_id, False) is True
-    assert await registry.set_focus(watcher.attachment_id, True) is True
     assert registry.focus_held("focus-held-web") is False
+
+    # An operator-focused native pane is a web viewer that never takes the lease.
+    assert await registry.set_focus(watcher.attachment_id, True) is True
+    assert registry.focus_held("focus-held-web") is True
+
+
+@pytest.mark.asyncio
+async def test_focus_observer_waits_until_no_attachment_is_focused() -> None:
+    registry = TerminalLeaseRegistry()
+    fired: list[str] = []
+    registry.set_focus_observer(fired.append)
+    holder = await registry.attach("focus-two", viewer="web")
+    watcher = await registry.attach("focus-two", viewer="web")
+    await registry.take_control("focus-two", holder.attachment_id, takeover=False)
+    assert await registry.set_focus(holder.attachment_id, True) is True
+    assert await registry.set_focus(watcher.attachment_id, True) is True
+    fired.clear()
+
+    assert await registry.set_focus(holder.attachment_id, False) is True
+    assert fired == []
+    assert await registry.set_focus(watcher.attachment_id, False) is True
+    assert fired == ["focus-two"]
 
 
 @pytest.mark.asyncio

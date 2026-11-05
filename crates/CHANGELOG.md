@@ -214,6 +214,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attach claims the lease with a non-takeover take right after attaching, so a
   tmux or proxied native pane keeps one writer. Direct native panes still type
   over the frame socket with no lease. Version: `0.1.113`.
+- **Proxied attach claim cleanup** (#25653) — a scripted proxied attach claims
+  its writer lease as the live attach does. A claim refused after a successful
+  attach detaches that attachment, so none is left behind. Version: `0.1.114`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

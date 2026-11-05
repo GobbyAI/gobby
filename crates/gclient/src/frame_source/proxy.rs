@@ -31,15 +31,29 @@ pub(crate) async fn claim_writer_lease(
     terminal_id: &str,
     attachment_id: &str,
 ) -> Result<(), FrameError> {
-    daemon
+    let claim = daemon
         .notify(json!({
             "type": "terminal_take_control",
             "terminal_id": terminal_id,
             "attachment_id": attachment_id,
             "takeover": false,
         }))
-        .await
-        .map_err(|error| FrameError::Other(error.to_string()))
+        .await;
+    if let Err(error) = claim {
+        // The attachment already exists on the daemon. A claim that timed out in the
+        // write queue may still be written, and the detach queues behind it on the same
+        // channel. A closed socket is cleaned up by the daemon's disconnect handling.
+        let _ = daemon
+            .notify(json!({
+                "type": "terminal_detach",
+                "request_id": Uuid::new_v4().to_string(),
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+            }))
+            .await;
+        return Err(FrameError::Other(error.to_string()));
+    }
+    Ok(())
 }
 
 impl ProxyFrameSource {

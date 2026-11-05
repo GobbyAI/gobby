@@ -429,6 +429,31 @@ async def test_focus_hold_applies_only_to_comms_wakes_with_a_focused_holder(
         _cancel_background(seat.dispatcher)
 
 
+async def test_a_focused_native_pane_without_the_lease_holds_the_comms_wake(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    seat.session.status = "paused"
+    seat.dispatcher._ism_manager = _ism_with(operator_comms_message(seat.session.id))
+    registry = TerminalLeaseRegistry()
+    seat.dispatcher.set_lease_registry(registry)
+    # A native direct pane is a web viewer that never takes the writer lease.
+    pane = await registry.attach(TERMINAL_ID, viewer="web")
+    await registry.set_focus(pane.attachment_id, True)
+    try:
+        result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+
+        assert result.get("skipped") == PANE_FOCUSED
+        seat.pane_sender.assert_not_awaited()
+        assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id: "normal"}}
+    finally:
+        _cancel_background(seat.dispatcher)
+
+
 async def test_focus_release_after_the_mailbox_was_read_sends_nothing(
     temp_db: HubDatabase,
     session_manager: SessionManager,

@@ -446,13 +446,8 @@ class TerminalLeaseRegistry:
         self._focus_observer = observer
 
     def focus_held(self, terminal_id: str) -> bool:
-        attachment_id = self.holder(terminal_id)
-        record = None if attachment_id is None else self.get(attachment_id)
-        if record is not None and record.focused:
-            return True
-        return any(
-            record.focused and record.viewer != "web" for record in self._live_viewers(terminal_id)
-        )
+        """Whether any live attachment of the terminal reports focus, lease or not."""
+        return any(record.focused for record in self._live_viewers(terminal_id))
 
     async def set_focus(self, attachment_id: str, focused: bool) -> bool:
         record = self.get(attachment_id)
@@ -462,16 +457,15 @@ class TerminalLeaseRegistry:
             record = self.get(attachment_id)
             if record is None:
                 return False
+            was_focused = record.focused
             record.focused = focused
-            # A gclient pane is always writable, so its focus counts whoever holds the lease.
-            if not focused and (
-                record.viewer != "web" or self.holder(record.terminal_id) == attachment_id
-            ):
+            if was_focused and not focused:
                 self._notify_focus(record.terminal_id)
             return True
 
     def _notify_focus(self, terminal_id: str) -> None:
-        if self._focus_observer is not None:
+        # Holds wait for the last focused attachment: another focused pane keeps them.
+        if self._focus_observer is not None and not self.focus_held(terminal_id):
             self._focus_observer(terminal_id)
 
     async def take_control(
@@ -544,15 +538,15 @@ class TerminalLeaseRegistry:
             if record is None or record.finalized:
                 return None
             lease = self._lease(terminal_id)
-            focus_lost = record.focused and record.viewer != "web"
+            focus_lost = record.focused
             if lease.holder == attachment_id:
                 self._bump(lease)
                 lease.holder = None
                 focus_lost = True
-            if focus_lost:
-                self._notify_focus(terminal_id)
             record.finalized = True
             record.focused = False
+            if focus_lost:
+                self._notify_focus(terminal_id)
             record.writes.clear()
             sizing = self._reelect_sizing(terminal_id, lease)
             if not self._live_viewers(terminal_id):
