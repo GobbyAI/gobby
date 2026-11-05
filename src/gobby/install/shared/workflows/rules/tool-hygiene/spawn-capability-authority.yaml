@@ -1,4 +1,4 @@
-version: "1.1.1"
+version: "1.2.0"
 tags: [gobby, default, tool-hygiene]
 
 rules:
@@ -11,11 +11,16 @@ rules:
     when: >
       event.data.get('mcp_server') == 'gobby-agents'
       and event.data.get('mcp_tool') == 'spawn_agent'
-      and not operator_session(event.metadata.get('_platform_session_id'))
-      and not spawn_capabilities_allowed(
-        event.metadata.get('_platform_session_id'), tool_input.get('agent'),
-        tool_input.get('project_path'), tool_input.get('parent_session_id'),
-        'spawn_any_definition')
+      and (
+        (not operator_session(event.metadata.get('_platform_session_id'))
+          and not spawn_capabilities_allowed(
+            event.metadata.get('_platform_session_id'), tool_input.get('agent'),
+            tool_input.get('project_path'), tool_input.get('parent_session_id'),
+            'spawn_any_definition'))
+        or not spawner_admitted(
+          event.metadata.get('_platform_session_id'), tool_input.get('agent'),
+          tool_input.get('project_path'), tool_input.get('parent_session_id'))
+      )
     effects:
       - type: block
         mcp_tools: [gobby-agents:spawn_agent]
@@ -25,4 +30,5 @@ rules:
           including an omitted target or a fallback to default. Finite spawn lists
           remain authoritative and parent references never grant authority. A target
           that declares spawner_capabilities also needs the caller to hold one of them,
-          whatever the caller's spawn list says.
+          whatever the caller's spawn list says, including the unspawned operator and
+          default sessions.

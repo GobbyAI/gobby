@@ -516,7 +516,7 @@ def session_condition_helpers(
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
     from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
-    from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed
+    from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed, spawner_admitted
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
@@ -527,6 +527,12 @@ def session_condition_helpers(
         parent_session_id=None,
         authority_capability=None: spawn_capabilities_allowed(
             session_manager, caller_id, agent, project_path, parent_session_id, authority_capability
+        ),
+        "spawner_admitted": lambda caller_id,
+        agent,
+        project_path=None,
+        parent_session_id=None: spawner_admitted(
+            session_manager, caller_id, agent, project_path, parent_session_id
         ),
         "session_has_capability": lambda caller_id, capability: (
             session_manager is not None

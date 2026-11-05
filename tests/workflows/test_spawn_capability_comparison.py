@@ -487,3 +487,90 @@ def test_spawner_capabilities_hold_on_a_fallback_hop(
         project_id=project_id,
     )
     assert not spawn_capabilities_allowed(sessions, caller, "fixture-entry", None, caller)
+
+
+@pytest.mark.parametrize(
+    ("caller_kind", "target", "expected"),
+    [
+        # An unspawned default-role session with no stored definition holds no capabilities.
+        ("unspawned", "fixture-guarded", "block"),
+        # The operator exemption still covers a target that declares no spawner requirement.
+        ("unspawned", "fixture-target", "allow"),
+        # A caller holding the declared spawner capability is admitted.
+        ("holder", "fixture-guarded", "allow"),
+        ("holder", "fixture-target", "allow"),
+    ],
+)
+async def test_spawner_requirement_binds_unspawned_and_default_callers(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caller_kind: str,
+    target: str,
+    expected: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    if caller_kind == "holder":
+        sessions, caller = _caller(
+            temp_db,
+            project_id,
+            ["spawn_any_definition", "fixture_child_permission"],
+            spawnable_agents=["*"],
+        )
+    else:
+        sessions = SessionManager(temp_db)
+        caller = sessions.register(
+            "fixture-unspawned-rule", None, "claude", project_id=project_id
+        ).id
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-target",
+        {"capabilities": ["fixture_child_permission"]},
+        project_id=project_id,
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-guarded",
+        {
+            "capabilities": ["fixture_child_permission"],
+            "spawner_capabilities": ["spawn_any_definition"],
+        },
+        project_id=project_id,
+    )
+    RuleDefinitionManager(temp_db).create(
+        "fixture-spawn-guard",
+        {
+            "event": "before_tool",
+            "mandatory": True,
+            "when": (
+                "event.data.get('mcp_server') == 'gobby-agents' "
+                "and event.data.get('mcp_tool') == 'spawn_agent' "
+                "and ((not operator_session(event.metadata.get('_platform_session_id')) "
+                "and not spawn_capabilities_allowed(event.metadata.get('_platform_session_id'), "
+                "tool_input.get('agent'), tool_input.get('project_path'), "
+                "tool_input.get('parent_session_id'), 'spawn_any_definition')) "
+                "or not spawner_admitted(event.metadata.get('_platform_session_id'), "
+                "tool_input.get('agent'), tool_input.get('project_path'), "
+                "tool_input.get('parent_session_id')))"
+            ),
+            "effects": [{"type": "block", "reason": "fixture spawn boundary"}],
+        },
+    )
+    response = await RuleEngine(temp_db).evaluate(
+        HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            source=SessionSource.CLAUDE,
+            session_id=caller,
+            timestamp=datetime.now(UTC),
+            metadata={"_platform_session_id": caller},
+            data={
+                "mcp_server": "gobby-agents",
+                "mcp_tool": "spawn_agent",
+                "tool_input": {"agent": target},
+            },
+        ),
+        session_id=caller,
+        variables={},
+    )
+    assert response.decision == expected
+    if expected == "block":
+        assert "fixture spawn boundary" in (response.reason or "")

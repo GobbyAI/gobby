@@ -5,6 +5,7 @@ from typing import Any
 
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
+from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import (
     resolve_agent,
     resolve_agent_with_row,
@@ -53,6 +54,18 @@ def _target_project_id(
     return caller_project_id
 
 
+def _resolve_hop(
+    session_manager: SessionManager, target: str, project_id: str
+) -> tuple[AgentDefinitionBody, bool] | None:
+    """One launch hop's definition and whether its stored row is enabled; None when unresolved."""
+    found = resolve_agent_with_row(target, session_manager.db, project_id=project_id)
+    if found is not None:
+        body, row = found
+        return body, row.enabled
+    fallback = resolve_agent(target, session_manager.db, project_id=project_id)
+    return None if fallback is None else (fallback, True)
+
+
 def spawn_capabilities_allowed(
     session_manager: SessionManager | None,
     caller_ref: Any,
@@ -98,16 +111,10 @@ def spawn_capabilities_allowed(
         if target in visited:
             return True
         visited.add(target)
-        found = resolve_agent_with_row(target, session_manager.db, project_id=project_id)
-        if found is not None:
-            body, row = found
-            if not row.enabled:
-                return False
-        else:
-            fallback_body = resolve_agent(target, session_manager.db, project_id=project_id)
-            if fallback_body is None:
-                return False
-            body = fallback_body
+        hop = _resolve_hop(session_manager, target, project_id)
+        if hop is None or not hop[1]:
+            return False
+        body = hop[0]
         if not body.admits_spawner(capabilities):
             return False
         if compare_capabilities and not set(body.capabilities) <= capabilities:
@@ -116,3 +123,48 @@ def spawn_capabilities_allowed(
             return True
         target = body.fallback_agent
     return True
+
+
+def spawner_admitted(
+    session_manager: SessionManager | None,
+    caller_ref: Any,
+    agent: Any,
+    project_path: Any = None,
+    parent_session_id: Any = None,
+) -> bool:
+    """Whether every hop of the launch admits the caller's capabilities.
+
+    A target's spawner_capabilities binds every caller, including the unspawned
+    operator and default sessions that the rule's operator exemption otherwise admits.
+    A caller with no stored definition holds no capabilities. A hop that cannot be
+    resolved declares no requirement here; spawn_capabilities_allowed refuses it for
+    every caller it does not exempt. A chain too long to finish walking fails closed.
+    """
+    from gobby.workflows.condition_helpers_sessions import _FALLBACK_CHAIN_MAX_HOPS, _spawn_caller
+
+    if session_manager is None:
+        raise RuntimeError("Spawner admission needs a session manager")
+    caller, _ = _spawn_caller(session_manager, caller_ref)
+    stored = session_agent_definition(session_manager.db, caller)
+    capabilities = set(stored[0].capabilities) if stored is not None else set()
+    project_id = _target_project_id(
+        session_manager, project_path, parent_session_id, caller.project_id
+    )
+    target = "default" if agent is None else agent
+    if project_id is None or not isinstance(target, str) or not target:
+        return True
+    visited: set[str] = set()
+    for _ in range(_FALLBACK_CHAIN_MAX_HOPS + 1):
+        if target in visited:
+            return True
+        visited.add(target)
+        hop = _resolve_hop(session_manager, target, project_id)
+        if hop is None:
+            return True
+        body = hop[0]
+        if not body.admits_spawner(capabilities):
+            return False
+        if not body.fallback_agent:
+            return True
+        target = body.fallback_agent
+    return False
