@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.1.1"
 tags: [gobby, default, tool-hygiene]
 
 rules:
@@ -23,4 +23,6 @@ rules:
           Unbounded spawning requires caller capability containment or declared
           spawn_any_definition authority. That authority never covers default,
           including an omitted target or a fallback to default. Finite spawn lists
-          remain authoritative and parent references never grant authority.
+          remain authoritative and parent references never grant authority. A target
+          that declares spawner_capabilities also needs the caller to hold one of them,
+          whatever the caller's spawn list says.

@@ -108,6 +108,8 @@ def spawn_capabilities_allowed(
             if fallback_body is None:
                 return False
             body = fallback_body
+        if not body.admits_spawner(capabilities):
+            return False
         if compare_capabilities and not set(body.capabilities) <= capabilities:
             return False
         if not body.fallback_agent:

@@ -1,7 +1,6 @@
 name: orchestrator
 spawnable_agents: ["*"]
 cold_start_commands: [admin]
-cold_start_counterpart: assistant
 capabilities: [message_restricted_seats, direct_release_manager, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, merge_base_commits, direct_integration_commit, remove_security_review_label, manage_rule_enforcement, spawn_any_definition, stop_any_seat, manage_workflow_definitions, manage_mcp_servers]
 direct_integration_commit_paths: ["src/gobby/install/shared/workflows/agents/*.yaml", ".gobby/project.json"]
 message_sender_capabilities: [message_restricted_seats]
@@ -9,7 +8,7 @@ description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and directs restarts and cutovers through the
   Release Manager.
-version: "6.1.0"
+version: "7.0.0"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]
@@ -90,6 +89,7 @@ prompts:
     - Keep the task queues current: send Triage an Archivist-bound update on every land, bounce, reroute, park, new task and restart.
     - Post-land cleanup. After landing and closure, the Dev Team Lead ends its own team's seats; you end any seat that is unowned or unresponsive with `stop_agent` and the full run UUID. The completion owner deletes the merged worktree with `delete_worktree(merged_into=<tree's stored base_branch>)`. Run the remedy when Triage forwards a teardown finding, using that tree's stored base_branch for every merge proof. The procedure has the steps.
     - Answer the operator directly when they talk to you in this pane. Otherwise reach the operator through the Assistant, with decisions as buttons.
+    - Assistant. You spawn the Assistant into its sandbox and reuse a live one. Only a seat holding `spawn_any_definition` may spawn it, and you are that seat.
 
     ## Database
     - Read the daemon database only through `gobby-sessions:query_readonly`: one read-only SELECT or WITH per call, row-capped, with credential tables refused. Never print secrets.

@@ -97,3 +97,32 @@ async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_invent
     }
     assert inventory.get_available_servers() == ["github", "gobby-tasks"]
     assert set(await inventory.list_tools()) == {"github", "gobby-tasks"}
+
+
+@pytest.mark.asyncio
+async def test_evaluate_spawn_refuses_a_definition_without_the_spawn_surface(
+    temp_db: HubDatabase,
+) -> None:
+    agent = make_agent_definition(
+        prompts={"persona": "Operator guidance."},
+        name="persona-only-agent",
+        provider="claude",
+        surfaces=["persona"],
+    )
+    AgentDefinitionManager(temp_db).create(
+        name=agent.name,
+        definition_json=agent.model_dump(),
+        source="installed",
+    )
+
+    with (
+        patch("gobby.utils.project_context.get_project_context", return_value=None),
+        patch("gobby.utils.session_context.get_current_session_id", return_value=None),
+    ):
+        registry = create_agents_registry(MagicMock(), db=temp_db)
+        result = await registry._tools["evaluate_spawn"].func(agent=agent.name)
+
+    assert result["can_spawn"] is False
+    refusal = next(item for item in result["items"] if item["code"] == "SURFACE_UNSUPPORTED")
+    assert refusal["level"] == "error"
+    assert "'spawn' surface" in refusal["message"]

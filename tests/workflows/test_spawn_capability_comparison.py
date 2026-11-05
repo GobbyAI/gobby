@@ -428,3 +428,62 @@ def test_hook_path_without_ambient_project_uses_the_caller_project(
         project_id=project_id,
     )
     assert spawn_capabilities_allowed(sessions, caller, "fixture-target") is allowed
+
+
+@pytest.mark.parametrize(
+    ("caller_capabilities", "spawnable", "expected"),
+    [
+        # Containment passes in every row; only the spawner requirement decides.
+        (["fixture_child_permission"], ["*"], False),
+        (["fixture_child_permission", "fixture_spawn_any"], ["*"], True),
+        (["fixture_child_permission"], ["fixture-guarded"], False),
+        (["fixture_child_permission", "fixture_spawn_any"], ["fixture-guarded"], True),
+    ],
+)
+def test_spawner_capabilities_gate_wildcard_and_finite_callers(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caller_capabilities: list[str],
+    spawnable: list[str],
+    expected: bool,
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(
+        temp_db, project_id, caller_capabilities, spawnable_agents=spawnable, spawned=True
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-guarded",
+        {
+            "capabilities": ["fixture_child_permission"],
+            "spawner_capabilities": ["fixture_spawn_any"],
+        },
+        project_id=project_id,
+    )
+    assert spawn_capabilities_allowed(sessions, caller, "fixture-guarded", None, caller) is expected
+
+
+def test_spawner_capabilities_hold_on_a_fallback_hop(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A guarded definition reached through a fallback is refused like a direct target."""
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(
+        temp_db, project_id, ["fixture_child_permission"], spawnable_agents=["*"], spawned=True
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-guarded",
+        {
+            "capabilities": ["fixture_child_permission"],
+            "spawner_capabilities": ["fixture_spawn_any"],
+        },
+        project_id=project_id,
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-entry",
+        {"capabilities": ["fixture_child_permission"], "fallback_agent": "fixture-guarded"},
+        project_id=project_id,
+    )
+    assert not spawn_capabilities_allowed(sessions, caller, "fixture-entry", None, caller)
