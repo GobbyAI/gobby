@@ -807,6 +807,28 @@ async def test_exceptions_and_cancellation_release_pane(placed: _Harness, exit_k
     assert _panes(h) == {} and _tabs(h) == set()
 
 
+async def test_deferred_delivery_failure_releases_the_placed_pane(placed: _Harness) -> None:
+    """A Codex spawn reports success before its prompt delivery runs. When that
+    delivery fails later, the pane it bound is released: no tab or pane remains."""
+    h = placed
+    panes_before, tabs_before = _panes(h), _tabs(h)
+
+    result = await _spawn(h, _tab(h))
+
+    assert result["success"] is True, result
+    terminal_id = result["terminal_id"]
+    [request] = h.launches
+    assert request.placement_releaser is not None
+    assert len(_tabs(h) - tabs_before) == 1 and len(_panes(h)) == len(panes_before) + 1
+    h.terminals.mark_exited(terminal_id)
+
+    await request.placement_releaser(terminal_id)
+
+    assert _panes(h) == panes_before and _tabs(h) == tabs_before
+    assert _terminal_states(h) == {terminal_id: "exited"}
+    _assert_seat_free(h)
+
+
 @pytest.mark.parametrize("kind", ["tab", "split"])
 async def test_placed_spawn_reply_carries_refs(placed: _Harness, kind: str) -> None:
     h = placed

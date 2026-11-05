@@ -24,6 +24,8 @@ pub struct RecordedRequest {
 #[derive(Default)]
 struct HubState {
     requests: Vec<RecordedRequest>,
+    // Receipt time of each entry in `requests`, on the paused test clock.
+    receipts: Vec<tokio::time::Instant>,
     scripts: HashMap<String, VecDeque<(StatusCode, Value)>>,
     barriers: HashMap<String, ReplyBarrier>,
 }
@@ -77,6 +79,13 @@ impl FakeHub {
         (observed, release)
     }
 
+    /// Receipt time of each request, in arrival order, on the paused test clock.
+    // Only the codex prompt tests read receipts. node_hooks includes this fake without them.
+    #[allow(dead_code)]
+    pub fn receipts(&self) -> Vec<tokio::time::Instant> {
+        self.state.lock().unwrap().receipts.clone()
+    }
+
     pub fn requests(&self) -> Vec<RecordedRequest> {
         self.state.lock().unwrap().requests.clone()
     }
@@ -105,6 +114,7 @@ async fn record(State(state): State<Arc<Mutex<HubState>>>, request: Request) -> 
             headers: parts.headers,
             body,
         });
+        state.receipts.push(tokio::time::Instant::now());
         let (status, body) = state
             .scripts
             .get_mut(&path)

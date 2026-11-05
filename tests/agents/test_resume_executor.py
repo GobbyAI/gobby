@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 import uuid
@@ -13,6 +14,8 @@ from uuid import UUID
 import pytest
 
 from gobby.agents import resume_executor
+from gobby.agents.resume_placement import launch_resume
+from gobby.agents.spawn_executor_support import schedule_codex_prompt_delivery
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.config.ai import GenerationEndpointConfig
@@ -228,6 +231,46 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     assert delivery_args[2] == "Continue"
     assert delivery_args[3] == str(_SUCCESSOR_ID)
     assert delivery_args[4] is runner.run_storage
+
+
+@pytest.mark.asyncio
+async def test_placed_codex_resume_hands_its_releaser_to_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_codex_prompt_delivery: MagicMock,
+) -> None:
+    """A late Codex delivery failure must release the pane that a placed resume bound."""
+    runner = _runner()
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    releaser = AsyncMock()
+    spawn_and_bind = launch_resume
+
+    async def placed_launch(request: Any, plan: Any, **kwargs: Any) -> Any:
+        # The real launch spawns the terminal; the placement binder then sets the releaser
+        # on the same request that delivery is scheduled from.
+        result = await spawn_and_bind(request, plan, **kwargs)
+        request.placement_releaser = releaser
+        return result
+
+    monkeypatch.setattr(resume_executor, "launch_resume", placed_launch)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=_resume_metadata(),
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    mock_codex_prompt_delivery.assert_called_once()
+    call = mock_codex_prompt_delivery.call_args
+    # Bind against the real signature: the releaser must reach placement_releaser by name,
+    # not by position into cleanup_agent.
+    bound = inspect.signature(schedule_codex_prompt_delivery).bind(*call.args, **call.kwargs)
+    assert bound.arguments.get("placement_releaser") is releaser
+    assert bound.arguments.get("cleanup_agent") is None
 
 
 @pytest.mark.asyncio
