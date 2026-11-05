@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Literal, Protocol, cast
 
+from gobby.providers.quota_observations import (
+    QuotaAggregate,
+    QuotaComponent,
+    QuotaObservation,
+    aggregate_components,
+    decode_quota_details,
+    encode_quota_details,
+    merge_components,
+)
+from gobby.providers.quota_signals import PaneQuotaHint, normalize_reporter_snapshot
 from gobby.providers.usage import (
     AgyUsageReporter,
     ProviderUsageReporter,
@@ -27,6 +37,17 @@ from gobby.utils.datetime import datetime_to_iso, utc_now
 type ProviderCapacityState = Literal["available", "exhausted", "stale", "unknown"]
 type RunDatabase = Callable[..., Awaitable[object]]
 type Clock = Callable[[], datetime]
+
+_MAX_CAS_ATTEMPTS = 5
+_REVISION_STEP = timedelta(microseconds=1)
+
+
+class QuotaWriteContentionError(RuntimeError):
+    """Concurrent writers kept moving one provider row past this writer's compare-and-set."""
+
+    def __init__(self, provider: str) -> None:
+        super().__init__(f"provider capacity write for {provider!r} kept losing compare-and-set")
+        self.provider = provider
 
 
 class ProviderSupportRecord(Protocol):
@@ -58,7 +79,9 @@ class CapacityStorage(Protocol):
         windows: Sequence[Mapping[str, object]],
         reason: str | None,
         source_version: str,
-    ) -> None: ...
+        details: Mapping[str, object],
+        expected_observed_at: datetime | None,
+    ) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +95,7 @@ class ProviderCapacitySnapshot:
     windows: tuple[UsageWindow, ...]
     reason: str | None
     source_version: str | None
+    details: Mapping[str, object] = field(default_factory=dict)
 
     @classmethod
     def unknown(cls, provider: str, reason: str) -> ProviderCapacitySnapshot:
@@ -95,6 +119,7 @@ class ProviderCapacitySnapshot:
             "windows": [window.to_dict() for window in self.windows],
             "reason": self.reason,
             "source_version": self.source_version,
+            "details": dict(self.details),
         }
 
 
@@ -120,6 +145,7 @@ class ProviderCapacityService:
         self._clock = clock
         self._run_db = run_db
         self._inflight: dict[tuple[str, str], asyncio.Task[ProviderCapacitySnapshot]] = {}
+        self._write_locks: dict[str, asyncio.Lock] = {}
 
     @classmethod
     def create_default(
@@ -136,15 +162,21 @@ class ProviderCapacityService:
         )
 
     async def get(self, provider: str) -> ProviderCapacitySnapshot:
-        """Return a fresh row or refresh and normalize a stale/missing one."""
+        """Read persisted components; reporter providers refresh when their last read is stale."""
         provider = _provider_name(provider)
         return await self._join_operation(provider, partial(self._get_once, provider))
 
     async def _get_once(self, provider: str) -> ProviderCapacitySnapshot:
-        persisted = await self._run_store(self.storage.get, provider)
-        if persisted is not None and self._age_seconds(persisted) <= self._freshness_seconds:
-            return _from_record(persisted, state=persisted.state, reason=persisted.reason)
-        return await self._refresh_with_fallback(provider, persisted)
+        record = await self._run_store(self.storage.get, provider)
+        if provider not in self._reporters:
+            return self._read(provider, record)
+        aggregate = _aggregate(record, now=self._clock())
+        if (
+            aggregate.observed_at is not None
+            and self._age_seconds(aggregate.observed_at) <= self._freshness_seconds
+        ):
+            return _snapshot(provider, aggregate, _source_version(record))
+        return await self._refresh_with_fallback(provider, record)
 
     async def refresh(self, provider: str) -> ProviderCapacitySnapshot:
         """Force one shared refresh attempt, preserving last success on failure."""
@@ -152,33 +184,71 @@ class ProviderCapacityService:
         return await self._join_operation(provider, partial(self._refresh_once, provider))
 
     async def _refresh_once(self, provider: str) -> ProviderCapacitySnapshot:
-        persisted = await self._run_store(self.storage.get, provider)
-        return await self._refresh_with_fallback(provider, persisted)
+        record = await self._run_store(self.storage.get, provider)
+        if provider not in self._reporters:
+            return self._read(provider, record)
+        return await self._refresh_with_fallback(provider, record)
+
+    async def observe(self, observation: QuotaObservation) -> ProviderCapacitySnapshot:
+        """Admit verified components through the per-provider CAS path and return the read."""
+        provider = _provider_name(observation.provider)
+        async with self._write_lock(provider):
+            for _ in range(_MAX_CAS_ATTEMPTS):
+                record = await self._run_store(self.storage.get, provider)
+                components, pane_hints = _decode(record)
+                merged, outcomes = merge_components(components, observation.components)
+                if "accepted" not in outcomes.values():
+                    return self._read(provider, record)
+                aggregate = await self._write(
+                    provider, record, merged, pane_hints, observation.source_version
+                )
+                if aggregate is not None:
+                    return _snapshot(provider, aggregate, observation.source_version)
+            raise QuotaWriteContentionError(provider)
+
+    async def observe_pane_hint(self, hint: PaneQuotaHint) -> bool:
+        """Persist one pane possible-limit hint; False when its occurrence was already seen."""
+        provider = _provider_name(hint.provider)
+        async with self._write_lock(provider):
+            for _ in range(_MAX_CAS_ATTEMPTS):
+                record = await self._run_store(self.storage.get, provider)
+                components, pane_hints = _decode(record)
+                if hint.occurrence in pane_hints:
+                    return False
+                seen = {
+                    **pane_hints,
+                    hint.occurrence: {
+                        "provider": provider,
+                        "kind": hint.kind,
+                        "detected_at": hint.detected_at.isoformat(),
+                    },
+                }
+                written = await self._write(
+                    provider, record, components, seen, _source_version(record) or "unknown"
+                )
+                if written is not None:
+                    return True
+            raise QuotaWriteContentionError(provider)
 
     async def _refresh_with_fallback(
         self,
         provider: str,
-        persisted: ProviderCapacityRecord | None,
+        record: ProviderCapacityRecord | None,
     ) -> ProviderCapacitySnapshot:
-        reporter = self._reporters.get(provider)
-        if reporter is None:
-            return _unknown(provider, "no usage reporter")
-
+        reporter = self._reporters[provider]
         source_version = "unknown"
         support_resolver = self._support_resolvers.get(provider)
         if support_resolver is not None:
             support = await support_resolver()
             if not support.supported:
-                return _unknown(provider, support.reason)
+                return ProviderCapacitySnapshot.unknown(provider, support.reason)
             if support.installed_version is not None:
                 source_version = support.installed_version
 
         try:
             return await self._refresh_and_persist(provider, reporter, source_version)
         except TransientUsageRefreshError as error:
-            if persisted is None:
-                return _unknown(provider, error.reason)
-            return _from_record(persisted, state="stale", reason=error.reason)
+            return self._stale(provider, record, error.reason)
 
     async def _join_operation(
         self,
@@ -223,30 +293,75 @@ class ProviderCapacityService:
                 "unsupported_snapshot",
                 "reporter returned an unsupported success snapshot",
             )
-        state: PersistedCapacityState = (
-            "exhausted"
-            if any(_is_exhausted(window) for window in snapshot.windows)
-            else "available"
-        )
-        reason = "one or more usage windows exhausted" if state == "exhausted" else None
-        await self._run_store(
+        observation = replace(normalize_reporter_snapshot(snapshot), source_version=source_version)
+        return await self.observe(observation)
+
+    async def _write(
+        self,
+        provider: str,
+        record: ProviderCapacityRecord | None,
+        components: Mapping[str, QuotaComponent],
+        pane_hints: Mapping[str, Mapping[str, str]],
+        source_version: str,
+    ) -> QuotaAggregate | None:
+        """Compare-and-set one row revision; None when a concurrent writer won the race."""
+        now = self._clock()
+        aggregate = aggregate_components(components, now=now)
+        revision = now if record is None else max(now, record.observed_at + _REVISION_STEP)
+        written = await self._run_store(
             self.storage.upsert,
             provider=provider,
-            state=state,
-            observed_at=snapshot.observed_at,
-            windows=tuple(window.to_dict() for window in snapshot.windows),
-            reason=reason,
+            state=(
+                "exhausted"
+                if any(component.state == "exhausted" for component in components.values())
+                else "available"
+            ),
+            observed_at=revision,
+            windows=tuple(window.to_dict() for window in aggregate.windows),
+            reason=aggregate.reason,
             source_version=source_version,
+            details=encode_quota_details(components, pane_hints),
+            expected_observed_at=None if record is None else record.observed_at,
         )
+        return aggregate if written else None
+
+    def _read(
+        self,
+        provider: str,
+        record: ProviderCapacityRecord | None,
+    ) -> ProviderCapacitySnapshot:
+        aggregate = _aggregate(record, now=self._clock())
+        return _snapshot(provider, aggregate, _source_version(record))
+
+    def _stale(
+        self,
+        provider: str,
+        record: ProviderCapacityRecord | None,
+        reason: str,
+    ) -> ProviderCapacitySnapshot:
+        """Keep the last success after a transient failure; aged components read stale."""
+        aggregate = _aggregate(record, now=self._clock())
+        source_version = _source_version(record)
+        if aggregate.state == "unknown":
+            return ProviderCapacitySnapshot.unknown(provider, reason)
+        if aggregate.state == "exhausted":
+            return _snapshot(provider, aggregate, source_version)
         return ProviderCapacitySnapshot(
             provider=provider,
             supported=True,
-            state=state,
-            observed_at=snapshot.observed_at,
-            windows=snapshot.windows,
+            state="stale",
+            observed_at=aggregate.observed_at,
+            windows=aggregate.windows,
             reason=reason,
             source_version=source_version,
+            details=aggregate.details,
         )
+
+    def _write_lock(self, provider: str) -> asyncio.Lock:
+        lock = self._write_locks.get(provider)
+        if lock is None:
+            lock = self._write_locks[provider] = asyncio.Lock()
+        return lock
 
     async def _run_store[T](
         self,
@@ -259,58 +374,46 @@ class ProviderCapacityService:
         result = await self._run_db(operation, *args, **kwargs)
         return cast(T, result)
 
-    def _age_seconds(self, record: ProviderCapacityRecord) -> float:
-        return max(0.0, (self._clock() - record.observed_at).total_seconds())
+    def _age_seconds(self, observed_at: datetime) -> float:
+        return max(0.0, (self._clock() - observed_at).total_seconds())
 
 
-def _from_record(
-    record: ProviderCapacityRecord,
-    *,
-    state: ProviderCapacityState,
-    reason: str | None,
+def _snapshot(
+    provider: str,
+    aggregate: QuotaAggregate,
+    source_version: str | None,
 ) -> ProviderCapacitySnapshot:
+    if aggregate.state == "unknown":
+        return ProviderCapacitySnapshot.unknown(provider, _no_observation_reason(provider))
     return ProviderCapacitySnapshot(
-        provider=record.provider,
+        provider=provider,
         supported=True,
-        state=state,
-        observed_at=record.observed_at,
-        windows=tuple(_window_from_dict(window) for window in record.windows),
-        reason=reason,
-        source_version=record.source_version,
+        state=aggregate.state,
+        observed_at=aggregate.observed_at,
+        windows=aggregate.windows,
+        reason=aggregate.reason,
+        source_version=source_version,
+        details=aggregate.details,
     )
 
 
-def _unknown(provider: str, reason: str) -> ProviderCapacitySnapshot:
-    return ProviderCapacitySnapshot.unknown(provider, reason)
+def _aggregate(record: ProviderCapacityRecord | None, *, now: datetime) -> QuotaAggregate:
+    components, _ = _decode(record)
+    return aggregate_components(components, now=now)
 
 
-def _window_from_dict(value: Mapping[str, object]) -> UsageWindow:
-    label = value.get("label")
-    unit = value.get("unit")
-    used = value.get("used")
-    limit = value.get("limit")
-    resets_at = value.get("resets_at")
-    if not isinstance(label, str) or not label:
-        raise TypeError("persisted usage window label must be a non-empty string")
-    if not isinstance(unit, str) or not unit:
-        raise TypeError("persisted usage window unit must be a non-empty string")
-    if not isinstance(used, (int, float)) or isinstance(used, bool):
-        raise TypeError("persisted usage window used must be numeric")
-    if not isinstance(limit, (int, float)) or isinstance(limit, bool):
-        raise TypeError("persisted usage window limit must be numeric")
-    if resets_at is not None and not isinstance(resets_at, str):
-        raise TypeError("persisted usage window resets_at must be a string or null")
-    return UsageWindow(
-        label=label,
-        used=float(used),
-        limit=float(limit),
-        unit=unit,
-        resets_at=resets_at,
-    )
+def _decode(
+    record: ProviderCapacityRecord | None,
+) -> tuple[dict[str, QuotaComponent], dict[str, dict[str, str]]]:
+    return decode_quota_details({} if record is None else record.details)
 
 
-def _is_exhausted(window: UsageWindow) -> bool:
-    return window.limit > 0 and window.used >= window.limit
+def _source_version(record: ProviderCapacityRecord | None) -> str | None:
+    return None if record is None else record.source_version
+
+
+def _no_observation_reason(provider: str) -> str:
+    return f"no {provider} quota observation"
 
 
 def _provider_name(provider: str) -> str:
