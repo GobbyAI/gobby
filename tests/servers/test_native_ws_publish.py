@@ -361,9 +361,13 @@ async def test_workspace_event_at_the_fragment_cap_publishes_bounded_ops(
 
 async def test_publish_preparation_peak_stays_within_queued_bytes_and_op_transients(
     supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Preparing a cap-sized publish holds its peak allocation near the queued wire bytes.
 
+    Encoding runs in a task after publish() returns, so the peak is read where the call
+    exchanges its ops. The exchange runs synchronously once preparation finishes and before
+    any POST starts, so the window covers the whole encode and none of the daemon side.
     The queued ops are the only whole-wire copies that outlive the call. Each op is
     assembled from at most PUBLISH_CHUNK bytes, so the transient allocation above them
     is a few op sizes. Traced allocation is fixed by the event, so the bound holds at
@@ -379,24 +383,36 @@ async def test_publish_preparation_peak_stays_within_queued_bytes_and_op_transie
         complete_json=canonical_json(message),
     )
     route = {field: message[field] for field in WORKSPACE_ROUTING_FIELDS}
+    source_bytes = _source_bytes(frames)
     daemon = _Daemon()
     daemon.publish_limit = DAEMON_PUBLISH_LIMIT
     publisher = _publisher(daemon)
+    enqueue = publisher._enqueue
+    exchanged: list[tuple[int, int]] = []
+
+    def measure_exchange(
+        turn: asyncio.Future[None], generation: str | None, encoded: list[bytes]
+    ) -> list[asyncio.Future[None]]:
+        futures = enqueue(turn, generation, encoded)
+        _, peak = tracemalloc.get_traced_memory()
+        exchanged.append((peak, sum(len(op) for op in encoded)))
+        return futures
+
     try:
         await publisher.start()
+        monkeypatch.setattr(publisher, "_enqueue", measure_exchange)
         tracemalloc.start()
         try:
             base, _ = tracemalloc.get_traced_memory()
             tracemalloc.reset_peak()
-            settled = publisher.publish(route, frames, source_bytes=_source_bytes(frames))
-            _, peak = tracemalloc.get_traced_memory()
+            settled = publisher.publish(route, frames, source_bytes=source_bytes)
+            await asyncio.wait_for(settled, 5.0)
         finally:
             tracemalloc.stop()
-        await asyncio.wait_for(settled, 5.0)
     finally:
         await publisher.stop()
 
-    queued = sum(daemon.body_sizes)
+    [(peak, queued)] = exchanged
     assert peak - base <= queued + 4 * native_publish.PUBLISH_CHUNK
 
 
