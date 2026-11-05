@@ -473,3 +473,54 @@ async def test_cost_state_only_append_reaches_the_ledger(
     [ingested] = store.list_runs(session.id)
     assert ingested.cost_amount == Decimal("2.0")
     assert processor._byte_offsets[session.id] == parent.stat().st_size
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_grok_non_finite_fixture_persists(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    tmp_path: Path,
+    bad: float,
+) -> None:
+    # The fixture puts the same ticks at the top level and in modelUsage; jsonb rejects both.
+    parser = GrokTranscriptParser(session_id="grok-persist")
+    message = parser.parse_line(_grok_turn("prompt-bad", bad), 0)
+    assert isinstance(message, ParsedMessage)
+    transcript = tmp_path / "grok-persist.jsonl"
+    _write(transcript, [_grok_turn("prompt-bad", bad)])
+    session = _register(session_manager, "grok-persist", transcript, source="grok")
+
+    store = ReportedUsageStore(db)
+    store.upsert_runs(session.id, grok_turn_runs([message]))
+    [stored] = store.list_runs(session.id)
+    assert stored.cost_amount is None
+    assert stored.model_usage == {"grok-build": {}}
+
+
+@pytest.mark.integration
+def test_non_finite_model_usage_keeps_valid_cost(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    tmp_path: Path,
+) -> None:
+    # A finite cost survives; the NaN inside modelUsage is dropped and its finite siblings kept.
+    record: dict[str, Any] = {
+        "type": "cost-state",
+        "startTime": START_MS,
+        "totalCostUSD": 1.5,
+        "totalAPIDuration": 30_000,
+        "totalDuration": 60_000,
+        "hasUnknownModelCost": False,
+        "modelUsage": {"claude-haiku-5-5": {"inputTokens": 10, "outputTokens": float("nan")}},
+    }
+    line = json.dumps(record)
+    transcript = tmp_path / "claude-persist.jsonl"
+    _write(transcript, [line])
+    session = _register(session_manager, "claude-persist", transcript)
+
+    store = ReportedUsageStore(db)
+    store.upsert_runs(session.id, claude_cost_runs([line]))
+    [stored] = store.list_runs(session.id)
+    assert stored.cost_amount == Decimal("1.5")
+    assert stored.model_usage == {"claude-haiku-5-5": {"inputTokens": 10}}
