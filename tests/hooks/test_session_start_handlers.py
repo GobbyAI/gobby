@@ -38,6 +38,13 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 from ._event_handler_helpers import TEST_MACHINE_ID, make_event
 
+# Hook-reported transcripts are adopted only when they match the provider's own layout
+# for the session. These fixtures use unbound paths, so that check is pinned to True;
+# the binding rule itself is covered in tests/hooks/test_transcript_path_derivation.py.
+_BOUND_HOOK_TRANSCRIPT = (
+    "gobby.hooks.event_handlers._session_start.transcripts.hook_transcript_is_bound"
+)
+
 pytestmark = pytest.mark.unit
 
 
@@ -827,8 +834,10 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies: dict[str, Any],
         mock_empty_session_variable_manager: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test pre-created session registers with message processor."""
+        monkeypatch.setattr(_BOUND_HOOK_TRANSCRIPT, lambda *_args, **_kwargs: True)
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text("{}\n", encoding="utf-8")
         mock_session = MagicMock()
@@ -897,8 +906,10 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies: dict[str, Any],
         mock_empty_session_variable_manager: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Codex thread-start events should reuse the durable web-chat row."""
+        monkeypatch.setattr(_BOUND_HOOK_TRANSCRIPT, lambda *_args, **_kwargs: True)
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text("{}\n", encoding="utf-8")
         mock_session = MagicMock()
@@ -1258,6 +1269,7 @@ class TestSessionStartNewSession:
             ),
             patch.object(handlers, "_activate_default_agent", return_value=None),
             patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+            patch(_BOUND_HOOK_TRANSCRIPT, new=lambda *_args, **_kwargs: True),
         ):
             response = handlers.handle_session_start(event)
 
