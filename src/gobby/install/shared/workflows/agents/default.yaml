@@ -1,4 +1,4 @@
-version: "1.3.1"
+version: "1.4.0"
 name: default
 capabilities:
   - accept_resume_retype
@@ -10,6 +10,7 @@ capabilities:
   - coordinate_tasks
   - close_without_work
   - message_restricted_seats
+  - manage_mcp_servers
   - manage_workflow_definitions
   - activate_agent_definitions
 direct_integration_commit_paths: ["**"]
