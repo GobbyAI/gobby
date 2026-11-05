@@ -223,6 +223,43 @@ When a publisher is attached:
   records it as a subsystem failure.
 - `BroadcastMixin.broadcast` hands the encoded frames to `publisher.publish` and
   skips local fanout. gdaemon's broker owns fanout and subscription filtering.
+- `publish` and `subscribe` are synchronous and return a future. Each call takes its
+  place in the queue order when it is made, and its operations enqueue after every
+  earlier call's, even when encoding yields to the loop. The future resolves to `None`
+  when its operations are settled or dropped. Cancelling a call before it queues its
+  operations leaves none behind. A later call still enqueues after every earlier call,
+  including one cancelled while it waits for its place.
+- A call captures the publisher's generation when it is made. An operation whose
+  generation has ended by the time it enqueues is dropped, and its future resolves to
+  `None`.
+- A frame that fails to encode fails its call with the encoding error. No operation of
+  that call is queued.
+- Calls waiting for their place or encoding count as one place each against
+  `MAX_RETAINED_OPS` and `MAX_WAITING_FUTURES`, together with queued operations. A call
+  whose encoded operations would exceed either cap fails the generation at its exchange
+  and queues none of them, and its future resolves to `None`.
+- A `publish` with frames declares `source_bytes`, the size of the payload its frames
+  encode from. Admission reserves those bytes against `MAX_RETAINED_BYTES` together with
+  the queued encoded bytes, so a call that would exceed the byte cap fails the generation
+  before it encodes. The reservation ends at the call's exchange, where its encoded bytes
+  are checked against the cap together with the queued bytes and the reservations of
+  calls still waiting, and then counted until settle. A call without frames charges its
+  message's filter JSON, which is its own payload.
+- `stop()` cancels calls still waiting for their place or encoding, so awaiting their
+  futures raises `CancelledError`. Calls whose operations are queued settle to `None`.
+  `BroadcastMixin.broadcast` catches only `TypeError` and `ValueError`, so a broadcast
+  that `stop()` cancels raises `CancelledError` in its caller.
+- A workspace event is encoded by `canonical_json_async`, which yields to the loop about
+  every 64 Ki characters of output (`CANONICAL_PIECE_CHARS`) and returns its buffer
+  without a copy. Its fragment frames are built by `fragment_event_async`, which yields
+  between 48 KiB base64 input blocks. Each frame's publish literal is encoded in string
+  slices of 8 KiB and yields about every 64 Ki of literal output, so each encode step handles
+  about one 64 KiB piece. The operation and request bodies are each joined once, as single
+  copies. The bytes equal the generic encoders' (`canonical_json`, `fragment_event`, and
+  `json_dumps` of `json_dumps` of each frame), so subscribers see the same frame bytes as before.
+- Ordering caveat: a workspace event is encoded before its publish takes its place. A
+  direct broadcast that starts during that encode can enqueue ahead of it. Lifecycle
+  publications are serialized by the lifecycle worker, so their order is unchanged.
 - `broadcast_session_event` does not return early for an empty client set in this
   mode, because the broker may still have subscribers.
 - `WebSocketServer.stop()` drains terminals before `publisher.stop()`, so no fanout
