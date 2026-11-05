@@ -549,8 +549,8 @@ pub(crate) enum VectorCommand {
         #[arg(long)]
         full: bool,
     },
-    /// Remove code-symbol vectors for files no longer indexed in PostgreSQL
-    CleanupOrphans,
+    /// Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing.
+    Reconcile,
 }
 
 #[derive(Subcommand)]

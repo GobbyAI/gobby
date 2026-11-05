@@ -165,7 +165,7 @@ fn service_config_selection(
         | Command::Path { .. }
         | Command::BlastRadius { .. } => ServiceConfigSelection::falkordb_only(),
         Command::Vector {
-            command: VectorCommand::CleanupOrphans,
+            command: VectorCommand::Reconcile,
         } => ServiceConfigSelection::qdrant_only(),
         Command::Vector { .. } | Command::Embeddings { .. } => ServiceConfigSelection::vectors(),
         Command::Search { .. } => ServiceConfigSelection::hybrid_search(),
@@ -542,13 +542,8 @@ fn run() -> anyhow::Result<()> {
             commands::vector::rebuild(&ctx, full, format)
         }
         Command::Vector {
-            command: VectorCommand::CleanupOrphans,
-        } => {
-            // Orphan cleanup deletes vectors by comparing them with the whole index, so it
-            // keeps the unbudgeted Project reconcile rather than a deferred read.
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::vector::cleanup_orphans(&ctx, format)
-        }
+            command: VectorCommand::Reconcile,
+        } => commands::vector::reconcile::run(&ctx, format),
         Command::Embeddings {
             command: EmbeddingsCommand::Doctor,
         } => commands::embeddings_doctor::run(&ctx),

@@ -18,6 +18,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::path::PathBuf;
 
+pub(crate) mod reconcile;
+
 pub(crate) fn lifecycle_from_context(
     ctx: &Context,
 ) -> Result<CodeSymbolVectorLifecycle, VectorLifecycleError> {
