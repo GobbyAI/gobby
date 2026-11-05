@@ -455,21 +455,32 @@ class ShellDirectoryState:
         Only a top-level stage outside a pipeline is trusted: a nested shell starts from
         its caller's cwd, which an unrecognised command may have moved. Without a proven
         directory the word stays relative and fails closed. Wrapped and dynamic words
-        keep the words they were given.
+        keep the words they were given. Leading NAME=value assignments do not change
+        which word runs the program.
         """
         if not trusted or not tokens or not parts or not self.changed or self.unproven_since_cd:
             return tokens, parts, raw
+        program_at = 0
+        while program_at < len(tokens) and re.match(
+            r"[A-Za-z_][A-Za-z0-9_]*=", tokens[program_at].value
+        ):
+            program_at += 1
         if (
-            tokens[0].value != parts[0]
+            program_at == len(tokens)
+            or tokens[program_at].value != parts[0]
             or not parts[0].startswith(("./", "../"))
-            or not _raw_shell_word_is_literal(raw[id(tokens[0])])
+            or not _raw_shell_word_is_literal(raw[id(tokens[program_at])])
             or self.cwd is None
             or not Path(self.cwd).is_absolute()
         ):
             return tokens, parts, raw
         program = str(Path(self.cwd, parts[0]))
-        token = replace(tokens[0], value=program)
-        return [token, *tokens[1:]], [program, *parts[1:]], {**raw, id(token): program}
+        token = replace(tokens[program_at], value=program)
+        return (
+            [*tokens[:program_at], token, *tokens[program_at + 1 :]],
+            [program, *parts[1:]],
+            {**raw, id(token): program},
+        )
 
     def directory_command(self, parts: list[str], *, uncertain: bool) -> None:
         """Track literal pushes and pops; unknown stack operations lose proof."""

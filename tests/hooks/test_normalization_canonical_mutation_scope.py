@@ -1021,6 +1021,10 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
     [
         "cd {scratch} && ./synthetic-daemon schema apply",
         "cd {scratch} && ./synthetic-daemon schema apply && ./synthetic-daemon serve",
+        # An environment assignment before the program leaves the program word in place.
+        "cd {scratch} && GOBBY_DATABASE_URL=synthetic-url ./synthetic-daemon schema apply",
+        "cd {scratch} && GOBBY_HOME={scratch}/home SYNTHETIC_ENV=1 "
+        "./synthetic-daemon serve > {scratch}/serve.log 2>&1",
     ],
 )
 def test_native_program_run_from_a_literal_directory_needs_no_claim(
@@ -1044,6 +1048,10 @@ def test_native_program_run_from_a_literal_directory_needs_no_claim(
         "cd {scratch} && make-helper && ./synthetic-daemon schema apply",
         "cd {scratch} && ./synthetic-daemon schema apply; make-helper; ./synthetic-daemon serve",
         "cd {scratch} && ./missing-daemon schema apply",
+        # An environment assignment does not prove a directory an unknown command may move.
+        "cd {scratch} && make-helper && SYNTHETIC_ENV=1 ./synthetic-daemon schema apply",
+        'cd "$SYNTHETIC_TARGET" && SYNTHETIC_ENV=1 ./synthetic-daemon schema apply',
+        "(cd {scratch} && GOBBY_HOME={scratch}/home ./synthetic-daemon serve)",
         'cd "$SYNTHETIC_TARGET" && ./synthetic-daemon schema apply',
         # A nested shell starts from its caller's cwd, which the proof does not cover.
         "(cd {scratch} && ./synthetic-daemon serve)",
@@ -3344,3 +3352,27 @@ def test_case_fallthrough_cd_is_not_a_background_job(
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_file_paths"] == [expected]
     assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "cd {scratch} && GOBBY_HOME={scratch}/home ./synthetic-daemon schema apply "
+        "> {project}/tracked.txt",
+        "cd {scratch} && SYNTHETIC_ENV=1 ./synthetic-script",
+    ],
+)
+def test_env_prefixed_program_writing_into_the_worktree_is_a_mutation(
+    tmp_path: Path, template: str
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+    project.mkdir()
+    scratch.mkdir()
+    (scratch / "synthetic-daemon").write_bytes(b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
+    script = scratch / "synthetic-script"
+    script.write_text(f"#!/bin/sh\ntouch {project}/tracked.txt\n")
+    script.chmod(0o755)
+
+    data = _shell_write_metadata(template.format(scratch=scratch, project=project), project)
+
+    assert data.get("canonical_repo_mutation") is True
