@@ -61,7 +61,9 @@ decided all three on 2026-11-05 (Decision 12):
   2026-11-05 rerun on a 512x512 image returned 200. The capture script's Box
   request bypasses the registered `gobby-decisions:evaluate` tool (2.4), and the
   wire note names no consumer per decision shape (2.5). The capture waits on
-  #25789, which routes each decision type to its own backend (Decision 19).
+  #25789, which routes each decision type to its own backend, so Box runs on
+  Jev through OpenRouter while Choice, Noul and Score run on local `clef:27b`
+  (Decisions 12 and 19).
 
 **When the leaves close:**
 - A provisioning record shows a fresh isolated harness, the Orchestrator's
@@ -76,9 +78,9 @@ decided all three on 2026-11-05 (Decision 12):
   the ship rule they select, with every decision consumer `off` (2.3).
 - The capture script sends its one Box request through the registered
   `gobby-decisions:evaluate` tool and keeps the raw exchange (2.4).
-- A dated `clef:27b` capture on local Ollama records Box's round trip through that
-  tool or its finding, and the wire note names a consumer and live-path test per
-  shape (2.5).
+- One dated capture records Choice, Noul and Score on local `clef:27b` and Box's
+  round trip on Jev through OpenRouter and that tool, or its finding, and the
+  wire note names a consumer, live-path test and serving backend per shape (2.5).
 
 ## Decision Record
 `kind: framing`
@@ -216,14 +218,20 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
       orchestrator to load Clef (not Clef flash) with Ollama and use that".
       The Orchestrator scoped it: "capture the Box evidence on Clef (full, not
       Flash) served locally by Ollama", with model `clef:27b`, and drop the
-      OpenRouter dependency. Leaf 2.4 sends the capture's Box request through the
+      OpenRouter dependency. On 2026-11-05 the Orchestrator reported that its
+      OpenRouter Box rerun on a 512x512 red-square image returned 200 with edges
+      0.25/0.74/0.25/0.76, that the 2026-10-26 HTTP 400 came from the 64x64
+      test image, and that OpenRouter's catalog lists `cloudflare/clef`,
+      `clef-flash` and `clef-omni`. Josh's later direction, relayed by the
+      Assistant with this split as the example, supersedes the local-Clef Box
+      answer: "can we split like that on choice/noul/score vs box?". The
+      Orchestrator ruled on 2026-11-05 that no `clef:27b` surface offers Box, so
+      2.5 captures Choice, Noul and Score on `clef:27b` through local Ollama and
+      Box on `typesafe/jev-1.14` through OpenRouter in one run under #25789's
+      per-type routing. Leaf 2.4 sends the capture's Box request through the
       registered `gobby-decisions:evaluate` tool, leaf 2.5 owns the evidence, and
-      the Orchestrator owns its capture step. LM Studio's `clef-flash` is not used. On
-      2026-11-05 the Orchestrator reported that its OpenRouter Box rerun on a
-      512x512 red-square image returned 200 with edges 0.25/0.74/0.25/0.76,
-      that the 2026-10-26 HTTP 400 came from the 64x64 test image, and that
-      OpenRouter's catalog lists `cloudflare/clef`, `clef-flash` and
-      `clef-omni`. The local `clef:27b` capture stays as ruled. The V2
+      the Orchestrator runs the keyed capture step. LM Studio's `clef-flash` is
+      not used. The V2
       checks gate enforcement, and this plan enables none: the
       `--no-decisions` branch ships every consumer `off`, so no leaf needs
       them, parity+ property 3 stays missing, and 2.2 records it so.
@@ -319,11 +327,15 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     #25789, which carries its refusal-detail fix, and the plan's Box consumer
     depends on #25789. #25789 sits under #25603, so this is a cross-epic edge,
     and expansion gives the 2.5 leaf a `blocked-by` edge on it. The edge sits on
-    2.5 and not 2.4. 2.4's configuration and service-cache seam are written
-    against today's single-endpoint service, and #25789's item 3 names "the
-    #22948 Box consumer" among the consumers it keeps working, so #25789 carries
-    2.4's route and its `tests/scripts` tests forward. Seats do not edit either
-    task.
+    2.5 and not 2.4, which the Orchestrator confirmed on 2026-11-05. 2.4's
+    configuration and service-cache seam are written against today's
+    single-endpoint service, and #25789's item 3 names "the #22948 Box consumer"
+    among the consumers it keeps working, so #25789 carries 2.4's route and its
+    `tests/scripts` tests forward. By the same ruling, the capture script's
+    per-type endpoint flags are #25789's consumer upkeep (its criterion 8), and
+    2.4 does not change. 2.5 uses those flags to send Choice, Noul and Score to
+    local `clef:27b` and Box to Jev through OpenRouter (Decision 12). Seats do
+    not edit either task.
 
 ## Constraints
 `kind: framing`
@@ -1267,8 +1279,9 @@ Consumers unchanged:
   is safe. 2.5 runs this script from the main checkout, so this leaf lands first.
 - #25789 (per-type decision backends) will change the configuration shape and make services
   per endpoint. This leaf lands on the current single-endpoint code and has no edge to it.
-  #25789's item 3 names "the #22948 Box consumer" among the consumers it keeps working, so it
-  carries this route and these tests forward (Decision 19).
+  #25789's item 3 names "the #22948 Box consumer" among the consumers it keeps working, and its
+  criterion 8 adds per-type endpoint flags to this same script and its tests, so it carries this
+  route and these tests forward (Decision 19).
 
 **Implementation:**
 1. **Tests first,** in `tests/scripts/test_decisions_live_capture.py`:
@@ -1312,7 +1325,7 @@ tests/scripts/test_community_label_study.py -v`, then `uv run ruff check
 scripts/decisions_live_capture.py tests/scripts/test_decisions_live_capture.py` and
 `uv run ruff format --check` on the same paths.
 
-### 2.5 Capture Box on local Clef and record the consumer evidence (depends: 2.4, #25789) [category: docs]
+### 2.5 Capture Choice, Noul and Score on local Clef and Box on Jev through OpenRouter, and record the consumer evidence (depends: 2.4, #25789) [category: docs]
 `kind: deliverable`
 
 Targets:
@@ -1322,15 +1335,29 @@ Targets:
 
 **Research context:**
 - Josh's D3 answer, 2026-11-05, verbatim: "On 22948, tell the orchestrator to load Clef (not
-  Clef flash) with Ollama and use that". The Orchestrator scoped it: "capture the Box evidence on
-  Clef (full, not Flash) served locally by Ollama", model `clef:27b` (18 GB), installed in local
-  Ollama and not loaded. OpenRouter is dropped by that ruling. Its 2026-10-26 Box attempt
-  returned HTTP 400 (`docs/evidence/decisions/item-4-checklist-2026-10-26.md`, lines 104-109),
-  which the Orchestrator traced on 2026-11-05 to the 64x64 test image, under Box's 280 px
-  minimum. Its rerun on a 512x512 red-square image returned 200 with edges
-  0.25/0.74/0.25/0.76. OpenRouter's catalog lists `cloudflare/clef`, `clef-flash` and
-  `clef-omni`. The local `clef:27b` capture stays as ruled. LM Studio's `clef-flash` is not
-  used.
+  Clef flash) with Ollama and use that". The Orchestrator scoped it to `clef:27b` (18 GB),
+  installed in local Ollama and not loaded. Josh's later direction, relayed by the Assistant with
+  this split as the example, verbatim: "can we split like that on choice/noul/score vs box?".
+  The Orchestrator's 2026-11-05 ruling applies it here: Choice, Noul and Score run on `clef:27b`
+  through local Ollama, and Box runs on TypeSafe Jev through OpenRouter, because no `clef:27b`
+  surface offers Box (Decision 12). #25789 refuses Box routed to `systemone` or `workers-ai` at
+  configuration load. LM Studio's `clef-flash` is not used.
+- OpenRouter Box: its 2026-10-26 attempt returned HTTP 400
+  (`docs/evidence/decisions/item-4-checklist-2026-10-26.md`, lines 104-109), which the
+  Orchestrator traced on 2026-11-05 to the 64x64 test image, under Box's 280 px minimum. Its
+  rerun on a 512x512 red-square image returned 200 with edges 0.25/0.74/0.25/0.76. OpenRouter's
+  catalog lists `cloudflare/clef`, `clef-flash` and `clef-omni`. The committed OpenRouter
+  captures (`docs/evidence/decisions/openrouter-decisions-live.md`) record `api_base`
+  `https://openrouter.ai/api`, `request_model` `typesafe/jev-1.14`, `identity_contract`
+  `response_version` and backend identity `response:typesafe/jev-1.14-20261014`; the item 4
+  checklist's only credential reference is the stored name `openrouter_api_key` (line 32).
+  Section 9 of the wire note says Box requires Jev 1.14.
+- Per-type routing: #25789's criterion 8 gives `scripts/decisions_live_capture.py::main` per-type
+  endpoint flags, so one capture run sends Choice, Noul and Score to one endpoint and Box to
+  another. #25789 owns their spelling, and this leaf uses them as #25789's committed help and docs
+  name them. #25789's criterion 7 also edits `wire-contracts.md` for per-type routing; this leaf's
+  edge on #25789 orders it after that edit, and it leaves the llama.cpp and LM Studio Box line in
+  section 9 to #25789.
 - What is owed: `docs/evidence/decisions/item-4-checklist-2026-10-26.json` lists "Resolve the Box
   failure and obtain #24248's required real consumer round-trip evidence."
   `.gobby/plans/community-label-decisions.md` 3.5 specified a "Decision shape consumers" section
@@ -1346,7 +1373,8 @@ Targets:
 - Capture tool: `scripts/decisions_live_capture.py::main` runs Choice, Noul and Score through
   `DecisionService`. After 2.4 it sends Box through the registered `gobby-decisions:evaluate` tool
   and records `consumer`, `image_sha256`, the tool's `questions` argument and its typed
-  `tool_output`. It then runs the raw probes and appends one dated section to `--out`. It requires
+  `tool_output`. It then runs the raw probes against the default endpoint and appends one dated
+  section to `--out`. It requires
   `--alias`, `--box-image` and `--out`. `build_decisions_config` fixes the service timeout at 30 s,
   and `--probe-timeout-seconds` sets the probes'. A failed shape is recorded as a `finding`.
 - Order: the Orchestrator runs the capture from the main checkout, so it needs 2.4's commit on
@@ -1360,6 +1388,9 @@ Targets:
   `systemone` wire with `response_version` identity, for Choice, Noul and Score only. Box on a local
   `systemone` surface is unverified (`wire-contracts.md`, section 9), and LM Studio's route rejected
   Box with HTTP 400, "Expected 'choice' | 'score' | 'noul'" (`systemone-live.md`, 2026-10-25).
+- Record location: the run's default endpoint is local `clef:27b`, which also serves its raw
+  probes, so its one dated section goes to `systemone-live.md` beside Run 8, and the wire note
+  links it for Box.
 - Box input bounds (`wire-contracts.md`, section 9): PNG or JPEG, 280 to 1568 pixels per side, so a
   512 by 512 image fits. Pillow is in `uv.lock`.
 - Execution context: the work directory is in the epic folder, which
@@ -1383,25 +1414,33 @@ Targets:
      /Users/josh/Projects/gobby/scripts/decisions_live_capture.py --wire-api systemone --api-base
      http://127.0.0.1:11434 --model clef:27b --identity-contract response_version
      --backend-max-state-tokens <that context length> --alias clef:27b --box-image
-     <dir>/red-square-512.png --probe-timeout-seconds 600 --out <dir>/clef-capture.md`.
-3. **Record.** Append `<dir>/clef-capture.md` unchanged to `systemone-live.md`, and commit the image
+     <dir>/red-square-512.png --probe-timeout-seconds 600 --out <dir>/capture.md`, plus #25789's
+     per-type flags routing Box to `wire_api` `openrouter-decisions`, `api_base`
+     `https://openrouter.ai/api`, model `typesafe/jev-1.14`, identity contract `response_version`
+     and API key secret `openrouter_api_key`. The default endpoint serves Choice, Noul and Score.
+     The leaf writes the full command from #25789's committed flag help before sending it. The
+     Orchestrator runs this keyed step, as in its 2026-11-05 rerun, and the key never reaches a
+     seat.
+3. **Record.** Append `<dir>/capture.md` unchanged to `systemone-live.md`, and commit the image
    as `docs/evidence/decisions/box-red-square-2026-11.png`.
 4. **Wire note.** Add a "Decision shape consumers" section to `wire-contracts.md` that names each
-   shape's consumer and live-path test above, #24248's closing commit, and the Clef Box result.
-   When Box parsed, it gives the captured edges and confidence beside the expected edges (top and
-   left 0.25, bottom and right 0.75) and states each difference. When Box did not parse, it gives
-   the finding's reason and detail verbatim. In section 9, replace "Box runtime support remains
-   unverified there" with the observed Ollama result. A Box finding stays a finding: the section
-   says Box live evidence on Clef is unmet, and no consumer leaves `off`.
+   shape's consumer and live-path test above, #24248's closing commit, each shape's serving
+   backend in this capture, and the Jev Box result with a link to the dated section. When Box
+   parsed, it gives the captured edges and confidence beside the expected edges (top and left
+   0.25, bottom and right 0.75) and states each difference. When Box did not parse, it gives the
+   finding's reason and detail verbatim. In section 9, after "These fixtures establish documented
+   wire conformance, not a live Box consumer or backend capture.", add one sentence that names
+   the dated capture and its Box result. A Box finding stays a finding: the section says Box live
+   evidence on Jev is unmet, and no consumer leaves `off`.
 
 **Acceptance:**
 
-- 2.5.1 - The dated capture section records `wire_api` `systemone`, `api_base` `http://127.0.0.1:11434`, `request_model` `clef:27b`, all four shapes, and a Box record with `consumer` `gobby-decisions:evaluate`, its `image_sha256`, and the tool's parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
-- 2.5.2 - The wire note's "Decision shape consumers" section names a product consumer and live-path test for each of Choice, Noul, Score and Box, with #24248's closing commit and the Clef Box result, and when Box parsed it sets the expected edges (top and left 0.25, bottom and right 0.75) beside the captured ones. file: `docs/evidence/decisions/wire-contracts.md`.
-- 2.5.3 - Section 9 of the wire note states the observed Ollama Box result in place of "remains unverified". file: `docs/evidence/decisions/wire-contracts.md`.
+- 2.5.1 - The dated capture section records Choice, Noul and Score sent to `clef:27b` at `http://127.0.0.1:11434` on `systemone`, and a Box record sent to `typesafe/jev-1.14` at `https://openrouter.ai/api` on `openrouter-decisions` with `consumer` `gobby-decisions:evaluate`, its `image_sha256`, and the tool's parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
+- 2.5.2 - The wire note's "Decision shape consumers" section names a product consumer, live-path test and serving backend for each of Choice, Noul, Score and Box, with #24248's closing commit and the Jev Box result, and when Box parsed it sets the expected edges (top and left 0.25, bottom and right 0.75) beside the captured ones. file: `docs/evidence/decisions/wire-contracts.md`.
+- 2.5.3 - Section 9 of the wire note names the dated capture and its Box result after the sentence saying its fixtures are not a live Box consumer or backend capture. file: `docs/evidence/decisions/wire-contracts.md`.
 - 2.5.4 - The committed image is 512 by 512 and white except for red pixels covering exactly [128, 384) on both axes, and its SHA-256 equals both the one sent with the Orchestrator's command and the Box record's `image_sha256`. file: `docs/evidence/decisions/box-red-square-2026-11.png`.
 
-**Verification:** the committed capture section is byte-equal to `<dir>/clef-capture.md`, the image
+**Verification:** the committed capture section is byte-equal to `<dir>/capture.md`, the image
 hash matches, a Pillow read of the committed image confirms the red pixel bounds, and the diff
 changes no configuration file.
 
@@ -1543,11 +1582,22 @@ changes no configuration file.
   - Leaf 2.6 is dropped and its stale M1 is removed for re-derivation.
   - Decision 19 records #25788 as superseded by #25789, and 2.5 depends on
     #25789.
-  - Open question, sent to the Orchestrator, which blocks consensus: #25789
-    refuses Box routed to a `systemone` endpoint at configuration load. Once 2.5
-    waits on it, 2.5's Box request on `clef:27b` through local Ollama is refused
-    before any exchange, so Decision 12's local-Clef Box capture and #25789's
-    routing cannot both govern 2.5.
+  - The Writer raised a conflict with the Orchestrator: #25789 refuses Box
+    routed to a `systemone` endpoint at configuration load, so 2.5's Box request
+    on `clef:27b` through local Ollama could not run once 2.5 waits on #25789.
+    The next entry records the ruling that resolves it.
+- 2026-11-05: The Orchestrator gobby#19309 ruled on that conflict, relayed by the
+  lead gobby#19945. The #25789 edge stays on 2.5, and 2.4 keeps today's
+  single-endpoint seam. 2.5 captures Choice, Noul and Score on `clef:27b`
+  through local Ollama and Box on `typesafe/jev-1.14` through OpenRouter in one
+  run under #25789's per-type routing, and the Orchestrator runs that keyed step.
+  The capture script's per-type endpoint flags are #25789's criterion 8. Josh's
+  later direction, "can we split like that on choice/noul/score vs box?",
+  supersedes the local-Clef Box answer because no `clef:27b` surface offers Box.
+  Decisions 12 and 19, the Overview, 2.4's research, 2.5's title, research,
+  steps and acceptance, and V2 item 6 now say so. Section 9's acceptance (2.5.3)
+  now names the dated capture after the fixture sentence, because no Ollama Box
+  result will exist to replace "remains unverified".
 
 ## V2: Verification
 `kind: verification`
@@ -1567,6 +1617,7 @@ After the leaves pass:
 6. Rerun `tests/scripts/test_decisions_live_capture.py` under
    `GOBBY_TEST_PROTECT=1` against the isolated test hub. Confirm `wire-contracts.md`
    has the "Decision shape consumers" section and `systemone-live.md` the dated
-   `clef:27b` capture, whose Box record names `consumer` `gobby-decisions:evaluate`.
+   capture with Choice, Noul and Score on `clef:27b` and Box on `typesafe/jev-1.14`,
+   whose Box record names `consumer` `gobby-decisions:evaluate`.
 7. Confirm #25788 is closed as superseded by #25789, and that #25789 closed before
    the 2.5 capture ran.
