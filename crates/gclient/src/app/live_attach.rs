@@ -6,7 +6,7 @@ use std::path::Path;
 use std::pin::Pin;
 
 use super::*;
-use crate::frame_source::{ProxyFrameSource, UnixSocketFrameSource};
+use crate::frame_source::{claim_writer_lease, ProxyFrameSource, UnixSocketFrameSource};
 
 mod promotion;
 mod recovery;
@@ -484,7 +484,6 @@ async fn request_direct_attachment(
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
             "encoding": "semantic_frame",
-            "viewer": "gclient",
         }))
         .await?;
     if reply.get("success").and_then(Value::as_bool) != Some(true) {
@@ -539,7 +538,6 @@ async fn request_proxy_source(
             "terminal_id": terminal_id,
             "frame_delivery": "proxy",
             "encoding": "semantic_frame",
-            "viewer": "gclient",
         }))
         .await?;
     if reply.get("success").and_then(Value::as_bool) != Some(true) {
@@ -561,6 +559,7 @@ async fn request_proxy_source(
         .and_then(Value::as_str)
         .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
         .to_string();
+    claim_writer_lease(daemon, terminal_id, &attachment).await?;
     let mut source = ProxyFrameSource::from_attachment(
         daemon.clone(),
         terminal_id,

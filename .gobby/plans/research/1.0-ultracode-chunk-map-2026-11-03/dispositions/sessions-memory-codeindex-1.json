@@ -1,0 +1,311 @@
+{
+ "dispositions": [
+  {
+   "ref": "#21562",
+   "disposition": "chunk",
+   "target": "SES-3B",
+   "rationale": "Audit rewrite (verify upheld): the card still says 'port as-is', treats resumability as transcript-based against plan S1's hub predicates, and its WIP plan stops at 7.4. SES-3B lists #21562 and its goal carries it; the epic's 63 rows split by ledger selector across SES-1, SES-2, SES-3A and SES-3B, the last of that chain, and D31 closes it at chunk-task creation either way. Its AssignmentNotifier obligation (tasks Q11 and sessions D11) is AG-3's, with the mailbox (D29), and B0-WRITE carries the claim route's handler.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SES-3B",
+   "changed": false
+  },
+  {
+   "ref": "#25253",
+   "disposition": "chunk",
+   "target": "SES-1",
+   "rationale": "#25253 has 8 linked commits (80fa1ad559, 23a431f12e, 23b9a95bf1, 90a14ac319, e7ad7769e8, dd5a057bf6, c136064941 and e7144f9a53), and git merge-base --is-ancestor shows every one on 0.5.0. Linked commits do not block superseded (D31), and its criterion is unmet, so it closes as superseded by SES-1's task. SES-1's goal names #25253 ('#25253's plan stops at 7.4 ... first deliverable freezes the sessions contract').",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SES-1",
+   "changed": false,
+   "reviewer_rationale": "Override of chunk to superseded, keeping SES-1: the audit rates it rewrite (verify upheld) because its deliverable is a gobby-plan (WIP, then M1, then expansion; 8 WIP commits ending e7144f9a53), which ruling 1 and settled item 7 retire for port work. SES-1 lists #25253 and replaces that plan: '#25253's plan stops at 7.4, so this brief's first deliverable freezes the sessions contract from REC-SESSIONS-AGENTS' corpus'. Its criterion is unmet, so the default 'chunk' would close it against a plan file nobody finishes; it closes superseded, as #25258 does under S4-NODE."
+  },
+  {
+   "ref": "#21563",
+   "disposition": "chunk",
+   "target": "MEM-4",
+   "rationale": "Audit rewrite (verify upheld): the gwiki line, 'awaiting approval and expansion' (run 3ee7bde4 expanded it on 2026-11-02) and the needs-planning label are stale, and E1's deadlock edge from #25024 is replaced by MEM-3's re-binding (D31). MEM-4 lists #21563, and its 80 rows split by ledger selector across MEM-1 to MEM-4 (HTTP and MCP) and V4 ('CLI gobby memory'). Descendants that land after MEM-4 (#25555 and #25556 in V4, #25559 at CP-WAVE3-CUT, #25562 and #25563 in S3-DELETE, and MEM-3's dream leaves, which MEM-4 does not depend on) do not hold it open, because D31 closes owned nodes at chunk-task creation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": false
+  },
+  {
+   "ref": "#25070",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Verify refuted the audit's edge-fix and rewrote it as card work: '#21563 has no plan yet' is stale and validation 1-4 lack memory 3.1's promote and discard, while E2's edges land on #25071, outside this batch. MEM-2 lists #25070 and says its card 'is now a container over #25532 and #25547' for the rebuild seam and project_change on AI-2's serving lease; both children are MEM-2 work, so it closes with MEM-2.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25532",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Audit keep: the P3 expansion container holding only #25547, the seam API (memory-family.md:1380), with the AI 7.4 promote and discard amendment as its open item. MEM-2 lists #25532 and its goal names 'the memories collection rebuild seam and project_change (#25070, #25532) on AI-2's serving lease'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25547",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Audit keep: 5 Rust targets and 6 acceptance items, including MEM-REV-01 at 3.1.6; E2's #25071 edge points from MCP-FLIP, which lands after MEM-2. MEM-2 owns it through #25532, and its goal names the rebuild seam and project_change on AI-2's serving lease.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25254",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit done, verify upheld: the memory plan carries M1 87ebc16ff6 and consensus f305668206, Josh's approval is attestation aca21b08 on #25479 (closed 2026-11-02), and expansion run 3ee7bde4 created P0-P8. MEM-1 lists #25254, but under D31 it closes done, not superseded, because its criterion is already met; verify notes the close must be explicit, since closure-preserves-reserved-ancestors keeps a task with its own criteria open after its child closes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25529",
+   "disposition": "chunk",
+   "target": "REC-MEMORY-COMMS",
+   "rationale": "Audit keep: the P0 expansion container holding #25538, the 80-row corpus. REC-MEMORY-COMMS lists #25529 and its goal 'absorbs #25538, the 80-row corpus'; the audit's open question, whether it may run before R0, is answered by the chunk DAG (REC-MEMORY-COMMS depends on REC-PILOT and P0-LOWTRAFFIC), which replaces the parent-chain gate (D31).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-MEMORY-COMMS",
+   "changed": false
+  },
+  {
+   "ref": "#25538",
+   "disposition": "chunk",
+   "target": "REC-MEMORY-COMMS",
+   "rationale": "Audit keep: a Python-side oracle with 3 targets and 5 acceptance items whose plan dependencies #24963 and #25446 are closed, which fits ruling 7. REC-MEMORY-COMMS's goal 'absorbs #25538, the 80-row corpus' on isolated graph and vector stores, and it is MEM-1's oracle.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-MEMORY-COMMS",
+   "changed": false
+  },
+  {
+   "ref": "#25530",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: the P1 expansion container holding #25539-#25541, the read rows. MEM-1 lists #25530 and its goal opens with '#21563 P1 (crate, family shell, configuration, record reads, knowledge-graph reads, hybrid search and surfaced statistics)'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25539",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: 14 targets (11 Rust) and 5 acceptance items; it creates crates/gmemory and adds the family to gdaemon's FAMILIES, and its plan dependencies #24443, #24448 and #24970 are closed. MEM-1 owns it through #25530; its goal names the crate, family shell, configuration and record reads, and its registration is 'one registry line and a new memory crate'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25540",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: 7 targets (6 Rust) and 6 acceptance items over the existing gcore falkor.rs. MEM-1 owns it through #25530 and its goal names knowledge-graph reads.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25541",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: 12 targets (11 Rust) and 6 acceptance items on gcore's rrf_merge (search.rs:76) and qdrant.rs. MEM-1 owns it through #25530 and its goal names hybrid search and surfaced statistics.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25531",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Audit keep: the P2 container holding #25542-#25546, whose D2 and D4 needs-Josh items verify refuted (aca21b08). MEM-2 lists #25531 and does #25544-#25546; its other children land earlier (#25542 in AI-2 under D8, #25543 in MEM-1), so MEM-2 is the last of them to land.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25542",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "Audit needs-josh, refuted by verify: Josh approved the stamped memory plan that contains Decision 4 (attestation aca21b08) and the AI plan was amended for the lease (23d0c055b8), so no decision is open. D8 builds the shared serving lease in AI-2, which lists #25542, as the single serving owner for MEM-2, CIX-2 and MCP-FLIP, and puts its projection-change ledger half in MEM-2.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false
+  },
+  {
+   "ref": "#25543",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: 10 targets and 12 acceptance items, blocked on #25059, the projects write fence that gcore lacks today (no project_fence.rs). MEM-1's goal names record lifecycle writes (#25543), and both projects chunks, PROJ-1 and PROJ-2, land before MEM-1.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25544",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Audit keep: 8 targets and 7 acceptance items; its open job-host question is settled by ROADMAP decision 18 (verify on finding 9) and R4's registry, which MEM-2 depends on. MEM-2's goal names index maintenance and the shared job slot (#25544).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25545",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Audit keep: 15 targets (13 Rust) and 8 acceptance items, with the LLM in process through #25097 (Decision 6). MEM-2's goal names knowledge-graph writes, extraction and rebuild jobs (#25545), and AI-1B's text generation lands before MEM-2.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25546",
+   "disposition": "chunk",
+   "target": "MEM-2",
+   "rationale": "Audit needs-josh, refuted by verify: memory D2 makes plan approval the gate for hdbscan 0.12.0 and kdtree 0.7.0, and Josh approved the stamped plan (aca21b08), so D8 is already approved and this is not a decision disposition. MEM-2's goal places HDBSCAN entity reclustering (#25546) there, with both crates exact-pinned in the memory crate only (D8).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": false
+  },
+  {
+   "ref": "#25533",
+   "disposition": "chunk",
+   "target": "MEM-3",
+   "rationale": "Audit keep: the P4 container holding #25548-#25550 (dream storage, planner and service, and the 3 /memory/dream rows). MEM-3 lists #25533, and its goal is '#25533: the dream store, journal, apply and revert; planning, related evidence and sweep orchestration; the dream service, aggregate runs, reports and routes'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-3",
+   "changed": false
+  },
+  {
+   "ref": "#25548",
+   "disposition": "chunk",
+   "target": "MEM-3",
+   "rationale": "Audit keep: 6 targets and 5 acceptance items, hub and standalone only (Decision 5). MEM-3 owns it through #25533; its goal names the dream store, journal, apply and revert, with crash-point cases between journal and apply.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-3",
+   "changed": false
+  },
+  {
+   "ref": "#25549",
+   "disposition": "chunk",
+   "target": "MEM-3",
+   "rationale": "Audit keep: 5 targets and 4 acceptance items, with the planner prompt policy of memory b53b325d. MEM-3 owns it through #25533 and its goal names planning, related evidence and sweep orchestration.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-3",
+   "changed": false
+  },
+  {
+   "ref": "#25550",
+   "disposition": "chunk",
+   "target": "MEM-3",
+   "rationale": "Audit keep: 8 targets and 5 acceptance items, and E1's fix target, since #25024 binds its MemoryDreamService (D10). MEM-3's goal names the dream service, aggregate runs, reports and routes, and re-binds the nightly dream system job to it (#25550), which replaces #25024's whole-epic edge on #21563 (D31).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-3",
+   "changed": false
+  },
+  {
+   "ref": "#25534",
+   "disposition": "chunk",
+   "target": "MEM-4",
+   "rationale": "Audit keep: the P5 container holding #25551, with the tasks and sessions export wall as its open item. MEM-4 lists #25534 and its goal opens with 'The review-learning service over memory rows (#25551)'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": false
+  },
+  {
+   "ref": "#25551",
+   "disposition": "chunk",
+   "target": "MEM-4",
+   "rationale": "Gap at review time, since closed in the map: audit edge-fix E7 (verify upheld): the service reads tasks 1.1, 1.2 and 2.1 and sessions 1.1's store and resolve_session_ref, which the B0 tasks chunks and SES-1 provide before MEM-4, and its #25550 edge is plan chain order only; but the plan's Decision 8 (memory-family.md:222-230) also needs a sessions is_ancestor export (_lineage_discovery.py:107) that the sessions plan lacks. MEM-4's goal names the review-learning service (#25551), while no SES chunk's goal names is_ancestor and the map never mentions it.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": false
+  },
+  {
+   "ref": "#25535",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: the P6 container holding #25552-#25554 (MCP 26 plus 6 rows), with sessions exports as its open item. MEM-1 lists #25535 and does #25552 and #25553; its third child #25554 lands later in MEM-4 ('its descriptor (#25554)'), which does not hold the epic open, because D31 closes owned nodes at chunk-task creation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25552",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Gap at review time, since closed in the map: audit edge-fix E7 (verify upheld): memory Decision 3 routes these writes through sessions 2.4, which must export record_memory_review (Python at workflows/state_manager.py:243), and the sessions plan has 0 hits for it. MEM-1's goal names 'memory session-variable records over the sessions API #25552', but SES-2's goal names only 'variables get and set' and the map never mentions record_memory_review, so the export MEM-1 needs has no owner.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25553",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit edge-fix E7 (verify upheld; D31 drops the old epic edges anyway): 7 targets and 28 acceptance items, the largest set, with 6.2.25 as the #25446 six-word floor. MEM-1's goal names the gobby-memory descriptor (#25553); routing is per tool (D26), so the tools whose behavior lands later (MEM-2's graph and index tools, MEM-3's memory_dream, MEM-4's review_task_memories and surface_memories) go Native under those chunks' ledger selectors.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25554",
+   "disposition": "chunk",
+   "target": "MEM-4",
+   "rationale": "Audit keep: 4 targets and 7 acceptance items for the 6 gobby-review-learning rows. MEM-4 lists #25554, its goal names the review-learning service 'and its descriptor (#25554)', and its ledger selector is '^MCP gobby-review-learning:'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": false
+  },
+  {
+   "ref": "#25536",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit keep: the P7 container holding #25555-#25557, with the CLI host and R4 as open items. V4 lists #25536 and builds its command tree (#25555-#25556) as gclient verbs over the public API (D16); its jobs leaf #25557 lands earlier, in MEM-3, so V4 is the last of its children to land.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  },
+  {
+   "ref": "#25555",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit keep with the CLI host open: 6 targets and 13 acceptance items that build a gdaemon memory tree in gdaemon's main.rs, which 6 other plans also target. D16 settles the host: V4's goal takes '#25536's command tree #25555-#25556' as gclient verbs over the public API 'with no gdaemon memory host', against REC-CLI goldens, so the command behaviors are built in V4 on gclient.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  },
+  {
+   "ref": "#25556",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit keep with the CLI host open: 4 targets and 11 acceptance items for the index, graph and dream commands. V4's goal builds #25555-#25556 as gclient verbs with no gdaemon memory host (D16), after MEM-1 to MEM-4 have landed the endpoints those verbs call.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  },
+  {
+   "ref": "#25557",
+   "disposition": "chunk",
+   "target": "MEM-3",
+   "rationale": "map review: The leaf can complete only at MEM-3: 7.3.2's purge and 7.3.4's interrupted-run reconcile call #25548 and #25550, which MEM-3 builds, and MEM-3 depends on MEM-2. MEM-3's tree_nodes now list #25557 and its goal names the leaf it completes; MEM-2's goal builds 7.3.1, 7.3.3 and the 7.3.4 scope repair without naming the leaf. The leaf is not split.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-2",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "MEM-2",
+     "rationale": "MAP GAP: audit rewrite (verify upheld on ROADMAP decision 18 and R4 criterion 3): MEM-2's goal registers memory jobs (#25557) on R4 and does not build the GOBBY_MEMORY_ROUTE latch, job_ownership.py or the family-owned tasks, so 7.3.5's route latch and 7.3.6's Python gates go. But the leaf ports its jobs 'over the leaves that already hold their logic', and 7.3.2's dream-hidden purge and run-history prune (4.1, #25548) and 7.3.4's interrupted-run reconcile (4.3, #25550) live in MEM-3, which lands after MEM-2; MEM-2 can carry only 7.3.1, 7.3.3 and 7.3.4's scope repair.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "MAP GAP: audit rewrite (verify upheld on ROADMAP decision 18 and R4 criterion 3): MEM-2's goal registers memory jobs (#25557) on R4 and does not build the GOBBY_MEMORY_ROUTE latch, job_ownership.py or the family-owned tasks, so 7.3.5's route latch and 7.3.6's Python gates go. But the leaf ports its jobs 'over the leaves that already hold their logic', and 7.3.2's dream-hidden purge and run-history prune (4.1, #25548) and 7.3.4's interrupted-run reconcile (4.3, #25550) live in MEM-3, which lands after MEM-2; MEM-2 can carry only 7.3.1, 7.3.3 and 7.3.4's scope repair."
+  }
+ ]
+}

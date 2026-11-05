@@ -35,65 +35,80 @@ records, as of 2026-09-24:
 
 Since then, #22889 (801a3d1f27) fixed the gcode CLI contract drift, and
 #23055 (30d66635c1) retired Ask while keeping the evidence operations as
-`gcode evidence`. gcode is now 1.9.9. The community code has not changed
-since #22858 (Community refresh counts internal edges by scanning every
-import edge per community, 386c7040d0), apart from the managed-scope fixes
-of #23431 (gcode index refresh fails with an RLS error on
-code_indexed_projects for a linked worktree, so it serves stale offsets).
+`gcode evidence`. gcode is now 1.9.103. Two scorecard rows have moved. #22862
+(gcode community refresh: measure the unchanged-file cost against the +250 ms
+budget, add the input-digest skip if over) and #23638 (Daemon gcode index times
+out after 30s almost only on the lane-6-everything-else worktree) brought the
+refresh to +120.495 ms p50, within budget on the activated implementation
+(`docs/evidence/community-labels-2026-09/refresh-latency.md`, lines 109-110).
+#22604 landed the label gate with every consumer `off` (Decision 8).
 
-**What remains.** Two things:
+**What remains.** P1 is closed: 1.2 delivered the read order, and 1.1 closed
+without delivering its measurement (Decision 2). Two things are left, and Josh
+decided both on 2026-11-05 (Decision 12):
 
 - Every head-to-head number is stale. The September bakeoff
   (`docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md`) measured
   gcode 1.7.0 against Graphify 0.9.55, before the community work existed.
-  Its gcode C7 (interruption and recovery) never ran. Nobody may claim
-  parity+ in writing until a rerun records current numbers (1.1).
-- The communities view breaks size ties on `members[0]`, while the report
-  and the evidence operation break them on `community_id`
-  (`docs/evidence/community-labels-2026-09/live-smoke.md`, lines 115-128).
-  The view is the one surface that disagrees (1.2).
+  Its gcode C7 (interruption and recovery) never ran. Four October roots
+  stopped before any timed run. Nobody may claim parity+ in writing until a
+  rerun records current numbers (2.1 and 2.2).
+- The label gate has no quality evidence. #22604 closed without its study, so
+  `docs/evidence/community-labels-2026-09/label-quality.md` does not exist and
+  the ship decision is open (2.3).
 
 **When the leaves close:**
+- A provisioning record shows a fresh isolated harness, the Orchestrator's
+  exact Docker invocations and service receipts, a live isolated daemon, and
+  C0 passed for both tools (2.1).
 - A dated evidence report records C1 to C8, including C7 for both tools, for
   current gcode against the current Graphify release, with interleaved,
-  order-balanced measurements and recorded load, on the
-  frozen Game Goblins corpus. It also records the community-label facts that
-  decide #22604 (1.1).
-- Every gcode read surface orders communities by member count descending,
-  then numeric `community_id` ascending (1.2).
+  order-balanced measurements and recorded load, on the frozen Game Goblins
+  corpus. It also records the community-label facts and a verdict for each
+  parity+ property (2.2).
+- A label-quality report records Josh's ratings of 30 sampled communities and
+  the ship rule they select, with every decision consumer `off` (2.3).
 
 ## Decision Record
 `kind: framing`
 
 The Orchestrator gobby#14972 ruled on the scope questions on 2026-10-05 at
 13:06 CT (Q1 to Q6 below). The Plan Writer gobby#15434 made the remaining
-decisions on 2026-10-05 from the sources cited.
+decisions on 2026-10-05 from the sources cited. Decisions 12 to 18 are the
+2026-11-05 refresh: Josh's buttons, relayed by the Orchestrator gobby#19309,
+and the Plan Writer gobby#19935's decisions from the sources cited.
 
 1. **Scope (Q1).** The parity+ target is Graphify's community subsystem, as
    the completed plan set it. A broader Graphify capability is built only
    when the plan names its consumer. No capability outside the community
    subsystem has one, so this plan adds none (Decisions 6 and 7).
-2. **Expand two leaves, each blocked by batch 3 activation.** The
-   Orchestrator's 2026-10-06 15:29 CT ruling supersedes the earlier
-   expansion-after-close gate. Expand exactly the existing two fully
-   specified leaves under #22948 (Code index: communities and Graphify
-   parity), and give each a blocked-by dependency on #23692 (Land batch 3
-   with one cutover). That carrier activates #22862 (gcode community refresh
-   input-digest skip) and #23638 (avoid quadratic community remapping), with
-   gcode 1.9.13 and schema 461. The benchmark uses that activated state;
-   #22862's post-activation latency measurement remains its own close gate.
-   Preserve both existing routes and no sibling dependency. The external
-   task reference is a task dependency applied by the Orchestrator during
-   expansion, never an M1 `depends_on` value, which names sibling sections.
-   This explicit ruling governs this amendment's expansion; it does not
-   change the plan-coverage contract for other plans or add a third leaf.
-3. **The benchmark is the first leaf (Q2), and its protocol amends the frozen
-   matrix.** `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md` stays the
-   protocol for everything 1.1 does not amend. Leaf 1.1 carries each
-   amendment in full, with its sources. In brief:
+2. **Both original leaves are expanded and closed, and #24222 did not deliver
+   1.1.** The Orchestrator's 2026-10-06 ruling expanded #24222 (Rerun the
+   Graphify comparison on current gcode) and #24223 (Order size ties by
+   community id in the graph views), each blocked by #23692 (Land batch 3 on
+   0.5.0 with one cutover), which closed on 2026-10-07. That gate no longer
+   applies. #24223 delivered 1.2, and its three acceptance tests exist.
+   #24222 closed `done` on 2026-10-31 at `4babd15570` under the operator's
+   "land everything" directive, without delivering acceptance 1.1:
+   `docs/evidence/gcode-graphify-rerun-2026-10/report.md` reads "Status:
+   partial" and "No timed run has executed", and every C1-C8, label and
+   verdict value is TBD. Its `covered` coverage rows matched the report's
+   path, so they are not evidence of measurement. The Orchestrator ruled on
+   2026-11-05 that this closure does not stand as delivery and that #24222 is
+   not reopened. Section 1.1 stays frozen as that leaf's record. Re-expansion
+   preserves a closed `done` leaf whose section remains, so any measurement
+   work takes a new section id.
+3. **The rerun's protocol amends the frozen matrix.**
+   `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md` stays the protocol for
+   everything leaves 2.1 and 2.2 do not amend. They carry each amendment in
+   full, with its sources. In brief:
    - the rerun provisions a fresh runtime root, because the September
      provisioning refuses an existing root and asserts the September owner
      task;
+   - Docker, dependency builds and project registration run in the
+     Orchestrator's root pane (Decision 13), and the isolated daemon runs in
+     the developer's sandbox (Decision 14);
+   - each gcode repetition has its own registered project (Decision 16);
    - every timed comparison uses at least five interleaved, order-balanced
      pairs, with the load recorded at each run, per the Orchestrator's
      2026-10-06 15:29 CT protocol amendment;
@@ -146,52 +161,164 @@ decisions on 2026-10-05 from the sources cited.
 
    The decisions already recorded in research §1.3 (wiki renderer, HTML and
    other exports, Leiden tuning flags, hub exclusion and call edges) stand.
-8. **#22604 stays held until the benchmark decides it (Q6).** #22604 (Gate
-   generated names through a Jev `choice` decision) carries the
-   `needs-decision` hold label. Today a generated label is admitted on schema
-   validation alone, with `label_confidence` left empty
-   (`src/gobby/code_index/community_labeler.py`, lines 86-188). 1.1 records
-   whether current Graphify emits semantic community names and how gcode's
-   labels are sourced. Josh decides from that evidence whether #22604 is
-   unparked or retired; the plan neither unparks nor retires it. Parity+
-   property 3 ("a generated label admitted only when a decision model is
-   confident", completed plan lines 30-34) holds only if #22604 ships. If it
-   is retired, that decision restates property 3, and this plan claims
-   nothing for it.
+8. **#22604 closed independently, and the label gate is not live.** #22604
+   (Gate generated names through a Jev `choice` decision) did not wait for the
+   benchmark. It closed on 2026-10-26 with the Choice gate, Noul carry and
+   Score sufficiency landed in `src/gobby/code_index/community_labeler.py`,
+   each defaulting to mode `off`. It closed without its label-quality study:
+   `docs/evidence/community-labels-2026-09/label-quality.md` does not exist,
+   `docs/guides/llm-features.md` says the study and ship decision are pending,
+   and Activation Gate item 4 remains unmet on both wires
+   (`docs/evidence/decisions/item-4-checklist-2026-10-26.md`). So a generated
+   label is still admitted on schema validation alone, and parity+ property 3
+   ("a generated label admitted only when a decision model is confident",
+   completed plan lines 30-34) does not hold in live configuration.
 9. **#22606 keeps its prerequisite.** #22606 (Memory community detection
    over memory_crossrefs) stays blocked by #21563 (Memory and search), as
    deferral D1 of the completed plan set it (lines 1722-1769). The Leiden
    kernel is reachable only in-process from the Rust memory crate. This plan
    neither pulls it forward nor edits it.
-10. **#21572 is cross-referenced only.** #21572 (Parity ledger) is the
-    whole-platform ledger of Rust public surfaces under 1.0. gcode community
-    capabilities are not ledger rows by default, and nothing in this plan is
-    a platform-parity obligation. The capabilities excluded here (Decisions 6
-    and 7) are excluded from gcode, not from that ledger, which keeps its 1.0
-    placement.
+10. **#21572 is cross-referenced only.** #21572 (Parity ledger), the
+    whole-platform ledger of Rust public surfaces under 1.0, closed on
+    2026-10-26. gcode community capabilities were not ledger rows by default,
+    and nothing in this plan is a platform-parity obligation. The capabilities
+    excluded here (Decisions 6 and 7) are excluded from gcode only, and this
+    plan makes no claim about that ledger.
 11. **Adjacent work stays separate.** #22958 (Plan code-index symbol-vector
     reconciliation and path-aware content retention) is unrelated to
-    communities and is excluded. #22862's own measurement and any input
-    digest it builds stay in #22862.
+    communities and is excluded. #22862 closed on 2026-10-07, and its
+    measurement stands.
+12. **Josh decided the remaining gaps on 2026-11-05.**
+    - D1, button "#22948 D1 Graphify comparison: Run it". Leaves 2.1 and 2.2
+      run the comparison. The button is also the operator's go for project
+      registration in the isolated hub only (Decision 13).
+    - D2, button "#22948 D2 label study: A, run the no-decisions study now
+      (Recommended)". Leaf 2.3 runs it. This supersedes the 2026-10-26
+      selection of completing Activation Gate item 4 first, recorded in
+      `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`,
+      lines 3-6. The button is also the explicit go that
+      `.gobby/plans/community-label-decisions.md` D4 requires before C1 is
+      re-registered.
+    - D3, the owner of real Box consumer evidence and of the V2 checks that
+      `docs/evidence/decisions/item-4-checklist-2026-10-26.md` lists as
+      outstanding. This plan owns neither, and no decision consumer leaves
+      `off` without them. #24238 (Decision classifier path) closed on
+      2026-11-04, so neither has an open owner until a consumer asks to
+      enforce. No leaf here needs them, because the `--no-decisions` branch
+      ships every consumer `off`, so parity+ property 3 stays missing and
+      2.2 records it so.
+13. **The Orchestrator is the only Docker-capable session, and the executor is
+    a sandboxed developer.** Spawned seats always run under SRT, and
+    `spawn_agent` has no unsandboxed fallback.
+    `src/gobby/agents/srt_settings.py::render_srt_settings` sets
+    `allowAllUnixSockets` false, so the Docker socket is unreachable. Josh
+    ruled on 2026-10-14 (decision `b02931d3`): "Seats cannot run Docker under
+    SRT, and the sandbox stays unchanged." The Orchestrator's root pane is
+    deliberately unsandboxed (`src/gobby/install/shared/workflows/agents/orchestrator.yaml`,
+    line 13). No seat gets Docker, and no sandbox grant is added.
+
+    That ruling has the Orchestrator run only the compose launch. The rerun
+    needs three more things from the root pane, and each is refused to a seat:
+    - **External-state snapshots** query `docker ps`, `docker volume ls` and
+      `lsof`, and the isolation check asserts their exit codes
+      (`provision_environment.py::external_state_snapshot`).
+    - **Dependency builds.** `worker-safety/no-package-install.yaml` reasons
+      that the user manages dependencies. Its pattern does not match `uv sync`
+      or `uv venv`, and this plan does not rely on that gap.
+    - **Project registration.** `roles/seat-spawn-policy.yaml::seat-no-project-create`
+      blocks `gobby init` for seats, because creating a project needs the
+      operator's go through the Orchestrator. A `gobby init` hidden inside a
+      runner script would evade that rule, so the harness has none.
+
+    All of this runs through three actions of one committed, dated script:
+    `launch_services.py provision`, `observe` and `teardown`. Every other step
+    stays with the developer. The Orchestrator confirmed this scope on
+    2026-11-05: it runs each action from the root pane after reading the
+    committed script and checking its SHA-256, and Josh's D1 button is the go
+    for registrations in the isolated hub only.
+14. **The isolated daemon is mandatory and runs in the developer's sandbox.**
+    The October report's "launches no daemon" scope cannot stand. gcode's
+    credentials come only through a signed v2 daemon grant, so no gcode case
+    runs without one. `python -m gobby.runner` under
+    `prepare_daemon.py::isolated_environment` strips every `GOBBY_*` and
+    credential variable and sets its own `GOBBY_HOME`. AGENTS.md directs
+    anything needing daemon behavior to an isolated test daemon with temporary
+    state and ports, and `worker-safety/no-daemon-management.yaml` covers only
+    the production daemon's commands. SRT permits loopback binds
+    (`allowLocalBinding`) and confines the daemon's writes to the epic folder,
+    which matters: September's early daemon probe wrote trust entries into
+    global Qwen stores (`environment.md`, lines 48-53). Rejected: the
+    Orchestrator launches it, which would run that daemon unsandboxed. The
+    Orchestrator confirmed on 2026-11-05 that the developer runs it, with an
+    isolated `GOBBY_HOME` and ports 59480-59482.
+15. **The runtime root lives in the epic folder.** The root is
+    `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11/`.
+    The October roots sat in seat session folders, and a relaunched seat lost
+    read access to them. `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths`
+    grants the epic folder to every seat of a live epic-mode team. `build/` is
+    excluded from the workspace's auto-commits, so corpora and
+    `config/services.env` stay out of them. The workspace's Git directory is
+    separate, so no `.git` sits above the root and the file walkers see the same
+    conditions as the September root. The worktree's `var/` path stays rejected:
+    the sandbox denied dotfile names there. The scripts themselves are committed
+    under `docs/evidence/gcode-graphify-rerun-2026-11/`, because the October
+    copies existed only in folders no later seat could read. The Orchestrator
+    confirmed this root on 2026-11-05.
+16. **Each gcode repetition has its own registered project, created empty.**
+    `crates/gcode/src/index/indexer/lifecycle.rs::invalidate` deletes only
+    machine state and retains the facts (`code_symbols`, `code_content_chunks`,
+    `code_imports`, `code_calls`, `code_inheritance`), as
+    `crates/gcode/src/index/indexer/tests/api_contract.rs::invalidate_postgres_deletes_only_machine_state`
+    pins. A rebuild after `gcode invalidate` would hit conflict paths, so it is
+    not cold. Fact rows are written per `project_id`
+    (`crates/gcode/src/index/api.rs`), so a new project starts cold. Registration
+    runs with the isolated daemon down, because `src/gobby/cli/init.py::init`
+    runs `gcode index` after it registers. Without a daemon that index fails its
+    reachability check with `GrantError::DaemonRequired`
+    (`crates/gcore/src/grant/acquisition.rs`), `init` reports the failure and
+    continues, and the project stays empty; `provision` asserts zero
+    `code_indexed_file_states` rows per project.
+17. **The Orchestrator runs the study's `prepare`.** `.gobby/plans/community-label-decisions.md`
+    has Josh running it. `scripts/community_label_study.py::_load_communities`
+    and `::_load_generation` read the live hub and its stored text-generation
+    configuration, so `prepare` cannot run under SRT. `--no-decisions` builds
+    no decision client and resolves no decision secret, and no key appears on
+    its command line. No seat enters or reads a credential. Josh's one manual
+    step is rating `sheet.csv`, delivered through the Assistant. The
+    Orchestrator confirmed on 2026-11-05 that it runs `prepare` from the root
+    pane into the epic folder, and that D2 counts as D4's go for re-registering
+    C1 under its existing id.
+18. **#24701 (Symbol summaries and community labels) waits on leaf 2.3.** Its
+    coordination line reads "Start only after #22604 closes, its Python study
+    included". #22604 closed without the study, so the line no longer holds
+    the order it names. By the Orchestrator's 2026-11-05 ruling, it edits #24701
+    at expansion to be blocked by the 2.3 task. Seats do not edit it.
 
 ## Constraints
 `kind: framing`
 
-- Leaf 1.1 is a heavy, long-running measurement. The Lane Manager admits it,
-  using Decision 3's comparative protocol and the shared heavy-work hold.
-  It runs in the fresh isolated
-  root `/Users/josh/Projects/gcode-graphify-rerun-2026-10/`, with its own
-  compose services and its own Gobby home. It never touches the live daemon,
-  the live database, or port 60891, and it never writes under the September
-  root.
-- The September harness is torn down: `docker ps -a` lists no
-  `wiki-bakeoff` container as of 2026-10-05. The executor stops only the
-  containers its own receipts record.
-- Leaf 1.2 changes `gobby-code`. The change is live only after the
-  workspace binary set is rebuilt and promoted through
-  `promote_workspace_binary_set`, and the Orchestrator schedules that per
-  the #22801 (Lane 4 - Rust) lane rule. The leaf closes on its tests.
-- No daemon restart, push, or migration is needed.
+- The Orchestrator launches all three leaves in a Dev Team in epic mode for
+  #22948, the only mode that grants the epic folder. That launch waits on Josh's
+  freeze: no new teams until #25765 and #25653 are proven live.
+- Leaves 2.1 and 2.2 are heavy measurement work. The fleet's load hold in
+  `project_policy` applies, and no timed run happens during
+  `project_policy.quiet_hours`. Decision 3's comparative protocol replaces any
+  quiet-load preflight.
+- Leaves 2.1 and 2.2 use only the fresh root named in Decision 15, with its own
+  compose services and Gobby home. They never touch the live daemon, the live
+  database, or port 60891, and they never write under the September root. The
+  root named in the frozen 1.1 text, under `/Users/josh/Projects/`, was never
+  created.
+- Only the Orchestrator calls Docker, and it stops only the containers its own
+  receipts record. The September harness is torn down: `docker ps -a` listed
+  no `wiki-bakeoff` container as of 2026-10-05.
+- Operator-gated steps go to the Orchestrator through the Dev Team Lead and
+  Triage, never to Josh directly. No seat enters a credential. Josh's only
+  manual step in this plan is rating the study sheet, delivered by the
+  Assistant.
+- A daemon hold pauses a leaf between pairs. It never voids a pair already
+  recorded, because the isolated services do not depend on the live daemon.
+- No live-daemon restart, push, or live migration is needed.
 
 ## P1: Current evidence and one read order
 `kind: framing`
@@ -460,7 +587,7 @@ Targets:
 - `crates/gcode/src/commands/graph/view/render.rs::build_view_payload`
 - `crates/gcode/src/commands/graph/view/communities.rs::view_community`
 - `crates/gcode/src/commands/graph/view/mcg.rs::label_communities`
-- `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_first_member`
+- `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id`
 - `crates/gcode/src/commands/graph/view/render_tests.rs::*` — scope-reason: the `community` fixture builds a `community_id`, and a new test pins the numeric tie order in `build_view_payload`
 - `crates/gcode/src/commands/graph/view/mcg/tests.rs::*` — scope-reason: a new test pins the same tie order through `label_communities` and `build_view_payload`
 
@@ -523,6 +650,530 @@ Consumers unchanged:
 
 **Verification:** `cargo test -p gobby-code --lib commands::graph::view`,
 `cargo fmt --all --check`, and `cargo clippy -p gobby-code --all-targets -- -D warnings`.
+
+## P2: The measurement and the label study
+`kind: framing`
+
+**Goal**: parity+ claims rest on numbers measured on current gcode, and the
+label gate has its quality evidence and ship rule.
+
+**Granularity:** three leaves. Provisioning (2.1) and measurement (2.2) split
+at the boundary where all four October roots stopped, so provisioning closes
+with its own durable record and a relaunched seat resumes measurement from it.
+Each lists more than six files, and the count does not call for a further
+split: 2.1's are dated copies of one harness that only runs together, and
+2.2's are the runner copies and the records its report traces to. Each leaf
+keeps to six acceptance items. The study (2.3) shares no target or service with
+the other two, so it has no edge to them.
+
+### 2.1 Provision the rerun harness and pass C0 [category: test]
+`kind: deliverable`
+
+Targets:
+- `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/prepare_daemon.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/prepare_identity.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_daemon.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/record_installations.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/validate_environment.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/runtime_boundary.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/service_safety.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/verify_corpora.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py`
+
+**Research context:**
+- Runtime root, written `<root>` below:
+  `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11/`.
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants the
+  epic folder to the seats of a live epic-mode team, so this leaf runs in one.
+  This leaf never touches the live daemon, the live database or port 60891, and
+  never writes under the September root.
+- Why the earlier attempts stopped:
+  `docs/evidence/gcode-graphify-rerun-2026-10/report.md`, section 7. Docker
+  denial on `docker image inspect` under SRT; write-once `receipts/gcode.json`
+  and `receipts/installations.json` written before validation failed; the
+  source manifest's one symlink record,
+  `crates/gterminal/vendor/libghostty-vt/CLAUDE.md` (still mode 120000),
+  rejected by `runtime_boundary.py::contained_file`; a missing
+  `isolation/external-state.after.json`; and a no-daemon scope. Its corpus
+  result stands as a method: `init` built the trees from the pinned source
+  (base `0216f1e3`, change `8b24ac26`), and 20 cases and 2,984 files matched
+  the September manifests with 0 mismatches. Its staged copies are not reused.
+- Harness to copy: `docs/evidence/wiki-bakeoff-code-2026-09/`.
+  `launch_services.py` has actions `check`, `start` and `observe`.
+  `provision_environment.py` has `init`, `refresh-manifest`, `write-compose`
+  and `snapshot-after`, and `init_runtime` refuses an existing root. Docker is
+  confined to `launch_services.py`, `provision_environment.py::external_state_snapshot`
+  and `validate_environment.py` (lines 227-229, 240-242, 496 and 594); the
+  September runners contain no Docker call. `validate_external_changes`
+  (lines 189-221) carries September's Codex trust-path attribution.
+  `runtime_boundary.py::assert_owned_runtime` asserts the owner task and owner
+  session. Ports: PostgreSQL 61234, Qdrant 61235/61236, FalkorDB 61237/61238,
+  daemon 59480/59481, UI 59482.
+- Daemon: `launch_daemon.py::launch` runs `python -m gobby.runner --config
+  gobby-home/bootstrap.yaml`, and `src/gobby/runner.py` still takes `--config`.
+  `prepare_daemon.py::prepare` writes the bootstrap, applies the schema through
+  `gobby.storage.schema_contract.apply_schema`, and patches configuration with
+  `ConfigMutations`, both of which still exist. It disables tmux, terminal
+  hosting, cron, memory dreams, task expansion and validation, and automatic
+  code indexing. `src/gobby/utils/dev.py::worktree_daemon_refusal` refuses only
+  a linked-worktree source tree, and an archive is not one.
+- Binary set: `src/gobby/storage/schema_divergence.py::binary_set_apply_refusal`
+  reports a set as mixed when `.gdaemon-schema-identity.json` is unreadable or
+  a member disagrees with it, and `gobby start` consults it. October copied
+  `gdaemon` alone, with no stamp.
+- Protocol: `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md`, C0 at lines
+  293-336, `command-manifest.json` immutability at lines 287-291, and C7's
+  marker rules at lines 565-570. `gobby init --no-linear-setup`, the September
+  argv in `casebook.py::initialize_gcode_project`, is gone: the option no
+  longer exists on `src/gobby/cli/init.py::init`.
+- gcode markers: gcode prints no progress under a pipe
+  (`crates/gcore/src/progress.rs::non_terminal_capture_suppresses_output`). It
+  keeps state in PostgreSQL and commits each file in its own transaction
+  (`crates/gcode/src/index/indexer/file.rs::index_file`), so the project's
+  `code_indexed_file_states` row count rises during a cold index. September
+  blocked its gcode C7 for lack of a marker
+  (`graphify-gcode.md`; `run_c7.py::record_gcode_disposition`).
+
+**Implementation:**
+1. **Dated copies.** Copy the harness files into
+   `docs/evidence/gcode-graphify-rerun-2026-11/harness/` and commit them. The
+   September scripts and results stay unchanged. Every isolation, corpus,
+   service-boundary, containment and receipt check stays. The copies may
+   change only:
+   - the runtime root to `<root>`, the owner task to `#22948`, the compose
+     project to `gcode-graphify-rerun-2026-11` (containers, volumes and network
+     derive from it), the database name and account email, and the tool,
+     source and contract pins. Graphify is unpinned: the PyPI `graphifyy`
+     package, recorded by version, executable SHA-256 and lock SHA-256.
+     Comparators narrow to gcode and Graphify (Orchestrator ruling 3,
+     2026-10-28). Ports stay. Images stay at the September digests unless
+     `apply_schema` fails on one; then that image moves to the digest the
+     Orchestrator reads from the live `gobby-postgres-local:18-pgsearch`, and
+     the record says so.
+   - `launch_services.py`, which gains the three actions in step 3 and becomes
+     the only file that calls Docker, builds a dependency environment, or runs
+     `gobby init`. `provision_environment.py::init_runtime` and
+     `::snapshot_after` no longer take snapshots themselves.
+   - `validate_environment.py`, which reads the `observe` receipt in place of
+     its Docker probes, drops the `opendeepwiki` assertions, and replaces the
+     September trust-path attribution with the same reconstruction for this
+     run: a Codex configuration difference passes only when removing that
+     run's observed worktree trust entries reproduces the before bytes. Any
+     other difference fails and is listed.
+   - `record_installations.py`, which validates before it writes its
+     write-once receipts, so a failed validation leaves none behind.
+   - source-manifest symlink entries, recorded as `{path, symlink, target}` and
+     verified with `os.readlink`. `contained_file` keeps refusing symlinks for
+     content reads.
+   - `prepare_daemon.py`'s configuration patch, which drops any key the current
+     configuration schema no longer has, and the record lists each one dropped.
+   - a new read-only `verify_corpora.py`, which checks each case against its
+     September manifest by hash, size and mode and reports extra files.
+2. **Developer setup.** Run `provision_environment.py init` with the developer's
+   session as owner, install the committed copies byte-identical into
+   `<root>/scripts/`, then run `write-compose` and `verify_corpora.py`. `init`
+   builds the corpora from the pinned commits and archives `0.5.0` at the run's
+   commit into `sources/gobby`. Copy `gcode`, `gdaemon`, `ghook` and
+   `.gdaemon-schema-identity.json` from `~/.gobby/bin/` into
+   `<root>/gobby-home/bin/` as one set, by new inode, then confirm
+   `binary_set_apply_refusal(<root>/gobby-home/bin)` returns `None`. Record each
+   SHA-256 from the isolated directory. `gdaemon schema version --json` and the
+   archived checkout's schema head must agree, and `crates/gcode` must carry the
+   installed version; a mismatch stops the leaf and asks the Orchestrator for its
+   next cutover, and the leaf builds no binaries. Write
+   `config/project-manifest.json`, one entry per gcode project (name, case,
+   repetition, workspace path), and materialize each workspace from its sealed
+   corpus: six repetitions and two spares for each of C1 to C6 (48), plus the
+   C7 interrupted and clean states, C8-baseline and C8-change, the clean C1 state
+   for labels and properties, and the C0 probe (6), for 54 projects.
+3. **Orchestrator actions.** Send the Orchestrator, through the Dev Team Lead
+   and Triage, each exact invocation and the SHA-256 of
+   `<root>/scripts/launch_services.py`. It reads that copy, then runs it from the
+   main checkout with `/Users/josh/Projects/gobby/.venv/bin/python`. No seat
+   calls Docker. Josh's D1 button, "#22948 D1 Graphify comparison: Run it", is
+   the operator's go for the registrations in `provision`, in the isolated hub
+   only.
+   - `provision --owner-session <session>`: writes
+     `isolation/external-state.before.json`; runs the existing `check`, `start`
+     and `observe`, which write the compose and service receipts; builds
+     `tools/graphify/venv` with the latest `graphifyy` and
+     `tools/gobby/venv` with `uv sync --frozen` from `sources/gobby`; runs
+     `prepare_daemon.py` and `prepare_identity.py`; runs `gobby init --name
+     <name>` in each manifest workspace under `isolated_environment`, with the
+     daemon down; and asserts zero `code_indexed_file_states` rows per project. A
+     step whose receipt exists and verifies is skipped, so it is safe to rerun
+     after a corrected copy.
+   - `observe --owner-session <session>`: writes the Docker, volume and listener
+     observation and `isolation/external-state.after.json`.
+   - `teardown --owner-session <session>`: writes the final snapshot and stops
+     only the containers and volumes the receipts record. Leaf 2.2 sends this.
+
+   The Orchestrator returns the exit code and the receipt paths. Endpoints and
+   connection details come from those receipts and `config/services.env`.
+4. **Isolated daemon.** Run `launch_daemon.py <attempt>` under SRT, with no
+   `GOBBY_ALLOW_WORKTREE_DAEMON`. It writes `receipts/daemon-launch-<attempt>.json`.
+   `isolated_environment` already removes provider CLIs from `PATH`.
+5. **C0.** Save stdout, stderr, exit code and environment diff for the matrix's
+   commands: Graphify `--version`, `--help`, and `extract <workspace> --code-only
+   --no-cluster --out <state>`; gcode `--version`, `--format json contract`,
+   `schema-identity --json`, `--format json embeddings doctor`, and `--format json
+   status`. Then:
+   - Capture Graphify's command inventory and select
+     `GRAPHIFY_NATIVE_CONCURRENCY`.
+   - Rerun the embedding-identity preflight. The hybrid lane joins C8 only if it
+     passes.
+   - Observe a pre-completion Graphify marker for this release; the September regex
+     is reused only if it is observed again.
+   - Establish gcode's C7 marker: a sidecar poller counts the C0 project's
+     `code_indexed_file_states` rows in the isolated PostgreSQL, and the marker is
+     that count above 0 and below the clean file count. Run one cold index under
+     the poller and confirm such a count appears before it completes. The marker
+     changes neither corpus nor source. No production seam is added.
+   - Name in advance the C7 probe set: the C8 deterministic retrieval queries and
+     `gcode graph` reads for five corpus symbols.
+   - Freeze `command-manifest.json` with each exact argv and any replacement, then
+     treat it as immutable. A missing command is demonstrated unsupported, with no
+     hand-authored substitute.
+6. **Validate.** Ask the Orchestrator for `observe`, then run the dated
+   `validate_environment.py --live`. It refreshes the native grant through the
+   copied gcode, checks grant version 2, expiry, and project and machine binding,
+   presents the signed grant to `/api/runtime/config` (200, and 403
+   `invalid_signature` for a changed signature), and connects to PostgreSQL, Qdrant
+   and FalkorDB, printing no credential. Stop the daemon. Compose stays up for 2.2.
+7. Write `provisioning.md`, including the deviation Josh's ruling requires: who
+   launched, each exact command, the copy's SHA-256, and the service receipts.
+
+**Acceptance:**
+
+- 2.1.1 - The record gives the runtime root and its ownership receipt with owner task `#22948`, the commit and SHA-256 of every dated copy, and each edit against its September copy, with no check removed beyond the Docker probes replaced by the `observe` receipt and the `opendeepwiki` assertions. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+- 2.1.2 - The record states the deviation: the Orchestrator ran `provision` and `observe` from the main checkout, with each exact invocation, the `launch_services.py` SHA-256 and the service receipts, and no seat called Docker. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+- 2.1.3 - The record shows the corpus commits and the verification of cases C0 to C7, C8-baseline and C8-change against the September manifests with 0 mismatches, and all 54 manifest projects registered with zero `code_indexed_file_states` rows before the daemon started. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+- 2.1.4 - The record shows the isolated binary set's SHA-256 values and stamp, `binary_set_apply_refusal` returning `None`, the daemon launch receipt under SRT with no worktree override, and a passing `validate_environment.py --live` covering the signed grant, its rejected tampered copy and all three services. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+- 2.1.5 - The record gives C0 for both tools: gcode version, contract and schema identity; Graphify's PyPI version and executable and lock SHA-256; the embedding preflight's outcome; both C7 markers as observed before completion; the probe set; and the SHA-256 of the frozen `command-manifest.json`. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+- 2.1.6 - A source-manifest symlink record passes only when its stored target equals `os.readlink`, and `contained_file` still refuses that path for a content read. test: `docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py::test_symlink_record_verifies_target_without_following`.
+
+**Verification:** `uv run pytest docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py`
+with `GOBBY_TEST_PROTECT=1`, and the dated validator exits 0 against the final C0
+identities and schema.
+
+### 2.2 Measure C1 to C8 and report the verdicts (depends: 2.1) [category: test]
+`kind: deliverable`
+
+Targets:
+- `docs/evidence/gcode-graphify-rerun-2026-11/report.md`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/casebook.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/run_index_cases.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/run_c7.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/run_c8.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/run_c8_deterministic.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/harness/analyze_evidence.py`
+- `docs/evidence/gcode-graphify-rerun-2026-11/results/measurements.json`
+- `docs/evidence/gcode-graphify-rerun-2026-11/results/run-records.normalized.jsonl`
+- `docs/evidence/gcode-graphify-rerun-2026-11/results/C7-summary.json`
+- `docs/evidence/gcode-graphify-rerun-2026-11/results/C8-scores.json`
+
+**Research context:**
+- Runtime root, written `<root>` below:
+  `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11/`.
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants the
+  epic folder to the seats of a live epic-mode team, so this leaf runs in one. It
+  holds `ownership.json`, `config/project-manifest.json` and the results.
+- Run constraints: this leaf never touches the live daemon, the live database or
+  port 60891, and never writes under the September root. The fleet's load hold in
+  `project_policy` applies, and no timed run happens during
+  `project_policy.quiet_hours`. A daemon hold pauses the leaf between pairs and
+  never voids a pair already recorded, because the isolated services do not depend
+  on the live daemon.
+- Prior run: `docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md` (C0-C9
+  table at lines 62-75, C1-C6 measurements at lines 80-94, frozen identities at
+  lines 42-48). Runners and results sit in
+  `/Users/josh/Projects/wiki-bakeoff-code-2026-09/results/index-comparison/`:
+  `casebook.py`, `run_index_cases.py` (C1-C6), `run_c7.py`, `run_c8.py`,
+  `run_c8_deterministic.py`, `analyze_evidence.py`, `measurements.json`,
+  `run-records.normalized.jsonl`, `C7-summary.json` (Graphify's clean and recovered
+  signatures) and `C8-questions.json`. That root is read-only input.
+- September's commands: gcode `gcode --project <workspace> --format json index
+  <workspace> [--full] --sync-projections`, then `status`, under
+  `casebook.py::isolated_gcode_environment`. Graphify `update <workspace>
+  --no-cluster` (`--force` for C6), `check-update <workspace>`, and `cluster-only
+  <state> --no-label`, with `GRAPHIFY_OUT` and `GRAPHIFY_NATIVE_CONCURRENCY`. Current
+  `gcode index --help` still lists `--full`, `--sync-projections` and `--project`.
+  `run_index_cases.py::run_cases` uses `casebook.py::initialize_gcode_project`, which
+  this leaf removes, because `roles/seat-spawn-policy.yaml::seat-no-project-create`
+  blocks `gobby init` for seats: 2.1 registered the projects.
+- Protocol: `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md`. C2 to C6 (lines
+  365-562) are separate one-step lineages, not one serial state: C2 copies the
+  sealed C1 state, C3 runs on an independent state built from the baseline, and C4
+  to C6 each start from a fresh baseline copy. C7 is at lines 563-696. Its wrapper
+  starts a separate process group, waits for the marker, sends one `SIGTERM`, and
+  uses `SIGKILL` only after a 30 s deadline. Native recovery is at lines 671-685,
+  and the queryable-result requirement at lines 688-695.
+- gcode facts: gcode syncs the graph and vector projections only after the facts
+  commit (`crates/gcode/src/commands/index.rs::run_index_locked`). The community
+  refresh runs inside `gcode index` through
+  `crates/gcode/src/communities.rs::refresh_project_communities`, which did not
+  exist in the September run, so C2 to C6 now include it.
+- Community ids: `crates/gcode/src/communities/remap.rs::assign_ids` keeps the id of
+  the prior community that a new community matches by Jaccard overlap, and gives each
+  unmatched community an id above both every prior id and the stored watermark
+  `code_indexed_project_states.community_id_watermark`, which never falls. Unit tests
+  in `crates/gcode/src/communities/remap/tests.rs` cover history across runs:
+  `retired_ids_are_never_reissued`, `watermark_is_monotone_across_runs`, and
+  `jaccard_beats_raw_overlap_on_swallow_case`.
+- Community evidence: the `communities` operation of `gcode evidence` lists communities
+  with empty `members`. With a `community_id` selector it returns that one community,
+  whose `members` carry `path` and `content_hash`, cut to `max_members` (1 to 500,
+  default 50) with `members_truncated` set when cut
+  (`crates/gcode/src/evidence/communities.rs`). Items are atomic:
+  `crates/gcode/src/evidence/mod.rs::EvidenceLibrary::paginate` returns
+  `NarrowingRequired` when any item exceeds `max_bytes` (default 16,384), and otherwise
+  fills a page with whole items whose summed serialized bytes, reported as
+  `bounds.serialized_item_bytes`, stay within `max_bytes`. The response envelope is not
+  counted. A `read` request of `kind: range` returns the file's indexed `content_hash`,
+  and fails when the file's bytes do not hash to it
+  (`crates/gcode/src/evidence/source.rs`).
+- Label gate: #22604 landed the Choice gate, Noul carry and Score sufficiency in
+  `src/gobby/code_index/community_labeler.py`, each defaulting to mode `off`
+  (`docs/guides/llm-features.md`, lines 177-192). So a generated label is admitted on
+  schema validation alone. The isolated daemon runs no labeler, because
+  `prepare_daemon.py` disables automatic code indexing, so its `label_source` counts
+  are context.
+- September numbers to compare against: C1 gcode 35.789 s versus Graphify 2.430 s; C2
+  0.117 s versus 2.108 s; C3 3.121 s versus 2.533 s; C4-C6 0.42-0.98 s versus 2.43-2.49
+  s; C8 6/14 for both. Community counts are not comparable: Graphify clusters 2,308
+  mixed nodes, gcode clusters 142 files
+  (`docs/evidence/community-labels-2026-09/thresholds.md`, lines 192-197).
+
+**Implementation:**
+1. **Runner copies.** Copy the runners into
+   `docs/evidence/gcode-graphify-rerun-2026-11/harness/` and commit them. The copies may
+   change only the root and tool paths, the executable identities, the registration
+   (each repetition reads its project from `config/project-manifest.json` instead of
+   running `gobby init`), and the pair and repetition loop in step 3. Results land in
+   `<root>/results/index-comparison/`. Start a fresh isolated daemon with
+   `launch_daemon.py <attempt>`, and rerun `validate_environment.py --live` against the
+   latest `observe` receipt. A relaunched seat restarts here under a new attempt id and
+   passes the owner session recorded in `ownership.json`. Before continuing, it inventories
+   completed valid pairs and consumed projects from
+   `<root>/results/index-comparison/run-records.normalized.jsonl` and
+   `config/project-manifest.json`. Each completed pair stays unchanged and counts once. An
+   interrupted or incomplete pair is recorded void, and the whole pair is replaced on an unused
+   spare in the same AB or BA slot. With no spare left, the seat stops, adds the manifest
+   entries, stops the isolated daemon, and asks the Orchestrator through the Dev Team Lead and
+   Triage to rerun `provision`. New projects have no cached grant
+   (`crates/gcore/src/grant/cache.rs::interactive_cache_path` keys on the project id), so their
+   registration stays empty as in 2.1. The runner loop and its records carry all of this, with no
+   separate checkpoint store.
+2. **Starting states.** Each case starts from the state the matrix names, in that
+   repetition's own project and Graphify state directory, with the starting state built
+   untimed. For C3, replace the workspace from its sealed change corpus and check the
+   hash; for C4 to C6, apply the frozen fixture; otherwise verify the workspace.
+3. **C1 to C6** for both tools, with the frozen argv. For each timed comparison, run six
+   interleaved pairs of gcode and Graphify, three in each tool order. Every repetition
+   starts from an independent copy of the case's starting state and never shares a
+   mutated state. A failed repetition voids its pair, is recorded with its reason, and
+   reruns on a spare project. Record pair id, tool order, exact argv, raw timing, and
+   the 1-, 5- and 15-minute load averages immediately before each run. Report both tools'
+   p50 timings and the p50 paired difference, with the raw samples. This comparative
+   protocol replaces the 5-minute load-under-5 preflight, per the Orchestrator's
+   2026-10-06 15:29 CT ruling. Apply the same pairing and isolation to any timed C7 or C8
+   comparison. For gcode's C2 to C6, read the state's `code_communities` rows and its
+   `community_id_watermark` before the timed command starts and after it ends, outside the
+   timed window.
+4. **C7** for both tools, each from a fresh baseline copy and fresh isolated state, through
+   the dated wrapper and the C0 markers. Preserve the partial state and logs after the one
+   `SIGTERM`. Recover each tool exactly once with its native command:
+   - Graphify: `update --no-cluster`, then `check-update`, against the interrupted output.
+   - gcode: `index --sync-projections` without `--full`, then `status`.
+
+   Build a separate fresh clean C1 state for each tool. Graphify's recovered state passes
+   when it matches that state by the September signature (`C7-summary.json`). gcode's
+   recovered state passes only when all of these hold between it and its clean state:
+   - **Facts.** For each fact table the index writes for the project
+     (`code_indexed_file_states`, `code_symbols`, `code_content_chunks`, `code_imports`,
+     `code_inheritance`, `code_calls`, and `code_communities`), the sorted rows the project
+     owns or references hash equal per table, after project id, root path, row UUIDs and
+     timestamps are normalized.
+   - **Projections.** The recovery's `index --sync-projections` response reports both
+     projections synced. The C0 probe set returns byte-equal normalized output on both
+     states, including `gcode graph` reads (FalkorDB-backed,
+     `crates/gcode/src/commands/graph/reads.rs`).
+   - **Vectors.** The C8 hybrid queries also match when the embedding preflight passed. When
+     it failed, the vector projection is recorded `not-compared` with the preflight's reason.
+
+   Equal counts never pass C7 on their own. A degraded or unsupported outcome is recorded as
+   such. Record the exact interruption, recovery and clean-build argv, and every adaptation,
+   with gcode's row-count marker recorded as an amendment to the matrix.
+5. **C8**: the 14 frozen questions, scored as in September.
+6. **Labels**, each in its own untimed state, apart from the timed `--code-only --no-cluster`
+   C1 state (`matrix.md`, lines 338-350):
+   - Graphify deterministic names: `extract --code-only` with clustering on, into its own
+     output directory.
+   - Graphify semantic names: the matrix's C1 semantic stage (`extract --backend … --model …`)
+     into its own output directory. It runs on its native provider path, or it is recorded
+     as `blocked-preflight` with the reason; no substitute is used.
+   - gcode: each community's label and `label_source` from `gcode graph view
+     --view=communities --format json` on the clean C1 state.
+7. **Parity+ properties.** Each verdict names its evidence producer and its pass or absence
+   condition, and says whether it was measured in this run or rests on earlier evidence:
+   - **File-level projection, externals excluded.** Measured on the clean C1 state: every
+     member in `code_communities` is a file path that has a `code_indexed_file_states` row
+     for the project, and none is an external module.
+   - **Monotone ids with Jaccard remap.** Measured per case from step 3's reads, each C2-C6
+     case against its own starting state only. C2 passes when it leaves every
+     `(community_id, member_signature)` pair and the watermark unchanged. Each of C3 to C6
+     passes when a community whose member set is unchanged keeps its id, every id absent from
+     the starting state is above the starting watermark, and the watermark does not fall. An
+     id absent from the starting state and at or below its watermark is a recycled id, and one
+     is an absence. Each case records its counts of kept, remapped (id kept, members changed,
+     with the Jaccard of the old and new member sets), retired, and new communities. A case
+     whose remapped or retired count is 0 records that behavior `not-exercised`. No matrix case
+     spans two refreshes of one state, so a retired id staying retired across runs rests on the
+     `remap/tests.rs` unit tests above, as earlier evidence.
+   - **Confident label admission.** Missing in live configuration: the gates landed with every
+     consumer `off`, so a generated label is admitted on schema validation alone with
+     `label_confidence` empty, and leaf 2.3's `--no-decisions` branch keeps them `off`. The
+     `label_source` counts are context only.
+   - **Byte-bounded, replay-verifiable evidence.** Measured with the `communities` evidence
+     operation on the clean C1 state, every request bound to that state's commit and tree. Each
+     distinct request (binding, selector, and `max_bytes`) runs twice, and both runs return
+     identical `items`, `bounds`, and `continuation`, or the identical error.
+     - List: at the default `max_bytes`, and at a `max_bytes` no smaller than the largest list
+       item and below the complete list's summed item bytes, so that the list spans at least two
+       pages. Each continuation is followed to the end. Every page reports
+       `bounds.serialized_item_bytes` within `bounds.max_bytes`, and the pages together return
+       every community exactly once, matching `bounds.total_items`.
+     - Detail: the first community in list order, with `max_members` at its member count (at
+       most 500). A default-budget request gives its full item size:
+       `bounds.serialized_item_bytes` when it succeeds, or the error's `item_bytes` when it returns
+       `NarrowingRequired`. The same request at a `max_bytes` one byte below that size returns
+       `NarrowingRequired` naming the community's `evidence_id`. At that `max_bytes`, a request with
+       `max_members` low enough for the item to fit succeeds, with `members_truncated: true` and
+       `bounds.serialized_item_bytes` within `max_bytes`.
+     - Replay: for every member a successful detail returns, a one-line `range` read of its `path`
+       against the same binding succeeds and returns the member's `content_hash`.
+
+     It passes when all of these hold. Identical `evidence_id` lists alone show stable identity,
+     not verifiable content.
+
+   Index and retrieval scores never stand in for a property verdict.
+8. **Close the harness.** Stop the isolated daemon. Ask the Orchestrator, through the Dev Team
+   Lead and Triage, for `observe`, then `teardown`. Commit the normalized records under
+   `docs/evidence/gcode-graphify-rerun-2026-11/results/`, because `build/` is not committed.
+9. Write `docs/evidence/gcode-graphify-rerun-2026-11/report.md`: identities (citing
+   `provisioning.md`), the load samples, the C1-C8 tables beside the September numbers (C9 is
+   not rerun), the C7 method with the amendments, the label facts, and the four property
+   verdicts.
+
+**Acceptance:**
+
+- 2.2.1 - The report gives both tools' identities from `provisioning.md`, the corpus commits, and six interleaved pairs for each timed comparison with equal AB and BA orders, with the load recorded at each run, raw samples, both tools' p50 timings, the p50 paired difference, and each voided pair with its reason. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+- 2.2.2 - The report gives C1 to C6 for both tools in the September table shape (seconds, changed files, symbols and chunks for gcode; nodes, edges and uncached files for Graphify) beside the September numbers, and states that gcode's C2 to C6 include the community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+- 2.2.3 - The report gives C7 for both tools: the marker each used, the one planned `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the recovered state equals a fresh clean C1 state, by the September signature for Graphify and by step 4's fact, projection and vector checks for gcode, with the gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+- 2.2.4 - The report scores C8's 14 frozen questions for both tools as in September, and states whether the gcode hybrid lane was included or excluded by the embedding preflight. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+- 2.2.5 - The report records Graphify's deterministic community names, whether current Graphify emits semantic community names (yes, no, or `blocked-preflight` with the reason), and gcode's count of communities by `label_source`, each from its own untimed state, without comparing community counts. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+- 2.2.6 - The report gives a verdict for each of the four parity+ properties by step 7's producers and conditions, says whether each was measured in this run, records every remap or retirement behavior no case exercised as `not-exercised`, and records the label-admission property as missing in live configuration. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+**Verification:** every number in the report traces to a committed record under
+`docs/evidence/gcode-graphify-rerun-2026-11/results/` named in the report, and the Orchestrator's
+`teardown` receipt lists the containers and volumes it stopped.
+
+### 2.3 Run the no-decisions label study and record the ship rule [category: test]
+`kind: deliverable`
+
+Targets:
+- `docs/evidence/community-labels-2026-09/label-quality.md`
+- `docs/evidence/community-labels-2026-09/study-2026-11/sheet.csv`
+- `docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv`
+- `docs/evidence/community-labels-2026-09/study-2026-11/key.json`
+- `docs/evidence/community-labels-2026-09/study-2026-11/run.json`
+- `docs/evidence/community-labels-2026-09/study-2026-11/label-quality-results.md`
+- `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`
+- `docs/guides/llm-features.md`
+
+**Research context:**
+- Execution context: the output directory in step 2 sits in the epic folder.
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants that folder only to the
+  seats of a live epic-mode team, so this leaf's developer and reviewer run in the #22948 epic-mode team.
+- Package: `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`. Its
+  temporary directory no longer exists, so this run needs new output paths. The scripts are
+  tracked: `scripts/community_label_study.py`, SHA-256
+  `07a77db40dac6ac83cb388fc05a10e0aa81c64c0aab0f0a5acf7780079784552`, and
+  `scripts/decisions_live_capture.py`, SHA-256
+  `1df0ba09baf98b052842cbe186cc8c245d4ad66865631af4ce01d0be6accd0b7`, both verified on 2026-11-05.
+  Their offline test is `tests/scripts/test_community_label_study.py`.
+- Sampling (`scripts/community_label_study.py::_sample`, `::CORPORA`): communities with at least 3
+  members, split into size terciles, five per tercile, seed 22604, 15 per corpus across `gobby`
+  and C1, so 30 in total. Fewer than 15 in either corpus exits nonzero. Identical deterministic and
+  generated names share one row, so `--no-decisions` produces 30 to 60 rows with two ratings each.
+- `_prepare`: `_load_communities` reads structural rows from the live hub in a read-only transaction,
+  `_load_generation` reads the hub's stored text-generation configuration, and label attempts and
+  writes go to an in-memory `RecordingStorage`. It performs inference, and it changes no live label
+  or configuration. With `--no-decisions` it builds no decision client. Outputs: `sheet.csv`,
+  `key.json` and `run.json`.
+- C1: `.gobby/plans/community-label-decisions.md`, D4 (lines 109-118 and 238-244). Corpus
+  `/Users/josh/Projects/wiki-bakeoff-code-2026-09/corpora/gcode/C1`, project id
+  `c8e071af-e1f7-434f-b3c0-f31a1b1299c9`, name `gcode-bakeoff-C1`. Josh's D2 button, "#22948 D2 label
+  study: A, run the no-decisions study now (Recommended)", is the explicit go D4 requires. The
+  Orchestrator re-registers and re-indexes that existing id, never a fresh init. After this leaf lands
+  it soft-deletes the registration with `gobby projects delete`; the folder and marker stay.
+- Ship rules (same plan, lines 973-987): rule 1, G regresses on at most 1 of 30, and the gate ships
+  `off`; rule 2, enforce if J passes its bars; rule 3, deterministic names ship with
+  `code_index.community_label.enabled: false` and every decision consumer `off`. "A `--no-decisions`
+  run has no J, carry or sufficiency data, so rule 2 is unreachable and every consumer ships `mode:
+  off`. Rule 1 or rule 3 then decides `enabled`." `score` proposes the configuration without applying
+  it, and live configuration is operator-side.
+- `docs/guides/llm-features.md` says the live study and ship decision are pending, and places the
+  report at `docs/evidence/community-labels-2026-09/label-quality.md`.
+
+**Implementation:**
+1. Run the offline test and confirm both script hashes. If either script has changed, record the new
+   hash; the test passing is what admits it.
+2. **Orchestrator steps.** Send these through the Dev Team Lead and Triage, with the exact commands.
+   The output directory is
+   `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/label-study-2026-11/`,
+   and it must not already exist.
+   - Re-register and re-index C1 under its existing id, and confirm by read-only count at least 15 C1
+     communities and 15 `gobby` communities with 3 or more members.
+   - Run, from the main checkout: `PYTHONPATH=/Users/josh/Projects/gobby/src uv run --project
+     /Users/josh/Projects/gobby python /Users/josh/Projects/gobby/scripts/community_label_study.py prepare
+     --wire-api openrouter-decisions --api-base https://openrouter.ai/api --model
+     typesafe/jev-1.14-20261014 --identity-contract response_version --no-decisions --out <dir>`. The
+     parser requires the decision flags, and this branch does not use them.
+3. **Check the sample.** Read `run.json`, and report the generation-failure count and the exact CSV row
+   count. A failed generation collapses an item to its deterministic name, which is not evidence of
+   generation quality. The sheet goes out only when the count is 0, or when the Orchestrator accepts the
+   count after reading it.
+4. **Manual step: Josh rates 30 to 60 rows.** Through the Dev Team Lead and Triage, the Orchestrator asks
+   the Assistant to deliver `sheet.csv` to Josh as an attachment, with the row count and the rating text at
+   lines 103-111 of the instructions. Only `sheet.csv` goes to Josh; `key.json` and `run.json` stay from him
+   until his ratings are final. Only Josh supplies ratings, and no seat fills or suggests one. The Assistant
+   hands his returned file to the Orchestrator, which writes it as `<dir>/sheet.rated.csv` and gives the
+   developer the path and SHA-256.
+5. **Score.** Run `score --sheet <dir>/sheet.rated.csv --key <dir>/key.json --capture /dev/null --out
+   <dir>/label-quality-results.md`. It reads only those files, and the capture is unused for a `no_decisions`
+   run.
+6. **Publish.** Blinding is over, so commit the five files under
+   `docs/evidence/community-labels-2026-09/study-2026-11/`. Write `label-quality.md` with the results, the sample,
+   the provenance and the rule selected. Update `docs/guides/llm-features.md` to state the outcome and link the
+   report, and add a line under the instructions' heading naming the 2026-11-05 selection and the new outputs.
+   Send the proposed configuration through the Dev Team Lead and Triage. Applying it is operator-side, and this
+   leaf does not.
+
+**Acceptance:**
+
+- 2.3.1 - The report records the `--no-decisions` branch and Josh's 2026-11-05 selection, both script SHA-256 values, the C1 readiness counts, the 30 sampled communities (15 per corpus), the exact row count, and the generation-failure count. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
+- 2.3.2 - The report gives the regression count for G against D over the 30 communities and the ship rule it selects, 1 or 3, with the proposed `code_index.community_label.enabled` value and every decision consumer `off`, and states that this branch has no J, carry or sufficiency data, so rule 2 is unreachable. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
+- 2.3.3 - The committed rated sheet holds Josh's ratings for every row of the delivered sheet, its item ids, paths and names unchanged, and `score` accepted it. file: `docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv`.
+- 2.3.4 - The guide no longer says the study and ship decision are pending, and states the outcome with a link to the report. file: `docs/guides/llm-features.md`.
+- 2.3.5 - The instructions name the 2026-11-05 selection and the new outputs, and keep their earlier text as history. file: `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`.
+
+**Verification:** `GOBBY_TEST_PROTECT=1 uv run pytest tests/scripts/test_community_label_study.py`, with
+`DATABASE_URL` at the isolated test hub, and every number in `label-quality.md` traces to the committed
+`label-quality-results.md` or `run.json`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -593,88 +1244,34 @@ Consumers unchanged:
   routes, Targets, other acceptance items, and the separate #22958 plan
   remain intact. This consensus entry receives a fresh service-derived M1;
   operational GO remains with Lane 7 and commit timing with the Merge Manager.
+- 2026-11-05: Plan Writer gobby#19935 refreshes the plan on the Orchestrator
+  gobby#19309's ruling that #24222's closure does not stand as delivery of 1.1,
+  and on Josh's D1 and D2 buttons (Decisions 2 and 12). Sections 1.1 and 1.2 keep
+  their closed leaves, and new work takes new section ids. Leaves 2.1 and 2.2
+  replace the undelivered measurement and carry its protocol, so they stand alone.
+  Leaf 2.3 adds the label study. The prior M1 is removed for re-derivation.
+- 2026-11-05: The Orchestrator gobby#19309's rulings, relayed through the lead
+  gobby#19945. It confirms the three `launch_services.py` invocations, the
+  developer-run isolated daemon on ports 59480-59482, the runtime root and an
+  epic-mode launch, its own run of `prepare`, and D2 as D4's go for C1. The launch
+  waits on Josh's freeze until #25765 and #25653 are proven live. #24701 is edited
+  at expansion to be blocked by the 2.3 task. It accepts the Plan Advocate
+  gobby#19939's PA-22948-01 as written, adding the resume rule to 2.2 step 1 with
+  no new store. D3 stays with Josh, and Decision 12 holds on this plan owning
+  neither unless he differs.
 
 ## V2: Verification
 `kind: verification`
 
-After both leaves pass:
+After the leaves pass:
 
-1. Confirm the report's C1-C8 tables trace to
-   `/Users/josh/Projects/gcode-graphify-rerun-2026-10/results/index-comparison/`.
-2. Rerun `cargo test -p gobby-code --lib commands::graph::view`.
-3. On a promoted binary, `gcode graph view --view=communities --format json`
-   on the main checkout lists equal-size communities in ascending id order.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Rerun the Graphify comparison on current gcode
-  category: test
-  task_type: chore
-  depends_on: []
-  validation_criteria: '1.1.1: The report records the fresh runtime root and its ownership
-    receipt, the dated script copies'' SHA-256 values, both tools'' identities (gcode
-    version, contract, and SHA-256 of the copied installed binary; Graphify''s PyPI
-    version and executable and lock SHA-256), the corpus commits, and at least five
-    interleaved, order-balanced pairs for each timed comparison (an even number, six
-    minimum, with equal AB/BA orders), with the load recorded at each run, raw samples,
-    both tools'' p50 timings and the p50 paired difference. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.2: The report gives C1 to C6 for both tools in the 09 table shape (seconds,
-    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
-    Graphify) beside the 09 numbers, and states that gcode''s C2 to C6 include the
-    community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.3: The report gives C7 for both tools: the marker each used, the one planned
-    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
-    recovered state equals a fresh clean C1 state, by the 09 signature for Graphify
-    and by step 4''s fact, projection and vector checks for gcode, with the gcode
-    row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.4: The report scores C8''s 14 frozen questions for both tools as in 09, and
-    states whether the gcode hybrid lane was included or excluded by the embedding
-    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.5: The report records Graphify''s deterministic community names, whether current
-    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
-    the reason), and gcode''s count of communities by `label_source`, each from its
-    own untimed state, without comparing community counts, and a section that states
-    the evidence for Josh''s #22604 decision without making it. behavior: "Decision
-    input for #22604" in `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.6: The report gives a verdict for each of the four parity+ properties by step
-    7''s producers and conditions, says whether each was measured in this run, records
-    every remap or retirement behavior no case exercised as `not-exercised`, and records
-    the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:1.1:1.1.1
-  - covers:gcode-graphify-parity-delta:1.1:1.1.2
-  - covers:gcode-graphify-parity-delta:1.1:1.1.3
-  - covers:gcode-graphify-parity-delta:1.1:1.1.4
-  - covers:gcode-graphify-parity-delta:1.1:1.1.5
-  - covers:gcode-graphify-parity-delta:1.1:1.1.6
-  tdd: false
-  source_section: '1.1'
-  assigned_agent: backend-developer
-- title: Order size ties by community id in the graph views
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.2.1: `build_view_payload` lists two communities of equal
-    size with ids 10 and 2 as `community:2` then `community:10`, after any larger
-    community. test: `crates/gcode/src/commands/graph/view/render_tests.rs::view_orders_size_ties_by_numeric_community_id`.
-
-    1.2.2: The communities list view returns `["community:2", "community:10", "community:1"]`
-    for the existing three-community fixture. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id`.
-
-    1.2.3: An MCG view over stored communities 10 and 2 of equal size lists `community:2`
-    first, in the payload and in the Mermaid subgraph order. test: `crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:1.2:1.2.1
-  - covers:gcode-graphify-parity-delta:1.2:1.2.2
-  - covers:gcode-graphify-parity-delta:1.2:1.2.3
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-```
+1. Confirm the report's C1-C8 tables trace to the committed records under
+   `docs/evidence/gcode-graphify-rerun-2026-11/results/`.
+2. Confirm `provisioning.md` states the Orchestrator's exact invocations, and that
+   the Orchestrator's `docker ps -a` lists no `gcode-graphify-rerun-2026-11` container.
+3. Rerun `cargo test -p gobby-code --lib commands::graph::view`.
+4. On the installed binary, `gcode graph view --view=communities --format json` on
+   the main checkout lists equal-size communities in ascending id order.
+5. Confirm `label-quality.md` exists and `docs/guides/llm-features.md` no longer calls
+   the study pending. The Orchestrator then soft-deletes the C1 registration, and
+   confirms #24701's `blocked-by` names the closed study leaf.

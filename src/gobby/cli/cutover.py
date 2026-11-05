@@ -306,7 +306,7 @@ def run_cutover(
         _require_unchanged_sources(root, sources)
         # The activation check runs again after the stop. Nothing is promoted yet, so a
         # refusal leaves the unchanged daemon to start again and the cutover is refused.
-        activation_refusal = agent_activation_refusal()
+        activation_refusal = agent_activation_refusal("cutover")
         if activation_refusal is None:
             promote_workspace_binary_set(
                 artifacts,
@@ -388,7 +388,7 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
     """Build and activate all schema-aware native binaries as one set."""
     from gobby.releases.activation import agent_activation_refusal
 
-    if refusal := agent_activation_refusal():
+    if refusal := agent_activation_refusal("cutover"):
         raise click.ClickException(f"Refusing to cut over: {refusal}")
     # A node never runs the Python daemon, so refuse before any build or promotion.
     with contextlib.suppress(BootstrapConfigError):

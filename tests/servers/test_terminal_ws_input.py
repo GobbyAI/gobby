@@ -523,11 +523,11 @@ async def test_operator_write_uses_attach_snapshot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gclient_pane_types_without_a_take() -> None:
-    """A gclient pane is always writable: its attach takes no lease and its keys deliver.
+async def test_a_viewer_label_on_the_socket_types_only_under_the_lease() -> None:
+    """A viewer label on the daemon WebSocket is ignored: the attach is web and lease-gated.
 
-    Another attachment holds the writer lease here, so the delivery cannot come
-    from holding the lease.
+    Another attachment holds the writer lease here, so a refused write shows the
+    label grants no lease-free delivery.
     """
     terminal = make_memory_terminal(backend="native")
     runtime = _RecordingRuntime(backend="native")
@@ -547,15 +547,15 @@ async def test_gclient_pane_types_without_a_take() -> None:
     attachment_id = attach_result["attachment_id"]
     record = server._leases().get(attachment_id)
     assert record is not None
-    assert record.viewer == "gclient"
+    assert record.viewer == "web"
     assert server._leases().holder(terminal.id) == holder_before
 
     await server._handle_terminal_input(
         websocket, _input_message(terminal, attachment_id, seq=1, data="a")
     )
 
-    assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
-    assert runtime.inputs == [b"a"]
+    assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "refused"
+    assert runtime.inputs == []
 
 
 @pytest.mark.asyncio

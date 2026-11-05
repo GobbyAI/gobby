@@ -4,13 +4,17 @@ from pathlib import Path
 
 from gobby.paths import get_gobby_home
 from gobby.utils.break_glass import break_glass_path, break_glass_staging_path
-from gobby.utils.local_token import daemon_bootstrap_path
+from gobby.utils.local_token import daemon_bootstrap_path, operator_bootstrap_path
 
 
 def credential_roots() -> list[Path]:
-    """Keep install credentials and the bound daemon startup files denied."""
+    """Keep install credentials and the bound daemon startup files denied.
+
+    The operator's canonical bootstrap is denied too: a daemon started under a GOBBY_HOME override
+    keeps its bound file elsewhere, and the canonical file is still the operator's credential.
+    """
     home = get_gobby_home()
-    return [
+    roots = [
         home / "bootstrap.yaml",
         home / ".secret_kek",
         home / "grants",
@@ -19,6 +23,10 @@ def credential_roots() -> list[Path]:
         break_glass_path(),
         break_glass_staging_path(),
     ]
+    canonical = operator_bootstrap_path()
+    if canonical is not None:
+        roots.append(canonical)
+    return roots
 
 
 def gcode_runtime_root() -> Path:

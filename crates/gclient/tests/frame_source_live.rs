@@ -969,6 +969,39 @@ async fn direct_frame_overflow_fails_typed_without_dropping() {
 }
 
 #[tokio::test]
+async fn proxy_attach_claims_the_writer_lease_without_a_takeover() {
+    // The daemon treats every WebSocket attach as a web viewer, so a proxied
+    // pane (tmux or proxied native) must claim the lease itself or it is read-only.
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let source = ProxyFrameSource::attach(daemon.clone(), "terminal-1")
+        .await
+        .expect("proxy attach");
+    // The socket is read in order, so the reply to a request sent after the
+    // attach proves the claim reached the daemon first.
+    timeout(
+        IO_TIMEOUT,
+        daemon.send(json!({"type": "subscribe", "events": [], "request_id": "claim-barrier"})),
+    )
+    .await
+    .expect("ordering barrier answered")
+    .expect("ordering barrier");
+    let claims: Vec<Value> = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("type").and_then(Value::as_str) == Some("terminal_take_control"))
+        .collect();
+    assert_eq!(claims.len(), 1, "one claim per proxied attach: {claims:?}");
+    assert_eq!(claims[0]["terminal_id"], json!("terminal-1"));
+    assert_eq!(claims[0]["attachment_id"], json!(source.attachment_id()));
+    assert_eq!(claims[0]["takeover"], json!(false));
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn proxy_source_decodes_cell_frames() {
     let mock = mock_daemon::MockDaemon::start("local-token").await;
     let daemon = LiveDaemon::connect(mock.url(), "local-token")

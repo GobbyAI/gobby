@@ -319,7 +319,7 @@ panes, manages tabs and splits, persists layouts, shows attention, and takes or
 releases control for input and resize. Roster, lifecycle, attention, and
 automatic writes use the daemon's public HTTP/WS API. Operator keystrokes do not:
 a direct native pane types on its own frame socket, so no keystroke waits on a
-daemon round trip. Every attached gclient pane is writable; no lease gates it.
+daemon round trip. A direct native pane is writable with no lease. A proxied pane (tmux, or a remote terminal) types through the daemon while its gclient attachment holds the writer lease, which the attach claims without a takeover.
 
 Three terminal paths are available:
 

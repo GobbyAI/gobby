@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 from websockets.exceptions import ConnectionClosed
@@ -107,11 +107,6 @@ def _log_proxy_attach_failure(terminal_id: str, code: str, *, exc_info: bool = F
         exc_info=exc_info,
     )
     return code
-
-
-def _attach_viewer(data: dict[str, Any]) -> Literal["web", "gclient"]:
-    """The viewer an attach claims. Only an explicit gclient label is lease-free."""
-    return "gclient" if data.get("viewer") == "gclient" else "web"
 
 
 class TerminalWsMixin(TerminalWriteMixin):
@@ -255,12 +250,12 @@ class TerminalWsMixin(TerminalWriteMixin):
             log_slow(code, row.id, row_loaded, row_loaded, row_loaded)
             return
         registry = self._leases()
-        viewer = _attach_viewer(data)
+        # Every daemon WebSocket attach is a web viewer: the socket carries one
+        # bearer identity, so a viewer label it sends is never trusted.
         record = await registry.attach(
             terminal_id,
             str(delivery),
             websocket=websocket,
-            viewer=viewer,
             backend=str(row.backend),
             terminal=row,
         )

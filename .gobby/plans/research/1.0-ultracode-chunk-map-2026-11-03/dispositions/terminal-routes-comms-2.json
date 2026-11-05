@@ -1,0 +1,359 @@
+{
+ "dispositions": [
+  {
+   "ref": "#25004",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit L442 (keep): stamped plan §5.2, covering the install, remove, update, validate, init, new and doc rows. V4's goal takes the skills CLI (#24984) as gclient verbs over the public API (D16), and a verb with no endpoint behind it adds one in the SKILLS crate through Found Work (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  },
+  {
+   "ref": "#25005",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit L443 (keep): stamped plan §5.3, covering the hub group, hub list, hub add and search rows, which consume #24466's configuration mutation service. V4's goal takes the skills CLI (#24984) as gclient verbs over the public API (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  },
+  {
+   "ref": "#25006",
+   "disposition": "superseded",
+   "target": "V4",
+   "rationale": "Audit L444 (keep, flagging the CLI-strategy conflict) and plan §5.4: the leaf is a Python Click launcher that forwards to gdaemon skills, plus the deletion of six Python callback modules. V4's gclient-verb design replaces the forwarder (D16; S3-NAME moves the gobby name to the Rust client), and S3-DELETE owns the deletion (D14). The default 'chunk' is wrong because nothing of the planned approach is built, so it would close as done against forwarding tests that never exist.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": true
+  },
+  {
+   "ref": "#24985",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L446 (keep): the P6 expansion container (6.0-6.2). SKILLS's goal ends with 'browser admission through the shared verifier; activation', and SKILLS owns it through #21580.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#25007",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L450 (keep): stamped plan §6.0, on #24967's verifier and #24964's CORS boundary. SKILLS's goal covers 'browser admission through the shared verifier', and D3 builds #24967 in SEAM-CALLERS before the pilot.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#25008",
+   "disposition": "superseded",
+   "target": "CP-WAVE1-CUT",
+   "rationale": "Section 6.1 cuts a per-family coherent release (MANAGED_BIN_VERSION_PINS, promote_workspace_binary_set) and keeps front_door.routes on Proxy as its rollback (audit L451, rewrite). Ruling 20 and D37 replace both: the never-live front_door.routes key and generation rollback. CP-WAVE1-CUT's activation list carries the SKILLS flip, and the #25521 precedent from D31 applies. SKILLS keeps the dormant gateway composition and the skills_cutover tests under its goal's 'activation'. Map fix: CP-WAVE1-CUT's tree_nodes list #25008.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": true,
+   "reviewer_rationale": "Audit L451 (rewrite): §6.1 cuts a per-family coherent release (MANAGED_BIN_VERSION_PINS, promote_workspace_binary_set) and keeps front_door.routes Proxy as its rollback. SKILLS's goal lists 'activation', so the dormant gateway composition and the skills_cutover tests stay here, just as AI-1B keeps #25107 'without its release step'. The default flip rides CP-WAVE1-CUT's activation commit, promotion waits for that cut (ruling 20), and rollback is a generation restore (D37, D38)."
+  },
+  {
+   "ref": "#25009",
+   "disposition": "superseded",
+   "target": "SKILLS",
+   "rationale": "The leaf sets the 54 Skills ledger rows to delegated through the ledger generator. D15 replaces scripts/generate_parity_ledger.py with gport ledger, which runs in chunk protocol step 6, and D5 writes chunk ids into the owner column at the cut. This aligns #25009 with G6's same-shape #25120 (superseded AI-1B) and #25065 (superseded PROJ-2). The close mechanics do not change: D31 closes both kinds at chunk-task creation, and #25009 has no commits. The skills docs update stays in SKILLS' brief. If the parent prefers chunk for all of them, flip #25120 and #25065 instead.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": true,
+   "reviewer_rationale": "Audit L452 (keep): stamped plan §6.2, which sets the 54 Skills ledger rows to delegated with evidence and updates the skills docs. Chunk protocol step 6 makes gport ledger part of every chunk's validation and SKILLS's selectors own those rows, so the ledger and doc update closes with SKILLS."
+  },
+  {
+   "ref": "#21581",
+   "disposition": "chunk",
+   "target": "PLANS",
+   "rationale": "Audit L258 (keep): no plan and no children (needs-planning), blocked by Tasks #21560, with a cross-plan edge that moves plan_archive.rs into the Plans crate. PLANS lists #21581 in tree_nodes, its brief is the spec (rulings 1 and 5), and it depends on B0-CLOSE (the tasks crate). It covers the plan registry, validate_plan_file and expansion runs.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PLANS",
+   "changed": false
+  },
+  {
+   "ref": "#21582",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L268 (keep): the stamped, approved Cron plan (23 leaves, 4 phases), whose P2 overlaps R4. CRON lists #21582 in tree_nodes, and its goal runs P1-P4 on R4's job registry. The epic spans other chunks: #25014's corpus lands in REC-CATALOG, #25035's deletion in S3-DELETE, and #25032 is superseded.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25010",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L456 (keep): the P1 expansion container (4 leaves). CRON's goal covers 'the schedule and value model, job repository and system rows, durable bounded-output metadata'. Its characterization leaf #25014 lands earlier, in REC-CATALOG, which CRON depends on.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25014",
+   "disposition": "chunk",
+   "target": "REC-CATALOG",
+   "rationale": "Audit L460 (keep): §1.1 characterizes Cron before takeover and is unblocked today. CRON's oracle names '#25014's characterization (REC-CATALOG)', and REC-CATALOG's goal records the CRON corpus, just as it absorbs Skills' #24986. The default (CRON, by ancestry) would put the oracle inside the chunk it gates, although CRON depends on REC-CATALOG.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": true
+  },
+  {
+   "ref": "#25015",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L461 (keep): stamped plan §1.1a, as planned. CRON's goal covers 'durable bounded-output metadata'. Its migration goes into CRON's prepared commit, which CP-WAVE1-CUT lands in step 6 (D22, ruling 20).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25016",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L462 (keep): stamped plan §1.2, as planned. CRON's goal covers 'the schedule and value model'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25017",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L463 (keep): stamped plan §1.3, as planned. CRON's goal covers the 'job repository and system rows'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25011",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L465 (keep): the P2 expansion container (8 leaves), whose description equals its title. CRON's goal covers the one hub scheduler, dispatch, the code-index nightly and the system-job bindings on R4's job registry, and CRON owns it through #21582.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25018",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L469 (keep): stamped plan §2.1, as planned. CRON's goal covers 'atomic scheduled and manual admission'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25019",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L470 (rewrite): §2.2's tick duplicates R4 #25472's 'exactly one scheduler'. map-v2 settles the overlap: CRON's goal keeps the cron 'tick, reconciliation and shutdown' on R4's job registry, and R4 owns the loops, so 'the two schedulers never both fire'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25020",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L471 (keep): stamped plan §2.3, as planned. CRON's goal covers 'bounded shell and handler actions'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25021",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L472 (keep): stamped plan §2.4. CRON's goal keeps agent dispatch (#25021), which calls Python's spawner through a worker op until AG-1 activates. The plan's edges on #21562 and #21564 drop under D31.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25022",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L473 (keep): stamped plan §2.5. CRON's goal keeps pipeline dispatch (#25022), which calls Python's pipeline executor through a worker op until PIPE-2 activates.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25023",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L474 (keep): stamped plan §2.6. CRON's goal registers the code-index nightly (#25023) and invokes Python's code-index job through a worker op until CIX-2 activates and registers its native handler with CRON. D32 keeps nightly_repair_timeout_seconds, so the plan's 'no per-project timeout' clause no longer applies.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25024",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L475 (keep): stamped plan §2.7, which binds the dream, feedback and purge jobs. CRON's goal covers 'system-job bindings' and binds the nightly dream to Python's one-iteration op on R4 until MEM-3 re-binds it (#25550). D31 replaces its whole-epic edge on #21563 with that re-binding, which drops an edge and does not change the disposition.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25025",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L476 (rewrite): §2.8 edits gdaemon state.rs and state_services.rs (R2/R4 lifecycle) and leans on Stage 4's #21575. Its 'passive' handle is map-v2's dormancy (D37: a family's jobs register only when the family is active, through R4's registry), so it stays CRON work. CP-WAVE1-CUT's activation commit carries CRON's job registration.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25012",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L478 (keep): the P3 expansion container (6 leaves). CRON's goal covers 'routes, raw-output retrieval, mutations and immediate runs; the restart-protection query and its lifecycle consumers', and CRON owns it through #21582.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25026",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L482 (keep): stamped plan §3.1, as planned, on seams #24967 and #24964. CRON's goal covers the job and run read routes, and its selector owns the /api/cron/ HTTP rows.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25027",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L483 (keep): stamped plan §3.1a, as planned. CRON's goal covers 'raw-output retrieval'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25028",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L484 (keep): stamped plan §3.2, as planned. CRON's goal covers 'mutations and immediate runs'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25029",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L485 (keep): stamped plan §3.3, as planned. CRON's goal covers 'the restart-protection query and its lifecycle consumers (the nightly dream must keep gobby stop and restart refusing without --wait or --force)'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25030",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L486 (keep): stamped plan §3.4, the native service contract for the CLI and MCP owners. CRON's goal and its gobby-cron MCP selector cover the service, which V5A's cron verbs later consume over the public API (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25031",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L487 (keep): stamped plan §3.5, the side-effect-safe compare verifier and native corpus replay. That evidence runs only in the isolated harness, which D37 allows (tests choose a backend through the harness), and CRON's oracle replays #25014's characterization differentially.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25013",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L489 (keep): the P4 expansion container (5 leaves). CRON's goal keeps delivered-mailbox retention and browser admission, and its third checkpoint covers activation. The epic spans CRON and S3-DELETE: #25035's deletion moves to S3-DELETE (D14), and #25032 is superseded.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25032",
+   "disposition": "superseded",
+   "target": "CP-WAVE1-CUT",
+   "rationale": "The kind is right and the target is not. #25032's whole plan is a restart-bound owner cutover at landing: a Python runner_cron_client.py, a routing-edit rollback and a per-leaf pin (audit L493), which G5 rightly rejects. The cron owner transfer is now carried by CP-WAVE1-CUT's activation ('CRON's jobs on R4's scheduler'), so by ruling 20 the cut is the superseding chunk. CRON's own design, dormant jobs on R4, is unchanged.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": true,
+   "reviewer_rationale": "Audit L493 (rewrite): §4.1 is 'R4's one-scheduler handoff, inside R0's inventory files', built on a Python runner_cron_client.py that reads native routes, a routing-edit restart as rollback, and a per-leaf pin. map-v2 rejects each of these: D4 bars a Python client of a Rust endpoint, D37 and D38 make rollback a generation restore, and ruling 20 promotes only at cuts. CRON's design replaces the handoff: its jobs run on R4's registry, Python's loops do not start under the Rust runner, and CP-WAVE1-CUT's activation commit flips the default, so the default 'chunk' would build mechanisms the map has dropped."
+  },
+  {
+   "ref": "#25033",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L494 (edge-fix): §4.1a deletes delivered mailbox rows natively and assumes a mailbox owner that four plans dispute. D29 gives AG-3 the mailbox and rewrites #25033 so that gcron schedules retention and never deletes inter_session_messages rows itself. CRON's goal keeps the rewritten leaf: retention stays a Python op until AG-3 swaps in its native retention.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25034",
+   "disposition": "chunk",
+   "target": "CRON",
+   "rationale": "Audit L495 (keep): stamped plan §4.1b, which carries security-review and sits on seams #24967 and #24964. CRON's goal covers 'browser admission', and the leaf's per-leaf pin waits for CP-WAVE1-CUT's promotion (ruling 20).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": false
+  },
+  {
+   "ref": "#25035",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "Audit L496 (keep): §4.2 deletes or edits 20 Cron-owned Python files. S3-DELETE lists #25035 in tree_nodes, CRON's goal says '#25035's Python deletion moves to S3-DELETE', and D14 turns per-family deletion into 'stop serving and freeze' at activation, with the deletion itself in S3-DELETE. Its native-client shims for the remaining Python callers are not built (D4).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  },
+  {
+   "ref": "#25036",
+   "disposition": "superseded",
+   "target": "CRON",
+   "rationale": "Plan section 4.3 sets the cron ledger status through the old generator, which D15 and D5 replace, and its 'two rollback boundaries' text gives way to generation rollback (D37, D38). This matches #25120 and #25065, and #25036 has no commits. CRON's brief keeps the cron-services.md and configuration-guide updates.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CRON",
+   "changed": true,
+   "reviewer_rationale": "Audit L497 (keep): stamped plan §4.3, covering the ledger status, cron-services.md and the configuration guide. Chunk protocol step 6 makes gport ledger part of every chunk's validation and CRON's selectors own the rows, so the leaf closes with CRON. Its 'two rollback boundaries' text gives way to generation rollback (D38)."
+  },
+  {
+   "ref": "#21583",
+   "disposition": "decision",
+   "target": "D2",
+   "rationale": "Audit L277 (needs-josh): Josh placed this epic behind Rust voice and sessions on 2026-10-25 ('Make comms wait'), then early in Stage 2 through operator-directed #25597 on 2026-11-02 ('move comms up the rust port chain in p2'). The map lists it in COMMS-2's tree_nodes under D2's default, which does not adopt #25597, but D2 has no resolved_by, so the node keeps Josh's placement as decision D2; the default 'chunk' would silently override #25597. Under D2's default it lands in COMMS-2 (adapters per D28, after VOICE, with Python's inbound voice-note transcription in src/gobby/communications/voice.py ported along with the Telegram adapter), and #25597 and #24173 sit in other batches.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "COMMS-2",
+   "changed": true
+  },
+  {
+   "ref": "#21584",
+   "disposition": "chunk",
+   "target": "SRC",
+   "rationale": "Audit L288 (keep): no plan and no children (needs-planning), blocked by #21560, with an unclear 'sync' scope. SRC lists #21584 in tree_nodes and takes the branch, diff and status routes and the gobby-merge tools. GitHub triage and sync parts that have no ledger row are listed by P0-RECORD's census, then ported here or recorded as drops.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SRC",
+   "changed": false
+  },
+  {
+   "ref": "#21585",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit L298 (keep): the stamped, approved Projects plan (23 leaves, 6 phases), with P2 #25046 as a de facto shared seam. PROJ-2 lists #21585 in tree_nodes and takes P3-P6. The epic spans other chunks: P1-P2 run earlier as the PROJ-1 seam, and #25061 and #25064 go to V5B and S4-PROOF.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  }
+ ]
+}

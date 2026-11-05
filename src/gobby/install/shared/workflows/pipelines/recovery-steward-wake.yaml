@@ -1,0 +1,111 @@
+name: recovery-steward-wake
+type: pipeline
+version: "1.0.0"
+description: |
+  Patrol tick for the Recovery Steward. A five-minute cron runs this pipeline. It lists the
+  Recovery Steward sessions in this project once per live status, so the status filter applies
+  before the 500-row limit and historical terminal rows never hide a live one. When exactly one
+  session is live and it isn't active, it wakes that session to patrol. An active Steward, zero
+  or several live matches, or any incomplete listing send nothing: the wake step is recorded as
+  skipped and the run completes.
+tags: [recovery, patrol]
+resume_on_restart: false
+
+inputs:
+  agent_type:
+    type: string
+    default: recovery-steward
+    description: "Agent definition whose single live session receives the patrol tick"
+
+steps:
+  - id: resolve_active
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: active
+        limit: 500
+
+  - id: resolve_paused
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: paused
+        limit: 500
+
+  - id: resolve_waiting
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: waiting
+        limit: 500
+
+  - id: resolve_idle
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: idle
+        limit: 500
+
+  - id: resolve_interrupted
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: interrupted
+        limit: 500
+
+  - id: resolve_awaiting_input
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: awaiting_input
+        limit: 500
+
+  - id: resolve_awaiting_approval
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: awaiting_approval
+        limit: 500
+
+  - id: resolve_awaiting_handoff
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: awaiting_handoff
+        limit: 500
+
+  - id: wake
+    condition: "${{ steps.resolve_active.output.total == 0 and len([r for r in [steps.resolve_active.output, steps.resolve_paused.output, steps.resolve_waiting.output, steps.resolve_idle.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] if r.count == r.total]) == 8 and len([s for r in [steps.resolve_paused.output, steps.resolve_waiting.output, steps.resolve_idle.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions]) == 1 }}"
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ [s for r in [steps.resolve_paused.output, steps.resolve_waiting.output, steps.resolve_idle.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions][0].id }}"
+        wake: true
+        message_type: message
+        content: "Patrol tick. Run your patrol now, then register your wait and yield."

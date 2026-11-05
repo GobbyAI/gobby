@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.clear_continuation import resolve_clear_successor
+from gobby.sessions.compact_failure_attention import clear_compact_failure_attention
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     FEEDBACK_DISPOSITIONS,
@@ -191,6 +192,7 @@ def register_handoff_tools(
                     session_manager.db, session_id, failed_attempt_id
                 )
                 if result is not None:
+                    clear_compact_failure_attention(session_manager.db, session_id)
                     late_handoff, gate_armed = result
                     return {
                         "success": True,
@@ -293,6 +295,7 @@ def register_handoff_tools(
             if gate.get("error_code") == "compact_unconfirmed" or legacy_ambiguous_enter:
                 result = reconcile_late_compact_handoff(session_manager.db, session_id, attempt_id)
                 if result is not None:
+                    clear_compact_failure_attention(session_manager.db, session_id)
                     late_handoff, gate_armed = result
                     return {
                         "success": True,

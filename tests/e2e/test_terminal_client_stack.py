@@ -264,16 +264,13 @@ class WsSession:
     def of_type(self, name: str) -> list[dict[str, Any]]:
         return [item for item in self.messages if item.get("type") == name]
 
-    async def attach(
-        self, terminal_id: str, *, delivery: str, request_id: str, viewer: str = "gclient"
-    ) -> str:
+    async def attach(self, terminal_id: str, *, delivery: str, request_id: str) -> str:
         await self.send(
             {
                 "type": "terminal_attach",
                 "request_id": request_id,
                 "terminal_id": terminal_id,
                 "frame_delivery": delivery,
-                "viewer": viewer,
             }
         )
         result = await self.wait_for(
@@ -820,7 +817,7 @@ async def test_terminal_client_stack_end_to_end(
     await gclient_ws.connect()
     await web_ws.connect()
     await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native")
-    await web_ws.attach(native_id, delivery="proxy", request_id="web-native", viewer="web")
+    await web_ws.attach(native_id, delivery="proxy", request_id="web-native")
     gclient_direct = WsSession(daemon_instance)
     await gclient_direct.connect()
     await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct")
@@ -922,7 +919,7 @@ async def test_terminal_client_stack_end_to_end(
     await web_ws.connect()
     await gclient_direct.connect()
     await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native-2")
-    await web_ws.attach(native_id, delivery="proxy", request_id="web-native-2", viewer="web")
+    await web_ws.attach(native_id, delivery="proxy", request_id="web-native-2")
     await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct-2")
     await web_ws.wait_for(
         lambda item: item.get("type")

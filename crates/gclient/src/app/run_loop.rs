@@ -422,9 +422,9 @@ impl<D: Daemon> Workspace<D> {
                 source
                     .send(&ClientMessage::SetViewport { rows, cols })
                     .await?;
-                // Decision 14: every live pane claims its size as the gclient
-                // viewer, whatever its backend or hold. A refusal comes back
-                // as `terminal_resize_result` and re-marks the owner.
+                // Decision 14: every live pane claims its size, whatever its
+                // backend or hold. A refusal comes back as `terminal_resize_result`
+                // and re-marks the owner.
                 pane.sized_by = None;
                 json!({
                     "type": "terminal_resize",
@@ -434,7 +434,6 @@ impl<D: Daemon> Workspace<D> {
                     "lease_generation": pane.lease_generation(),
                     "rows": rows,
                     "cols": cols,
-                    "viewer": "gclient",
                 })
             };
             self.daemon
@@ -493,7 +492,6 @@ impl<D: Daemon> Workspace<D> {
             "lease_generation": pane.lease_generation(),
             "rows": rows,
             "cols": cols,
-            "viewer": "gclient",
         }));
         Ok(messages)
     }

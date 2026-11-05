@@ -333,7 +333,6 @@ impl Workspace {
             "terminal_id": terminal_id,
             "frame_delivery": "proxy",
             "encoding": "semantic_frame",
-            "viewer": "gclient"
         }))
     }
 

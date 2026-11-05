@@ -2,6 +2,7 @@
 
 pub mod proxy;
 
+pub(crate) use proxy::claim_writer_lease;
 pub use proxy::ProxyFrameSource;
 
 use std::collections::VecDeque;

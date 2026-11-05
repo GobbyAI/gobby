@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.communications.agent_labels import agent_label, agent_menu_labels
 from gobby.communications.models import ChannelConfig, CommsMessage
-from gobby.communications.operator_routing import is_terminal_session
+from gobby.communications.operator_routing import is_operator_seat, is_terminal_session
 from gobby.communications.session_delivery import is_attached_operator_message
 from gobby.communications.telegram_access import allowed_senders
 from gobby.storage.session_resolution import is_session_uuid
@@ -232,17 +232,11 @@ class TelegramActionController:
             statuses=list(LIVE_SESSION_STATUSES),
             limit=1000,
         )
-        agents = sorted(
-            (
-                session
-                for session in sessions
-                if session.status in LIVE_SESSION_STATUSES
-                and is_terminal_session(session)
-                and getattr(session, "agent_depth", 0) == 0
-                and getattr(session, "agent_run_id", None) is None
-            ),
-            key=lambda session: (agent_label(session).casefold(), session.id),
+        db = self._session_manager.db
+        seats = await asyncio.to_thread(
+            lambda: [session for session in sessions if is_operator_seat(db, session)]
         )
+        agents = sorted(seats, key=lambda session: (agent_label(session).casefold(), session.id))
         labels = agent_menu_labels(agents)
         current = await asyncio.to_thread(
             self._manager.attached_session, channel.id, conversation_id
@@ -347,12 +341,8 @@ class TelegramActionController:
             await self._agent_feedback(channel, message, "This agent choice is invalid.")
             return
         target = await asyncio.to_thread(self._session_manager.get, target_id)
-        if (
-            target is None
-            or target.status not in LIVE_SESSION_STATUSES
-            or not is_terminal_session(target)
-            or getattr(target, "agent_depth", 0) != 0
-            or getattr(target, "agent_run_id", None) is not None
+        if target is None or not await asyncio.to_thread(
+            is_operator_seat, self._session_manager.db, target
         ):
             await self._agent_feedback(channel, message, "This agent is no longer running.")
             return

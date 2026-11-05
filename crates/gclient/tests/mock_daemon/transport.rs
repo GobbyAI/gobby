@@ -1193,6 +1193,7 @@ fn websocket_reply(
         })),
         "subscribe" => Some(json!({
             "type": "subscribe_success",
+            "request_id": request.get("request_id"),
             "events": request.get("events").cloned().unwrap_or_else(|| json!([])),
         })),
         "workspace_attach" => {

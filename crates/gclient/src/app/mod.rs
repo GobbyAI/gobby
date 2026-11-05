@@ -447,7 +447,6 @@ impl Workspace {
             "terminal_id": terminal_id,
             "attachment_id": attachment,
             "frame_delivery": "direct",
-            "viewer": "gclient"
         }));
         self.push_frame(id, "first-frame");
         Ok(())
@@ -585,7 +584,6 @@ impl Workspace {
             "attachment_id": attachment,
             "frame_delivery": "proxy",
             "encoding": "semantic_frame",
-            "viewer": "gclient"
         }))?;
         self.push_frame(id, "first-frame");
         Ok(())
@@ -623,7 +621,6 @@ impl Workspace {
                 "terminal_id": terminal_id,
                 "attachment_id": attachment,
                 "frame_delivery": "direct",
-                "viewer": "gclient"
             }))?;
         }
         Ok(())

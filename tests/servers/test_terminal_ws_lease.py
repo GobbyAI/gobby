@@ -842,6 +842,80 @@ async def test_finalize_revokes_authority_before_frame_close(
         await asyncio.sleep(0)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label",
+    [{}, {"viewer": "gclient"}],
+    ids=["unlabeled", "claims-gclient"],
+)
+async def test_attach_is_lease_gated_as_web_whatever_viewer_it_claims(
+    temp_db: HubDatabase, sample_project: dict[str, Any], label: dict[str, str]
+) -> None:
+    # The daemon WebSocket has one bearer identity, so no attach can claim a
+    # lease-free viewer: an unlabeled or gclient-labelled attach is web and
+    # stays behind the writer lease while another web attach holds it.
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db)
+    holder = MockWebSocket()
+    observer = MockWebSocket()
+    server.clients[holder] = {"subscriptions": {"*"}}
+    server.clients[observer] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        holder,
+        {
+            "type": "terminal_attach",
+            "request_id": "holder",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    holder_attachment = holder.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+    await _send(
+        server,
+        holder,
+        {
+            "type": "terminal_take_control",
+            "terminal_id": terminal_id,
+            "attachment_id": holder_attachment,
+            "takeover": False,
+        },
+    )
+    await _send(
+        server,
+        observer,
+        {
+            "type": "terminal_attach",
+            "request_id": "observer",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+            **label,
+        },
+    )
+    attach_result = observer.messages_of_type("terminal_attach_result")[-1]
+    observer_attachment = attach_result["attachment_id"]
+    assert attach_result["lease_holder"] == {
+        "attachment_id": holder_attachment,
+        "kind": "web",
+        "session_ref": None,
+    }
+    await _send(
+        server,
+        observer,
+        {
+            "type": "terminal_paste",
+            "terminal_id": terminal_id,
+            "attachment_id": observer_attachment,
+            "text": "hi",
+            "client_write_seq": 1,
+        },
+    )
+    refused = observer.messages_of_type("terminal_write_outcome")[-1]
+    assert refused["outcome"] == "refused"
+    assert observer.closed is False
+
+
 def _foreign_message(operation: str, terminal_id: str, attachment_id: str) -> dict[str, Any]:
     fields: dict[str, dict[str, Any]] = {
         "take_control": {"type": "terminal_take_control", "takeover": True},

@@ -22,6 +22,26 @@ pub struct ProxyFrameSource {
     buffered: VecDeque<ServerMessage>,
 }
 
+/// Claims the writer lease for a daemon-written pane. The daemon trusts no
+/// viewer label, so every proxied attach is a web viewer and must take the
+/// lease itself. A refused claim (another holder) leaves the pane read-only:
+/// one writer per daemon-written pane.
+pub(crate) async fn claim_writer_lease(
+    daemon: &LiveDaemon,
+    terminal_id: &str,
+    attachment_id: &str,
+) -> Result<(), FrameError> {
+    daemon
+        .notify(json!({
+            "type": "terminal_take_control",
+            "terminal_id": terminal_id,
+            "attachment_id": attachment_id,
+            "takeover": false,
+        }))
+        .await
+        .map_err(|error| FrameError::Other(error.to_string()))
+}
+
 impl ProxyFrameSource {
     pub async fn attach(
         daemon: LiveDaemon,
@@ -38,7 +58,6 @@ impl ProxyFrameSource {
                 "terminal_id": terminal_id,
                 "frame_delivery": "proxy",
                 "encoding": "semantic_frame",
-                "viewer": "gclient",
             }))
             .await?;
         if reply.get("success").and_then(Value::as_bool) != Some(true) {
@@ -55,6 +74,7 @@ impl ProxyFrameSource {
             .and_then(Value::as_str)
             .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
             .to_string();
+        claim_writer_lease(&daemon, &terminal_id, &attachment_id).await?;
         Self::from_attachment(daemon, terminal_id, attachment_id, receiver)
     }
 

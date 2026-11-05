@@ -2542,7 +2542,10 @@ async fn live_resize_propagates_geometry_by_policy() {
                 .rev()
                 .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
                 .unwrap_or_else(|| panic!("{terminal_id} claimed no size"));
-            assert_eq!(latest.get("viewer"), Some(&json!("gclient")));
+            assert!(
+                latest.get("viewer").is_none(),
+                "a size claim names no viewer label"
+            );
             assert_eq!(
                 latest.get("rows").and_then(Value::as_u64),
                 Some(u64::from(rows))
@@ -2738,11 +2741,7 @@ async fn resize_geometry_policy_reducer() {
             message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_resize")
         })
         .collect();
-    assert_eq!(
-        resizes.len(),
-        3,
-        "every live pane claims its size for the gclient viewer"
-    );
+    assert_eq!(resizes.len(), 3, "every live pane claims its size");
     for (pane, terminal_id) in [
         (controlled_native, "term-controlled"),
         (observed_proxy, "term-observed"),
@@ -2753,7 +2752,10 @@ async fn resize_geometry_policy_reducer() {
             .iter()
             .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
             .unwrap_or_else(|| panic!("{terminal_id} claimed no size"));
-        assert_eq!(resize.get("viewer"), Some(&json!("gclient")));
+        assert!(
+            resize.get("viewer").is_none(),
+            "a size claim names no viewer label"
+        );
         assert_eq!(resize.get("rows"), Some(&json!(rows)));
         assert_eq!(resize.get("cols"), Some(&json!(cols)));
     }
@@ -9511,7 +9513,7 @@ async fn tab_sets_follow_the_focused_project() {
 
 /// Plan 2.3.1: after startup and after a slot change every shown pane, tmux
 /// or native, held or observing, carries the geometry of its inner rect: a
-/// `SetViewport` plus a `terminal_resize` claiming `viewer: "gclient"`.
+/// `SetViewport` plus a `terminal_resize` claiming the pane's size.
 #[tokio::test]
 async fn every_shown_pane_sizes_its_terminal() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -9613,8 +9615,8 @@ async fn every_shown_pane_sizes_its_terminal() {
     assert!(
         resizes
             .iter()
-            .all(|request| request.get("viewer") == Some(&json!("gclient"))),
-        "every size claim names the gclient viewer: {resizes:?}"
+            .all(|request| request.get("viewer").is_none()),
+        "every size claim names no viewer label: {resizes:?}"
     );
     for info in &chrome.view.pane_infos {
         let pane = workspace.pane(tab.slots[&info.id]);

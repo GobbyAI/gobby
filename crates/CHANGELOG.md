@@ -208,6 +208,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A key typed into a native pane whose close is in flight is refused with a
   toast, and keys typed behind a recovery detach reach the new attachment.
   Version: `0.1.112`.
+- **Daemon WebSocket attaches are always web** (#25653) — the daemon ignores a
+  viewer label on a WebSocket attach, so every daemon attach takes the writer
+  lease and a claimed `viewer: "gclient"` is treated as web. A proxied gclient
+  attach claims the lease with a non-takeover take right after attaching, so a
+  tmux or proxied native pane keeps one writer. Direct native panes still type
+  over the frame socket with no lease. Version: `0.1.113`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 
