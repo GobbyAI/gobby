@@ -8,7 +8,7 @@ use super::super::jobs::LoopJobs;
 use super::super::outage_grant::GrantOutcome;
 use super::{apply_control_outcome, apply_outage_grant};
 use crate::app::live_control::ControlOutcome;
-use crate::app::{Backend, Pane, PaneId, Workspace};
+use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
 use crate::daemon::LiveDaemon;
 use crate::frame_source::{AttachLocator, PaneFrameSource, UnixSocketFrameSource};
 use crate::ui::Chrome;
@@ -90,6 +90,69 @@ async fn a_failed_grant_flush_reports_every_key_it_could_not_write() {
         chrome.alert_log.len(),
         3,
         "each key whose write failed is reported, not only the first"
+    );
+}
+
+/// A native direct pane that already holds the host's grant and the daemon
+/// lease, the state a granted take leaves behind.
+async fn held_direct_pane() -> Pane {
+    let mut pane = cut_pane_with_keys().await;
+    pane.control = ControlState::Held;
+    pane.host_input_granted = true;
+    pane
+}
+
+#[tokio::test]
+async fn a_refused_host_ask_keeps_the_lease_a_pane_already_holds() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let pane = held_direct_pane().await;
+    let attachment = pane.attachment_id().to_owned();
+    workspace.panes.insert(PaneId(1), pane);
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        PaneId(1),
+        &attachment,
+        Ok(GrantOutcome::Refused("not_granted".into())),
+        Vec::new(),
+    );
+
+    assert!(
+        workspace.pane(PaneId(1)).is_held(),
+        "a refused redundant host ask must not drop the lease the pane holds, or its release is never sent"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_host_ask_keeps_the_lease_a_pane_already_holds() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let pane = held_direct_pane().await;
+    let attachment = pane.attachment_id().to_owned();
+    workspace.panes.insert(PaneId(1), pane);
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        PaneId(1),
+        &attachment,
+        Err(std::io::Error::other("connection reset")),
+        Vec::new(),
+    );
+
+    assert!(
+        workspace.pane(PaneId(1)).is_held(),
+        "a failed redundant host ask must not drop the lease the pane holds, or its release is never sent"
     );
 }
 

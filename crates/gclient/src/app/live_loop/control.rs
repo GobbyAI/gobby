@@ -534,6 +534,11 @@ pub(super) fn apply_outage_grant(
             pane.clear_pending_input();
             chrome.notify(Toast::warning(HELD_BY_PEER));
         }
+        // A pane that holds control and the host grant keeps both. The host's
+        // answer to this redundant ask does not revoke that grant, and a
+        // downgrade to Observe here would leave the daemon lease with no
+        // release to follow (ruling b59e4ce9).
+        Ok(GrantOutcome::Refused(_)) | Err(_) if pane.is_held() && pane.direct_input() => {}
         Ok(GrantOutcome::Refused(_)) => {
             pane.apply_host_grant(Some(false));
         }
