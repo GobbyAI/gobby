@@ -3,12 +3,14 @@ import json
 import logging
 import mimetypes
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
+from gobby.status_report.compose import compose_report
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_executions import pipeline_execution_definition_json
@@ -268,6 +270,46 @@ def create_communications_registry(
 
     @registry.tool(
         description=(
+            "Compose the project's operator status report from hub evidence, git and live agent "
+            "runs, and write it under the project's reports directory. Daemon-run steps only; "
+            "deliver the returned file_path with send_operator_attachment."
+        )
+    )
+    async def compose_status_report(
+        integration_branch: str,
+        operator_timezone: str,
+        window_seconds: int = 1800,
+        load_threshold: float = 60.0,
+    ) -> dict[str, Any]:
+        if not is_daemon_execution():
+            return {
+                "success": False,
+                "code": "forbidden",
+                "error": "Status reports are composed by daemon-run steps only",
+            }
+        project_context = get_project_context()
+        project_id = project_context.get("id") if project_context else None
+        project_path = project_context.get("project_path") if project_context else None
+        if db is None or not isinstance(project_id, str) or not isinstance(project_path, str):
+            return {"success": False, "error": "Project checkout or storage is unavailable"}
+        try:
+            return await asyncio.to_thread(
+                compose_report,
+                db,
+                project_id=project_id,
+                project_path=Path(project_path),
+                integration_branch=integration_branch,
+                operator_timezone=operator_timezone,
+                window=timedelta(seconds=window_seconds),
+                load_threshold=load_threshold,
+                now=utc_now(),
+            )
+        except Exception as exc:
+            logger.exception("Status report composition failed")
+            return {"success": False, "error": str(exc)}
+
+    @registry.tool(
+        description=(
             "Send a message to a communication channel. session_id defaults to the calling "
             "session when available; an explicit session_id must identify that same caller. "
             "For Telegram clarification or approval "
@@ -344,7 +386,7 @@ def create_communications_registry(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
-        description="List live attached sessions and their channels/conversations; these sessions reply directly and need no Assistant relay.",
+        description="List live attached sessions and their channels/conversations; these sessions reply directly and need no relay.",
         read_only=True,
     )
     def list_conversation_attachments() -> dict[str, Any]:
