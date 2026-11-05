@@ -215,10 +215,10 @@ fn titled_definition_seat(
 
 #[test]
 fn a_manual_session_title_names_the_seat_in_place_of_its_provider() {
-    let (ws, pane) = titled_seat("gobby#14069: Assistant", "manual");
+    let (ws, pane) = titled_seat("gobby#14069: Synthetic seat", "manual");
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "○ #14069: Assistant · Focused",
+        "○ #14069: Synthetic seat · Focused",
         "the manual title drops the ref prefix the header already leads with"
     );
 
