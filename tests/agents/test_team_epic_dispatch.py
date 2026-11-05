@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -307,6 +308,33 @@ async def test_pod_adopts_its_leafs_clean_tree_on_the_leaf_branch(world: TeamWor
     assert git_in(path, "branch", "--show-current") == branch
     assert git_in(path, "rev-parse", "HEAD") == head
     assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+async def test_pod_adoption_gives_a_markerless_leaf_tree_its_isolation_marker(
+    world: TeamWorld,
+) -> None:
+    """Adoption skips the isolation preflight, so it repairs the marker itself: a leaf tree
+    without one resolves as a bare checkout and its index refresh is refused."""
+    project_json = Path(world.case.repo) / ".gobby" / "project.json"
+    project_json.parent.mkdir(exist_ok=True)
+    project_json.write_text(json.dumps({"id": world.case.project_id}))
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    _, path, _ = leaf_tree(team, epic, leaf)
+    epic_head = git_in(tree_of(team.binding), "rev-parse", team.binding.branch)
+    assert not (path / ".gobby" / "isolation.json").exists()
+
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    assert tree_of(pod) == path
+    assert (path / ".gobby" / "isolation.json").is_file()
+    marker = json.loads((path / ".gobby" / "isolation.json").read_text())
+    assert Path(marker["ancestor_checkout_path"]).resolve() == Path(world.case.repo).resolve()
+    assert marker["base_commit"] == epic_head
 
 
 @pytest.mark.asyncio
