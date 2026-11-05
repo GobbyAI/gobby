@@ -1,0 +1,420 @@
+{
+ "dispositions": [
+  {
+   "ref": "#25037",
+   "disposition": "chunk",
+   "target": "PROJ-1",
+   "rationale": "PROJ-1's tree_nodes list #25037, and its goal opens with the statically linked Projects family crate (#25044; audit: keep, as planned). Its corpus leaf #25043 is carved out to REC-PLATFORM, and PROJ-1's oracle is its family tests and REC-PILOT's corpus, so #25044's edge on #25043 drops (D31).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-1",
+   "changed": false
+  },
+  {
+   "ref": "#25043",
+   "disposition": "chunk",
+   "target": "REC-PLATFORM",
+   "rationale": "Audit: keep, unblocked today, the Projects 1.1 corpus. REC-PLATFORM's tree_nodes list #25043, and its goal records the Projects corpora (projects, files, hub documents, chat attachments) from tests/ only.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-PLATFORM",
+   "changed": false
+  },
+  {
+   "ref": "#25044",
+   "disposition": "chunk",
+   "target": "PROJ-1",
+   "rationale": "Audit: keep, as planned (the crate, family assembly, a Proxy default and the exact method/path/principal inventory). PROJ-1's goal names the statically linked Projects family crate with one registry line; its compiled default stays Proxy until a checkpoint's activation commit flips it (D37), and its edge on REC-PLATFORM's #25043 drops because PROJ-1's oracle is REC-PILOT's project read cases.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-1",
+   "changed": false
+  },
+  {
+   "ref": "#25038",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "map review: SEAM-CALLERS' tree_nodes list #25038, and its goal runs Projects P2 (#25045, #25046) after #24967. The epic's leaves consume SEAM-CALLERS' #24967, #24964 and #24452 while SEAM-CALLERS depends on PROJ-1, so P2 cannot run in PROJ-1 (get_task: #25038 is blocked by #25045 and #25046 and blocks #21585). Under D31 it closes as superseded by SEAM-CALLERS' task.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-1",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "PROJ-1",
+     "rationale": "PROJ-1's tree_nodes list #25038, and its goal names reusable native admission (#25046) and the shared browser authority (#25045), the seam placement the audit asked for (#25046: move it, or run Projects P2 as a seam chunk). Both leaves carry a map gap, because their prerequisites #24967, #24964 and #24452 sit in SEAM-CALLERS, which depends on PROJ-1; this epic follows its leaves wherever the fix puts them.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "PROJ-1's tree_nodes list #25038, and its goal names reusable native admission (#25046) and the shared browser authority (#25045), the seam placement the audit asked for (#25046: move it, or run Projects P2 as a seam chunk). Both leaves carry a map gap, because their prerequisites #24967, #24964 and #24452 sit in SEAM-CALLERS, which depends on PROJ-1; this epic follows its leaves wherever the fix puts them."
+  },
+  {
+   "ref": "#25045",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "map review: SEAM-CALLERS' tree_nodes list #25045, and its goal puts it in checkpoint 1 after #24967, which blocks it (get_task: blocked by #25044 and #24967; blocks #25046 and #25038). #25044 stays in PROJ-1, which SEAM-CALLERS depends on, so both blockers are upstream. Audit: keep, as planned.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-1",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "PROJ-1",
+     "rationale": "MAP GAP: PROJ-1 lists #25045 and its goal names the browser authority integration, but the task injects #24967's cookie verifier, a SEAM-CALLERS node, and SEAM-CALLERS depends on PROJ-1, so PROJ-1 cannot start this leaf in the map's order. Audit: keep, blocked by #25044 and #24967.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "MAP GAP: PROJ-1 lists #25045 and its goal names the browser authority integration, but the task injects #24967's cookie verifier, a SEAM-CALLERS node, and SEAM-CALLERS depends on PROJ-1, so PROJ-1 cannot start this leaf in the map's order. Audit: keep, blocked by #25044 and #24967."
+  },
+  {
+   "ref": "#25046",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "map review: SEAM-CALLERS' tree_nodes list #25046, and its goal puts it in checkpoint 2 after #24452, #24964 and #24967, which block it with #25045 (get_task; #24963 is closed), and before #25068, which it blocks with #25106 (AI-1B, through AI-1A) and #25558 (MEM-1); AI-1A and MEM-1 depend on SEAM-CALLERS. Audit: keep, as planned.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-1",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "PROJ-1",
+     "rationale": "MAP GAP: PROJ-1's goal names #25046 as the admission seam consumed by SEAM-CALLERS (#25068), AI-1B (#25106) and MEM-1 (#25558), but the task consumes #24967's verifier, #24452's capability-token verification and #24964's CORS, all SEAM-CALLERS nodes, while SEAM-CALLERS depends on PROJ-1, so the chain #24967/#24452/#24964 to #25046 to #25068 crosses the chunk edge both ways. Audit: move it to the seam layer with #24967, #24964, #24968 and #25068, or run Projects P2 as a seam chunk; the map took the second option without reordering those prerequisites.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "MAP GAP: PROJ-1's goal names #25046 as the admission seam consumed by SEAM-CALLERS (#25068), AI-1B (#25106) and MEM-1 (#25558), but the task consumes #24967's verifier, #24452's capability-token verification and #24964's CORS, all SEAM-CALLERS nodes, while SEAM-CALLERS depends on PROJ-1, so the chain #24967/#24452/#24964 to #25046 to #25068 crosses the chunk edge both ways. Audit: move it to the seam layer with #24967, #24964, #24968 and #25068, or run Projects P2 as a seam chunk; the map took the second option without reordering those prerequisites."
+  },
+  {
+   "ref": "#25039",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "PROJ-2 owns #21585's P3-P6, and its goal lists P3's leaves: USER.md on shared files_home, attachment limits, publication, content and lease-safe deletion, the files migration and the namespace cutover. The relocation (#25050) and the cutover (#25051) are built dormant here and run at CP-WAVE3-CUT, when chat goes Native.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25047",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned; its blockers #24968 (SEAM-CALLERS) and #25046 (also SEAM-CALLERS) are upstream of PROJ-2. PROJ-2's goal opens with USER.md on shared files_home.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25048",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists attachment limits and publication among the chat attachment routes, which go Native at CP-WAVE1-CUT on the existing layout.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25049",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists attachment content and lease-safe deletion, and CHAT-1 and CHAT-2 delete attachment bytes only through this native deletion, which resolves each row's stored locator on either layout.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25050",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal names the files migration and final attachment layout (files_migrate.py), built dormant here, with the once-only relocation run at CP-WAVE3-CUT under that cut's backup; the task's Click shim in src/gobby/cli/files.py is not built, because D4 rules out a Python client of a Rust endpoint and V5B owns the files verbs (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25051",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Gap at review time, since closed in the map: PROJ-2's goal names the namespace cutover and its consumers, builds its native half dormant (the canonical family routes, old-path 404s, the six #24963 entries; 3.5.2 and 3.5.4) and runs it at CP-WAVE3-CUT, and it does not build the Python consumer edits. But no step lands the task's live consumer edits with that activation: web/src/lib/chatAttachments.ts and MessageItem.tsx's prefix check (the task: 'changing server routes alone would break rendered attachment links'), two skill-reference templates, and the Python profile consumers that still call /api/files/user-md (remote_preflight.py's probe and the node-mode profile hook).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25040",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "PROJ-2's goal lists P4's leaves: local file tree, text and image reads, checkout file writes, git status and diff, project initialization and checkout mutation, metadata guards, and updates and soft deletion. Its inventory leaf #25052 is also PROJ-2's, Native from CP-WAVE1-CUT's flip.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25052",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "map review: PROJ-1's tree_nodes no longer list #25052, so PROJ-2 owns it through #21585, and PROJ-2's goal and ledger selectors name the project inventory, detail, checkouts and cross-project listing (GET /api/projects, detail, checkouts and MCP gobby-hub:list_all_projects), which go Native when CP-WAVE1-CUT flips the family. The plan places 4.1 after 3.5 and before 4.2 (#25053, PROJ-2); its blockers #24265 and #24963 are closed and its #25051 edge drops (D31). Its Python hub.py adapter (4.1.5) is not built: D4 rules out a Python client of a Rust endpoint, and GW-1's per-tool routing serves gobby-hub:list_all_projects natively. GET /api/projects/_inventory and its native-extension entry (4.1.6) are not built either, because that adapter is their only caller.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-1",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "PROJ-1",
+     "rationale": "PROJ-1's tree_nodes list #25052, and its ledger selectors match this leaf's project rows (GET /api/projects, detail, checkouts and MCP gobby-hub:list_all_projects). Its Python hub.py adapter (4.1.5) is not built: D4 rules out a Python client of a Rust endpoint, and GW-1's per-tool routing serves the tool natively (D26); its edge on #25051 drops because that cutover runs at CP-WAVE3-CUT, and in plan order it follows #25046 inside PROJ-1.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "PROJ-1's tree_nodes list #25052, and its ledger selectors match this leaf's project rows (GET /api/projects, detail, checkouts and MCP gobby-hub:list_all_projects). Its Python hub.py adapter (4.1.5) is not built: D4 rules out a Python client of a Rust endpoint, and GW-1's per-tool routing serves the tool natively (D26); its edge on #25051 drops because that cutover runs at CP-WAVE3-CUT, and in plan order it follows #25046 inside PROJ-1."
+  },
+  {
+   "ref": "#25053",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists local file tree, text and image reads; its edge on #25052 points upstream, since PROJ-2 depends on PROJ-1.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25054",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists checkout file writes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25055",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists git status and diff.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25056",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists project initialization (init_project) and checkout mutation; POST /api/nodes/checkouts belongs to NODEHUB (D11), not this family.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25057",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Gap at review time, since closed in the map: PROJ-2's goal lists metadata serialization and policy guards, but the task's cross-runtime guard is a shared flock on .gobby/.project.json.lock that edits 26 Python files (audit: 10,996 lines, transitional machinery), and neither D4's allow-list nor PROJ-2's python_edits (None) covers them. D19's same-lock-keys rule covers shared DB tables, not file-only writers of project.json.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25058",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned. PROJ-2's goal lists updates and soft deletion; its native project.json writes rely on #25057's cross-runtime guard (see that map gap).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25041",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "PROJ-2's goal lists P5's write fence (#25059, landed first), lifecycle-safe hard purge (#25060) and verification-command refresh (#25062). Its operator-command leaf #25061 is carved out to V5B.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25059",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Gap at review time, since closed in the map: PROJ-2's goal names the cross-runtime write fence as the D19 contract for projects, landed first, but the task pairs a gcore PostgreSQL advisory lock with Python edits (write_fence.py, storage/hub/postgres.py, runner_init/services.py), because Python's ProjectWriteFence is in-process only. D4 and PROJ-2's python_edits (None) exclude that half, so a native write or purge cannot exclude Python's writers (audit: transitional machinery).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25060",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned; its blockers #25059 and A1-RUNTIME's #24454 are upstream. PROJ-2's goal lists lifecycle-safe hard purge, whose exclusion of Python writers depends on #25059's fence (see that map gap).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25061",
+   "disposition": "chunk",
+   "target": "V5B",
+   "rationale": "V5B's goal names 'projects (#25061: the Projects command group and ordinary verbs)'. The command behaviors 5.3.1-5.3.8 survive as gclient verbs; only the Click shims are replaced (D16; deleted in S3-DELETE under D14). The rule is the same as for #25117: a command tree is chunk at its verb chunk, and a forwarder is superseded.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V5B",
+   "changed": false,
+   "reviewer_rationale": "The task builds 'gdaemon projects' subcommands plus Click shims in src/gobby/cli/projects.py (audit: Click shims, CLI strategy decision). V5B's goal owns the Projects command group as gclient verbs over the public API, which replaces that approach: D16 gives the operator rows to the Stage 3 verb chunks with REC-CLI goldens, and D4 rules out a Python client of a Rust endpoint, so no criterion written for the subcommand tree or the shims survives."
+  },
+  {
+   "ref": "#25062",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: edge-fix (it waits on the whole #21587 epic; narrow it to the AI leaf it consumes). The task calls the daemon's existing generation route, which D19 allows across the runtimes, so PROJ-2's goal (verification-command refresh, project_verification) needs no AI chunk edge; its CLI row 'gobby projects refresh-verification' goes to V5B (D16), and its #25061 edge drops.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25042",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "PROJ-2's goal ends with read/write compare and native default (#25063) and ledger evidence (#25065). Its two-machine proof #25064 is carved out to S4-PROOF.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25063",
+   "disposition": "chunk",
+   "target": "PROJ-2",
+   "rationale": "Audit: keep, as planned; its #24967 and #24964 blockers are upstream through SEAM-CALLERS. PROJ-2's goal lists read/write compare and native default: the compare verification is built here, and the default flip itself is CP-WAVE1-CUT's activation commit (D37: only a checkpoint's activation commit changes a compiled default).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": false
+  },
+  {
+   "ref": "#25064",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Audit: keep (the two-machine failure proof, 6.2.3; Stage 4 is up for replan). S4-PROOF's tree_nodes list #25064, and its goal names cross-surface Projects parity and the two-machine failure proof, activated at CP-NODE-CUT (D24, D39).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#25065",
+   "disposition": "superseded",
+   "target": "PROJ-2",
+   "rationale": "The task writes ledger shards through scripts/generate_parity_ledger.py and defines a routing rollback contract. D15 replaces that generator with gport ledger, which the chunk protocol runs in PROJ-2's step 6 and which writes owners at the cut (D5), and D37's generation rollback replaces the routing rollback. Its 6.3.5 reassignment of POST /api/nodes/checkouts to Projects contradicts D11 (NODEHUB), and its edge on S4-PROOF's #25064 drops.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "PROJ-2",
+   "changed": true
+  },
+  {
+   "ref": "#21587",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "AI-2's tree_nodes list #21587, so it is owned, not map-root. The map's selfcheck names only #21544, #21545, #21546 and #21568 as containers. G5 kept the same-shape #21585, whose phases span PROJ-1, PROJ-2, V5B and S4-PROOF, as chunk at its listing chunk. Phases in other chunks do not make it a map-root container under D31; close its 9 open children first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false,
+   "reviewer_rationale": "AI-2's tree_nodes list the family epic, but AI-2's landing does not finish it: its phases are split across REC-CATALOG (P0), AI-1A (P1, P6), AI-1B (P2-P5, P8), AI-2 (#25095, P7), CHAT-2 (#25111) and V4 (#25117, #25119), and AI-2 runs in parallel with AI-1B (neither depends on the other). It is an umbrella whose work is fully decomposed into chunks, so it closes as a map-root container (D31)."
+  },
+  {
+   "ref": "#25084",
+   "disposition": "chunk",
+   "target": "REC-CATALOG",
+   "rationale": "map review: REC-CATALOG's tree_nodes list #25084 (P0: freeze the family contract), and its goal records the AI-1A, AI-1B, AI-1C and AI-2 corpora against fake provider endpoints (D51).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-CATALOG",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "REC-CATALOG",
+     "rationale": "REC-CATALOG's tree_nodes list #25084 (P0: freeze the family contract), and its goal records the AI-1A, AI-1B and AI-2 corpora against fake provider endpoints.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "REC-CATALOG's tree_nodes list #25084 (P0: freeze the family contract), and its goal records the AI-1A, AI-1B and AI-2 corpora against fake provider endpoints."
+  },
+  {
+   "ref": "#25093",
+   "disposition": "chunk",
+   "target": "REC-CATALOG",
+   "rationale": "Audit: keep, unblocked today (the 0.1 corpus of the family's 19 rows). It sits under #25084, which REC-CATALOG owns, and REC-CATALOG records it from tests/ only.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-CATALOG",
+   "changed": false
+  },
+  {
+   "ref": "#25085",
+   "disposition": "chunk",
+   "target": "AI-1A",
+   "rationale": "map review: AI-1A's tree_nodes list #25085, and its goal is all of #21587 P1: the crate, the three family shells, the configuration snapshot and status reads, and native embedding generation (#25095, POST /api/embeddings), so AI-1A owns the ai family's three embeddings rows and AI-1B's admission and activation proofs reach every ai row (D51).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1A",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1A",
+     "rationale": "AI-1A's tree_nodes list #25085, and its goal is #21587 P1: the crate, three family shells, the configuration snapshot and status reads. Embedding generation #25095 is carved out to AI-2.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "AI-1A's tree_nodes list #25085, and its goal is #21587 P1: the crate, three family shells, the configuration snapshot and status reads. Embedding generation #25095 is carved out to AI-2."
+  },
+  {
+   "ref": "#25094",
+   "disposition": "chunk",
+   "target": "AI-1A",
+   "rationale": "Audit: keep, as planned. AI-1A's goal names the crate, the three family shells, the configuration snapshot and the status reads, with the LLM and vision status reads served from the capability snapshot.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1A",
+   "changed": false
+  },
+  {
+   "ref": "#25095",
+   "disposition": "chunk",
+   "target": "AI-1A",
+   "rationale": "map review: D51: AI-1A owns #25095 through #25085 once AI-2's tree_nodes drop it, and its goal names native embedding generation (1.2, POST /api/embeddings). 1.2 depends only on 1.1, and AI-1B's 2.1 depends on 1.2; AI-1B's 5.1.1 (#25106) and 5.2.1-5.2.2 (#25107) cover POST /api/embeddings as one of the eight ai rows, and AI-1B depends on AI-1A but does not reach AI-2. AI-1A also owns the ai family's embeddings status and doctor rows, which its 1.1 builds.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-2",
+     "rationale": "Audit: keep, as planned. AI-2's tree_nodes list #25095, and AI-1A's goal says embedding generation stays with AI-2.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "Audit: keep, as planned. AI-2's tree_nodes list #25095, and AI-1A's goal says embedding generation stays with AI-2."
+  },
+  {
+   "ref": "#25086",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "AI-1B's tree_nodes list #25086, and its goal is #21587 P2: feature-profile candidates, the text-generation service and endpoint adapters, CLI provider adapters, the generation route and local endpoint context.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25096",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal opens P2 with feature-profile candidates; the task's only blocker, AI-2's #25095, is plan order (the contract holds the six text-generation candidates and no embedding data), so that edge drops (D31).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25097",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal names the text-generation service and endpoint adapters.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25098",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal names CLI provider adapters within P2.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  }
+ ]
+}

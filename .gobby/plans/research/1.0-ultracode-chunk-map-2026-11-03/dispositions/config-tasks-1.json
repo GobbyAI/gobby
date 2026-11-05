@@ -1,0 +1,330 @@
+{
+ "batch": "config-tasks",
+ "part": 1,
+ "reviewer": "G1",
+ "dispositions": [
+  {
+   "ref": "#21559",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "D31 defines a close only for map-root containers ('map-root containers close'), and map-v2's coverage_selfcheck names exactly four containers (#21544, #21545, #21546 and #21568). G2, G5 and G7 keep every epic listed in tree_nodes as chunk at its listing chunk, which gives the applier D31's rule. A1-SECRETS lists #21559. Its 13 linked commits do not change that: it closes as superseded by A1-SECRETS' task (D31). Close its children first (closure-requires-closed-children).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false,
+   "reviewer_rationale": "Umbrella epic: its open leaves are disposed individually across SEAM-FAMILY (#24477), SEAM-CALLERS (#24452), A1-RUNTIME, A1-CONFIG, A1-SECRETS and CP-TEMPLATE-READS-CUT (#24474, the last to land), so the prefill's 'chunk' wrongly says one chunk does its work; A1-SECRETS' tree_nodes anchor it, and close gate 1 (children_closed) lets it close only after #24474. The audit's needs-josh (CC-5: no Rust owner for materialize_managed_launch, rotate_due or config activation) is settled by D12 (both in A1-RUNTIME) and by A1-CONFIG's config epoch, which R2's worker reconciliation applies to Python."
+  },
+  {
+   "ref": "#24439",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "A1-RUNTIME's tree_nodes list #24439. D31 has no close rule for a non-map-root container, and the selfcheck names only four containers, so this matches G2, G5 and G7. Close its 6 open children first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-RUNTIME",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 4.2-4.7 (4.1 #24451 is closed); its leaves split between SEAM-CALLERS (#24452, per D25) and A1-RUNTIME (#24453-#24457, which lands later), so it carries no work of its own and the prefill's 'chunk' kind is wrong. A1-RUNTIME's goal names '#21559 P4 (#24439)' and its tree_nodes anchor it."
+  },
+  {
+   "ref": "#24452",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "Audit keep (4.2: a new gruntime agent.rs that #25068 depends on). D25 places it in SEAM-CALLERS, whose goal builds agent-token and runtime-grant admission 'with capability-token verification #24452' and lists it in tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-CALLERS",
+   "changed": false
+  },
+  {
+   "ref": "#24453",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "Audit keep (4.3: a new challenge.rs serving /api/runtime/handshake/challenge); verify asks to re-verify 4.3-4.5 against the P4 Python drift (#24816, #24675, #25264; +129/-28). A1-RUNTIME's goal names the managed challenge route (#24453) and that re-verification, inside its /api/runtime selector.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-RUNTIME",
+   "changed": false
+  },
+  {
+   "ref": "#24454",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "Audit keep (4.4 credential issuance; CC-5 notes launch-time credential creation had no Rust owner). A1-RUNTIME's goal names credential issuance (#24454) and, per D12, ports materialize_managed_launch as a gruntime service, which closes that gap.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-RUNTIME",
+   "changed": false
+  },
+  {
+   "ref": "#24455",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "Audit keep (4.5 rotation and the grant.json rewrite; CC-5 left the rotate_due loop without an owner). A1-RUNTIME's goal names rotation with the grant.json rewrite (#24455) and, per D12 and ruling 16, writes rotate_due's native iteration and registers it on R4's scheduler, active from CP-TEMPLATE-READS-CUT.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-RUNTIME",
+   "changed": false
+  },
+  {
+   "ref": "#24456",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "Audit keep; verify says rewrite because Python's managed handshake now retries rotation in-request and reuses a competing successor (runner_init/servers.py:427-488, 047fa598a7). A1-RUNTIME's goal names the native managed handshake (#24456) and already directs it to follow that retry instead of the leaf's credential_issuance_failed.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-RUNTIME",
+   "changed": false
+  },
+  {
+   "ref": "#24457",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "Audit keep (4.7 grant presentation, which #25068 and #25103 depend on). A1-RUNTIME's goal names grant presentation (#24457) and GET /api/runtime/config, within its /api/runtime selector.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-RUNTIME",
+   "changed": false
+  },
+  {
+   "ref": "#24440",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "A1-CONFIG's tree_nodes list #24440. The convention is the same as for #21559. Under D31 every owned node closes at chunk-task creation, so the late-closing children G1 cites (A1-SECRETS) do not hold it open; close its 15 children first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 5.1-5.16 (5.3 #24460 is closed); its leaves split between A1-CONFIG (#24458, #24462-#24466, #24468, #24469) and A1-SECRETS (#24459, #24461, #24467, #24470-#24473, which lands later), so the prefill's 'chunk' wrongly says one chunk does its work. A1-CONFIG's goal names '#21559 P5 config routes (#24440)' and its tree_nodes anchor it."
+  },
+  {
+   "ref": "#24458",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep (5.1 GET /api/config/schema); verify notes its '458 properties' figure is already stale against today's runtime_config_contract.json. A1-CONFIG's goal names GET /api/config/schema (#24458) and starts its brief from the current contract counts.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24459",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit rewrite, upheld by verify: the description still names the stale hashtext lock key. A1-SECRETS' goal names secret listing and deletion (#24459) and says it 'takes the current embedding_switch_journal_mutation lock key, not the leaf's stale key', so the chunk brief carries the rewrite.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24461",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Gap at review time, since closed in the map: A1-SECRETS' goal names the prompt routes with the JSON save contract (#24461), but the task text changes Python's save contract too (configuration_prompts.py, SavePromptOverrideRequest) because it rejects parsing frontmatter natively (yaml_serde hides YAML 1.1 style and unsafe_code is forbidden), while A1-SECRETS declares python_edits None and D4 permits no such edit. The Rust routes are covered here; how this forced contract change reaches callers is stated nowhere in the map.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24462",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep (5.5 YAML template read and export, with gcore runtime_contract.rs edits). A1-CONFIG's goal names YAML template read and export (#24462) within its /api/config selector.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24463",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep (5.6 reads the config_active_state Python publishes; CC-5 asks who owns activation once Python retires). A1-CONFIG's goal names the active-state reads (#24463) and moves DaemonConfig's model to gcore::config under SEAM-FAMILY's config epoch, which R2's worker reconciliation applies to Python, so activation has a Rust owner.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24464",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep (5.7 ports the pydantic validators; sized as its own unit); verify says the 78-name list is stale. A1-CONFIG's goal names per-key validation (#24464) and starts from today's 84 validator decorators, naming the new ones.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24465",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep; verify says re-derive its validator list at chunk time, and A1-CONFIG's goal names complete-candidate validation (#24465) from today's counts. The task text's Python edits (validator message order, the truncated re-raise, a deleted redundant validator, tzdata for every platform in pyproject.toml) sit outside A1-CONFIG's python_edits None: the genuine bug fixes may land as D4 bug fixes, and any remaining divergence is a D18 known-bad row.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24466",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit rewrite, upheld: CC-6 amendment 5.9.10 makes PATCH secret updates use the multiplexer plan's 1.4 SecretStore::set_in, which cannot exist when #24466 closes. A1-CONFIG's goal names PATCH /api/config/values (#24466), covering 5.9.1-5.9.9; A1 lands in the pilot long before MUX-1, so 5.9.10 resolves by its own 'if this leaf lands first' branch to 1.4 absorbing this writer, which no MUX brief names yet (see the #24467 map gap).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24467",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Gap at review time, since closed in the map: A1-SECRETS' goal names secret creation (#24467), covering 5.10.1-5.10.5. Its CC-6 amendment 5.10.6 (an optional project_id on POST /api/config/secrets, passed to the multiplexer plan's 1.4 set_in; audit rewrite, verify upheld) has no covers label and no chunk names it, and the multiplexer plan's 5.2 sends that project_id while editing nothing in save_secret, so once #24467 closes nothing owns it.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24468",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep (5.11 adds a Python Yaml12Loader beside the Rust reader so both sides read YAML 1.2). A1-CONFIG's goal names #24468 'on both sides', but the chunk declares python_edits None and D4 permits no Yaml12Loader, so the chunk ports the Rust reader with the export quoting that keeps Rust-written YAML readable by PyYAML (A1-CONFIG's risks), and Python's YAML 1.1 readings of imports become D18 known-bad rows.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24469",
+   "disposition": "chunk",
+   "target": "A1-CONFIG",
+   "rationale": "Audit keep (5.12 PUT /api/config/template and POST /api/config/import, porting parts of documents.py and config_mutations.py). A1-CONFIG's goal names both routes (#24469) within its /api/config selector.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-CONFIG",
+   "changed": false
+  },
+  {
+   "ref": "#24470",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit keep (5.13, the largest leaf; the AI-providers plan defers probing and activation to this family). A1-SECRETS' goal names the generation-endpoint probe client (#24470), reaching fixture endpoints only, and lists it in tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24471",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit keep (5.14 activate route). A1-SECRETS' goal names generation-endpoint activation (#24471), and its PUT /api/config/generation-endpoints/ selector owns the route.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24472",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit keep; verify says re-verify against the classifier drift since the stamp (+116/-13; #24430, #24507, #24535, #24608). A1-SECRETS' goal names the validation-command classifier (#24472) 're-verified against +116/-13 of Python drift'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24473",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit keep (5.16 preview route); verify flags the same classifier drift. A1-SECRETS' goal names the detection preview (#24473) with that re-verification, and its selector owns POST /api/config/validation-detection/preview.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24441",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "A1-SECRETS' tree_nodes list #24441. The convention is the same as for #21559; close its children first, #24474 included (superseded CP-TEMPLATE-READS-CUT).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as a container whose operator steps live in its leaves; they split across SEAM-FAMILY (#24477), A1-SECRETS (#24475, #24476) and CP-TEMPLATE-READS-CUT (#24474, the last to land), so it carries no work of its own and the prefill's 'chunk' kind is wrong. A1-SECRETS' goal runs 'P6 (#24441)' and its tree_nodes anchor it."
+  },
+  {
+   "ref": "#24474",
+   "disposition": "superseded",
+   "target": "CP-TEMPLATE-READS-CUT",
+   "rationale": "D31's binding move, kind corrected from chunk. Its acceptance is code-only (6.1.1 default_backend Native, 6.1.2 the bump; verify), but its landing constraint cuts leaves over as they land through operator E1 route commands coordinated by Orchestrator #15977 with a 24 h soak (audit CC-2, CC-3), which rulings 14 and 20 replace with the checkpoint cut. CP-TEMPLATE-READS-CUT's goal states that #24474 'is this activation commit'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CP-TEMPLATE-READS-CUT",
+   "changed": true
+  },
+  {
+   "ref": "#24475",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit keep (6.2 replays tests/contracts/http/* natively; the manifest already has the config, runtime_challenge and runtime_handshake families). A1-SECRETS' goal says 'its corpus replays natively (#24475)', which is contract replay and fits ruling 7.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24476",
+   "disposition": "chunk",
+   "target": "A1-SECRETS",
+   "rationale": "Audit keep: the isolated e2e can close in one session, and the live soak is a separate exit procedure (CC-2). A1-SECRETS' goal runs 'the compare smoke, backend-kill fallback, flip and rollback E2E (#24476)' in the isolated harness, where D37 still lets tests pick a backend, and D13 moves the live soak to the CP-TEMPLATE cuts.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "A1-SECRETS",
+   "changed": false
+  },
+  {
+   "ref": "#24477",
+   "disposition": "chunk",
+   "target": "SEAM-FAMILY",
+   "rationale": "Audit rewrite, refuted to keep by verify (6.4.1's template docs are current; 6.4.2 documents front_door.routes flips). SEAM-FAMILY's goal ships 'the family-crate template and the activation runbook (#24477)', and D37 makes that runbook describe checkpoint activation commits and generation rollback, because front_door.routes is never used on the live daemon.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-FAMILY",
+   "changed": false
+  },
+  {
+   "ref": "#21560",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "B0-CLOSE's tree_nodes list #21560. The convention is the same as for #21559. Applier: #21560 carries needs-planning, a HOLD_LABEL (storage/tasks/_automation.py:23) that blocks its auto-close, so close it explicitly or drop the label, after its 7 children.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false,
+   "reviewer_rationale": "Family root epic whose leaves are disposed across REC-PILOT, B0-READ, B0-WRITE, B0-CLOSE, CP-TEMPLATE-CLOSE-CUT (#25521) and V2 (#25499, #25527; Stage 3, the last to land), so the prefill's 'chunk' kind is wrong; B0-CLOSE's tree_nodes anchor it. Verify's needs-josh on its #21559 edge is settled by D25 (A1 first; B0-READ depends on A1-SECRETS), and its stale needs-planning label is a hold label (storage/tasks/_automation.py:23) that blocks the auto-close, so the label goes or the close is explicit."
+  },
+  {
+   "ref": "#21561",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "B0-WRITE's tree_nodes list #21561. The convention is the same as for #21559; close it after its children.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false,
+   "reviewer_rationale": "Audit keep as the container for P2 (through #20822) and P3; its subtree spans B0-WRITE and B0-CLOSE (#25511, #25514, #25515, #25516), so it carries no work of its own and the prefill's 'chunk' kind is wrong. B0-WRITE's goal opens with '#21561' and its tree_nodes anchor it; the description's 'consults transcripts' is cosmetic (audit)."
+  },
+  {
+   "ref": "#20822",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "B0-WRITE's tree_nodes and goal list #20822 ('the transition authority matrix #20822'). The convention is the same as for #21559. Its restraint-deferral label is a ceiling note, not a deferral by Josh.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false,
+   "reviewer_rationale": "Audit merge (verify: #25494 merges into #20822, which survives): its one child #25494 holds #25505 and #25506, the audit items in its description are carried by 2.1, 3.2, 3.5, 3.9 (#25515, B0-CLOSE), 3.11 and #21581 (PLANS), and its ten named stage and verdict tools no longer exist. With nothing of its own left it is a container, not a chunk node; B0-WRITE's goal names 'the transition authority matrix #20822' and anchors it."
+  },
+  {
+   "ref": "#25494",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "#25494 is not listed itself and is owned through #20822 (B0-WRITE). The convention is the same as for #21559.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 2.1-2.2 and the merge partner of #20822; both leaves (#25505, #25506) are disposed to B0-WRITE, so it carries no work of its own and closes with them, which makes container the right kind. B0-WRITE owns it through #20822 in its tree_nodes."
+  },
+  {
+   "ref": "#25505",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (2.1 caller principals and the transition table, with D5-D7); verify flags Q9 as stale, since label removal now needs the operator or the remove_security_review_label capability and only for security-review (674594feaa). B0-WRITE's goal ports the authority matrix and says authorize_label_removal 'wins over the plan's Q9'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25506",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (2.2 ports the closed #25228's task_protection_policy as native protection refusals). B0-WRITE carries it with the transition authority matrix (#20822) named in its goal and tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  }
+ ]
+}

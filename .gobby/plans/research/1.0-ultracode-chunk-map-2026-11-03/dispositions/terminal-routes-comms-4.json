@@ -1,0 +1,457 @@
+{
+ "dispositions": [
+  {
+   "ref": "#25099",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal names the generation route within P2; AI-2's #25115 waits on it only to order edits to the shared waiver file.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25100",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "map review: Audit: keep, as planned. AI-1B's goal ends P2 with local endpoint context; AI-1C's #25109 reads this 2.5 evidence, which is why AI-1C lands after AI-1B (D51).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1B",
+     "rationale": "Audit: keep, as planned. AI-1B's goal ends P2 with local endpoint context; AI-1A's #25109 reads this 2.5 evidence, which is the map gap recorded on #25109.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "Audit: keep, as planned. AI-1B's goal ends P2 with local endpoint context; AI-1A's #25109 reads this 2.5 evidence, which is the map gap recorded on #25109."
+  },
+  {
+   "ref": "#25087",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "AI-1B's tree_nodes list #25087, and its goal is #21587 P3: the read-only gcode tool runtime and endpoint tool loop, provider tool-chat styles and chat completions with managed tool credentials.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25101",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal names the read-only gcode tool runtime and endpoint tool loop.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25102",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal names provider tool-chat styles.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25103",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep; it waits on A1 P4's #24454 and #24457, which A1-RUNTIME builds upstream of AI-1B. AI-1B's goal names chat completions with managed tool credentials.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25088",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "AI-1B's tree_nodes list #25088, and its goal is #21587 P4: vision extraction and the full capability snapshot with Voice audio bindings.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25104",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep, as planned. AI-1B's goal names vision extraction.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25105",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "map review: D50 closes the ordering gap: AI-1B's #25105 declares the speech-to-text probe as a trait in crates/gai with #25072's contract and builds the full snapshot, the audio bindings and GET /api/llm/status against a stub probe, as the AI plan's 4.2 verification does. Without a probe the ai family leaves GET /api/llm/status to Python. VOICE's #25072 implements the trait through an adapter in gdaemon, and serve.rs passes that adapter to the ai family only while the voice family's backend is Native, so the row moves to Native with CP-WAVE3-CUT's voice default flip and that activation commit flips only defaults (D37). The card's #25072 edge is satisfied by the trait, not by VOICE's landing.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1B",
+     "rationale": "MAP GAP: AI-1B's goal names the full capability snapshot with Voice audio bindings, but the task calls #25072's voice_stt_available(voice_config) -> bool, and #25072 sits in VOICE, which depends on AI-1B (and CHAT-2), so AI-1B cannot build this leaf in the map's order. Audit: keep, waits on #25072 (rewrite).",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "MAP GAP: AI-1B's goal names the full capability snapshot with Voice audio bindings, but the task calls #25072's voice_stt_available(voice_config) -> bool, and #25072 sits in VOICE, which depends on AI-1B (and CHAT-2), so AI-1B cannot build this leaf in the map's order. Audit: keep, waits on #25072 (rewrite)."
+  },
+  {
+   "ref": "#25089",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "map review: AI-1B's tree_nodes list #25089, and its goal is #21587 P5: the native admission binding on the #25068 contract (#25106) and #25107's dormant criteria 5.2.1-5.2.3, with in-process tests on a stub speech-to-text probe and 5.2.2's end-to-end run over the seven ai rows that serve without one (D50). #25107's default flip, version bumps and release are CP-WAVE1-CUT's activation, which lists it (D37, D39).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1B",
+     "rationale": "AI-1B's tree_nodes list #25089, and its goal is #21587 P5: the native admission binding on the #25068 contract and ai family activation #25107 without its release step.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "AI-1B's tree_nodes list #25089, and its goal is #21587 P5: the native admission binding on the #25068 contract and ai family activation #25107 without its release step."
+  },
+  {
+   "ref": "#25106",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "Audit: keep; it waits on #25068 (A1-RUNTIME) and #25046 (SEAM-CALLERS), both upstream of AI-1B. AI-1B's goal names the native admission binding on the #25068 contract.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25107",
+   "disposition": "superseded",
+   "target": "CP-WAVE1-CUT",
+   "rationale": "map review: Activation and release leaf (ruling 20, D37): the task promotes the coherent trio through promote_workspace_binary_set with 0.0.1 bumps, and only a checkpoint's activation commit flips defaults, so the ai family's default flip, version bumps and release are CP-WAVE1-CUT's activation, whose tree_nodes list #25107 (D39). AI-1B's goal keeps 5.2.1-5.2.3 as dormant build work: in-process tests pass a stub speech-to-text probe, and 5.2.2's end-to-end run on the gdaemon binary covers the seven ai rows that serve without a probe, while VOICE's harness adds GET /api/llm/status with the real probe (D50). AI-1A builds the embeddings rows that 5.2.1-5.2.2 cover (D51). The edge on #25112 (7.0) only orders the release, because 7.0's gcore change ships with it, and CP-WAVE1-CUT reaches AI-2, which builds 7.0.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": true,
+   "reviewer_rationale": "Audit: rewrite (5.2's 0.0.1 bumps and promote_workspace_binary_set conflict with batched promotion). AI-1B's goal keeps '#25107 without its release step', and build criteria survive: 5.2.1-5.2.3's scoping, Python-loss e2e and readiness tests run in the isolated harness. The front_door.routes selection, the coherent release and the Orchestrator-delegated cutover go to CP-WAVE1-CUT's activation commit and promotion (D37, D39, rulings 11 and 20), and gcode and ghook bump only there.",
+   "history": [
+    {
+     "disposition": "superseded",
+     "target": "CP-WAVE1-CUT",
+     "rationale": "The task text promotes the coherent trio through promote_workspace_binary_set with 0.0.1 bumps, and only the Orchestrator delegates the cutover (audit: rewrite). Under ruling 20 and D37, only a checkpoint's activation commit flips defaults. CP-WAVE1-REVIEW's activation list flips every wave 1 family except providers, so the ai family's activation and release belong to CP-WAVE1-CUT. D31's binding move of #25521 is the precedent for this exact shape. B0-CLOSE's goal names #25521 as 'landed dormant (#25521, which CP-TEMPLATE-CLOSE-CUT activates and releases)', yet D31 sends it to the cut; G2 did the same for #25559 and #24707. AI-1B's goal keeps 5.2.1-5.2.3 as dormant build work ('#25107 without its release step'), and D31 closes both kinds at chunk-task creation, so only the target changes. Map fix: CP-WAVE1-CUT's tree_nodes list #25107.",
+     "by": "verify pass"
+    }
+   ]
+  },
+  {
+   "ref": "#25090",
+   "disposition": "chunk",
+   "target": "AI-1C",
+   "rationale": "map review: D51: AI-1C, a new family chunk after AI-1B, lists #25090 and owns P6's three dormant leaves (#25108, #25109, #25110), because 6.1 reads 2.5's local endpoint context, which AI-1B builds (#25100). The activation leaf #25111 stays carved out to CHAT-2's dormant build and CP-WAVE3-CUT's activation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1A",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1A",
+     "rationale": "AI-1A's tree_nodes list #25090, and its goal is #21587 P6: the web-chat provider health seam (#25108), the provider list and model catalog (#25109) and provider usage (#25110). Its activation leaf #25111 is carved out to CHAT-2, and #25109 carries a map gap.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "AI-1A's tree_nodes list #25090, and its goal is #21587 P6: the web-chat provider health seam (#25108), the provider list and model catalog (#25109) and provider usage (#25110). Its activation leaf #25111 is carved out to CHAT-2, and #25109 carries a map gap."
+  },
+  {
+   "ref": "#25108",
+   "disposition": "chunk",
+   "target": "AI-1C",
+   "rationale": "map review: D51: the web-chat provider health seam moves with #25090 to AI-1C, whose goal names it; CHAT-2's #25111 connects the native web-chat runtime to it through an adapter in gdaemon, and CHAT-2 depends on AI-1C.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1A",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1A",
+     "rationale": "Audit: keep, as planned. AI-1A's goal names the web-chat provider health seam #25108, which CHAT-2's #25111 connects to the native web-chat runtime.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "Audit: keep, as planned. AI-1A's goal names the web-chat provider health seam #25108, which CHAT-2's #25111 connects to the native web-chat runtime."
+  },
+  {
+   "ref": "#25109",
+   "disposition": "chunk",
+   "target": "AI-1C",
+   "rationale": "map review: D51 closes the ordering gap: AI-1C depends on AI-1B, so the local model groups (6.1.3) read AI-1B's get_observation evidence from #25100, and #25108's seam lands in the same chunk. AI-1C's goal names #25109.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1A",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1A",
+     "rationale": "MAP GAP: AI-1A's goal names #25109, but its local model groups (6.1.3) read 2.5's get_observation context evidence from #25100, which AI-1B builds, and AI-1B depends on AI-1A, so AI-1A cannot build this leaf in the map's order. Audit: keep, blocked by #25108 and #25100.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "MAP GAP: AI-1A's goal names #25109, but its local model groups (6.1.3) read 2.5's get_observation context evidence from #25100, which AI-1B builds, and AI-1B depends on AI-1A, so AI-1A cannot build this leaf in the map's order. Audit: keep, blocked by #25108 and #25100."
+  },
+  {
+   "ref": "#25110",
+   "disposition": "chunk",
+   "target": "AI-1C",
+   "rationale": "map review: D51: provider usage follows #25109 to AI-1C, whose goal names it; its wait on #23603 clears with start gate item 2's #23591 wrap-up (ruling 6).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1A",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-1A",
+     "rationale": "Audit: keep; it waits on #23603, the pre-port wrap-up under start-gate item #23591 (ruling 6), and on #25109. AI-1A's goal names provider usage #25110, and it follows #25109 wherever that leaf's map gap puts it.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "Audit: keep; it waits on #23603, the pre-port wrap-up under start-gate item #23591 (ruling 6), and on #25109. AI-1A's goal names provider usage #25110, and it follows #25109 wherever that leaf's map gap puts it."
+  },
+  {
+   "ref": "#25111",
+   "disposition": "superseded",
+   "target": "CP-WAVE3-CUT",
+   "rationale": "The map already says '#25111's release step is that cutover'. CP-WAVE1-REVIEW holds the providers family for CP-WAVE3-CUT, and the audit rates #25111's per-family release a rewrite. #25111 is superseded by the cut that now carries it, as G2 disposed #25559 and #24707 to CP-WAVE3-CUT. CHAT-2 keeps the dormant serve.rs WebChatHealth adapter and 6.3.1-6.3.3. Map fix: CP-WAVE3-CUT's tree_nodes list #25111, #25559 and #24707.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CHAT-2",
+   "changed": true,
+   "reviewer_rationale": "Audit: rewrite (the per-family release conflicts with batched promotion, and it waits on all of #21592). CHAT-2's tree_nodes list #25111 and its goal builds the providers default flip dormant, and build criteria survive: serve.rs's WebChatHealth adapter for #21592's runtime and 6.3.1-6.3.3's scoping, Python-loss and readiness tests. The flip and the gdaemon release are CP-WAVE3-CUT's activation commit and promotion (AI-1A's goal: '#25111's release step is that cutover'; D37, D39)."
+  },
+  {
+   "ref": "#25091",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "map review: AI-2's tree_nodes list #25091, and its goal is the embedding switch: gcore Qdrant alias operations, the catalog contract, the journal, coordinator and routes, staging, build, flip and garbage collection, with gcore's CollectionRebuildSeam trait and stub-seam proofs (D52). Its command tree #25117 and CLI forward #25119 are carved out to V4, and its activation #25118 to MCP-FLIP's dormant proofs and CP-WAVE5-CUT's activation (D52).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-2",
+     "rationale": "AI-2's tree_nodes list #25091, and its goal is the embedding switch: gcore Qdrant alias operations, the catalog contract, the journal, coordinator and routes, staging, build, flip and garbage collection, and activation. Its command tree #25117 and CLI forward #25119 are carved out to V4.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "AI-2's tree_nodes list #25091, and its goal is the embedding switch: gcore Qdrant alias operations, the catalog contract, the journal, coordinator and routes, staging, build, flip and garbage collection, and activation. Its command tree #25117 and CLI forward #25119 are carved out to V4."
+  },
+  {
+   "ref": "#25112",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "Audit: keep, unblocked today; the gcore change bumps every gcore dependent. AI-2's goal names the gcore Qdrant alias operations, and under D39 its landing bumps gdaemon while gcode and ghook bump in the cut's activation commit.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false
+  },
+  {
+   "ref": "#25113",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "Audit: keep, as planned. AI-2's goal names the embedding catalog contract; the generated Python catalog module the task plans is outside D4's allow-list and AI-2's python_edits (None), so the chunk builds the Rust side and leaves Python's catalog as it is.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false
+  },
+  {
+   "ref": "#25114",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "Audit: keep, as planned; its #24466 blocker is A1-CONFIG's, upstream. AI-2's goal names the switch journal, coordinator and routes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false
+  },
+  {
+   "ref": "#25115",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "Audit: keep, as planned. AI-2's goal names staging through provider APIs; its edge on AI-1B's #25099 only orders edits to the shared waiver file, so it drops (D31).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false
+  },
+  {
+   "ref": "#25116",
+   "disposition": "chunk",
+   "target": "AI-2",
+   "rationale": "map review: D52 closes the ordering gap: AI-2 adds gcore's CollectionRebuildSeam trait (rebuild, project_change, and promote and discard with no-op defaults), and the runner is proven against stub seams, so #25116's edges on #25070 and #25071 are dropped. MEM-2's #25547 and MCP-FLIP's #25071 implement the real seams, MCP-FLIP composes them, and CP-WAVE5-CUT activates the switch.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": false,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "AI-2",
+     "rationale": "MAP GAP: AI-2's goal names build, flip and garbage collection, but the task's build rebuilds collections through #25070's memories seam (MEM-2) and #25071's tool-embedding seam (MCP-FLIP), both downstream of AI-2, while CP-WAVE1-CUT activates the wave 1 families, AI-2 included. Audit: keep, waits on #25070 and #25071 (brief decision 14); the map's note that #25116's card is stale concerns only the serving lease.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "MAP GAP: AI-2's goal names build, flip and garbage collection, but the task's build rebuilds collections through #25070's memories seam (MEM-2) and #25071's tool-embedding seam (MCP-FLIP), both downstream of AI-2, while CP-WAVE1-CUT activates the wave 1 families, AI-2 included. Audit: keep, waits on #25070 and #25071 (brief decision 14); the map's note that #25116's card is stale concerns only the serving lease."
+  },
+  {
+   "ref": "#25117",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "V4's goal names 'embeddings commands (#25117, #25119)', and AI-2's goal sends 'the embeddings command tree #25117' to V4. Its command behaviors 7.5.1-7.5.6 survive as gclient verbs (D16), so its remaining 1.0 work is done in V4. #25003-#25005 (skills) and #25555-#25556 (memory) are the same shape and are disposed chunk V4. Only the Python forwarders (#25006, #25119, #25560) are replaced by D16's no-forwarder design, and they stay superseded V4.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false,
+   "reviewer_rationale": "The task builds a 'gdaemon embeddings' clap dispatcher. V4's goal owns the embeddings commands as gclient verbs over the public API (D16: the Stage 3 verb chunks own the operator rows and family chunks add no verbs), which replaces the gdaemon subcommand tree, so V4's design supersedes the node rather than doing it as planned."
+  },
+  {
+   "ref": "#25118",
+   "disposition": "superseded",
+   "target": "CP-WAVE5-CUT",
+   "rationale": "map review: D52 moves the ai-embedding-switch family's activation and release to CP-WAVE5-CUT, whose tree_nodes list #25118: one Qdrant alias request flips both kinds' collections (AI plan 7.4), and the tool_embeddings seam exists only from MCP-FLIP. MCP-FLIP composes both seams in serve.rs and proves the dormant criteria 7.6.1-7.6.3 and 7.6.6, driving the four switch rows over HTTP because V4's gclient verbs replace the gdaemon embeddings command tree (D16); 7.6.4's bump and 7.6.5's runbook are the cut's (D37, D39). AI-2 cannot prove 7.6.2 or 7.6.6, which need the real seams that serve composes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-2",
+   "changed": true,
+   "reviewer_rationale": "MAP GAP: the task says activation 'requires #25070 and #25071', which MEM-2 and MCP-FLIP build after CP-WAVE1-CUT, where AI-2's families go Native. Otherwise the prefill holds: AI-2's goal lists activation, and build criteria survive (7.6.1-7.6.3 and 7.6.6's recovery across the flip restart) while the flip and release go to the cut (D37, D39; audit: rewrite), and its 'gdaemon embeddings' e2e driver becomes V4's gclient verbs (D16).",
+   "history": [
+    {
+     "disposition": "superseded",
+     "target": "CP-WAVE1-CUT",
+     "rationale": "#25118 is the ai-embedding-switch family's promote-and-activate leaf; its task text promotes the trio, the Orchestrator delegates the cutover, and it 'requires #25070 and #25071'. As the map is written, CP-WAVE1-CUT flips the wave 1 families, AI-2 included. If the confirmed #25116/#25118 map gap is fixed by moving the switch's activation after MCP-FLIP, the target becomes CP-WAVE5-CUT. AI-2 keeps 7.6.1-7.6.3 and 7.6.6 as dormant build work in the isolated harness.",
+     "by": "verify pass"
+    }
+   ]
+  },
+  {
+   "ref": "#25119",
+   "disposition": "superseded",
+   "target": "V4",
+   "rationale": "The task adds a Python Click forwarder in src/gobby/cli/embeddings.py that hands the public CLI to the gdaemon command tree (audit: Click forwarding, CLI strategy decision). D4 rules out a Python client of a Rust endpoint and D16 gives the public CLI to V4's gclient verbs, so V4's design replaces the forwarder.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": true
+  },
+  {
+   "ref": "#25092",
+   "disposition": "chunk",
+   "target": "AI-1B",
+   "rationale": "AI-1B's tree_nodes list #25092, and its goal names P8, the ledger record, which the chunk protocol's step 6 produces with gport ledger (D5, D15).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": false
+  },
+  {
+   "ref": "#25120",
+   "disposition": "superseded",
+   "target": "AI-1B",
+   "rationale": "The task edits the parity-ledger status shards to set the 19 AI rows to delegated after 5.2, 6.3, 7.6 and 7.7, then regenerates the ledger with scripts/generate_parity_ledger.py and tests/test_parity_ledger.py (8.1.3); D15 replaces both with gport ledger, and D5 has it write chunk ids into the owner column at each cut. Those activations now land at CP-WAVE1-CUT, CP-WAVE3-CUT and V4, and its guide text assumes the 'gobby embeddings' forwarder that D16 drops, so AI-1B's gport ledger step replaces the publication and the edge on V4's #25119 drops.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AI-1B",
+   "changed": true
+  },
+  {
+   "ref": "#21588",
+   "disposition": "chunk",
+   "target": "VOICE",
+   "rationale": "Audit: needs-josh (the Rust STT engine choice and Crane TTS scope and licence). VOICE's tree_nodes list #21588, and D107 is the answer to D9 that VOICE builds (whisper-rs and Crane behind two traits) unless Josh rules otherwise at map approval, so the node's placement does not wait on D9.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "VOICE",
+   "changed": false
+  },
+  {
+   "ref": "#25072",
+   "disposition": "chunk",
+   "target": "VOICE",
+   "rationale": "Audit: rewrite (criterion 3's faster-whisper parity depends on the engine choice). VOICE's goal names the STT readiness probe for the capability registry (#25072), and the probe implements AI-1B's probe trait on D107's engine through an adapter in gdaemon, so AI-1B's #25105 reaches it with no dependency on VOICE's code. Criterion 3's faster-whisper parity is an accepted contract change at CP-WAVE3-REVIEW (D17).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "VOICE",
+   "changed": false
+  },
+  {
+   "ref": "#21589",
+   "disposition": "chunk",
+   "target": "OBS",
+   "rationale": "Audit: keep (no plan; blocked by #21560, which B0-CLOSE builds upstream of OBS). OBS's tree_nodes list #21589, and its goal is the admin, metrics, traces, feedback and observations family.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "OBS",
+   "changed": false
+  },
+  {
+   "ref": "#21590",
+   "disposition": "chunk",
+   "target": "AUTH",
+   "rationale": "Audit: rewrite (the ledger sees only 12 CLI ui rows, not the SPA catch-all, /assets, the Vite dev proxy or HMR). AUTH's tree_nodes list #21590, and its goal names that unledgered static serving, which REC-PLATFORM records against a fixture dist tree and a fake Vite dev server.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "AUTH",
+   "changed": false
+  },
+  {
+   "ref": "#21591",
+   "disposition": "chunk",
+   "target": "V1B",
+   "rationale": "Audit: keep (no plan or direct rows; the install and postgres CLI rows sit on the umbrella). V1B's tree_nodes list #21591 as its install and setup family, built as gclient verbs (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V1B",
+   "changed": false
+  },
+  {
+   "ref": "#21592",
+   "disposition": "chunk",
+   "target": "CHAT-2",
+   "rationale": "Audit: keep (no plan; its only child is #25291, and #25111 waits on it). CHAT-2's tree_nodes list #21592: the live chat runtime as single-owner state, the 17 WS chat messages, web chat and the ACP routes, on SEAM-WS's handler registry.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CHAT-2",
+   "changed": false
+  },
+  {
+   "ref": "#25291",
+   "disposition": "superseded",
+   "target": "CHAT-1",
+   "rationale": "Audit: merge (its only criterion, 'passes gobby plans validate, and carries its consensus and manifest stamps', is a gobby-plan gate). Ruling 1 replaces gobby-plan with chunk briefs, and CHAT-1's goal makes the WS chat family contract its brief's first deliverable, so CHAT-1's design replaces the node's planned approach and none of the node's criteria survive.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CHAT-1",
+   "changed": true
+  },
+  {
+   "ref": "#22143",
+   "disposition": "chunk",
+   "target": "VOICE",
+   "rationale": "Audit: keep (a planning-only architecture_doc whose criteria ask for a grounded plan, not the gobby-plan pipeline; blocked by #21588). VOICE's tree_nodes list #22143, and its goal makes the node's deliverable a plan, .gobby/plans/terminal-speech.md, written in VOICE's last checkpoint (D108). The node closes superseded by VOICE's task.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "VOICE",
+   "changed": false
+  },
+  {
+   "ref": "#22075",
+   "disposition": "decision",
+   "target": "D6",
+   "rationale": "Labeled deferred-by-josh, and Josh placed it in Stage 2 on 2026-10-08 ('22075 is also stage 2', re-parented under #21544). The map's self-check (map-v2.md:2419) counts it as post-1.0 under D6, but D6 is a recommended default with no resolved_by, so the map does not settle it: it keeps Josh's Stage 2 placement until he decides D6.",
+   "prefill_disposition": null,
+   "prefill_target": null,
+   "changed": true
+  },
+  {
+   "ref": "#22340",
+   "disposition": "chunk",
+   "target": "COMMS-1",
+   "rationale": "Audit: superseded (folded into #24173 on 2026-10-28; the audit's reason that landed draft 66216fbb0d blocks a superseded close is out of date (D31)). COMMS-1's tree_nodes list #22340, and its goal, following D2, closes it done citing COMMS-1's landing SHA; D2's open order question moves COMMS-1 as a whole, not this node.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "COMMS-1",
+   "changed": false
+  },
+  {
+   "ref": "#24173",
+   "disposition": "decision",
+   "target": "D2",
+   "rationale": "#24173 carries josh-ruling. Josh's operator-directed #25597 (2026-11-02) placed the comms work that #24173 plans early in Stage 2. D2 has no resolved_by, and its default does not adopt that order. The task rule keeps a Josh placement as decision unless the map settles it, and an open decision's default does not settle it. D28 (rulings 12 and 13), D29 and ruling 1 settle the adapter set, the mailbox owner and the plan gate, not the order. G5 (#21583) and G7 (#25597) already dispose the same placement as decision D2, so #24173 must match. Under D2's default the disposition is superseded COMMS-1, as D31 has it for any chunk-owned node. #22340, folded into it, still closes done per D2, citing COMMS-1's landing SHA.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "COMMS-1",
+   "changed": true,
+   "reviewer_rationale": "Audit: needs-josh (criteria 1-3 are plan-file and stamp gates, scope item 1 is a Python refactor, Teams is out, and criterion 8 claims the mailbox). The map settles each point, so its josh-ruling label does not make it a decision: ruling 1 replaces the plan gates with COMMS-1's brief, D28 (resolved by rulings 12 and 13) restores Teams on one Rust gobby-comms adapter contract, and D29 gives the mailbox to AG-3. COMMS-1's design therefore replaces its approach, while COMMS-1 carries '#24173's core' and reuses its relay and reply-context acceptance text."
+  }
+ ]
+}
