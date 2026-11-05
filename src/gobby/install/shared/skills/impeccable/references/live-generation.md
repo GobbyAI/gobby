@@ -29,7 +29,7 @@ node <scripts_dir>/live-insert.mjs --id EVENT_ID --count EVENT_COUNT --position 
 
 ### 1. Read the screenshot (if present)
 
-`event.screenshotPath` is sent **only when the user annotated before Go**; it is a PNG of the element with annotations baked in. Read it before planning. When absent, do not ask for one or screenshot the page yourself: without annotations a screenshot anchors you on the existing design and fights the three-distinct-directions brief; work from `element.outerHTML`, the computed styles, and the prompt.
+`event.screenshotPath` is sent **only when the user annotated before Go**; it is a PNG of the element with annotations baked in. Read it first. When absent, do not ask for one or screenshot the page: without annotations a screenshot anchors you on the existing design and fights the three-distinct-directions brief; work from `element.outerHTML`, the computed styles, and the prompt.
 
 Annotation semantics: a comment's `{x, y}` is element-local and binds the text to the child under that point (a comment near the title is about the title). Comments and strokes are independent unless clearly paired. Strokes read by shape: closed loop = "this thing" (emphasis, not a clipping region); arrow = direction or movement; cross/slash = delete; scribble = emphasis or delete by context. If a stroke's intent is genuinely ambiguous and it changes the brief, ask one short question before generating; otherwise state your reading in one sentence.
 
@@ -106,6 +106,6 @@ Sources in priority order: `.impeccable.md`'s visual-system fields; CSS custom p
 
 `event.freeformPrompt` is the user's ceiling on direction: all variants honor it while exploring different interpretations within the Phase B mode. Default mode: the prompt narrows the axes, not the identity ("more confident" → one variant amplifies hierarchy, one commits the accent color, one tightens density). Departure mode: the prompt narrows the lanes, not the families ("newspaper front page" → broadsheet vs tabloid vs trade journal, then run the family pass). When the prompt conflicts with a binding brand commitment or `.impeccable.md` invariant, preserve the invariant unless the user explicitly revokes it.
 
-After planning and applying the prompt, call `get_skill_file(name="impeccable", path="references/live-variants.md")` to deliver variants, declare parameters, and signal completion.
+After planning and applying the prompt, call `get_skill_file(name="impeccable", path="references/live-variants.md")` to deliver variants, declare parameters and signal completion.
 
-_Version: 1.0.0_
+_Version: 1.0.1_

@@ -1,14 +1,13 @@
 # assistant procedures
 
-A status tick arrives as a message from the status-wake pipeline. Run this procedure at once.
-A tick never waits for the operator.
+A status tick arrives from the status-wake pipeline. Run this procedure at once; a tick never waits for the operator.
 
 ## Seat recovery
 
 Never spawn seats. When the Orchestrator needs to be stopped or respawned, send
 the operator the reason and supporting evidence, request that action, and wait.
 The operator performs the shutdown and relaunch. Do not activate another
-definition or restart the Orchestrator yourself.
+definition, cold-start, or restart the Orchestrator yourself.
 
 ## Cadence and mode
 
@@ -187,12 +186,7 @@ Sources:
      activity proves it, and idle when inactivity is recorded. Otherwise it is unknown. A pane with
      no live session is empty.
    - Format one tab heading, then one line per pane: `label | seat | provider / model / reasoning
-     effort | state | task ref and title or none`. Examples: `unlabeled | empty | none / none / none |
-     no seat | task none`; `seat label | role | provider / model / reasoning effort | idle | task
-     none`. Never omit empty panes or unclaimed seats. Report tabs_read/total and panes_read/total.
-
-The root queue, the next-five order and the last Consolidator review are not gathered here. They
-come from the digest, which is #25661's scope.
+     effort | state | task ref and title or none`. Example: `unlabeled | empty | none / none / none | no seat | task none`. Never omit empty panes or unclaimed seats. Report tabs_read/total and panes_read/total.
 
 ## Report handoff from another seat
 
@@ -236,7 +230,7 @@ Rules for every report:
   breaching.
 - List unknowns and source gaps under the section they affect. Never add a generic unknowns
   paragraph.
-- Include no log lines, log paths or file paths. Your message says what happened and when.
+- Include no log lines, log paths or file paths; say what happened and when.
 - Keep it to structure, not prose.
 
 ## Deliver
@@ -245,12 +239,10 @@ Rules for every report:
    `gobby-communications:resolve_operator_conversation(channel="gobby-telegram")`, unless project
    policy names another channel. If it is missing or ambiguous, report the delivery gap to the
    Orchestrator and stop. Never guess a destination.
-2. Check `gobby-communications:list_conversation_attachments` and branch on whether the operator
-   channel is attached to this pane, meaning this session holds the attachment. Each tick takes
-   exactly one of these paths:
-   - Attached: type the whole markdown report once as your reply in this pane. Automatic mirroring
-     carries it to the operator channel. Do not call `send_operator_message` for this tick, and
-     do not announce a send.
+2. Check `gobby-communications:list_conversation_attachments` to see whether this session holds the
+   operator channel attachment. Each tick takes exactly one path:
+   - Attached: type the whole markdown report once in this pane; automatic mirroring carries it to
+     the operator channel. Do not call `send_operator_message` or announce a send.
    - Not attached: send the whole markdown report once with
      `gobby-communications:send_operator_message(channel=<channel>, content=<report>)`. Inspect
      success and keep the message_id. Type nothing in this pane for this tick.
@@ -259,5 +251,5 @@ Rules for every report:
    retry applies.
 4. On the send path, never resend a confirmed delivery.
 
-_Version: 3.0.0_
+_Version: 3.0.1_
 _Last verified: 2026-11-04_
