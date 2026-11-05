@@ -94,6 +94,18 @@ impl WorkspaceSim {
         find(&self.panes).or_else(|| self.parked.iter().find_map(|(_, _, panes)| find(panes)))
     }
 
+    /// The daemon pane that shows `terminal_id`, including a parked workspace.
+    pub fn pane_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        let find = |panes: &[Value]| {
+            panes.iter().find_map(|pane| {
+                (pane["terminal_id"].as_str() == Some(terminal_id))
+                    .then(|| pane["id"].as_str().unwrap_or_default().to_string())
+                    .filter(|id| !id.is_empty())
+            })
+        };
+        find(&self.panes).or_else(|| self.parked.iter().find_map(|(_, _, panes)| find(panes)))
+    }
+
     /// The terminal row the daemon serves for a shell this workspace created,
     /// once a placed pane owns it. Adopted and seeded terminals are read from
     /// the roster instead.

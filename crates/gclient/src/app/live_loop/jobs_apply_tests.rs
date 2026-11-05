@@ -12,6 +12,8 @@ mod host;
 
 use super::*;
 
+#[path = "jobs_held_placement_tests.rs"]
+mod held_placement;
 #[path = "jobs_snapshot_order_tests.rs"]
 mod snapshot_order;
 use crate::app::live_loop::jobs;

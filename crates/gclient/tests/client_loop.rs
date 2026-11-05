@@ -139,6 +139,33 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     });
 }
 
+/// Waits until the loop's latest focus hint names `pane`. The loop sends a hint only
+/// once focus has moved, so this is the step that proves a split placed its pane.
+async fn wait_for_focus_hint(mock: &MockDaemon, pane: &str) {
+    timeout(WAIT_BUDGET, async {
+        loop {
+            let latest = workspace_ops(mock, "workspace.set_focus_hints")
+                .last()
+                .and_then(|hint| hint["pane"].as_str().map(str::to_owned));
+            if latest.as_deref() == Some(pane) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        let hints: Vec<_> = workspace_ops(mock, "workspace.set_focus_hints")
+            .iter()
+            .map(|hint| hint["pane"].clone())
+            .collect();
+        panic!(
+            "timed out waiting for focus on pane {pane}; hints={hints:?}\n{}",
+            mock.activity().join("\n")
+        )
+    });
+}
+
 fn request_count(mock: &MockDaemon, method: &str, path: &str) -> usize {
     mock.requests()
         .into_iter()
@@ -8689,6 +8716,12 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
                 .any(|request| request.get("terminal_id") == Some(&json!(NEXT_OWNED)))
         })
         .await;
+        // Closing input ends the loop, and a split's placement moves focus only once its
+        // reply is applied. Wait for the focus hint before closing so that reply lands.
+        let next_pane = mock
+            .pane_for_terminal(NEXT_OWNED)
+            .expect("daemon pane for the new shell");
+        wait_for_focus_hint(&mock, &next_pane).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
