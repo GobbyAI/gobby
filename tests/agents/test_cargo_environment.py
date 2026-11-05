@@ -142,16 +142,6 @@ def test_rustc_wrapper_shim_hides_target_dirs_from_sccache(fake_sccache: Path) -
         assert seen["CARGO_PKG_NAME"] == "gobby-core"
 
 
-@pytest.mark.usefixtures("fake_sccache")
-def test_cache_cap_is_pinned_when_sccache_is_enabled() -> None:
-    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
-        root = Path(short)
-        enabled = cargo_environment(root / "cache" / "sccache", root / "sccache.sock")
-        assert enabled.get("SCCACHE_CACHE_SIZE") == "10G"
-        disabled = cargo_environment(root / "cache" / "sccache", None)
-        assert disabled.get("SCCACHE_CACHE_SIZE") == ""
-
-
 def test_unwritable_shim_fails_open_to_blank_sccache(fake_sccache: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
         root = Path(short)

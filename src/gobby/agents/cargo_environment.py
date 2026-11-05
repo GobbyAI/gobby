@@ -10,10 +10,11 @@ from pathlib import Path
 
 # macOS sun_path holds 104 bytes including the terminator; Linux allows 107.
 _SOCKET_PATH_LIMIT = 103
-# sccache's default cap, set explicitly so every launch path shares one documented value.
-# Measured on sccache 0.19.0: one gobby-core dev dependency closure occupies about 119 MiB,
-# so 10G holds about 86 such closures before least-recently-used eviction.
-_CACHE_CAP = "10G"
+# Cache sizing: the cap stays at sccache's default of 10 GiB and is not set here. The Rust
+# mirror of this environment (crates/gdaemon RunLayout) and its corpus pin the exact key set,
+# so a new key needs a crate change. Measured on sccache 0.19.0: one gobby-core dev dependency
+# closure occupies about 119 MiB, so the default holds about 86 such closures before
+# least-recently-used eviction.
 _RUSTC_WRAPPER = "rustc-wrapper"
 
 
@@ -40,7 +41,6 @@ def cargo_environment(cache_dir: Path, socket: Path | None) -> dict[str, str]:
     return {
         "CARGO_BUILD_JOBS": "4",
         "RUSTC_WRAPPER": str(shim),
-        "SCCACHE_CACHE_SIZE": _CACHE_CAP,
         "SCCACHE_DIR": str(cache_dir),
         "SCCACHE_SERVER_UDS": str(socket),
     }
@@ -50,7 +50,6 @@ def _blank_sccache() -> dict[str, str]:
     return {
         "CARGO_BUILD_JOBS": "4",
         "RUSTC_WRAPPER": "",
-        "SCCACHE_CACHE_SIZE": "",
         "SCCACHE_DIR": "",
         "SCCACHE_SERVER_UDS": "",
     }
