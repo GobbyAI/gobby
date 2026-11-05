@@ -165,12 +165,9 @@ class NativePublisher:
     ) -> asyncio.Future[None]:
         # Frames are encoded exactly as BroadcastMixin.broadcast encodes them. The filter
         # repeats in every op this call splits into, so callers pass routing fields only.
-        payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]
-        filter_json = json_dumps(message)
-        futures = [
-            self._enqueue(_publish_op(filter_json, chunk))
-            for chunk in _publish_chunks(filter_json, payloads)
-        ]
+        # Every op is encoded before any is queued, so a frame that fails to encode queues none.
+        ops = _publish_ops(json_dumps(message), frames or (message,))
+        futures = [self._enqueue(op) for op in ops]
         if len(futures) == 1:
             return futures[0]
         return asyncio.ensure_future(_settle_all(futures))
@@ -380,29 +377,43 @@ def _request_body(generation: str, ops: list[bytes]) -> bytes:
     )
 
 
-def _publish_op(filter_json: str, frames: list[str]) -> bytes:
-    """Encodes a publish op from frame strings already encoded as JSON, as json_dumps would."""
-    return f'{{"op": "publish", "filter": {filter_json}, "frames": [{", ".join(frames)}]}}'.encode()
+def _publish_op(filter_json: str, frames: list[bytes]) -> bytes:
+    """Encodes a publish op from frame literals, each already encoded as a JSON string.
+
+    The op is joined once from its pieces, so assembling it holds no copy of the frames.
+    """
+    pieces = [b'{"op": "publish", "filter": ', filter_json.encode(), b', "frames": [']
+    for index, frame in enumerate(frames):
+        if index:
+            pieces.append(b", ")
+        pieces.append(frame)
+    pieces.append(b"]}")
+    return b"".join(pieces)
 
 
-def _publish_chunks(filter_json: str, payloads: list[str]) -> list[list[str]]:
-    """Groups frame payloads in order so each publish op encodes within PUBLISH_CHUNK.
+def _publish_ops(filter_json: str, sources: Sequence[dict[str, Any]]) -> list[bytes]:
+    """Encodes the frames in order into publish ops, each within PUBLISH_CHUNK bytes.
 
-    Each payload is encoded as a JSON string once, here, and the op reuses that encoding.
+    A frame is encoded as JSON and then as the JSON string literal its op carries. Each
+    literal is dropped once its op is built, so no whole-payload list of frames is held.
     """
     empty = len(_publish_op(filter_json, []))
-    chunks: list[list[str]] = [[]]
+    ops: list[bytes] = []
+    chunk: list[bytes] = []
     size = empty
-    for payload in payloads:
-        literal = json_dumps(payload)
+    for source in sources:
+        literal = json_dumps(json_dumps(source)).encode()
+        # json_dumps escapes to ASCII, so the literal's length is its encoded size.
         # Each frame costs its encoded bytes plus the separator before it.
-        cost = len(literal.encode()) + 2
-        if chunks[-1] and size + cost > PUBLISH_CHUNK:
-            chunks.append([])
+        cost = len(literal) + 2
+        if chunk and size + cost > PUBLISH_CHUNK:
+            ops.append(_publish_op(filter_json, chunk))
+            chunk = []
             size = empty
-        chunks[-1].append(literal)
+        chunk.append(literal)
         size += cost
-    return chunks
+    ops.append(_publish_op(filter_json, chunk))
+    return ops
 
 
 async def _settle_all(futures: list[asyncio.Future[None]]) -> None:

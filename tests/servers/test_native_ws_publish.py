@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import tracemalloc
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -163,7 +164,7 @@ def test_publish_op_bytes_match_the_generic_encoder() -> None:
         json_dumps({"seq": 1, "data": 'quote " and \\ slash'}),
         json_dumps({"seq": 2, "data": "héllo"}),
     ]
-    literals = [json_dumps(payload) for payload in payloads]
+    literals = [json_dumps(payload).encode() for payload in payloads]
     op = {"op": "publish", "filter": message, "frames": payloads}
     assert native_publish._publish_op(json_dumps(message), literals) == json_dumps(op).encode()
 
@@ -284,6 +285,47 @@ async def test_workspace_event_at_the_fragment_cap_publishes_bounded_ops(
     assert len(fragments) > 2
     assert [fragment["fragment_index"] for fragment in fragments] == list(range(len(fragments)))
     assert b"".join(base64.b64decode(fragment["payload"]) for fragment in fragments) == raw
+
+
+async def test_publish_preparation_peak_stays_within_queued_bytes_and_op_transients(
+    supervisor_token: str,
+) -> None:
+    """Preparing a cap-sized publish holds its peak allocation near the queued wire bytes.
+
+    The queued ops are the only whole-wire copies that outlive the call. Each op is
+    assembled from at most PUBLISH_CHUNK bytes, so the transient allocation above them
+    is a few op sizes. Traced allocation is fixed by the event, so the bound holds at
+    any host load.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    message = _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    frames = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=canonical_json(message),
+    )
+    route = {field: message[field] for field in WORKSPACE_ROUTING_FIELDS}
+    daemon = _Daemon()
+    daemon.publish_limit = DAEMON_PUBLISH_LIMIT
+    publisher = _publisher(daemon)
+    try:
+        await publisher.start()
+        tracemalloc.start()
+        try:
+            base, _ = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            settled = publisher.publish(route, frames)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        await asyncio.wait_for(settled, 5.0)
+    finally:
+        await publisher.stop()
+
+    queued = sum(daemon.body_sizes)
+    assert peak - base <= queued + 4 * native_publish.PUBLISH_CHUNK
 
 
 class _Daemon:
