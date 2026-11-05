@@ -202,6 +202,26 @@ def test_claude_ignores_non_finite_duration() -> None:
     assert run.observed_at == run.started_at
 
 
+@pytest.mark.parametrize(
+    ("start_ms", "duration_ms"),
+    [(START_MS, 1e17), (253_402_300_799_000, 60_000)],
+    ids=["duration-beyond-timedelta", "end-beyond-datetime"],
+)
+def test_claude_keeps_cost_when_timeline_overflows(start_ms: int, duration_ms: float) -> None:
+    record = json.dumps(
+        {
+            "type": "cost-state",
+            "startTime": start_ms,
+            "totalCostUSD": 0.25,
+            "totalDuration": duration_ms,
+        }
+    )
+    [run] = claude_cost_runs([record])
+    assert run.cost_amount == Decimal("0.25")
+    assert run.wall_duration_ms is None
+    assert run.observed_at == run.started_at
+
+
 @pytest.mark.parametrize("bad", _BAD_NUMBERS, ids=_BAD_IDS)
 def test_grok_treats_non_finite_or_negative_ticks_as_no_cost(bad: float) -> None:
     parser = GrokTranscriptParser(session_id="grok-reported")

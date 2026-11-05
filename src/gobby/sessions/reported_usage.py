@@ -81,6 +81,11 @@ def claude_cost_runs(lines: Iterable[str]) -> list[ReportedRun]:
 def _claude_run(record: Mapping[str, Any], start_ms: int, cost: int | float) -> ReportedRun:
     started = _EPOCH + timedelta(milliseconds=start_ms)
     wall = _duration_ms(record.get("totalDuration"))
+    try:
+        observed = started + timedelta(milliseconds=wall or 0)
+    except OverflowError:
+        # A duration that places the reading beyond the calendar is no duration; the cost stands.
+        wall, observed = None, started
     usage = record.get("modelUsage")
     return ReportedRun(
         run_key=f"{CLAUDE_SOURCE}:{start_ms}",
@@ -91,7 +96,7 @@ def _claude_run(record: Mapping[str, Any], start_ms: int, cost: int | float) -> 
         api_duration_ms=_duration_ms(record.get("totalAPIDuration")),
         wall_duration_ms=wall,
         started_at=started,
-        observed_at=started + timedelta(milliseconds=wall or 0),
+        observed_at=observed,
         model_usage=usage if isinstance(usage, dict) else {},
     )
 
