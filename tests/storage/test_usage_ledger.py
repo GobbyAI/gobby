@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -30,6 +31,7 @@ pytestmark = pytest.mark.integration
 
 BASE = datetime(2026, 10, 20, 10, 0, tzinfo=UTC)
 TS = "2026-10-20T10:00:00Z"
+APPENDED_TS = "2026-10-20T10:10:00Z"
 
 
 def _at(minutes: float) -> datetime:
@@ -147,10 +149,12 @@ def _run(
     )
 
 
-def _claude_record(message_id: str, input_tokens: int, output_tokens: int) -> str:
+def _claude_record(
+    message_id: str, input_tokens: int, output_tokens: int, timestamp: str = TS
+) -> str:
     record = {
         "type": "assistant",
-        "timestamp": TS,
+        "timestamp": timestamp,
         "message": {
             "id": message_id,
             "role": "assistant",
@@ -191,10 +195,6 @@ def _write_jsonl(path: Path, lines: Iterable[str]) -> Path:
     return path
 
 
-def _keys(rows: list[dict[str, Any]]) -> list[tuple[str, str | None]]:
-    return [(row["event_at"], row["message_id"]) for row in rows]
-
-
 def _traverse(
     store: UsageLedgerStore, cursor: str | None = None, limit: int = 1, **scope: Any
 ) -> list[dict[str, Any]]:
@@ -215,6 +215,56 @@ def _observed(store: UsageLedgerStore, session_id: str, source: str) -> dict[str
     return observed
 
 
+@dataclass(frozen=True)
+class _Mixed:
+    """The 3.1.1 fixture after ingestion: one task scope over a Claude and a Codex session."""
+
+    task_id: str
+    claude: str
+    codex: str
+    claude_path: Path
+    codex_path: Path
+
+
+def _claude_lines() -> list[str]:
+    # msg-a is written as two content-block lines that share one message.id.
+    return [
+        _claude_record("msg-a", 10, 5),
+        _claude_record("msg-a", 10, 5),
+        _claude_record("msg-b", 20, 7),
+    ]
+
+
+def _codex_lines() -> list[str]:
+    # The third line repeats the second line's cumulative total.
+    return [
+        _token_count_line(_codex_usage(100, 40, 10), _codex_usage(100, 40, 10)),
+        _token_count_line(_codex_usage(50, 20, 5), _codex_usage(150, 60, 15)),
+        _token_count_line(_codex_usage(50, 20, 5), _codex_usage(150, 60, 15)),
+    ]
+
+
+async def _ingest_mixed(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    lifecycle_manager: SessionLifecycleManager,
+    project: dict[str, Any],
+    tmp_path: Path,
+) -> _Mixed:
+    """Ingest the 3.1.1 transcripts through the real parsers; claim both sessions for one task."""
+    claude_path = _write_jsonl(tmp_path / "claude.jsonl", _claude_lines())
+    codex_path = _write_jsonl(tmp_path / "codex.jsonl", _codex_lines())
+    claude = _session(session_manager, project, "mixed-claude", "claude", claude_path)
+    codex = _session(session_manager, project, "mixed-codex", "codex", codex_path)
+    await lifecycle_manager._process_session_transcript(claude, str(claude_path))
+    await lifecycle_manager._process_session_transcript(codex, str(codex_path))
+
+    task_id = _task(temp_db, project, "Mixed fixture scope")
+    _interval(temp_db, task_id, claude, BASE - timedelta(hours=1), BASE + timedelta(hours=1))
+    _interval(temp_db, task_id, codex, BASE - timedelta(hours=1), BASE + timedelta(hours=1))
+    return _Mixed(task_id, claude, codex, claude_path, codex_path)
+
+
 @pytest.mark.asyncio
 async def test_fixture_calls_are_counted_once(
     temp_db: HubDatabase,
@@ -223,32 +273,11 @@ async def test_fixture_calls_are_counted_once(
     sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
-    claude_path = _write_jsonl(
-        tmp_path / "claude.jsonl",
-        [
-            _claude_record("msg-a", 10, 5),
-            _claude_record("msg-a", 10, 5),
-            _claude_record("msg-b", 20, 7),
-        ],
+    mixed = await _ingest_mixed(
+        temp_db, session_manager, lifecycle_manager, sample_project, tmp_path
     )
-    codex_path = _write_jsonl(
-        tmp_path / "codex.jsonl",
-        [
-            _token_count_line(_codex_usage(100, 40, 10), _codex_usage(100, 40, 10)),
-            _token_count_line(_codex_usage(50, 20, 5), _codex_usage(150, 60, 15)),
-            _token_count_line(_codex_usage(50, 20, 5), _codex_usage(150, 60, 15)),
-        ],
-    )
-    claude = _session(session_manager, sample_project, "fixture-claude", "claude", claude_path)
-    codex = _session(session_manager, sample_project, "fixture-codex", "codex", codex_path)
-    await lifecycle_manager._process_session_transcript(claude, str(claude_path))
-    await lifecycle_manager._process_session_transcript(codex, str(codex_path))
 
-    task_id = _task(temp_db, sample_project, "Fixture scope")
-    _interval(temp_db, task_id, claude, BASE - timedelta(hours=1), BASE + timedelta(hours=1))
-    _interval(temp_db, task_id, codex, BASE - timedelta(hours=1), BASE + timedelta(hours=1))
-
-    totals = UsageLedgerStore(temp_db).page(task_id=task_id, limit=1000)["totals"]
+    totals = UsageLedgerStore(temp_db).page(task_id=mixed.task_id, limit=1000)["totals"]
 
     # Two distinct Claude calls (msg-a is written twice) and two distinct Codex calls.
     # Codex splits cached input out of input_tokens: call one is 60 input and 40 cached,
@@ -261,31 +290,30 @@ async def test_fixture_calls_are_counted_once(
     assert totals["by_source"]["codex"]["rows"] == 2
 
 
-def test_paging_neither_loses_nor_double_counts(
+@pytest.mark.asyncio
+async def test_paging_neither_loses_nor_double_counts(
     temp_db: HubDatabase,
     session_manager: SessionManager,
+    lifecycle_manager: SessionLifecycleManager,
     sample_project: dict[str, Any],
+    tmp_path: Path,
 ) -> None:
-    session = _session(session_manager, sample_project, "paging")
-    for index in range(4):
-        _event(
-            temp_db,
-            sample_project,
-            session,
-            at=_at(index),
-            message_id=f"msg-{index}",
-            input_tokens=10 + index,
-        )
-
+    mixed = await _ingest_mixed(
+        temp_db, session_manager, lifecycle_manager, sample_project, tmp_path
+    )
     store = UsageLedgerStore(temp_db)
-    pages = _traverse(store, limit=1, session_id=session)
-    single = store.page(session_id=session, limit=1000)
+    single = store.page(task_id=mixed.task_id, limit=1000)
+    pages = _traverse(store, limit=1, task_id=mixed.task_id)
 
     assert len(pages) == 4
-    unioned = [row for page in pages for row in page["rows"]]
-    assert _keys(unioned) == _keys(single["rows"])
-    assert len({row["message_id"] for row in unioned}) == 4
+    assert [row for page in pages for row in page["rows"]] == single["rows"]
     assert all(page["totals"] == single["totals"] for page in pages)
+    # All four rows share one event_at, so the order falls to session_id, then message key.
+    assert len({row["event_at"] for row in single["rows"]}) == 1
+    assert {row["session_id"] for row in single["rows"]} == {mixed.claude, mixed.codex}
+    assert single["rows"] == sorted(
+        single["rows"], key=lambda row: (row["session_id"], row["message_id"])
+    )
 
 
 @pytest.mark.asyncio
@@ -296,25 +324,28 @@ async def test_rebuild_keeps_rows_totals_and_cursor(
     sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
-    transcript = _write_jsonl(
-        tmp_path / "rebuild.jsonl",
-        [_claude_record("msg-1", 10, 5), _claude_record("msg-2", 20, 7)],
+    mixed = await _ingest_mixed(
+        temp_db, session_manager, lifecycle_manager, sample_project, tmp_path
     )
-    session = _session(session_manager, sample_project, "rebuild", "claude", transcript)
-    await lifecycle_manager._process_session_transcript(session, str(transcript))
-
     store = UsageLedgerStore(temp_db)
-    cursor = store.page(session_id=session, limit=1)["next_cursor"]
-    assert cursor is not None
-    before = store.page(session_id=session, limit=1000)
+    before = store.page(task_id=mixed.task_id, limit=1000)
+    # The cursor after each row, issued before the rebuild; the last one is NULL.
+    cursors = [page["next_cursor"] for page in _traverse(store, limit=1, task_id=mixed.task_id)]
+    assert cursors[-1] is None
+    assert all(cursor is not None for cursor in cursors[:-1])
 
-    await lifecycle_manager._process_session_transcript(session, str(transcript))
+    await lifecycle_manager._process_session_transcript(mixed.claude, str(mixed.claude_path))
+    await lifecycle_manager._process_session_transcript(mixed.codex, str(mixed.codex_path))
 
-    after = store.page(session_id=session, limit=1000)
+    after = store.page(task_id=mixed.task_id, limit=1000)
     assert after["rows"] == before["rows"]
     assert after["totals"] == before["totals"]
-    resumed = store.page(session_id=session, cursor=cursor, limit=1)
-    assert _keys(resumed["rows"]) == [(before["rows"][1]["event_at"], "msg-2")]
+    # Codex message ids come from transcript line indexes, so they survive the delete and reinsert.
+    codex_ids = [row["message_id"] for row in after["rows"] if row["source"] == "codex"]
+    assert codex_ids == [row["message_id"] for row in before["rows"] if row["source"] == "codex"]
+    for index, cursor in enumerate(cursors[:-1]):
+        resumed = store.page(task_id=mixed.task_id, cursor=cursor, limit=1)
+        assert resumed["rows"] == [before["rows"][index + 1]]
 
 
 def test_task_scope_latest_claim_wins(
@@ -432,48 +463,59 @@ def test_spend_unknown_is_distinct_from_reported_zero(
     assert "usd" not in incomplete["amounts"]
 
 
-def test_paging_is_a_live_traversal(
+@pytest.mark.asyncio
+async def test_paging_is_a_live_traversal(
     temp_db: HubDatabase,
     session_manager: SessionManager,
+    lifecycle_manager: SessionLifecycleManager,
     sample_project: dict[str, Any],
+    tmp_path: Path,
 ) -> None:
-    session = _session(session_manager, sample_project, "live")
-    for index in range(4):
-        _event(temp_db, sample_project, session, at=_at(index), message_id=f"msg-{index}")
-
+    mixed = await _ingest_mixed(
+        temp_db, session_manager, lifecycle_manager, sample_project, tmp_path
+    )
     store = UsageLedgerStore(temp_db)
-    first = store.page(session_id=session, limit=1)
-    assert [row["message_id"] for row in first["rows"]] == ["msg-0"]
+    first = store.page(task_id=mixed.task_id, limit=1)
+    assert first["totals"]["rows"] == 4
     cursor = first["next_cursor"]
     assert cursor is not None
 
-    # An appended call after page one raises the totals and lands on a later page.
-    _event(temp_db, sample_project, session, at=_at(10), message_id="msg-appended")
+    # An appended Claude call arrives through the parser and is dated after the fixture.
+    appended = _claude_record("msg-appended", 30, 9, timestamp=APPENDED_TS)
+    _write_jsonl(mixed.claude_path, [*_claude_lines(), appended])
+    await lifecycle_manager._process_session_transcript(mixed.claude, str(mixed.claude_path))
     # A subagent row dated before the cursor counts in the totals but never on a later page.
     _event(
         temp_db,
         sample_project,
-        session,
+        mixed.claude,
         at=_at(-5),
         message_id="msg-subagent",
         agent_id="agent-1",
     )
 
-    second = store.page(session_id=session, cursor=cursor, limit=1)
+    second = store.page(task_id=mixed.task_id, cursor=cursor, limit=1)
     assert second["totals"]["rows"] == 6
     assert second["totals"]["rows"] > first["totals"]["rows"]
 
-    after_cursor = _traverse(store, cursor=cursor, limit=1, session_id=session)
-    later_ids = [row["message_id"] for page in after_cursor for row in page["rows"]]
-    assert "msg-subagent" not in later_ids
-    assert "msg-appended" in later_ids
-    assert sorted(later_ids) == sorted(["msg-1", "msg-2", "msg-3", "msg-appended"])
+    full = store.page(task_id=mixed.task_id, limit=1000)["rows"]
+    assert [row["message_id"] for row in full[:2]] == [
+        "msg-subagent",
+        first["rows"][0]["message_id"],
+    ]
+    assert full[-1]["message_id"] == "msg-appended"
+    later = [
+        row
+        for page in _traverse(store, cursor=cursor, limit=1, task_id=mixed.task_id)
+        for row in page["rows"]
+    ]
+    assert later == full[2:]
+    assert "msg-subagent" not in [row["message_id"] for row in later]
 
-    restarted = _traverse(store, limit=1, session_id=session)
-    restarted_ids = [row["message_id"] for page in restarted for row in page["rows"]]
-    assert sorted(restarted_ids) == sorted(
-        ["msg-0", "msg-1", "msg-2", "msg-3", "msg-appended", "msg-subagent"]
-    )
+    restarted = [
+        row for page in _traverse(store, limit=1, task_id=mixed.task_id) for row in page["rows"]
+    ]
+    assert restarted == full
 
 
 def test_malformed_cursor_raises_value_error(
