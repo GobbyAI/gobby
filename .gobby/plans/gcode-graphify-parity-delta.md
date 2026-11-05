@@ -1475,6 +1475,15 @@ changes no configuration file.
   2.4 replaces the capture script's direct Box request with the registered
   `gobby-decisions:evaluate` tool path, keeping the raw exchange through the
   observed service, and the capture becomes 2.5, which depends on 2.4.
+- 2026-11-05: Consensus. The Plan Writer gobby#19935 and the Adversary
+  gobby#19936 reached technical consensus on plan commit
+  `3b46dab4be4014970fc4be31d2652cec70c5d95f` (plan SHA-256
+  `6d388ab8a97b68f7a75e585bbf3593993e81bebfd446306c705e78f1ce83ba2e`), with base
+  validation passing for both. GP-20261105-01 through GP-20261105-04 are resolved.
+  The Adversary verified PA-22948-02 and found the temporary service-cache seam in
+  2.4 consistent with `get_decision_service`'s fingerprint contract, so no product
+  factory parameter is needed. The Plan Advocate gobby#19939 converged on the same
+  bytes with no further suggestions. No open decision or blocking finding remains.
 
 ## V2: Verification
 `kind: verification`
