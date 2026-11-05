@@ -596,8 +596,12 @@ workspace and survive detach and reattach.
 ## Attach and control
 
 Every pane you open is *attached*: it receives frames and takes your typing.
-Every attached pane is writable. Typing needs no permission, no take-control
-step, and no grant from the daemon.
+A native pane is writable at once: typing goes straight to its terminal, with no
+permission, no take-control step, and no grant from the daemon. Several gclient
+windows can type into the same native pane at once. A tmux pane, or a pane
+proxied through the daemon, takes one writer at a time: gclient claims that
+writer slot when it attaches, and a browser or another client takes it over
+explicitly.
 
 | Pane title ends | Meaning |
 | --- | --- |
