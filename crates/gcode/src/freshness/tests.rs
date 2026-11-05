@@ -1683,3 +1683,172 @@ fn worktree_symbol_at_reads_unindexed_python_body_edits() {
     invalidate_test_project(&overlay_ctx);
     invalidate_test_project(&parent_ctx);
 }
+
+/// Production identity for an admitted leaf: the five-key marker that
+/// `ensure_project_json_for_isolation` writes, no forced scope, and no checkout row
+/// for the overlay. Symbol-at must serve the leaf's edited body, not the pinned parent's.
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn admitted_leaf_marker_resolves_overlay_and_serves_symbol_at_without_checkout_row() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hooks = tmp.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let main_root = tmp.path().join("main");
+    let leaf_root = tmp.path().join("leaf");
+    let rel = "src/lib.rs";
+    let parent_id = test_project_id("gcode-admitted-leaf-main");
+    std::fs::create_dir_all(main_root.join("src")).expect("create main src");
+    std::fs::create_dir_all(main_root.join(".gobby")).expect("create main .gobby");
+    std::fs::write(
+        main_root.join(".gobby").join("project.json"),
+        serde_json::json!({ "id": parent_id }).to_string(),
+    )
+    .expect("write tracked project identity");
+    std::fs::write(
+        main_root.join(rel),
+        "pub fn epic_body() -> u8 {\n    1\n}\n",
+    )
+    .expect("write epic source");
+    git_in(&main_root, &hooks, &["init", "-q"]);
+    git_in(&main_root, &hooks, &["add", "."]);
+    git_in(&main_root, &hooks, &["commit", "-q", "-m", "epic seed"]);
+    let base_commit = git_in(&main_root, &hooks, &["rev-parse", "HEAD"]);
+    git_in(
+        &main_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "leaf",
+            leaf_root.to_str().expect("utf-8 leaf path"),
+        ],
+    );
+    let main_ctx = postgres_context_with_root(&parent_id, &main_root);
+    invalidate_test_project(&main_ctx);
+    full_index(&main_ctx);
+
+    let main_canonical = main_root.canonicalize().expect("canonical main root");
+    let main_str = main_canonical
+        .to_str()
+        .expect("utf-8 main path")
+        .to_string();
+    // The five keys admission writes: parent identity plus the pin provenance.
+    let marker = serde_json::json!({
+        "parent_project_path": main_str,
+        "parent_project_id": parent_id,
+        "base_commit": base_commit,
+        "ancestor_checkout_path": main_str,
+        "ancestor_checkout_identity": parent_id,
+    });
+    std::fs::write(
+        leaf_root.join(".gobby").join("isolation.json"),
+        marker.to_string(),
+    )
+    .expect("write admitted marker");
+    let leaf_canonical = leaf_root.canonicalize().expect("canonical leaf root");
+
+    let identity = crate::config::resolve_project_identity(&leaf_canonical)
+        .expect("production identity for the admitted leaf");
+    assert_eq!(
+        identity.source,
+        crate::config::ProjectIdentitySource::IsolatedOverlay
+    );
+    assert_eq!(
+        identity.project_id,
+        gobby_core::project::code_index_id_for_root(&leaf_canonical)
+    );
+    let crate::config::ProjectIndexScope::Overlay {
+        overlay_project_id,
+        overlay_root,
+        parent_project_id,
+        parent_root,
+    } = &identity.index_scope
+    else {
+        panic!(
+            "admitted leaf must resolve to overlay scope: {:?}",
+            identity.index_scope
+        );
+    };
+    assert_eq!(overlay_project_id, &identity.project_id);
+    assert_eq!(overlay_root, &leaf_canonical);
+    assert_eq!(parent_project_id, &parent_id);
+    assert_eq!(parent_root, &main_canonical);
+
+    let database_url = crate::test_env::postgres_test_database_url("freshness tests");
+    let overlay_ctx = Context {
+        database_url: database_url.clone(),
+        project_root: identity.root.clone(),
+        project_id: identity.project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: crate::config::CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: identity.index_scope.clone(),
+    };
+    invalidate_test_project(&overlay_ctx);
+    pin_parent_versions(&overlay_ctx, &main_ctx, &[rel]);
+    {
+        let mut conn = db::connect_readonly(&database_url).expect("connect readonly");
+        let overlay_uuid = uuid::Uuid::parse_str(&overlay_ctx.project_id).expect("overlay uuid");
+        let checkouts: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM project_checkouts WHERE project_id = $1",
+                &[&overlay_uuid],
+            )
+            .expect("count overlay checkout rows")
+            .get(0);
+        assert_eq!(checkouts, 0, "an admitted overlay has no checkout row");
+    }
+
+    // The seat edits the body after admission. Refresh must index the leaf's text.
+    std::fs::write(
+        leaf_root.join(rel),
+        "pub fn leaf_body() -> u8 {\n    2\n}\n",
+    )
+    .expect("write leaf edit");
+    let status = ensure_fresh(
+        &overlay_ctx,
+        FreshnessScope::Files(vec![PathBuf::from(rel)]),
+    )
+    .expect("symbol-at freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+
+    let source = std::fs::read(leaf_root.join(rel)).expect("read leaf source");
+    let mut conn = db::connect_readonly(&database_url).expect("connect readonly");
+    let symbols = visibility::visible_symbols_for_file(&mut conn, &overlay_ctx, rel)
+        .expect("visible symbols");
+    assert!(
+        symbols.iter().all(|symbol| symbol.name != "epic_body"),
+        "the pinned parent body must not survive the leaf edit"
+    );
+    let body = symbols
+        .iter()
+        .find(|symbol| symbol.name == "leaf_body")
+        .expect("leaf_body is visible");
+    let snippet = String::from_utf8_lossy(
+        source
+            .get(body.byte_start..body.byte_end)
+            .unwrap_or_default(),
+    )
+    .into_owned();
+    assert_eq!(
+        snippet.trim_end(),
+        "pub fn leaf_body() -> u8 {\n    2\n}",
+        "symbol-at must slice the leaf file with the rows' current byte range"
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&main_ctx);
+}

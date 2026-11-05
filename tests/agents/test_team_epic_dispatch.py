@@ -335,6 +335,15 @@ async def test_pod_adoption_gives_a_markerless_leaf_tree_its_isolation_marker(
     marker = json.loads((path / ".gobby" / "isolation.json").read_text())
     assert Path(marker["ancestor_checkout_path"]).resolve() == Path(world.case.repo).resolve()
     assert marker["base_commit"] == epic_head
+    # The gcode freshness fixture in crates/gcode/src/freshness/tests.rs mirrors this key set.
+    assert set(marker) == {
+        "parent_project_path",
+        "parent_project_id",
+        "base_commit",
+        "ancestor_checkout_path",
+        "ancestor_checkout_identity",
+    }
+    assert marker["parent_project_id"] == world.case.project_id
 
 
 @pytest.mark.asyncio
