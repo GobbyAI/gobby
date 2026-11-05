@@ -1,4 +1,11 @@
 use super::*;
+use crate::app::Workspace;
+use crate::daemon::{Checkout, ProjectRow, SidebarRows};
+use crate::ui::chrome::Chrome;
+use crate::ui::chrome_render::render_workspace;
+use crate::ui::sidebar::agent_rows;
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+use serde_json::json;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -204,5 +211,104 @@ async fn session_fetch_requests_every_live_daemon_status() {
             "awaiting_handoff",
         ],
         "the sessions fetch must request every daemon live status"
+    );
+}
+
+#[tokio::test]
+async fn an_idle_session_fetched_from_the_daemon_renders_its_ref_on_the_sidebar() {
+    // The daemon returns a session only for a status the request names, so the
+    // idle seat reaches the sidebar only when the fetch asks for idle.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut request = vec![0_u8; 8192];
+        let read = stream.read(&mut request).await.expect("read request");
+        let text = String::from_utf8_lossy(&request[..read]).into_owned();
+        let target = text
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .expect("request target");
+        let url = Url::parse(&format!("http://{address}{target}")).expect("request url");
+        let asks_idle = url
+            .query_pairs()
+            .any(|(key, value)| key == "status_in" && value == "idle");
+        let body = if asks_idle {
+            r##"{"sessions":[{"id":"sess-idle","ref":"#41","status":"idle","source":"codex","model":"gpt-5"}],"count":1,"next_cursor":null}"##
+        } else {
+            r##"{"sessions":[],"count":0,"next_cursor":null}"##
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("write response");
+    });
+    let base = Url::parse(&format!("http://{address}/")).expect("base url");
+    let client = RestClient::new(base, "token".to_string()).expect("client");
+    let sessions = client.sessions("project-1").await.expect("sessions");
+    server.await.expect("server task");
+
+    let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "project-1".to_string(),
+            name: "alpha".to_string(),
+            display_name: "alpha".to_string(),
+            checkout: Some(Checkout {
+                machine_id: "local".to_string(),
+                root_path: "/repos/alpha".to_string(),
+            }),
+            ..ProjectRow::default()
+        }],
+        sessions: [("project-1".to_string(), sessions)].into_iter().collect(),
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "session:sess-idle",
+            "session_id": "sess-idle",
+            "provider": "codex",
+            "model": "gpt-5",
+            "terminal": {"terminal_id": "term-idle", "backend": "native"}
+        }]
+    }));
+    ws.select_project("project-1");
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-idle", "native", "epoch")
+        .expect("open idle terminal");
+
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    chrome.sidebar.width = 34;
+    let rows = agent_rows(&ws, &chrome);
+    let references: Vec<&str> = rows.iter().map(|row| row.reference.as_str()).collect();
+    assert!(
+        references.contains(&"#41"),
+        "the idle agent row must carry its ref: {references:?}"
+    );
+
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            render_workspace(frame, &ws, &chrome);
+        })
+        .expect("draw frame");
+    let buffer = terminal.backend().buffer();
+    let sidebar: Vec<String> = (0..40_u16)
+        .map(|y| (0..34_u16).map(|x| buffer[(x, y)].symbol()).collect())
+        .collect();
+    assert!(
+        sidebar.iter().any(|line| line.contains("#41")),
+        "the idle seat's ref must render on the sidebar:\n{}",
+        sidebar.join("\n")
     );
 }

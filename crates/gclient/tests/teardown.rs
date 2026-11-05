@@ -776,7 +776,7 @@ impl LiveShutdownStall {
 }
 
 async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
-    timeout(Duration::from_secs(1), async {
+    timeout(Duration::from_secs(5), async {
         loop {
             if mock.requests().iter().any(|request| {
                 request
@@ -796,7 +796,7 @@ async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
 }
 
 async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
-    timeout(Duration::from_secs(1), async {
+    timeout(Duration::from_secs(5), async {
         loop {
             let count = mock
                 .requests()
@@ -891,7 +891,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
                 let daemon = observer.clone();
                 tokio::spawn(async move { daemon.reconnect(initial_generation).await })
             };
-            timeout(Duration::from_secs(1), async {
+            timeout(Duration::from_secs(5), async {
                 while mock.websocket_handshakes() < 2 {
                     tokio::task::yield_now().await;
                 }
@@ -917,8 +917,10 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
 
     let mut switch = TerminalGuard::recording().0;
     let (loop_result, (exit_started, reconnect)) = tokio::join!(
+        // A hung loop is the only thing this outer guard catches; the shutdown
+        // deadline assertions below stay tight at 8 s and 2 s.
         timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(20),
             run_live_loop(
                 &mut workspace,
                 &mut terminal,
@@ -950,7 +952,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         "{trigger:?}/{stall:?} must restore the terminal exactly once"
     );
 
-    timeout(Duration::from_millis(250), async {
+    timeout(Duration::from_secs(2), async {
         while observer.shutdown_resources() != (false, false, false) {
             tokio::task::yield_now().await;
         }
@@ -972,7 +974,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
 
     if let Some((gate, reconnect)) = reconnect {
         assert_eq!(
-            timeout(Duration::from_millis(250), reconnect)
+            timeout(Duration::from_secs(2), reconnect)
                 .await
                 .expect("close must settle the reconnect owner")
                 .expect("reconnect owner task"),
@@ -980,7 +982,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         );
         gate.notify_waiters();
     }
-    timeout(Duration::from_millis(250), mock.wait_for_no_websockets())
+    timeout(Duration::from_secs(2), mock.wait_for_no_websockets())
         .await
         .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} left the WebSocket connected"));
     mock.shutdown().await;

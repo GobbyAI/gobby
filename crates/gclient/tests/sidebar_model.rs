@@ -9,12 +9,16 @@ use gobby_client::app::sidebar_model::{
     agent_state, build, provider_label, rollup, worktree_focus_target, AgentEntry, SandboxState,
     SidebarInputs, SidebarModel,
 };
+use gobby_client::app::Workspace;
 use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
     Attention, Checkout, ProjectRow, RosterEntry, RunRow, RunSandbox, SessionRow, SidebarRows,
     SourceStatus, TaskRef, TerminalRef, WorktreeRow,
 };
-use gobby_client::ui::chrome::RowState;
+use gobby_client::ui::chrome::{Chrome, RowState};
+use gobby_client::ui::chrome_render::render_workspace;
+use gobby_client::ui::sidebar::agent_rows;
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 use serde_json::json;
 use tokio::time::Instant;
 
@@ -889,6 +893,97 @@ fn build_carries_the_roster_status_line_into_the_agent_row() {
         Some("Reviewing the ticker")
     );
     assert_eq!(model.agents[0].task_title, None);
+}
+
+/// The sidebar's first 34 columns after a full frame render, one line per row.
+fn sidebar_text(ws: &Workspace, chrome: &mut Chrome) -> String {
+    chrome.compute_view(ws, Rect::new(0, 0, 120, 40));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            render_workspace(frame, ws, chrome);
+        })
+        .expect("draw frame");
+    let buffer = terminal.backend().buffer();
+    (0..40_u16)
+        .map(|y| {
+            (0..34_u16)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_refresh_that_clears_the_status_line_clears_the_agent_row() {
+    let roster = |status_line: serde_json::Value, task: Option<serde_json::Value>| {
+        let mut entry = json!({
+            "entry_id": "session:sess-status",
+            "session_id": "sess-status",
+            "provider": "codex",
+            "model": "gpt-5",
+            "status_line": status_line,
+            "terminal": {"terminal_id": "term-status", "backend": "native"}
+        });
+        if let Some(task) = task {
+            entry["task"] = task;
+        }
+        json!({"epoch": "e1", "seq": 1, "entries": [entry]})
+    };
+    let mut ws = Workspace::scripted();
+    ws.set_local_machine("local");
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_string(),
+            name: "alpha".to_string(),
+            display_name: "alpha".to_string(),
+            ..ProjectRow::default()
+        }],
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut()
+        .set_roster(roster(json!("Reviewing the ticker"), None));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-status", "native", "epoch")
+        .expect("open status terminal");
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.pinned = true;
+    chrome.sidebar.width = 34;
+
+    let populated = sidebar_text(&ws, &mut chrome);
+    assert!(
+        populated.contains("Reviewing the ticker"),
+        "the populated status line must render:\n{populated}"
+    );
+
+    // The next refresh carries the seat's cleared line as an explicit null.
+    ws.daemon_mut()
+        .set_roster(roster(serde_json::Value::Null, None));
+    ws.reconcile_subscribe_first().expect("refresh roster");
+    let cleared = sidebar_text(&ws, &mut chrome);
+    assert!(
+        !cleared.contains("Reviewing the ticker"),
+        "a cleared status line must leave the row without it:\n{cleared}"
+    );
+    let rows = agent_rows(&ws, &chrome);
+    assert!(
+        rows.iter().all(|row| row.status_line.is_none()),
+        "no agent row may keep the cleared status line"
+    );
+
+    // A task on the seat takes line three over a status line it also reports.
+    ws.daemon_mut().set_roster(roster(
+        json!("Reviewing the ticker"),
+        Some(json!({"ref": "#123", "title": "Ticker work"})),
+    ));
+    ws.reconcile_subscribe_first().expect("claim a task");
+    let tasked = sidebar_text(&ws, &mut chrome);
+    assert!(
+        tasked.contains("Working task") && !tasked.contains("Reviewing the ticker"),
+        "a held task must take line three over the status line:\n{tasked}"
+    );
 }
 
 #[test]
