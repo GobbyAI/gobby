@@ -6,12 +6,15 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import psycopg
 import pytest
 
 from gobby.cli import tokens as tokens_cli
 from gobby.config.sessions import SessionLifecycleConfig
+from gobby.sessions import subagent_usage
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.processor import SessionMessageProcessor
+from gobby.sessions.subagent_usage import SubagentCursor, read_subagent_events
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -322,3 +325,127 @@ async def test_fallback_ids_are_agent_scoped_and_audited(
 
     audit = tokens_cli._audit_session(db, session.id, fix=False)
     assert (audit.stale_rows, audit.missing_rows, audit.usage_mismatch) == (0, 0, False)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_failed_totals_refresh_is_repaired_on_replay(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "parent.jsonl"
+    _write(parent, [_user_line(), _usage_line("parent-1", 1000, 10)])
+    session = _register(session_manager, "refresh-replay", parent)
+    processor = _processor(db, session_manager)
+    await _pass(processor, session, parent)
+    subagent = _subagent_file(parent, "a1")
+    _write(subagent, [])
+    _append(subagent, [_usage_line("sub-1", 100, 10)])
+
+    real_update_usage = session_manager.update_usage
+    failures = [psycopg.OperationalError("injected totals failure")]
+
+    def update_usage_failing_once(**kwargs: Any) -> Any:
+        if failures:
+            raise failures.pop()
+        return real_update_usage(**kwargs)
+
+    monkeypatch.setattr(session_manager, "update_usage", update_usage_failing_once)
+
+    # The idle pass inserts sub-1, the totals refresh fails, and the cursor stays put.
+    await _pass(processor, session, parent)
+    assert _ids(db, session.id) == ["parent-1", "sub-1"]
+    assert _totals(session_manager, session.id) == (1000, 10)
+
+    # The replay dedupes sub-1 to False and must still repair the totals.
+    await _pass(processor, session, parent)
+    assert _ids(db, session.id) == ["parent-1", "sub-1"]
+    assert _totals(session_manager, session.id) == (1100, 20)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_unexpected_ledger_fault_does_not_double_count_parent_stats(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "parent.jsonl"
+    _write(parent, [_user_line()])
+    session = _register(session_manager, "ledger-fault", parent)
+    processor = _processor(db, session_manager)
+    await _pass(processor, session, parent)
+    before = session_manager.get(session.id)
+    assert before is not None
+    _write(_subagent_file(parent, "a1"), [_usage_line("sub-1", 100, 10)])
+    _append(parent, [_usage_line("parent-1", 1000, 10)])
+
+    faults = [RuntimeError("injected ledger fault")]
+
+    def read_failing_once(*args: Any, **kwargs: Any) -> Any:
+        if faults:
+            raise faults.pop()
+        return read_subagent_events(*args, **kwargs)
+
+    monkeypatch.setattr("gobby.sessions.processor_ledger.read_subagent_events", read_failing_once)
+
+    # A ledger error the ledger does not handle escapes the pass.
+    with pytest.raises(RuntimeError, match="injected ledger fault"):
+        await processor._process_session(session.id, str(parent))
+
+    # The retry counts the new parent message once, not once per attempt.
+    await _pass(processor, session, parent)
+    after = session_manager.get(session.id)
+    assert after is not None
+    assert after.message_count == (before.message_count or 0) + 1
+    assert sorted(_ids(db, session.id)) == ["parent-1", "sub-1"]
+
+
+@pytest.mark.unit
+def test_subagent_reader_takes_a_complete_final_record_and_waits_for_a_torn_one(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "parent.jsonl"
+    _write(parent, [])
+    subagent = _subagent_file(parent, "a1")
+    _write(subagent, [])
+    record = _usage_line("sub-1", 100, 10)
+
+    # A torn write is not a record yet: nothing is read and the cursor stays at zero.
+    subagent.write_text(record[:20], encoding="utf-8")
+    events, cursors = read_subagent_events("ledger-reader", PROJECT_ID, str(parent), {})
+    assert events == []
+
+    # The writer finishes the record without its newline. Complete JSON is a record at EOF.
+    with subagent.open("a", encoding="utf-8") as handle:
+        handle.write(record[20:])
+    events, cursors = read_subagent_events("ledger-reader", PROJECT_ID, str(parent), cursors)
+    assert [event.message_id for event in events] == ["sub-1"]
+
+    # The newline arrives later, and the next record is read once without a duplicate.
+    with subagent.open("a", encoding="utf-8") as handle:
+        handle.write("\n" + _usage_line("sub-2", 200, 20) + "\n")
+    events, cursors = read_subagent_events("ledger-reader", PROJECT_ID, str(parent), cursors)
+    assert [event.message_id for event in events] == ["sub-2"]
+
+
+@pytest.mark.unit
+def test_subagent_reader_reads_at_most_one_chunk_per_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # A one-byte chunk is smaller than any line, so each pass takes exactly one line.
+    monkeypatch.setattr(subagent_usage, "SUBAGENT_CHUNK_BYTES", 1)
+    parent = tmp_path / "parent.jsonl"
+    _write(parent, [])
+    _write(_subagent_file(parent, "a1"), [_usage_line(f"sub-{n}", 10 * n, n) for n in (1, 2, 3)])
+
+    cursors: dict[str, SubagentCursor] = {}
+    passes: list[list[str | None]] = []
+    for _ in range(3):
+        events, cursors = read_subagent_events("ledger-bounds", PROJECT_ID, str(parent), cursors)
+        passes.append([event.message_id for event in events])
+    assert passes == [["sub-1"], ["sub-2"], ["sub-3"]]

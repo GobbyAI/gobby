@@ -52,21 +52,22 @@ class ProcessorLedgerMixin:
             )
             if events:
                 store = self._new_token_event_store()
-                inserted = await self._run_db(store.record_batch, events)
-                if any(inserted):
-                    # Occupancy and model belong to the parent's own messages, so the
-                    # refresh carries only the lifetime totals.
-                    totals = await self._run_db(store.get_session_totals, session_id)
-                    await self._run_db(
-                        self.session_manager.update_usage,
-                        session_id=session_id,
-                        input_tokens=totals["input_tokens"],
-                        output_tokens=totals["output_tokens"],
-                        cache_creation_tokens=totals["cache_creation_tokens"],
-                        cache_read_tokens=totals["cache_read_tokens"],
-                        context_window=None,
-                        model=None,
-                    )
+                await self._run_db(store.record_batch, events)
+                # Refresh on every pass that ingests events, not only when rows insert: a
+                # refresh that failed after the insert leaves the replay deduped to False,
+                # and the totals still need repair. Occupancy and model belong to the
+                # parent's own messages, so the refresh carries only the lifetime totals.
+                totals = await self._run_db(store.get_session_totals, session_id)
+                await self._run_db(
+                    self.session_manager.update_usage,
+                    session_id=session_id,
+                    input_tokens=totals["input_tokens"],
+                    output_tokens=totals["output_tokens"],
+                    cache_creation_tokens=totals["cache_creation_tokens"],
+                    cache_read_tokens=totals["cache_read_tokens"],
+                    context_window=None,
+                    model=None,
+                )
         except (psycopg.Error, OSError, ValueError):
             logger.warning(
                 "Failed to ingest subagent usage for %s; retrying next pass",

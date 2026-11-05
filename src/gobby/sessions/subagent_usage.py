@@ -8,6 +8,7 @@ same message ids and the same totals.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Mapping
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 SUBAGENT_SOURCE = "claude"
 _AGENT_PREFIX = "agent-"
+SUBAGENT_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -51,7 +53,7 @@ def read_subagent_events(
     transcript_path: str,
     cursors: Mapping[str, SubagentCursor],
 ) -> tuple[list[TokenEvent], dict[str, SubagentCursor]]:
-    """Read new complete lines from each subagent file and return their usage events.
+    """Read the next chunk of new lines from each subagent file and return their usage events.
 
     A file with no cursor, or whose cursor no longer matches it (truncated below the
     offset, replaced by a new inode, or with an older mtime), is read from offset 0 and
@@ -127,15 +129,30 @@ def _cursor_stale(cursor: SubagentCursor, stat: os.stat_result) -> bool:
 
 
 def _complete_lines(path: str, offset: int) -> tuple[list[str], int]:
-    """Return the newline-terminated lines from ``offset`` and the offset past the last one."""
+    """Return the lines from ``offset`` up to one chunk, and the offset past them.
+
+    The last line may cross the chunk boundary. A line ends at its newline. A final line
+    without one is taken only when it is a complete JSON object, as the parent path
+    accepts at EOF; a torn write stays at the cursor until the rest of it lands.
+    """
+    lines: list[str] = []
+    end = offset
     with open(path, "rb") as handle:
         handle.seek(offset)
-        data = handle.read()
-    end = data.rfind(b"\n")
-    if end < 0:
-        return [], offset
-    raw_lines = data[: end + 1].split(b"\n")[:-1]
-    return [raw.decode("utf-8", errors="replace") + "\n" for raw in raw_lines], offset + end + 1
+        while end - offset < SUBAGENT_CHUNK_BYTES:
+            raw = handle.readline()
+            if not raw or (not raw.endswith(b"\n") and not _is_complete_object(raw)):
+                break
+            lines.append(raw.decode("utf-8", errors="replace"))
+            end += len(raw)
+    return lines, end
+
+
+def _is_complete_object(raw: bytes) -> bool:
+    try:
+        return isinstance(json.loads(raw), dict)
+    except ValueError:
+        return False
 
 
 def _has_tokens(usage: TokenUsage) -> bool:

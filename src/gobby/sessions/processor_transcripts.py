@@ -352,6 +352,9 @@ class ProcessorTranscriptMixin:
                     if parser_source == "agy" and isinstance(record, ParsedToolEvent)
                 ),
             ]
+            # The ledger runs inside the parser rollback, ahead of the stats: a failure
+            # here leaves the stats, the offsets, and the parser as they were before the pass.
+            await self._persist_ledger_batch(session_id, transcript_path, parser_source)
         except Exception:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)
@@ -410,7 +413,6 @@ class ProcessorTranscriptMixin:
             await collect_live_quota(self, session_id, parser_source, positioned)
 
         if not stats_records:
-            await self._persist_ledger_batch(session_id, transcript_path, parser_source)
             if pending_appender is not None:
                 self._index_appenders[session_id] = pending_appender
             if latest_parsed_index > last_index:
@@ -441,7 +443,6 @@ class ProcessorTranscriptMixin:
                 parser.hydrate_state(parser_state)
             raise
 
-        await self._persist_ledger_batch(session_id, transcript_path, parser_source)
         if pending_appender is not None:
             pending_appender.index.session_stats = stats
             self._index_appenders[session_id] = pending_appender
