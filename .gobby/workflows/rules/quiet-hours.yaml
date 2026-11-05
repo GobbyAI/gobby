@@ -21,5 +21,5 @@ rules:
       - type: block
         tools: [Bash]
         mask_quoted: true
-        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env\s+(?:(?:-u\s+\S+|-\S+|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+)*|uv\s+run\s+(?:(?:--directory\s+\S+|--project\s+\S+|-\S+)\s+)*)*(?:[^\s;&|]*/)?(?:gobby\s+(?:start|stop|restart|cutover)\b|python[0-9.]*\s+-m\s+gobby\.runner\b|curl\b.*/api/admin/(?:restart|shutdown))'
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env\s+(?:[^\s;&|]+\s+)*?|uv\s+(?:[^\s;&|]+\s+)*?run\s+(?:[^\s;&|]+\s+)*?)*(?:[^\s;&|]*/)?(?:gobby\s+(?:start|stop|restart|cutover)\b|python[0-9.]*\s+-m\s+gobby\.runner\b|curl\b.*/api/admin/(?:restart|shutdown))'
         reason: "Project quiet hours (04:00-05:00 America/Chicago daily; 04:00-06:00 on Mondays): no daemon start, stop, restart or cutover. Retry after the window closes."
