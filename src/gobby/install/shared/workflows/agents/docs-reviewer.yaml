@@ -1,5 +1,5 @@
 name: docs-reviewer
-version: "3.0.0"
+version: "4.0.0"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
@@ -10,7 +10,7 @@ checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session]
 blocked_tools: [Edit, Write, NotebookEdit, KillShell]
-blocked_mcp_tools: ["gobby-agents:kill_agent"]
+blocked_mcp_tools: ["gobby-agents:kill_agent", "gobby-worktrees:delete_worktree", "gobby-worktrees:cleanup_stale_worktrees", "gobby-clones:delete_clone", "gobby-clones:cleanup_stale_clones"]
 task_attestation_writes: [independent-review, closing, disposition]
 respect_task_protections: true
 

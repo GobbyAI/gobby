@@ -1,5 +1,5 @@
 name: code-reviewer
-version: "3.0.0"
+version: "4.0.0"
 description: Independently reviews the exact candidate and validates its task criteria.
 tags:
 - gobby
@@ -26,6 +26,9 @@ blocked_mcp_tools:
 - gobby-tasks-ops:land_commit
 - gobby-tasks:close_task
 - gobby-worktrees:delete_worktree
+- gobby-worktrees:cleanup_stale_worktrees
+- gobby-clones:delete_clone
+- gobby-clones:cleanup_stale_clones
 task_attestation_writes:
 - independent-review
 - validation
