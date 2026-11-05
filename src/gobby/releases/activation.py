@@ -8,24 +8,17 @@ lookup that resolves a project's primary checkout for landing.
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-import psycopg
-
-from gobby.cli.runtime import CliRuntime
-from gobby.config.bootstrap import BootstrapConfigError
 from gobby.storage.project_checkouts import require_root
 from gobby.utils.daemon_url import DaemonUrlError, validate_daemon_url
 from gobby.utils.local_token import (
     GOBBY_AGENT_API_TOKEN_ENV,
     AgentApiTokenClaims,
-    classify_agent_api_token,
     operator_bootstrap_path,
     read_managed_api_token,
-    read_managed_signing_key,
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_resolver import session_has_capability
@@ -33,14 +26,10 @@ from gobby.workflows.agent_resolver import session_has_capability
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
-logger = logging.getLogger(__name__)
-
 ACTIVATE_DAEMON = "activate_daemon"
-# Stop and start are never admitted for a spawned identity; only these can be granted.
-_GRANTABLE_OPERATIONS = frozenset({"restart", "cutover"})
-# A marked caller's restart is decided by the daemon route; only cutover, which has no route,
-# is verified on the seat itself.
-_LOCALLY_VERIFIED_OPERATIONS = frozenset({"cutover"})
+# Only a restart can be granted to a spawned identity, and the daemon route decides it. Stop,
+# start and cutover are refused for every spawned seat.
+_GRANTABLE_OPERATIONS = frozenset({"restart"})
 # The API token is a run credential that only a spawned seat is given; daemon_auth_headers would
 # send it as a bearer, so its presence marks the caller as spawned rather than as the operator.
 _SPAWNED_ENV_NAMES = (
@@ -55,7 +44,7 @@ _REFUSED = "spawned_agent_refused"
 def claims_may_activate(db: HubDatabase, claims: AgentApiTokenClaims, operation: str) -> bool:
     """Whether a verified managed identity's installed definition admits a daemon operation.
 
-    Only restart and cutover can be admitted, and only for an identity bound to a run or
+    Only restart can be admitted, and only for an identity bound to a run or
     managed execution whose session resolves to an enabled installed definition that holds
     activate_daemon. Anything unresolved is refused.
     """
@@ -96,10 +85,9 @@ def agent_activation_refusal(operation: str) -> str | None:
     A caller with no spawn marker passes only when it can read the operator's bootstrap
     credential. A cleared environment is not evidence of the operator, so it is refused when
     that credential is unreadable. The run id in the environment is only a marker and grants
-    nothing. A marked caller is refused for stop and start. A marked restart is never admitted
-    here: the daemon route decides it with the daemon's own key (spawned_restart_refusal then
-    posts it). Cutover has no route, so a marked caller's cutover verifies its managed
-    capability locally.
+    nothing. A marked caller is refused for stop, start and cutover, whatever its grant, its
+    key or its GOBBY_HOME says. A marked restart is never admitted here: the daemon route decides
+    it with the daemon's own key (spawned_restart_refusal then posts it).
     """
     if not caller_is_spawned():
         if operator_credential_readable():
@@ -110,15 +98,23 @@ def agent_activation_refusal(operation: str) -> str | None:
         )
     if operation == "restart":
         return f"{_REFUSED}: a spawned seat's restart is decided by the daemon route, not locally"
-    if operation not in _LOCALLY_VERIFIED_OPERATIONS:
-        return spawned_whole_daemon_refusal()
-    return _verified_refusal(operation)
+    if operation == "cutover":
+        return spawned_cutover_refusal()
+    return spawned_whole_daemon_refusal()
 
 
 def spawned_whole_daemon_refusal() -> str:
     """The refusal for a marked caller's stop or start, which no spawned seat may run."""
     return (
         f"{_REFUSED}: spawned agents may not stop or start the daemon; "
+        "activation follows the configured owner"
+    )
+
+
+def spawned_cutover_refusal() -> str:
+    """The refusal for a marked caller's cutover, which stays with the configured owner."""
+    return (
+        f"{_REFUSED}: spawned agents may not cut over the daemon; "
         "activation follows the configured owner"
     )
 
@@ -143,37 +139,6 @@ def spawned_restart_refusal() -> str | None:
     if urlsplit(url).port is None:
         return f"{_REFUSED}: no daemon URL is presented for restart"
     return None
-
-
-def _verified_refusal(operation: str) -> str | None:
-    """Verify the presented managed capability and its installed definition, failing closed."""
-    try:
-        token = read_managed_api_token()
-    except RuntimeError as exc:
-        return f"{_REFUSED}: {exc}"
-    if token is None:
-        return f"{_REFUSED}: no managed capability is presented for {operation}"
-    claims = classify_agent_api_token(token, read_managed_signing_key())
-    if not isinstance(claims, AgentApiTokenClaims):
-        return f"{_REFUSED}: managed capability is {claims}"
-    try:
-        admitted = _admitted_by_installed_definition(claims, operation)
-    except (BootstrapConfigError, OSError, RuntimeError, psycopg.Error) as exc:
-        logger.warning("Activation grant unresolved for %s: %s", operation, exc)
-        return f"{_REFUSED}: the verified identity could not be resolved for {operation}"
-    if not admitted:
-        return f"{_REFUSED}: the verified definition does not hold {ACTIVATE_DAEMON}"
-    return None
-
-
-def _admitted_by_installed_definition(claims: AgentApiTokenClaims, operation: str) -> bool:
-    runtime = CliRuntime(config_file=None)
-    try:
-        return claims_may_activate(
-            runtime.require_database(apply_migrations=False), claims, operation
-        )
-    finally:
-        runtime.close()
 
 
 def project_checkout_root(db: HubDatabase, project_id: str) -> str:

@@ -1,4 +1,4 @@
-"""The activation guard refuses spawned agents unless a verified managed identity holds activate_daemon."""
+"""The activation guard refuses a spawned agent's stop, start and cutover; restart goes to the daemon route."""
 
 from __future__ import annotations
 
@@ -49,41 +49,13 @@ def operator_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(activation, "operator_credential_readable", lambda: True)
 
 
-class _HubRuntime:
-    def __init__(self, config_file: object = None) -> None:
-        pass
-
-    def require_database(self, *, apply_migrations: bool = True) -> object:
-        return object()
-
-    def close(self) -> None:
-        pass
-
-
-def _recording_runtime(opened: list[str]) -> type[_HubRuntime]:
-    class RecordingRuntime(_HubRuntime):
-        def __init__(self, config_file: object = None) -> None:
-            opened.append("hub")
-
-    return RecordingRuntime
-
-
 @pytest.fixture
-def spawned(monkeypatch: pytest.MonkeyPatch) -> Callable[[bool], None]:
-    """A spawned seat whose verified managed identity is CLAIMS; the caller sets its grant."""
+def spawned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A spawned seat that presents a managed capability. Stop, start and cutover never read a grant."""
     monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
     monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_ID", raising=False)
     monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", raising=False)
     monkeypatch.setattr(activation, "read_managed_api_token", lambda: "token-1")
-    monkeypatch.setattr(activation, "read_managed_signing_key", lambda: b"key")
-    monkeypatch.setattr(activation, "classify_agent_api_token", lambda _token, _key: CLAIMS)
-    monkeypatch.setattr(activation, "CliRuntime", _HubRuntime)
-
-    def holds(granted: bool) -> None:
-        monkeypatch.setattr(activation, "claims_may_activate", lambda _db, _claims, _op: granted)
-
-    holds(False)
-    return holds
 
 
 @pytest.mark.parametrize("operation", ["start", "stop", "restart", "cutover"])
@@ -105,11 +77,12 @@ def test_blank_run_id_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert agent_activation_refusal("restart") is None
 
 
-@pytest.mark.parametrize("operation", ["start", "stop"])
-def test_spawned_stop_and_start_stay_refused_even_for_a_holder(
-    spawned: Callable[[bool], None], operation: str
+@pytest.mark.parametrize("operation", ["start", "stop", "cutover"])
+@pytest.mark.usefixtures("spawned")
+def test_spawned_stop_start_and_cutover_stay_refused_even_with_a_grant(
+    monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    spawned(True)
+    monkeypatch.setattr(activation, "claims_may_activate", lambda _db, _claims, _op: True)
 
     refusal = agent_activation_refusal(operation)
 
@@ -117,34 +90,27 @@ def test_spawned_stop_and_start_stay_refused_even_for_a_holder(
     assert refusal.startswith("spawned_agent_refused")
 
 
-def test_verified_holder_passes_cutover_locally(spawned: Callable[[bool], None]) -> None:
-    spawned(True)
-
-    assert agent_activation_refusal("cutover") is None
-
-
-def test_spawned_restart_is_never_admitted_by_a_local_stop_half(
-    spawned: Callable[[bool], None],
-) -> None:
-    """A verified holder's restart is decided by the daemon route, so no local stop may run it."""
-    spawned(True)
-
+@pytest.mark.usefixtures("spawned")
+def test_spawned_restart_is_never_admitted_by_a_local_stop_half() -> None:
+    """A spawned restart is decided by the daemon route, so no local stop may run it."""
     refusal = agent_activation_refusal("restart")
 
     assert refusal is not None
     assert "decided by the daemon route" in refusal
 
 
+@pytest.mark.usefixtures("spawned")
 def test_spawned_restart_refusal_needs_only_the_private_envelope_and_the_daemon_url(
-    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOBBY_DAEMON_URL", "http://127.0.0.1:61987")
 
     assert activation.spawned_restart_refusal() is None
 
 
+@pytest.mark.usefixtures("spawned")
 def test_spawned_restart_refusal_names_a_missing_envelope(
-    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(activation, "read_managed_api_token", lambda: None)
 
@@ -154,9 +120,10 @@ def test_spawned_restart_refusal_names_a_missing_envelope(
     assert "no managed capability is presented for restart" in refusal
 
 
+@pytest.mark.usefixtures("spawned")
 @pytest.mark.parametrize("url", ["", "http://127.0.0.1", "ftp://127.0.0.1:61987"])
 def test_spawned_restart_refusal_needs_a_usable_daemon_url_with_a_port(
-    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch, url: str
+    monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
     monkeypatch.setenv("GOBBY_DAEMON_URL", url)
 
@@ -166,38 +133,17 @@ def test_spawned_restart_refusal_needs_a_usable_daemon_url_with_a_port(
     assert "no daemon URL is presented" in refusal
 
 
-def test_spawned_whole_daemon_refusal_names_stop_and_start(
-    spawned: Callable[[bool], None],
-) -> None:
+def test_spawned_whole_daemon_refusal_names_stop_and_start() -> None:
     refusal = activation.spawned_whole_daemon_refusal()
 
     assert "spawned agents may not stop or start the daemon" in refusal
 
 
-def test_verified_definition_without_the_capability_is_refused(
-    spawned: Callable[[bool], None],
-) -> None:
-    spawned(False)
+def test_spawned_cutover_refusal_names_cutover() -> None:
+    refusal = activation.spawned_cutover_refusal()
 
-    refusal = agent_activation_refusal("cutover")
-
-    assert refusal is not None
-    assert "activate_daemon" in refusal
-
-
-def test_spawned_seat_without_a_managed_envelope_is_refused(
-    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spawned(True)
-    monkeypatch.setattr(activation, "read_managed_api_token", lambda: None)
-    opened: list[str] = []
-    monkeypatch.setattr(activation, "CliRuntime", _recording_runtime(opened))
-
-    refusal = agent_activation_refusal("restart")
-
-    assert refusal is not None
     assert refusal.startswith("spawned_agent_refused")
-    assert opened == []
+    assert "spawned agents may not cut over the daemon" in refusal
 
 
 def test_copied_run_id_cannot_borrow_another_seats_envelope(
@@ -211,45 +157,11 @@ def test_copied_run_id_cannot_borrow_another_seats_envelope(
     monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
     monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_ID", raising=False)
     monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(envelope))
-    opened: list[str] = []
-    monkeypatch.setattr(activation, "CliRuntime", _recording_runtime(opened))
 
-    refusal = agent_activation_refusal("restart")
+    refusal = activation.spawned_restart_refusal()
 
     assert refusal is not None
     assert refusal.startswith("spawned_agent_refused")
-    assert opened == []
-
-
-def test_capability_that_fails_its_signature_is_refused(
-    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spawned(True)
-    monkeypatch.setattr(
-        activation, "classify_agent_api_token", lambda _token, _key: "capability_invalid"
-    )
-
-    refusal = agent_activation_refusal("cutover")
-
-    assert refusal is not None
-    assert "capability_invalid" in refusal
-
-
-def test_capability_without_a_signing_key_is_refused(
-    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spawned(True)
-    monkeypatch.setattr(activation, "read_managed_signing_key", lambda: None)
-    monkeypatch.setattr(
-        activation,
-        "classify_agent_api_token",
-        lambda _token, key: "signing_key_unavailable" if key is None else CLAIMS,
-    )
-
-    refusal = agent_activation_refusal("cutover")
-
-    assert refusal is not None
-    assert "signing_key_unavailable" in refusal
 
 
 def test_claims_without_a_run_identity_never_activate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -266,8 +178,8 @@ def test_claims_without_a_run_identity_never_activate(monkeypatch: pytest.Monkey
     assert calls == []
 
 
-@pytest.mark.parametrize("operation", ["start", "stop"])
-def test_capability_never_admits_stop_or_start(
+@pytest.mark.parametrize("operation", ["start", "stop", "cutover"])
+def test_capability_never_admits_stop_start_or_cutover(
     monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
     monkeypatch.setattr(activation, "session_has_capability", lambda _db, _sid, _cap: True)
@@ -285,7 +197,7 @@ def test_capability_is_read_from_the_verified_session(monkeypatch: pytest.Monkey
     monkeypatch.setattr(activation, "session_has_capability", capability)
     db = HUB_DATABASE
 
-    assert claims_may_activate(db, CLAIMS, "cutover") is True
+    assert claims_may_activate(db, CLAIMS, "restart") is True
     assert calls == [(db, "session-1", "activate_daemon")]
 
 
@@ -369,7 +281,7 @@ def marker_cleared_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pa
 
 def _must_not_reach(name: str) -> Callable[..., NoReturn]:
     def reached(*_args: object, **_kwargs: object) -> NoReturn:
-        pytest.fail(f"{name} reached the daemon from a caller whose spawn markers were cleared")
+        pytest.fail(f"{name} was reached by a caller the guard must refuse")
 
     return reached
 
@@ -412,21 +324,12 @@ def test_marker_cleared_caller_never_reaches_the_daemon(
     assert "spawned_agent_refused" in result.output
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "open (#25723 rework): a marked cutover verifies the signature and the capability lookup "
-        "from state the caller controls (GOBBY_HOME, its envelope grant); the trust root for "
-        "spawned cutover needs a lead decision: a daemon-decided route, or refusal"
-    ),
-)
-def test_marked_cutover_is_not_admitted_by_a_key_under_a_redirected_home(
+def test_marked_cutover_is_refused_before_any_key_or_capability_lookup(
     marker_cleared_caller: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A capability minted under the redirected home's key, with a database that grants it, is refused.
+    """A capability minted under the redirected home's key is refused by the marker rule alone.
 
-    The signature and the capability lookup both read env-selected state, so this models a
-    marked caller that controls its own home. Refusal here is the spawned-cutover trust root.
+    A marked caller's cutover has no local grant, so the capability lookup is never consulted.
     """
     token = issue_agent_api_token(
         derive_managed_signing_key(_FORGED_KEY),
@@ -443,10 +346,34 @@ def test_marked_cutover_is_not_admitted_by_a_key_under_a_redirected_home(
     envelope.chmod(0o600)
     monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
     monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(envelope))
-    monkeypatch.setattr(activation, "CliRuntime", _HubRuntime)
-    monkeypatch.setattr(activation, "claims_may_activate", lambda _db, _claims, _op: True)
+    monkeypatch.setattr(activation, "claims_may_activate", _must_not_reach("claims_may_activate"))
 
     refusal = agent_activation_refusal("cutover")
 
-    assert refusal is not None
-    assert refusal.startswith("spawned_agent_refused")
+    assert refusal == activation.spawned_cutover_refusal()
+
+
+@pytest.mark.usefixtures("spawned")
+def test_spawned_cutover_is_refused_at_entry_before_any_stop_or_protected_run_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A redirected GOBBY_HOME changes nothing: the entry refusal runs before any stop or bearer."""
+    forged = tmp_path / "forged-home"
+    forged.mkdir()
+    (forged / "bootstrap.yaml").write_text(f"api_key: {_FORGED_KEY}\n")
+    monkeypatch.setenv("GOBBY_HOME", str(forged))
+    monkeypatch.setattr(cutover_cli, "_do_stop", _must_not_reach("_do_stop"))
+    monkeypatch.setattr(
+        cutover_cli, "_stop_admission_refusal", _must_not_reach("_stop_admission_refusal")
+    )
+    monkeypatch.setattr(
+        cutover_cli, "fetch_protected_runs", _must_not_reach("fetch_protected_runs")
+    )
+    monkeypatch.setattr(cutover_cli, "run_cutover", _must_not_reach("run_cutover"))
+
+    result = CliRunner().invoke(
+        cutover_cli.cutover, ["--allow-dirty"], obj=CliRuntime(config_file=None)
+    )
+
+    assert result.exit_code != 0, result.output
+    assert "spawned_agent_refused" in result.output
