@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -12,6 +12,10 @@ from uuid import uuid4
 import pytest
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.sessions.compact_failure_attention import (
+    COMPACT_FAILURE_ATTENTION_REASON,
+    compact_failure_attention_manager,
+)
 from gobby.sessions.compact_markers import (
     COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -28,6 +32,7 @@ from gobby.sessions.handoff_reconciliation import (
     settle_expired_unconfirmed_compact,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, insert_delivery_receipt
+from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -305,3 +310,37 @@ def test_delivered_attempt_is_never_settled(temp_db: HubDatabase, session_id: st
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["attempt_id"] == ATTEMPT_ID
     assert receipt_count(temp_db) == 1
+
+
+@pytest.mark.asyncio
+async def test_late_reconcile_clears_the_blocked_compact_attention(
+    temp_db: HubDatabase, session_manager: SessionManager, session_id: str
+) -> None:
+    unconfirmed_attempt(temp_db, session_id, age=timedelta(minutes=5))
+    attention = compact_failure_attention_manager(temp_db)
+    entry_id = session_attention_entry_id(session_id)
+    attention.transition(
+        entry_id,
+        state="blocked",
+        session_id=session_id,
+        reason=COMPACT_FAILURE_ATTENTION_REASON,
+        kind="actionable",
+        fingerprint=f"compact-handoff:{ATTEMPT_ID}",
+        payload={"attempt_id": ATTEMPT_ID},
+    )
+    SessionVariableManager(temp_db).set_variable(
+        session_id, COMPACT_NOTIFICATION_STARTED_AT_VARIABLE, datetime.now(UTC).isoformat()
+    )
+    blocked = attention.get(entry_id)
+    assert blocked is not None
+    assert blocked.state == "blocked"
+
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+    with session_context_for_test(session_id):
+        reconciled = await registry.call(
+            "get_handoff", {"failed_attempt_id": ATTEMPT_ID, "reconcile_late_compact": True}
+        )
+
+    assert reconciled["delivery_state"] == "reconciled_late_compact"
+    cleared = attention.get(entry_id)
+    assert cleared is None or cleared.state is None

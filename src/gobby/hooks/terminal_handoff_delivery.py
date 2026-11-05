@@ -29,6 +29,11 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
 )
 from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.compact_continuation import _schedule_coroutine, persist_pull_prompt_message
+from gobby.sessions.compact_failure_attention import (
+    COMPACT_FAILURE_ATTENTION_REASON,
+    clear_compact_failure_attention,
+    compact_failure_attention_manager,
+)
 from gobby.sessions.handoff import (
     DISPATCH_OWNER,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -43,7 +48,7 @@ from gobby.sessions.handoff import (
 from gobby.sessions.handoff_reconciliation import settle_expired_unconfirmed_compact
 from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
+from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.datetime import utc_now
@@ -96,7 +101,6 @@ _NO_TERMINAL_TARGET_GUIDANCE = (
 # that cannot take the command twice will not take it a ninth time (#22364).
 _MAX_CONSECUTIVE_DELIVERY_FAILURES = 2
 _ABANDONED_ERROR_CODE = "handoff_delivery_abandoned"
-_COMPACT_FAILED_ATTENTION_REASON = "handoff_delivery_failed"
 _ABANDON_GUIDANCE = (
     "Terminal handoff delivery failed twice in a row; delivery is abandoned for this "
     "session. Do not call set_handoff again. Continue the task with the remaining "
@@ -558,7 +562,7 @@ async def _settle_delivery(
             return
 
         if _delivery_succeeded(result, clear_session=claimed.clear_session):
-            _clear_compact_failure_attention(db, claimed.session_id)
+            clear_compact_failure_attention(db, claimed.session_id)
             if result.get("attempt_pending") is True:
                 SessionVariableManager(db).merge_variables(
                     claimed.session_id,
@@ -623,16 +627,6 @@ def _consecutive_delivery_failures(db: HubDatabase, session_id: str) -> int:
         .get(HANDOFF_DELIVERY_FAILURES_VARIABLE)
     )
     return count if isinstance(count, int) and not isinstance(count, bool) else 0
-
-
-def _attention_manager(db: HubDatabase) -> AttentionStateManager:
-    container = get_app_context()
-    configured = getattr(container, "attention_manager", None)
-    return (
-        configured
-        if isinstance(configured, AttentionStateManager) and configured.db is db
-        else AttentionStateManager(db)
-    )
 
 
 def _compensate_delivery_failure(
@@ -710,13 +704,15 @@ def _compensate_delivery_failure(
             # Lifts context-handoff policy; the epoch reset clears it again.
             updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
         SessionVariableManager(db).merge_variables(claimed.session_id, updates)
-    if error_code == "compact_failed":
+    # An unconfirmed compact never reaches the seat by wake: awaiting_handoff declines it. The
+    # blocked entry is the failure the operator can see.
+    if error_code in ("compact_failed", "compact_unconfirmed"):
         try:
-            _attention_manager(db).transition(
+            compact_failure_attention_manager(db).transition(
                 session_attention_entry_id(claimed.session_id),
                 state="blocked",
                 session_id=claimed.session_id,
-                reason=_COMPACT_FAILED_ATTENTION_REASON,
+                reason=COMPACT_FAILURE_ATTENTION_REASON,
                 kind="actionable",
                 fingerprint=f"compact-handoff:{claimed.attempt_id}",
                 payload={"attempt_id": claimed.attempt_id, "message": reason},
@@ -864,27 +860,6 @@ def resume_unconfirmed_compact_expiries(
         (machine_id,),
     )
     return sum(_arm_compact_expiry(db, str(row["id"]), row, loop=event_loop) for row in rows)
-
-
-def _clear_compact_failure_attention(db: HubDatabase, session_id: str) -> None:
-    try:
-        manager = _attention_manager(db)
-        entry_id = session_attention_entry_id(session_id)
-        current = manager.get(entry_id)
-        if current is None or current.reason != _COMPACT_FAILED_ATTENTION_REASON:
-            return
-        manager.transition(
-            entry_id,
-            state=None,
-            expected_attention_id=current.attention_id,
-            expected_fingerprint=current.fingerprint,
-        )
-    except Exception:
-        logger.warning(
-            "Failed clearing compact delivery attention for session %s",
-            session_id,
-            exc_info=True,
-        )
 
 
 def _log_delivery_completion(
