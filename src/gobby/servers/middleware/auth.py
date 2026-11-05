@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from gobby.hub.caller_scope import bind_decision, reset_caller
+from gobby.runtime_grants.signed_request import has_signed_headers, signed_route_operation
 from gobby.servers.auth_service import request_path
 from gobby.servers.browser_sessions import PREFIX as BROWSER_COOKIE_PREFIX
 from gobby.servers.browser_sessions import browser_selectors_match
@@ -42,6 +43,7 @@ _PUBLIC_PATHS = frozenset(
         "/api/health",
         "/api/admin/startup-progress",
         "/api/runtime/handshake/challenge",
+        "/api/runtime/signed-request/nonce",
         "/favicon.ico",
         "/logo.png",
     }
@@ -102,7 +104,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         auth_service = self.server.auth_service
-        decision = await self.server.run_db(auth_service.authenticate, request)
+        if (
+            not browser_cookie
+            and signed_route_operation(request.method, path) is not None
+            and has_signed_headers(request.headers)
+        ):
+            body = await request.body()
+            decision = await self.server.run_db(auth_service.admit_signed_request, request, body)
+        else:
+            decision = await self.server.run_db(auth_service.authenticate, request)
         project_token = None
         if decision.allowed and decision.browser_session is not None:
             claims = decision.browser_session.claims

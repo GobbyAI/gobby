@@ -377,6 +377,7 @@ class TestAgentsSpawnCommand:
             "timeout": 300.0,
             "reasoning_effort": "high",
             "reasoning_required": True,
+            "claim": True,
         }
 
     @patch("gobby.cli.agents.resolve_session_id")

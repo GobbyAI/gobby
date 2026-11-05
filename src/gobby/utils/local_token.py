@@ -1,6 +1,7 @@
 """Lightweight helpers for the install-scoped daemon API token."""
 
 import base64
+import ctypes
 import hashlib
 import hmac
 import json
@@ -30,6 +31,70 @@ def bind_daemon_bootstrap(path: Path) -> None:
 def daemon_bootstrap_path() -> Path:
     """Client processes keep the default bootstrap until daemon startup binds it."""
     return _daemon_bootstrap if _daemon_bootstrap is not None else bootstrap_path()
+
+
+def account_home() -> Path | None:
+    """The account's home from the OS account record; no environment variable selects it.
+
+    POSIX reads the passwd entry. Where the pwd module is missing (native Windows), the profile
+    comes from the known-folder API. A passwd entry that is missing stays None.
+    """
+    try:
+        from pwd import getpwuid
+    except ImportError:
+        return _windows_account_home()
+    try:
+        return Path(getpwuid(os.getuid()).pw_dir)
+    except (AttributeError, KeyError):
+        return None
+
+
+def _windows_account_home() -> Path | None:  # pragma: no cover - Windows only
+    """The account's profile folder from the known-folder API, which reads the process token.
+
+    The profile comes from the account's own record, not from USERPROFILE or any other environment
+    variable. It is the profile the Rust side resolves through dirs::home_dir().
+    """
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        return None
+
+    class _Guid(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_uint32),
+            ("Data2", ctypes.c_uint16),
+            ("Data3", ctypes.c_uint16),
+            ("Data4", ctypes.c_uint8 * 8),
+        ]
+
+    # FOLDERID_Profile from knownfolders.h: {5E6C858F-0E22-4760-9AFE-EA3317B67173}.
+    profile_id = _Guid(
+        0x5E6C858F,
+        0x0E22,
+        0x4760,
+        (ctypes.c_uint8 * 8)(0x9A, 0xFE, 0xEA, 0x33, 0x17, 0xB6, 0x71, 0x73),
+    )
+    shell32 = win_dll("shell32")
+    ole32 = win_dll("ole32")
+    folder = ctypes.c_void_p()
+    # A NULL token resolves the calling account's profile; flags 0 asks for the plain path.
+    hresult = shell32.SHGetKnownFolderPath(ctypes.byref(profile_id), 0, None, ctypes.byref(folder))
+    if hresult != 0 or folder.value is None:
+        return None
+    try:
+        return Path(ctypes.wstring_at(folder.value))
+    finally:
+        ole32.CoTaskMemFree(folder)
+
+
+def operator_bootstrap_path() -> Path | None:
+    """The operator's bootstrap credential at the account's canonical location.
+
+    Only the passwd entry selects it. GOBBY_HOME and HOME are environment variables a caller can
+    set, so neither can redirect the operator credential that activation trusts.
+    """
+    home = account_home()
+    return None if home is None else home / ".gobby" / "bootstrap.yaml"
 
 
 MANAGED_TOKEN_KEY_LABEL = b"gobby-managed-token-v1"
@@ -414,3 +479,25 @@ def read_managed_api_token(env: Mapping[str, str] | None = None) -> str | None:
         if value and principal.get(key) != value:
             raise RuntimeError("managed capability envelope identity does not match")
     return token.strip()
+
+
+def managed_capability_signature(signing_key: bytes, encoded_payload: str) -> bytes:
+    """Return the signature a managed capability carries over its encoded payload."""
+    signed = f"{_AGENT_TOKEN_VERSION}.{encoded_payload}"
+    return hmac.new(signing_key, signed.encode(), hashlib.sha256).digest()
+
+
+def verify_managed_payload(
+    encoded_payload: str,
+    signing_key: bytes | None,
+) -> tuple[AgentApiTokenClaims, bytes] | None:
+    """Verify a capability payload under the daemon's key and return its claims and signature.
+
+    The signature is recomputed from the payload, so a caller learns it only by holding the key.
+    """
+    if not signing_key:
+        return None
+    signature = managed_capability_signature(signing_key, encoded_payload)
+    token = f"{_AGENT_TOKEN_VERSION}.{encoded_payload}.{_urlsafe_encode(signature)}"
+    claims = verify_agent_api_token(token, signing_key)
+    return None if claims is None else (claims, signature)

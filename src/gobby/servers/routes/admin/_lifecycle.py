@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
+from gobby.releases.activation import claims_may_activate
 from gobby.sessions.handoff_shutdown import (
     HandoffShutdownBlocked,
     cancel_handoff_shutdown,
@@ -96,19 +97,26 @@ def _restart_start_refusal() -> str | None:
         runtime.close()
 
 
-async def _managed_activation_refusal(server: "HTTPServer", request: Request) -> str | None:
-    """Refuse a managed caller from stopping, starting, restarting or cutting over the daemon.
+async def _managed_activation_refusal(
+    server: "HTTPServer", request: Request, operation: str
+) -> str | None:
+    """Refuse a managed caller's daemon activation unless its verified definition admits it.
 
-    Operators, the web UI and break-glass callers have no managed principal and pass.
+    Operators, the web UI and break-glass callers have no managed principal and pass. A managed
+    caller passes only for restart and cutover, and only when its installed definition holds
+    activate_daemon; every other managed caller is refused before any stop.
     """
     principal = await server.run_db(server.auth_service.request_principal, request)
     if principal is None:
         return None
     if principal is False:
         return "the managed credential was rejected"
+    if await server.run_db(claims_may_activate, server.services.database, principal, operation):
+        return None
     return (
         "managed_activation_refused: managed callers may not stop, start, restart or cut over "
-        "the daemon; activation follows the configured owner"
+        "the daemon unless their definition holds activate_daemon; activation follows the "
+        "configured owner"
     )
 
 
@@ -144,7 +152,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         start_time = time.perf_counter()
         inc_counter("shutdown_requests_total")
-        if refusal := await _managed_activation_refusal(server, request):
+        operation = "restart" if restart_supervisor else "stop"
+        if refusal := await _managed_activation_refusal(server, request, operation):
             raise HTTPException(status_code=403, detail=refusal)
         machine_id = require_machine_id()
         shutdown_initiated = False
@@ -231,7 +240,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         ``terminals=true`` also restarts the gterm host (#22002).
         """
         start_time = time.perf_counter()
-        if refusal := await _managed_activation_refusal(server, request):
+        if refusal := await _managed_activation_refusal(server, request, "restart"):
             raise HTTPException(status_code=403, detail=refusal)
 
         restart_lock = _get_restart_lock()
