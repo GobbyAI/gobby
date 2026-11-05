@@ -1,6 +1,6 @@
 # orchestrator procedures
 
-- Seat rulings and dispositions go through Triage. Send the full decision with target seat ref, task and candidate to Triage with wake=true; it forwards immediately with wake=true and marks the ledger item resolved. Route HOLD/GO work decisions the same way. Only pane recovery goes directly to seats. Send queue updates for the Archivist and operator decisions for the Assistant through Triage too.
+- Seat rulings and dispositions go directly to the target seat with wake=true, with the task, candidate and full decision. HOLD/GO work decisions go the same way. Triage stays the inbound digest path, and it clears a ledger item when it sees your direct answer. Send queue updates for the Archivist and operator decisions for the Assistant through Triage.
 - Artifacts. Follow `gobby:references/agents/messaging.md` for review findings and operator reports. Send complete durable content with task/candidate/filename/digest; a private workspace path alone is unusable by other seats. Triage relays reviews to the task's developer with new recipient-addressed message IDs. Send reports through Triage to the Assistant, which reconstructs its own file and delivers it through project_policy.operator_channel.
 - Rank work by the project's operating policy and roadmap. Say which priority a task serves when you rank it for the operator.
 - File tasks and give each code task to a DevTeam. Never claim code tasks yourself, however small. Edit tasks as needed, and field other seats' edit requests, their own assigned tasks included.
@@ -23,7 +23,7 @@
 - Never gate a local landing, package or daemon restart on a review of pushed work. The responsible author resolves each post-push finding with a fix or a reasoned dismissal.
 - After every landing, confirm the merge.
 - The daemon announces its own restarts and cutovers: a waking global hold notice before it stops and a waking DAEMON BACK once it is healthy. Never compose either notice by hand. A landing meant to fix load activates at once, even under heavy load.
-- Landing ledger. You own every restart and activation, at any time outside the quiet hours in the project policy. Keep the landing ledger of landed work. The Orchestrator runs no release batches; activation is a restart. Seats never run `gobby restart`.
+- Landing ledger. You decide every restart and activation, at any time outside the quiet hours in the project policy, and the Release Manager runs them on your direction. Launch it with `support` and `seats=release-manager` when it isn't live. Run one yourself only when the Release Manager can't. No other seat runs `gobby restart`. Keep the landing ledger of landed work.
 - Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
 - Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.
 - Before a seat restarts, it runs `set_handoff` and consumes the handoff in its fresh context first. Wait for that before closing its window and resuming it; a high-context resume wastes tokens.
@@ -39,8 +39,9 @@
 - Ending seats. Reviewers, writers, and plan and research seats end their own runs with `end_agent_run` once their verdict or artifact is delivered; a developer keeps its seat for the next leaf of its epic. Lead seats never kill or stop a seat. A lingering or dead seat goes to Triage, which hands it to you; you end any seat that is unowned or unresponsive with `gobby-agents:stop_agent(run_id=<full run UUID>)`, never a prefix. A seat ends only its own run or the runs in its own spawner chain, never another team's seat.
 - Cost. Stop every idle seat as soon as its work is delivered. Spawn one fresh reviewer per candidate SHA and have it end its own run after its verdict; reuse it only for a delta review of the same task. Use global wakes only for machine-wide coordination.
 - Restarts. Batch every landing that needs activation (rules, definitions, daemon code) into one restart outside the project policy's quiet hours. Do not spawn while a restart or cutover is in progress. After the restart, read back each installed row the landings changed, then close.
-- Land and close, in order (details in `gobby:references/tasks/closing.md`):
-  1. `gobby-tasks-ops:land_commit`; restart or cut over if the landing needs activation.
+- Who lands. A DevTeam's lead lands and closes its task; never take that over. Never spawn a developer outside a dev-team. You land only your own YAML-only live fixes.
+- Land and close your own live fix, in order (details in `gobby:references/tasks/closing.md`):
+  1. `gobby-tasks-ops:land_commit`; direct the restart or cutover if the landing needs activation.
   2. Record the closing attestation with the full integrated SHA.
   3. `release_task_claim` if a claim is still held.
   4. `close_task` with `preview=true`, then the real call with the returned `expected_closure_revision`.
@@ -76,6 +77,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 7.2.0_
+_Version: 8.0.0_
 
 _Last verified: 2026-11-04_

@@ -1,9 +1,21 @@
-version: "1.0.1"
+version: "1.1.0"
 tags: [worker-safety, enforcement, gobby]
 
 rules:
+  no-daemon-start-stop-or-force:
+    description: "Hold a spawned definition that may activate landings to a plain restart or cutover: no start, stop, --force or --allow-dirty"
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?gobby\\s+(?:(?:start|stop)\\b|(?:restart|cutover)\\b[^;&|\\n]*\\s--(?:force|allow-dirty)\\b)"
+        reason: "Spawned agents never start or stop the daemon, and never force a restart or cutover. Run it plain with --wait, or report the refusal."
+
   no-daemon-management:
-    description: "Block spawned agents from starting, stopping, restarting or cutting over the gobby daemon via CLI; the Orchestrator restarts it and the daemon announces the restart"
+    description: "Block spawned agents from starting, stopping, restarting or cutting over the gobby daemon via CLI; a definition that activates landings excludes this rule by name, and the daemon announces the restart"
     event: before_tool
     enabled: true
     priority: 50
