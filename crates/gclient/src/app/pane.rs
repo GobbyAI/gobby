@@ -417,6 +417,16 @@ impl Pane {
         self.is_live() && !self.terminating
     }
 
+    /// Keys typed while a detach is in flight still go out: the detach runs
+    /// off the input path, so only a pane being closed refuses them.
+    pub fn accepts_input(&self) -> bool {
+        !self.terminating
+            && matches!(
+                self.attach,
+                AttachState::Attached { .. } | AttachState::Detaching { .. }
+            )
+    }
+
     /// Frames arrive on a direct socket and the backend is one gclient can
     /// write to. Such a pane types straight onto its host stream.
     pub(super) fn direct_native(&self) -> bool {

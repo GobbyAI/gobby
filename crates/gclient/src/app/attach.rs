@@ -143,6 +143,30 @@ impl Pane {
         Some((old_attachment_id, generation))
     }
 
+    /// Closing an external pane: the detach request rides the writer, so keys
+    /// typed behind it still go out on the old attachment. The supervisor is
+    /// marked requested so the detach deadline cannot reconnect a closing pane.
+    pub(super) fn begin_closing_detach(&mut self) -> Option<String> {
+        let (old_attachment_id, generation) = match &self.attach {
+            AttachState::Attached {
+                attachment_id,
+                generation,
+                ..
+            } => (attachment_id.clone(), *generation),
+            AttachState::Detaching { .. }
+            | AttachState::Detached
+            | AttachState::Attaching { .. } => return None,
+        };
+        self.attach = AttachState::Detaching {
+            old_attachment_id: old_attachment_id.clone(),
+            generation,
+            deadline: Instant::now(),
+            supervisor_requested: true,
+        };
+        self.live = false;
+        Some(old_attachment_id)
+    }
+
     pub(super) fn retire_attachment(
         &mut self,
         attachment_id: &str,

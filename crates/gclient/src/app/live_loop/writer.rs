@@ -116,6 +116,118 @@ enum QueuedWrite {
     },
 }
 
+/// A barrier the writer has taken but not yet fired. It fires once the writes
+/// sent before it have settled, and its waits then run off the writer task.
+struct Fence {
+    /// Writes sent before the barrier, counted when it was taken.
+    ahead: u64,
+    message: Option<Value>,
+    after: Option<watch::Receiver<bool>>,
+    flushed: Option<WriteReceipt>,
+    attachment: String,
+    done: watch::Sender<bool>,
+}
+
+/// The writer's barriers, fired in the order they were taken.
+#[derive(Default)]
+struct Fences {
+    queue: VecDeque<Fence>,
+    /// Writes that have entered `inflight`.
+    pushed: u64,
+    /// Writes whose replies have settled, in the order sent.
+    settled: u64,
+    /// The last fired barrier's `done`: the next one waits behind it so detaches
+    /// reach the daemon in order.
+    chain: Option<watch::Receiver<bool>>,
+}
+
+impl Fences {
+    /// Fires every barrier whose earlier writes have settled. `false` means the
+    /// pane is finished and the writer must stop.
+    fn fire_ready(
+        &mut self,
+        abandoned: &mut Abandoned,
+        outcomes: &UnboundedSender<JobOutcome>,
+        daemon: &LiveDaemon,
+        pane: PaneId,
+        generation: Generation,
+    ) -> bool {
+        while self
+            .queue
+            .front()
+            .is_some_and(|fence| fence.ahead <= self.settled)
+        {
+            if !abandoned.report(outcomes, pane) {
+                return false;
+            }
+            let Some(fence) = self.queue.pop_front() else {
+                break;
+            };
+            let prev = self.chain.replace(fence.done.subscribe());
+            tokio::spawn(run_fence(
+                fence,
+                prev,
+                daemon.clone(),
+                outcomes.clone(),
+                generation,
+                pane,
+            ));
+        }
+        true
+    }
+}
+
+/// Runs one fired barrier off the writer task: the barrier before it, the take
+/// it undoes and the frame flush come first, then the daemon request.
+async fn run_fence(
+    fence: Fence,
+    prev: Option<watch::Receiver<bool>>,
+    daemon: LiveDaemon,
+    outcomes: UnboundedSender<JobOutcome>,
+    generation: Generation,
+    pane: PaneId,
+) {
+    let Fence {
+        message,
+        after,
+        flushed,
+        attachment,
+        done,
+        ..
+    } = fence;
+    if let Some(mut prev) = prev {
+        let _ = prev.wait_for(|fired| *fired).await;
+    }
+    if let Some(mut taken) = after {
+        let _ = taken.wait_for(|taken| *taken).await;
+    }
+    // A direct pane's input is flushed to its frame socket first. The frame
+    // writer bounds each write and retires a socket the host stopped reading,
+    // which fails the receipt: what was typed there is unconfirmed, and the
+    // barrier goes on rather than holding the next take.
+    if let Some(flushed) = flushed {
+        if !matches!(flushed.await, Ok(Ok(()))) {
+            let outcome = JobOutcome {
+                tag: JobTag {
+                    id: 0,
+                    generation,
+                    key: JobKey::Write(pane),
+                },
+                result: JobResult::WriteUnconfirmed { pane, attachment },
+            };
+            if outcomes.send(outcome).is_err() {
+                return;
+            }
+        }
+    }
+    // A detach that cannot reach the daemon lost the connection, which drops
+    // the attachment with it.
+    if let Some(message) = message {
+        let _ = daemon.notify(message).await;
+    }
+    let _ = done.send(true);
+}
+
 /// What is queued and not yet picked up by the writer task.
 #[derive(Debug, Default)]
 struct Backlog {
@@ -195,6 +307,7 @@ impl PaneWriter {
         tokio::spawn(async move {
             let mut abandoned = Abandoned::default();
             let mut inflight = VecDeque::new();
+            let mut fences = Fences::default();
             loop {
                 // A settled reply goes out before the next queued write, so the
                 // outcomes come back in the order the writes were sent.
@@ -202,6 +315,10 @@ impl PaneWriter {
                     biased;
                     settled = settle_front(&mut inflight, pane), if !inflight.is_empty() => {
                         if !deliver(settled, &drained, &outcomes) {
+                            return;
+                        }
+                        fences.settled += 1;
+                        if !fences.fire_ready(&mut abandoned, &outcomes, &daemon, pane, writer_generation) {
                             return;
                         }
                         continue;
@@ -259,6 +376,7 @@ impl PaneWriter {
                             bytes,
                             reply,
                         });
+                        fences.pushed += 1;
                     }
                     QueuedWrite::Barrier {
                         message,
@@ -267,46 +385,26 @@ impl PaneWriter {
                         attachment,
                         done,
                     } => {
-                        // A detach fences the attachment's waiters, so every
-                        // write sent before it settles first.
-                        while !inflight.is_empty() {
-                            let settled = settle_front(&mut inflight, pane).await;
-                            if !deliver(settled, &drained, &outcomes) {
-                                return;
-                            }
-                        }
-                        if !abandoned.report(&outcomes, pane) {
+                        // A detach fences the attachment's waiters: it fires once
+                        // every write sent before it has settled. Writes typed
+                        // after it keep flowing, so a held reply holds no key.
+                        fences.queue.push_back(Fence {
+                            ahead: fences.pushed,
+                            message,
+                            after,
+                            flushed,
+                            attachment,
+                            done,
+                        });
+                        if !fences.fire_ready(
+                            &mut abandoned,
+                            &outcomes,
+                            &daemon,
+                            pane,
+                            writer_generation,
+                        ) {
                             return;
                         }
-                        if let Some(mut taken) = after {
-                            let _ = taken.wait_for(|taken| *taken).await;
-                        }
-                        // A direct pane's input is flushed to its frame socket
-                        // first. The frame writer bounds each write and retires
-                        // a socket the host stopped reading, which fails the
-                        // receipt: what was typed there is unconfirmed, and the
-                        // barrier goes on rather than holding the next take.
-                        if let Some(flushed) = flushed {
-                            if !matches!(flushed.await, Ok(Ok(()))) {
-                                let outcome = JobOutcome {
-                                    tag: JobTag {
-                                        id: 0,
-                                        generation: writer_generation,
-                                        key: JobKey::Write(pane),
-                                    },
-                                    result: JobResult::WriteUnconfirmed { pane, attachment },
-                                };
-                                if outcomes.send(outcome).is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                        // A detach that cannot reach the daemon lost the
-                        // connection, which drops the attachment with it.
-                        if let Some(message) = message {
-                            let _ = daemon.notify(message).await;
-                        }
-                        let _ = done.send(true);
                     }
                 }
             }
@@ -315,6 +413,12 @@ impl PaneWriter {
                 if !deliver(settled, &drained, &outcomes) {
                     return;
                 }
+                fences.settled += 1;
+            }
+            // Barriers left behind writes that have all settled now fire, so a
+            // close the loop asked for still reaches the daemon.
+            if !fences.fire_ready(&mut abandoned, &outcomes, &daemon, pane, writer_generation) {
+                return;
             }
             abandoned.report(&outcomes, pane);
         });

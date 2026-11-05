@@ -124,7 +124,9 @@ pub(super) fn send_live_input(
         return Ok(());
     }
     let pane = workspace.pane(pane_id);
-    if pane.writable() && (pane.direct_native() || workspace.daemon_ready()) {
+    // A detaching pane is not live, so its keys take the daemon path.
+    let direct = pane.is_live() && pane.direct_native();
+    if pane.accepts_input() && (direct || workspace.daemon_ready()) {
         return send_live_write(workspace, jobs, pane_id, data, paste);
     }
     if !workspace.daemon_ready() {
@@ -190,17 +192,14 @@ pub(super) fn detach_barrier(
     let flushed = pane
         .frame_source_mut()
         .and_then(PaneFrameSource::take_write_receipt);
+    let attachment = pane.begin_closing_detach()?;
     let pane = pane_writer(workspace, outcomes, pane_id);
-    let attachment = pane.attachment_id().to_owned();
     let message = json!({
         "type": "terminal_detach",
         "request_id": uuid::Uuid::new_v4().to_string(),
         "terminal_id": pane.terminal_id,
         "attachment_id": attachment,
     });
-    // Detached here, so the daemon's later finalized event for this attachment
-    // finds no current attachment to retire and attaches nothing again.
-    pane.attach = AttachState::Detached;
     let writer = pane.writer.as_ref().expect("writer spawned");
     writer.enqueue_barrier(Some(message), None, flushed, attachment)
 }
@@ -264,12 +263,14 @@ pub(super) fn send_live_write(
     paste: bool,
 ) -> Result<(), FrameError> {
     let generation = workspace.daemon().generation();
-    if !workspace.pane(pane_id).writable() {
+    if !workspace.pane(pane_id).accepts_input() {
         return Ok(());
     }
     // A direct native pane types on its own frame socket: no write
     // sequence, no in-flight write, no daemon round trip per key (#22573).
-    if workspace.pane(pane_id).direct_native() {
+    // A detaching pane is not live, so its keys take the daemon path.
+    let pane = workspace.pane(pane_id);
+    if pane.is_live() && pane.direct_native() {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
         return pane.send_host_input(data, paste);
     }

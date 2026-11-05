@@ -3882,3 +3882,57 @@ async fn a_slow_new_terminal_attach_never_stalls_streaming_direct_panes() {
     result.expect("live loop exits cleanly");
     mock.shutdown().await;
 }
+
+/// A tmux pane closed while its own write is unsettled queues a detach behind
+/// that write. The daemon holds the reply, so the detach cannot be sent yet. A
+/// key typed into the still-focused pane must reach the daemon within
+/// `KEY_BOUND` rather than wait on the detach.
+#[tokio::test]
+async fn a_key_typed_into_a_tmux_pane_closing_behind_a_held_write_is_not_held() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home, mut chrome) = closing_workspace(&mock, true).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        probe.key_reaches("terminal-b", 'x').await;
+        let release = mock.hold_ws("terminal_input", for_terminal("terminal-b"));
+        probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
+        wait_until("the held write", || written(&mock, "terminal-b").len() == 2).await;
+        probe.key(KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
+        probe.key(KeyCode::Char('z'), KeyModifiers::NONE).await;
+        let landed = timeout(KEY_BOUND, async {
+            while written(&mock, "terminal-b") != ["x", "y", "z"] {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            landed.is_ok(),
+            "the key typed behind the closing detach never reached terminal-b: \
+             terminal-b wrote {:?}, terminal-a wrote {:?}",
+            written(&mock, "terminal-b"),
+            written(&mock, "terminal-a"),
+        );
+        release.notify_one();
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+}
