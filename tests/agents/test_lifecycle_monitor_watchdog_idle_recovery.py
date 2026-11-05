@@ -665,6 +665,11 @@ async def test_fresh_task_complete_usage_limit_promptly_fails_run(
         session_age_seconds=1,
     )
     assert run.started_at is not None
+    # The attempt begins with the run, so a startup error before started_at is in-attempt.
+    temp_db.execute(
+        "UPDATE terminals SET attempt_started_at = %s WHERE agent_run_id = %s",
+        (run.created_at, run.id),
+    )
     event_timestamp = (
         run.created_at + (run.started_at - run.created_at) / 2
         if before_start_persist

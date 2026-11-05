@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.provider_quota_monitor import ProviderQuotaMonitor
 from gobby.agents.watchdog.completed_turn_recovery import completed_turn_recovery_due
 from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
-from gobby.agents.watchdog.quota import ProviderQuotaExhaustion, detect_provider_quota
 from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator, pane_has_capacity_message
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.hub.remote_pane import remote_pane_store
+from gobby.providers.quota_observations import FRESHNESS_SECONDS
+from gobby.providers.quota_signals import pane_generation
 from gobby.sessions.activity import last_session_activity
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.storage.coordination_waits import CoordinationWaitManager
@@ -28,12 +30,14 @@ if TYPE_CHECKING:
     from gobby.agents.stall_classifier import StallClassifier
     from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
     from gobby.config.tmux import TmuxConfig
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.attention import AttentionStateManager
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.terminals import Terminal
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,6 @@ logger = logging.getLogger(__name__)
 class PaneFacts:
     """Pane observations consumed by the hub's idle policy."""
 
-    quota: ProviderQuotaExhaustion | None
     capacity_candidate: bool
     status: str
     turn_in_flight: bool
@@ -108,11 +111,16 @@ class IdleCheckHandler:
             terminal_services=terminal_services,
         )
         self._attention_panes_for_idle: dict[str, str] = {}
+        self._provider_quota_monitor: ProviderQuotaMonitor | None = None
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
+
+    def set_provider_capacity_service(self, service: ProviderCapacityService | None) -> None:
+        """Attach the shared capacity service; spawned-run pane hints go through it."""
+        self._provider_quota_monitor = None if service is None else ProviderQuotaMonitor(service)
 
     @property
     def attention_tracker(self) -> AgentAttentionTracker:
@@ -154,21 +162,51 @@ class IdleCheckHandler:
         return handled
 
     async def check_attention_agents(self, *, reuse_for_idle: bool = False) -> int:
-        """Scan active panes for attention without waiting for idle eligibility."""
+        """Scan each active pane once: attention state and spawned-run quota hints."""
         self._attention_panes_for_idle.clear()
-        if not self._attention_tracker.enabled:
+        monitor = self._provider_quota_monitor
+        attention_enabled = self._attention_tracker.enabled
+        services = self._terminal_services
+        if services is None or not (attention_enabled or monitor is not None):
             return 0
-        runs = await self._run_db(self._get_active_terminal_runs)
-        checked = 0
-        for run in runs:
-            if self._terminal_services is None or self._terminal_services.terminal_for(run) is None:
-                continue
+        targets: list[tuple[AgentRun, Terminal, str]] = []
+        for run in await self._run_db(self._get_active_terminal_runs):
+            terminal = services.terminal_for(run)
+            if terminal is not None:
+                targets.append((run, terminal, await self._observation_provider(run)))
+        if monitor is not None:
+            # Every live terminal counts, including one whose capture fails this pass.
+            live: dict[str, set[str]] = {}
+            for _run, terminal, provider in targets:
+                live.setdefault(provider, set()).add(pane_generation(terminal))
             try:
-                snapshot = await self._terminal_services.snapshot(run, 15)
+                await monitor.retire_dead(live)
+            except Exception:
+                logger.warning("Failed to retire pane quota generations", exc_info=True)
+        checked = 0
+        for run, terminal, provider in targets:
+            try:
+                snapshot = await services.snapshot(run, 15)
                 pane_output = None if snapshot is None else snapshot.text
                 if pane_output is None:
                     continue
-                await self._attention_tracker.sync(run, pane_output)
+                if monitor is not None:
+                    # Isolated: observation failure never gates attention or verified failure.
+                    try:
+                        await monitor.observe_capture(
+                            provider=provider,
+                            terminal=terminal,
+                            snapshot=snapshot,
+                            detected_at=datetime.now(UTC),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to observe pane quota hints for agent %s",
+                            run.id,
+                            exc_info=True,
+                        )
+                if attention_enabled:
+                    await self._attention_tracker.sync(run, pane_output)
                 if reuse_for_idle:
                     self._attention_panes_for_idle[run.id] = pane_output
                 checked += 1
@@ -179,6 +217,22 @@ class IdleCheckHandler:
                     exc_info=True,
                 )
         return checked
+
+    async def _observation_provider(self, run: AgentRun) -> str:
+        """Provider whose pane patterns apply: the child session's source, else the run's."""
+        session_manager = self._get_session_manager()
+        if session_manager is None or not run.child_session_id:
+            return run.provider
+        try:
+            session = await self._run_db(session_manager.get, run.child_session_id)
+        except Exception:
+            logger.warning(
+                "Failed to load session for quota observation on run %s",
+                run.id,
+                exc_info=True,
+            )
+            return run.provider
+        return (session.source if session is not None else None) or run.provider
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
         """Active runs on this machine whose terminal is still pending or live.
@@ -217,11 +271,6 @@ class IdleCheckHandler:
         if idle is None:
             return None
         return PaneFacts(
-            quota=(
-                None
-                if idle.quota is None
-                else ProviderQuotaExhaustion(idle.quota.provider, idle.quota.reset_time)
-            ),
             capacity_candidate=idle.capacity_message is not None,
             status=idle.status,
             turn_in_flight=idle.turn_in_flight,
@@ -271,29 +320,54 @@ class IdleCheckHandler:
             return transcript_path, None
 
     @staticmethod
-    def _provider_error_postdates_run(run: AgentRun, snapshot: WatchdogTranscriptSnapshot) -> bool:
+    def _provider_error_postdates_run(
+        run: AgentRun,
+        terminal: Terminal,
+        snapshot: WatchdogTranscriptSnapshot,
+    ) -> bool:
         error = snapshot.provider_error_event
         created_at = parse_stored_datetime(run.created_at)
         # Native resume appends to the predecessor's rollout. The new run
         # exists before launch; started_at is persisted afterward and could
-        # exclude a current process's immediate startup failure.
+        # exclude a current process's immediate startup failure. The attempt
+        # start bounds a relaunch: an error before it belongs to the prior attempt.
         return (
             error is not None
             and error.timestamp is not None
             and created_at is not None
-            and error.timestamp >= created_at
+            and error.timestamp >= max(created_at, terminal.attempt_started_at)
         )
+
+    async def _fail_on_verified_quota(
+        self,
+        run: AgentRun,
+        terminal: Terminal,
+        snapshot: WatchdogTranscriptSnapshot | None,
+    ) -> bool:
+        """Fail a run whose newest output is a fresh, verified usage-limit error."""
+        if snapshot is None or not snapshot.has_current_provider_error:
+            return False
+        error = snapshot.provider_error_event
+        if (
+            error is None
+            or error.timestamp is None
+            or snapshot.provider_error_terminal_reason != "provider_quota_exhausted"
+            or (datetime.now(UTC) - error.timestamp).total_seconds() > FRESHNESS_SECONDS
+        ):
+            return False
+        return await self._fail_on_terminal_provider_error(run, terminal, snapshot)
 
     async def _fail_on_terminal_provider_error(
         self,
         run: AgentRun,
+        terminal: Terminal,
         snapshot: WatchdogTranscriptSnapshot | None,
     ) -> bool:
         """Terminalize a run whose turn ended on a hard provider error."""
         if (
             snapshot is None
             or not snapshot.has_conclusive_terminal_provider_error
-            or not self._provider_error_postdates_run(run, snapshot)
+            or not self._provider_error_postdates_run(run, terminal, snapshot)
         ):
             return False
         if not await self._recovery._complete_if_work_finished(run):
@@ -319,10 +393,14 @@ class IdleCheckHandler:
         provider_id = (session.source if session is not None else None) or run.provider
         reader = self._watchdog_readers.for_provider(provider_id)
         _path, snapshot = await self._read_local_transcript(run, session, reader)
+        terminal = (
+            None if self._terminal_services is None else self._terminal_services.terminal_for(run)
+        )
         if (
-            snapshot is None
+            terminal is None
+            or snapshot is None
             or not snapshot.has_current_provider_error
-            or not self._provider_error_postdates_run(run, snapshot)
+            or not self._provider_error_postdates_run(run, terminal, snapshot)
         ):
             return None
         return snapshot
@@ -359,10 +437,36 @@ class IdleCheckHandler:
         tmux_name = terminal.session_name or terminal.id
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
+        session_manager = self._get_session_manager()
+        session: Session | None = None
+        session_id = run.child_session_id
+        if session_id and session_manager:
+            session = await self._run_db(session_manager.get, session_id)
+        session_source = session.source if session is not None else None
+        provider_id = session_source or run.provider
+        reader = self._watchdog_readers.for_provider(provider_id)
+        has_capacity_probe = reader is not None and reader.capacity_pane_message is not None
+        transcript_path: str | None = None
+        transcript_snapshot: WatchdogTranscriptSnapshot | None = None
+        transcript_read = False
+        if not remote and reader is not None and reader.provider_id == "codex":
+            # Only the Codex reader classifies a usage limit as a terminal provider error.
+            # Its verified check runs before the gates below, so a held, parked, or recent
+            # run still fails. An active turn has not ended on an error, so it is not read.
+            if pane_output is None and self._terminal_services is not None:
+                snapshot = await self._terminal_services.snapshot(run, 15)
+                pane_output = None if snapshot is None else snapshot.text
+            if pane_output is not None and idle_detector.detect(pane_output) != "active":
+                transcript_path, transcript_snapshot = await self._read_local_transcript(
+                    run, session, reader
+                )
+                transcript_read = True
+                if await self._fail_on_verified_quota(run, terminal, transcript_snapshot):
+                    return 1
+
         session_stale = False
         session_recent = False
         last_activity: datetime | None = None
-        session_id = run.child_session_id
         if session_id:
             try:
                 coordinated_hold = await self._run_db(
@@ -381,23 +485,19 @@ class IdleCheckHandler:
             logger.debug("Agent %s is parked on a subscribed completion; not idle", run.id)
             idle_detector.reset_idle(run.id)
             return 0
-        session_manager = self._get_session_manager()
-        session: Session | None = None
 
-        if session_id and session_manager:
-            session = await self._run_db(session_manager.get, session_id)
-            if session and session.updated_at:
-                try:
-                    last_update = parse_stored_datetime(session.updated_at)
-                    if last_update is not None:
-                        last_activity = last_update
-                        elapsed = (datetime.now(UTC) - last_update).total_seconds()
-                        if elapsed < idle_timeout_seconds:
-                            session_recent = True
-                        else:
-                            session_stale = True
-                except (ValueError, TypeError):
-                    pass
+        if session and session.updated_at:
+            try:
+                last_update = parse_stored_datetime(session.updated_at)
+                if last_update is not None:
+                    last_activity = last_update
+                    elapsed = (datetime.now(UTC) - last_update).total_seconds()
+                    if elapsed < idle_timeout_seconds:
+                        session_recent = True
+                    else:
+                        session_stale = True
+            except (ValueError, TypeError):
+                pass
 
         if session_id:
             activity_at = last_session_activity(session_id)
@@ -416,16 +516,12 @@ class IdleCheckHandler:
             and (datetime.now(UTC) - last_activity).total_seconds() >= idle_ttl
         )
 
-        session_source = session.source if session is not None else None
-        provider_id = session_source or run.provider
-        reader = self._watchdog_readers.for_provider(provider_id)
-        has_capacity_probe = reader is not None and reader.capacity_pane_message is not None
         if session_recent and not has_capacity_probe:
             # A Claude turn that ended on an unrecoverable API error fails the run
             # now rather than after the session goes stale.
             if reader is not None and reader.provider_id == "claude":
                 _path, snapshot = await self._read_local_transcript(run, session, reader)
-                if await self._fail_on_terminal_provider_error(run, snapshot):
+                if await self._fail_on_terminal_provider_error(run, terminal, snapshot):
                     return 1
             idle_detector.reset_idle(run.id)
             return 0
@@ -442,11 +538,9 @@ class IdleCheckHandler:
                 return 0
             if not attention_synced:
                 await self._attention_tracker.sync(run, pane_output)
-            quota = detect_provider_quota(pane_output, provider_id)
-            status = idle_detector.detect(pane_output) if quota is None else "unknown"
+            status = idle_detector.detect(pane_output)
             check_composer = status in ("idle", "active")
             facts = PaneFacts(
-                quota=quota,
                 capacity_candidate=pane_has_capacity_message(pane_output, reader),
                 status=status,
                 turn_in_flight=check_composer and idle_detector.has_turn_in_flight(pane_output),
@@ -457,23 +551,9 @@ class IdleCheckHandler:
                 ),
                 tail=pane_output,
             )
-        pane_output = facts.tail
-        quota = facts.quota
-        if quota is not None:
-            logger.error(
-                "Failing agent %s because %s quota is exhausted%s",
-                run.id,
-                quota.provider,
-                f" until {quota.reset_time}" if quota.reset_time is not None else "",
-            )
-            await self._recovery.fail_provider_quota_agent(run, quota)
-            return 1
         capacity_candidate = facts.capacity_candidate
         status = facts.status
-
-        transcript_snapshot: WatchdogTranscriptSnapshot | None = None
-        transcript_path: str | None = None
-        if (
+        if not transcript_read and (
             session_stale
             or capacity_candidate
             or reader is not None
@@ -483,7 +563,7 @@ class IdleCheckHandler:
             transcript_path, transcript_snapshot = await self._read_local_transcript(
                 run, session, reader
             )
-        if await self._fail_on_terminal_provider_error(run, transcript_snapshot):
+        if await self._fail_on_terminal_provider_error(run, terminal, transcript_snapshot):
             return 1
 
         if status == "unknown":

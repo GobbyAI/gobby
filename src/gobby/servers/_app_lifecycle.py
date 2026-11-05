@@ -222,6 +222,11 @@ def create_lifespan(
             )
             logger.debug("Session coordinator connected to agent lifecycle monitor")
 
+        if server.services.agent_lifecycle_monitor is not None:
+            server.services.agent_lifecycle_monitor.set_provider_capacity_service(
+                server.services.provider_capacity_service
+            )
+
         if (
             hasattr(app.state, "hook_manager")
             and hasattr(app.state.hook_manager, "_session_coordinator")
