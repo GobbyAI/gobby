@@ -122,7 +122,7 @@ def spawn_capabilities_allowed(
         if not body.fallback_agent:
             return True
         target = body.fallback_agent
-    return True
+    return False
 
 
 def spawner_admitted(

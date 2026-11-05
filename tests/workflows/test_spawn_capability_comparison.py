@@ -14,7 +14,10 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.condition_helpers_sessions import spawn_target_allowed
+from gobby.workflows.condition_helpers_sessions import (
+    _FALLBACK_CHAIN_MAX_HOPS,
+    spawn_target_allowed,
+)
 from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
@@ -536,26 +539,40 @@ async def test_spawner_requirement_binds_unspawned_and_default_callers(
         },
         project_id=project_id,
     )
-    RuleDefinitionManager(temp_db).create(
+    _create_spawn_guard_rule(temp_db)
+    decision, reason = await _spawn_decision(temp_db, caller, target)
+    assert decision == expected
+    if expected == "block":
+        assert "fixture spawn boundary" in reason
+
+
+_SPAWN_GUARD_WHEN = (
+    "event.data.get('mcp_server') == 'gobby-agents' "
+    "and event.data.get('mcp_tool') == 'spawn_agent' "
+    "and ((not operator_session(event.metadata.get('_platform_session_id')) "
+    "and not spawn_capabilities_allowed(event.metadata.get('_platform_session_id'), "
+    "tool_input.get('agent'), tool_input.get('project_path'), "
+    "tool_input.get('parent_session_id'), 'spawn_any_definition')) "
+    "or not spawner_admitted(event.metadata.get('_platform_session_id'), "
+    "tool_input.get('agent'), tool_input.get('project_path'), "
+    "tool_input.get('parent_session_id')))"
+)
+
+
+def _create_spawn_guard_rule(db: HubDatabase) -> None:
+    RuleDefinitionManager(db).create(
         "fixture-spawn-guard",
         {
             "event": "before_tool",
             "mandatory": True,
-            "when": (
-                "event.data.get('mcp_server') == 'gobby-agents' "
-                "and event.data.get('mcp_tool') == 'spawn_agent' "
-                "and ((not operator_session(event.metadata.get('_platform_session_id')) "
-                "and not spawn_capabilities_allowed(event.metadata.get('_platform_session_id'), "
-                "tool_input.get('agent'), tool_input.get('project_path'), "
-                "tool_input.get('parent_session_id'), 'spawn_any_definition')) "
-                "or not spawner_admitted(event.metadata.get('_platform_session_id'), "
-                "tool_input.get('agent'), tool_input.get('project_path'), "
-                "tool_input.get('parent_session_id')))"
-            ),
+            "when": _SPAWN_GUARD_WHEN,
             "effects": [{"type": "block", "reason": "fixture spawn boundary"}],
         },
     )
-    response = await RuleEngine(temp_db).evaluate(
+
+
+async def _spawn_decision(db: HubDatabase, caller: str, target: str) -> tuple[str, str]:
+    response = await RuleEngine(db).evaluate(
         HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             source=SessionSource.CLAUDE,
@@ -571,6 +588,107 @@ async def test_spawner_requirement_binds_unspawned_and_default_callers(
         session_id=caller,
         variables={},
     )
-    assert response.decision == expected
-    if expected == "block":
-        assert "fixture spawn boundary" in (response.reason or "")
+    return response.decision, response.reason or ""
+
+
+def _chain_names(length: int) -> list[str]:
+    return [f"fixture-chain-{index}" for index in range(length)]
+
+
+def _define_chain(manager: AgentDefinitionManager, project_id: str, names: list[str]) -> None:
+    """Define a linear fallback chain in which each name falls back to the next."""
+    for index, name in enumerate(names):
+        body: dict[str, Any] = {"capabilities": []}
+        if index + 1 < len(names):
+            body["fallback_agent"] = names[index + 1]
+        _define(manager, name, body, project_id=project_id)
+
+
+@pytest.mark.parametrize(
+    ("length", "expected"),
+    [
+        # Every hop of a chain at the bound is checked before the chain ends.
+        (_FALLBACK_CHAIN_MAX_HOPS + 1, True),
+        # One hop past the bound would go unchecked, so the launch is refused.
+        (_FALLBACK_CHAIN_MAX_HOPS + 2, False),
+    ],
+)
+def test_overlong_fallback_chain_fails_closed_for_capabilities(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    length: int,
+    expected: bool,
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(temp_db, project_id, [], spawnable_agents=["*"])
+    names = _chain_names(length)
+    _define_chain(AgentDefinitionManager(temp_db), project_id, names)
+    assert spawn_capabilities_allowed(sessions, caller, names[0], None, caller) is expected
+
+
+@pytest.mark.parametrize("caller_kind", ["unspawned", "wildcard"])
+async def test_overlong_fallback_chain_is_refused_on_the_rule_path(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caller_kind: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    names = _chain_names(_FALLBACK_CHAIN_MAX_HOPS + 2)
+    _define_chain(AgentDefinitionManager(temp_db), project_id, names)
+    if caller_kind == "wildcard":
+        _, caller = _caller(temp_db, project_id, [], spawnable_agents=["*"])
+    else:
+        caller = (
+            SessionManager(temp_db)
+            .register("fixture-unspawned-chain", None, "claude", project_id=project_id)
+            .id
+        )
+    _create_spawn_guard_rule(temp_db)
+    decision, reason = await _spawn_decision(temp_db, caller, names[0])
+    assert decision == "block"
+    assert "fixture spawn boundary" in reason
+
+
+def test_overlong_fallback_chain_cannot_pass_the_spawnable_scope(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = str(sample_project["id"])
+    names = _chain_names(_FALLBACK_CHAIN_MAX_HOPS + 2)
+    sessions, caller = _caller(temp_db, project_id, [], spawnable_agents=names)
+    _define_chain(AgentDefinitionManager(temp_db), project_id, names)
+    with pytest.raises(ValueError, match="fallback chain"):
+        spawn_target_allowed(
+            sessions, caller, "spawn_agent", names[0], target_project_id=project_id
+        )
+
+
+@pytest.mark.parametrize(
+    ("guard", "expected"),
+    [
+        # A cycle revisits only hops already checked, so unguarded hops admit.
+        (None, True),
+        # A guarded hop reached around the cycle is still checked before the revisit.
+        (["fixture_never_held"], False),
+    ],
+)
+def test_fallback_cycle_checks_each_hop_before_revisiting(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    guard: list[str] | None,
+    expected: bool,
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(temp_db, project_id, [], spawnable_agents=["*"])
+    manager = AgentDefinitionManager(temp_db)
+    _define(
+        manager,
+        "fixture-cycle-a",
+        {"capabilities": [], "fallback_agent": "fixture-cycle-b"},
+        project_id=project_id,
+    )
+    second: dict[str, Any] = {"capabilities": [], "fallback_agent": "fixture-cycle-a"}
+    if guard is not None:
+        second["spawner_capabilities"] = guard
+    _define(manager, "fixture-cycle-b", second, project_id=project_id)
+    assert spawn_capabilities_allowed(sessions, caller, "fixture-cycle-a", None, caller) is expected
