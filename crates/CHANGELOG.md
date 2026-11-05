@@ -114,7 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon lease against `gobby-core 0.9.1`. Version: `0.3.0`.
 - **Foundation alignment** — require `gobby-core 0.9.2`. Version: `0.3.1`.
 - **Minor version bump** — `0.4.0`; requires `gobby-core 0.10.0`. The managed `gdaemon` floor (`MANAGED_BIN_VERSION_PINS`) moves to `0.4.0` with it. Version: `0.4.0`.
-- **Input grant handshake removed** (#25653) — rebuilt against `gobby-terminals` without the grant checks and control routes that only existed for read-only mode. Version: `0.4.135`.
+- **Input grant handshake removed** (#25653) — rebuilt against `gobby-terminals` without the grant checks and control routes that only existed for read-only mode. Version: `0.4.136`.
 
 #### gcode
 
@@ -198,7 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   straight to its gterm host. Daemon load no longer delays a keystroke, since no
   take grant sits on the path. Closing an external or adopted pane detaches its
   attachment. A failed open keeps its error text, and a split whose terminal
-  leaves the workspace stops waiting on it. Version: `0.1.110`.
+  leaves the workspace stops waiting on it. Version: `0.1.111`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 
