@@ -60,10 +60,8 @@ decided all three on 2026-11-05 (Decision 12):
   HTTP 400 on a 64x64 image, under Box's 280 px minimum, and the Orchestrator's
   2026-11-05 rerun on a 512x512 image returned 200. The capture script's Box
   request bypasses the registered `gobby-decisions:evaluate` tool (2.4), and the
-  wire note names no consumer per decision shape (2.5). The service already
-  refuses an image outside 280 to 1568 px per side before dialing, but its error
-  names neither the image's size nor the bounds (2.6, which the Orchestrator
-  filed as #25788).
+  wire note names no consumer per decision shape (2.5). The capture waits on
+  #25789, which routes each decision type to its own backend (Decision 19).
 
 **When the leaves close:**
 - A provisioning record shows a fresh isolated harness, the Orchestrator's
@@ -81,8 +79,6 @@ decided all three on 2026-11-05 (Decision 12):
 - A dated `clef:27b` capture on local Ollama records Box's round trip through that
   tool or its finding, and the wire note names a consumer and live-path test per
   shape (2.5).
-- A Box image outside 280 to 1568 px per side is refused before dialing with an
-  error naming its size and the bounds (2.6).
 
 ## Decision Record
 `kind: framing`
@@ -317,17 +313,22 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     included". #22604 closed without the study, so the line no longer holds
     the order it names. By the Orchestrator's 2026-11-05 ruling, it edits #24701
     at expansion to be blocked by the 2.3 task. Seats do not edit it.
-19. **#25788 (Box decisions reject images under 280 px per side before sending,
-    with a clear error) becomes leaf 2.6.** The Orchestrator filed it under
-    #22948 on 2026-11-05 and directed it into P2 with no edges. Leaf 2.6
-    carries its four validation criteria. At expansion the Orchestrator closes
-    #25788 as superseded by the 2.6 leaf, so the section has one implementation
-    owner and its coverage labels sit on an open leaf. Seats do not edit it.
+19. **The Box capture waits on #25789 (Route each decision type to its own
+    configured backend, and name size and bounds when refusing a Box image).**
+    By the Orchestrator's 2026-11-05 ruling, #25788 is closed as superseded by
+    #25789, which carries its refusal-detail fix, and the plan's Box consumer
+    depends on #25789. #25789 sits under #25603, so this is a cross-epic edge,
+    and expansion gives the 2.5 leaf a `blocked-by` edge on it. The edge sits on
+    2.5 and not 2.4. 2.4's configuration and service-cache seam are written
+    against today's single-endpoint service, and #25789's item 3 names "the
+    #22948 Box consumer" among the consumers it keeps working, so #25789 carries
+    2.4's route and its `tests/scripts` tests forward. Seats do not edit either
+    task.
 
 ## Constraints
 `kind: framing`
 
-- The Orchestrator launches all six leaves in a Dev Team in epic mode for
+- The Orchestrator launches all five leaves in a Dev Team in epic mode for
   #22948, the only mode that grants the epic folder. That launch waits on Josh's
   freeze: no new teams until #25765 and #25653 are proven live.
 - Leaves 2.1 and 2.2 are heavy measurement work. The fleet's load hold in
@@ -687,7 +688,7 @@ Consumers unchanged:
 **Goal**: parity+ claims rest on numbers measured on current gcode, and the
 label gate has its quality evidence and ship rule.
 
-**Granularity:** six leaves. Provisioning (2.1) and measurement (2.2) split
+**Granularity:** five leaves. Provisioning (2.1) and measurement (2.2) split
 at the boundary where all four October roots stopped, so provisioning closes
 with its own durable record and a relaunched seat resumes measurement from it.
 Each lists more than six files, and the count does not call for a further
@@ -698,10 +699,8 @@ the other two, so it has no edge to them. The Box route (2.4) and the Box
 capture (2.5) share no target with any of them, so they have no edge to them.
 The route is a script change with its own tests and closes on them. The capture
 waits on operator steps, and it depends on 2.4 because it runs the script from
-the main checkout after 2.4 lands. The two share no target. The Box refusal
-detail (2.6) is a product change in `src/gobby/ai/decisions.py` with its own
-tests, outside 2.4's script-only scope. It shares no target with any leaf, so it
-has no edge (Decision 19).
+the main checkout after 2.4 lands. The two share no target. The capture also
+depends on #25789, which is outside this plan (Decision 19).
 
 ### 2.1 Provision the rerun harness and pass C0 [category: test]
 `kind: deliverable`
@@ -1266,6 +1265,10 @@ Consumers unchanged:
 - `main` calls `_capture(config, args)` and writes its dict as JSON, so it needs no edit.
   `_parse_diagnostics` treats only Score questions specially, so the Box `questions` shape below
   is safe. 2.5 runs this script from the main checkout, so this leaf lands first.
+- #25789 (per-type decision backends) will change the configuration shape and make services
+  per endpoint. This leaf lands on the current single-endpoint code and has no edge to it.
+  #25789's item 3 names "the #22948 Box consumer" among the consumers it keeps working, so it
+  carries this route and these tests forward (Decision 19).
 
 **Implementation:**
 1. **Tests first,** in `tests/scripts/test_decisions_live_capture.py`:
@@ -1309,7 +1312,7 @@ tests/scripts/test_community_label_study.py -v`, then `uv run ruff check
 scripts/decisions_live_capture.py tests/scripts/test_decisions_live_capture.py` and
 `uv run ruff format --check` on the same paths.
 
-### 2.5 Capture Box on local Clef and record the consumer evidence (depends: 2.4) [category: docs]
+### 2.5 Capture Box on local Clef and record the consumer evidence (depends: 2.4, #25789) [category: docs]
 `kind: deliverable`
 
 Targets:
@@ -1401,75 +1404,6 @@ Targets:
 **Verification:** the committed capture section is byte-equal to `<dir>/clef-capture.md`, the image
 hash matches, a Pillow read of the committed image confirms the red pixel bounds, and the diff
 changes no configuration file.
-
-### 2.6 Name the image's size and the bounds when Box refuses its dimensions [category: code]
-`kind: deliverable`
-
-Targets:
-- `src/gobby/ai/decisions.py::_check_images`
-- `tests/ai/test_decisions_service.py::*` — scope-reason: a new test pins the refusal detail for both formats and both bounds, the 512 by 512 pass and the cooldown, and `test_box_rejects_invalid_images_before_dialing` keeps its existing checks
-
-**Research context:**
-- #25788, filed by the Orchestrator under #22948 on 2026-11-05 and directed into P2 with no edges
-  (Decision 19). Its fix: "read the PNG/JPEG dimensions from the header and refuse an image
-  outside 280-1568 px per side with a typed invalid-input error naming the size and the bounds,
-  before dialing. Invalid input must not open the service cooldown." Its validation criteria:
-  "1. A Box request with a 64x64 image is refused before any HTTP call with an error naming the
-  image size and the 280-1568 px bounds. 2. A 512x512 image passes validation unchanged. 3. The
-  refusal does not open the service cooldown. 4. Focused tests in tests/ai pass against the
-  isolated test hub."
-- What already exists. #25788's description says the service does not check pixel dimensions.
-  The current checkout does check them, since `4e5b4ef809` (2026-10-24, #22604):
-  - `src/gobby/ai/decisions.py::_check_images` measures each image with `_image_dimensions`
-    (PNG IHDR or JPEG SOF). Outside 280 to 1568 px per side, or 78,400 to 2,458,624 px in all,
-    it raises `DecisionsUnavailable("invalid_request", "image dimensions exceed Box limits")`.
-  - `_check_request` calls it, and `DecisionService._request` runs `_check_request` before the
-    cooldown check and `_dial`. A refusal therefore sends nothing and opens no cooldown.
-  - `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing` pins
-    refusal of 279 and 1569 px PNG and JPEG images before dialing with `invalid_request`. It also
-    pins the inclusive 280 and 1568 px boundaries and that no refusal opened the cooldown, on
-    `systemone` and `openrouter-decisions`.
-- So criteria 2 and 3 already hold, and criterion 1 holds except for the error's content. The
-  detail names neither the size nor the bounds, and says "exceed" for an undersized image. This
-  leaf changes that detail only. It keeps the bounds, the area check and the order of checks.
-- Fixture sweep, for the Adversary gobby#19936: no fixture starts failing, because the guard
-  already exists and only its detail changes. The Box fixtures are
-  `tests/scripts/conftest.py::png` (280 by 280), `tests/mcp_proxy/tools/test_decisions_tools.py::_png`
-  (280 by 280), the 2.5 image (512 by 512), and the service test's
-  `tests/ai/test_decisions_service.py::_png` and `::_jpeg` at chosen sizes. A repository search
-  for "dimensions exceed" and "exceed Box" finds only `decisions.py` line 506, so no test or
-  document quotes the old detail.
-- Consumers: the `gobby-decisions:evaluate` tool returns the detail through
-  `src/gobby/mcp_proxy/tools/decisions.py::_failure` as `detail` and in `error`, with its shape
-  unchanged. `_check_request` is `_check_images`' only caller.
-- Test helpers already in the service test: `::_png(width, height)`, `::_jpeg(width, height)`,
-  `::_image`, `::_wire_config`, `::_must_not_dial`, `::_shape_responder`, `BOX_MODEL` and `STATE`.
-- `src/gobby/ai/decisions.py` is 805 lines, under the 850-line heuristic.
-
-**Implementation:**
-1. **Test first.** Add `test_box_dimension_refusal_names_size_and_bounds` to
-   `tests/ai/test_decisions_service.py`, parametrized on `systemone` and `openrouter-decisions`.
-   It builds one `DecisionService` with `failure_cooldown_seconds=60`.
-   - With `_must_not_dial`, a 64 by 64 PNG raises `invalid_request` with detail exactly
-     `image is 64x64 px; Box takes 280 to 1568 px per side`, and a 300 by 1569 JPEG gives
-     `image is 300x1569 px; Box takes 280 to 1568 px per side`. No request is sent.
-   - With `_shape_responder`, a 512 by 512 PNG Box request dials once and returns its answer,
-     which shows the refusals opened no cooldown.
-2. **Detail.** In `_check_images`, raise
-   `DecisionsUnavailable("invalid_request", f"image is {width}x{height} px; Box takes 280 to 1568
-   px per side")`. Keep the bounds and the area check unchanged.
-
-**Acceptance:**
-
-- 2.6.1 - A 64 by 64 PNG and a 300 by 1569 JPEG are refused with `invalid_request` before any HTTP call, each with a detail naming its size and the 280 to 1568 px bounds. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
-- 2.6.2 - After those refusals, a 512 by 512 PNG passes validation and dials once, so the refusals opened no cooldown. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
-- 2.6.3 - The 279 and 1569 px refusals, the inclusive 280 and 1568 px boundaries and the no-cooldown check still pass on both wires. test: `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing`.
-
-**Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
-GOBBY_TEST_PROTECT=1 uv run pytest tests/ai/test_decisions_service.py
-tests/mcp_proxy/tools/test_decisions_tools.py -v`, then `uv run ruff check src/gobby/ai/decisions.py
-tests/ai/test_decisions_service.py`, `uv run ruff format --check` on the same paths, and
-`uv run mypy src/gobby/ai/decisions.py`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1601,6 +1535,19 @@ tests/ai/test_decisions_service.py`, `uv run ruff format --check` on the same pa
   gives the section one owner at expansion. GP-20261105-01 through
   GP-20261105-04 stay resolved, and no new finding or open decision remains.
   The Plan Advocate gobby#19939 converged on the same bytes with no suggestions.
+- 2026-11-05: After that consensus and the M1 stamp, the Orchestrator gobby#19309
+  ruled, relayed through Triage gobby#19614 and the lead gobby#19945, that
+  #25789 replaces #25788. The stamped commit
+  `109243edc9cdb1896e9236e481426fd1d6559b83` is superseded, and no attestation
+  was recorded on it.
+  - Leaf 2.6 is dropped and its stale M1 is removed for re-derivation.
+  - Decision 19 records #25788 as superseded by #25789, and 2.5 depends on
+    #25789.
+  - Open question, sent to the Orchestrator, which blocks consensus: #25789
+    refuses Box routed to a `systemone` endpoint at configuration load. Once 2.5
+    waits on it, 2.5's Box request on `clef:27b` through local Ollama is refused
+    before any exchange, so Decision 12's local-Clef Box capture and #25789's
+    routing cannot both govern 2.5.
 
 ## V2: Verification
 `kind: verification`
@@ -1621,276 +1568,5 @@ After the leaves pass:
    `GOBBY_TEST_PROTECT=1` against the isolated test hub. Confirm `wire-contracts.md`
    has the "Decision shape consumers" section and `systemone-live.md` the dated
    `clef:27b` capture, whose Box record names `consumer` `gobby-decisions:evaluate`.
-7. Rerun `tests/ai/test_decisions_service.py` under `GOBBY_TEST_PROTECT=1` against the
-   isolated test hub, and confirm #25788 is closed as superseded by the 2.6 leaf.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Rerun the Graphify comparison on current gcode
-  category: test
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: The report records the fresh runtime root and its ownership
-    receipt, the dated script copies'' SHA-256 values, both tools'' identities (gcode
-    version, contract, and SHA-256 of the copied installed binary; Graphify''s PyPI
-    version and executable and lock SHA-256), the corpus commits, and at least five
-    interleaved, order-balanced pairs for each timed comparison (an even number, six
-    minimum, with equal AB/BA orders), with the load recorded at each run, raw samples,
-    both tools'' p50 timings and the p50 paired difference. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.2: The report gives C1 to C6 for both tools in the 09 table shape (seconds,
-    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
-    Graphify) beside the 09 numbers, and states that gcode''s C2 to C6 include the
-    community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.3: The report gives C7 for both tools: the marker each used, the one planned
-    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
-    recovered state equals a fresh clean C1 state, by the 09 signature for Graphify
-    and by step 4''s fact, projection and vector checks for gcode, with the gcode
-    row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.4: The report scores C8''s 14 frozen questions for both tools as in 09, and
-    states whether the gcode hybrid lane was included or excluded by the embedding
-    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.5: The report records Graphify''s deterministic community names, whether current
-    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
-    the reason), and gcode''s count of communities by `label_source`, each from its
-    own untimed state, without comparing community counts, and a section that states
-    the evidence for Josh''s #22604 decision without making it. behavior: "Decision
-    input for #22604" in `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-
-    1.1.6: The report gives a verdict for each of the four parity+ properties by step
-    7''s producers and conditions, says whether each was measured in this run, records
-    every remap or retirement behavior no case exercised as `not-exercised`, and records
-    the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:1.1:1.1.1
-  - covers:gcode-graphify-parity-delta:1.1:1.1.2
-  - covers:gcode-graphify-parity-delta:1.1:1.1.3
-  - covers:gcode-graphify-parity-delta:1.1:1.1.4
-  - covers:gcode-graphify-parity-delta:1.1:1.1.5
-  - covers:gcode-graphify-parity-delta:1.1:1.1.6
-  tdd: false
-  source_section: '1.1'
-- title: Order size ties by community id in the graph views
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.2.1: `build_view_payload` lists two communities of equal
-    size with ids 10 and 2 as `community:2` then `community:10`, after any larger
-    community. test: `crates/gcode/src/commands/graph/view/render_tests.rs::view_orders_size_ties_by_numeric_community_id`.
-
-    1.2.2: The communities list view returns `["community:2", "community:10", "community:1"]`
-    for the existing three-community fixture. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id`.
-
-    1.2.3: An MCG view over stored communities 10 and 2 of equal size lists `community:2`
-    first, in the payload and in the Mermaid subgraph order. test: `crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:1.2:1.2.1
-  - covers:gcode-graphify-parity-delta:1.2:1.2.2
-  - covers:gcode-graphify-parity-delta:1.2:1.2.3
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Provision the rerun harness and pass C0
-  category: test
-  task_type: feature
-  depends_on: []
-  validation_criteria: '2.1.1: The record gives the runtime root and its ownership
-    receipt with owner task `#22948`, the commit and SHA-256 of every dated copy,
-    and each edit against its September copy, with no check removed beyond the Docker
-    probes replaced by the `observe` receipt and the `opendeepwiki` assertions. file:
-    `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
-
-    2.1.2: The record states the deviation: the Orchestrator ran `provision` and `observe`
-    from the main checkout, with each exact invocation, the `launch_services.py` SHA-256
-    and the service receipts, and no seat called Docker. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
-
-    2.1.3: The record shows the corpus commits and the verification of cases C0 to
-    C7, C8-baseline and C8-change against the September manifests with 0 mismatches,
-    and all 54 manifest projects registered with zero `code_indexed_file_states` rows
-    before the daemon started. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
-
-    2.1.4: The record shows the isolated binary set''s SHA-256 values and stamp, `binary_set_apply_refusal`
-    returning `None`, the daemon launch receipt under SRT with no worktree override,
-    and a passing `validate_environment.py --live` covering the signed grant, its
-    rejected tampered copy and all three services. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
-
-    2.1.5: The record gives C0 for both tools: gcode version, contract and schema
-    identity; Graphify''s PyPI version and executable and lock SHA-256; the embedding
-    preflight''s outcome; both C7 markers as observed before completion; the probe
-    set; and the SHA-256 of the frozen `command-manifest.json`. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
-
-    2.1.6: A source-manifest symlink record passes only when its stored target equals
-    `os.readlink`, and `contained_file` still refuses that path for a content read.
-    test: `docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py::test_symlink_record_verifies_target_without_following`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:2.1:2.1.1
-  - covers:gcode-graphify-parity-delta:2.1:2.1.2
-  - covers:gcode-graphify-parity-delta:2.1:2.1.3
-  - covers:gcode-graphify-parity-delta:2.1:2.1.4
-  - covers:gcode-graphify-parity-delta:2.1:2.1.5
-  - covers:gcode-graphify-parity-delta:2.1:2.1.6
-  tdd: false
-  source_section: '2.1'
-- title: Measure C1 to C8 and report the verdicts
-  category: test
-  task_type: feature
-  depends_on:
-  - '2.1'
-  validation_criteria: '2.2.1: The report gives both tools'' identities from `provisioning.md`,
-    the corpus commits, and six interleaved pairs for each timed comparison with equal
-    AB and BA orders, with the load recorded at each run, raw samples, both tools''
-    p50 timings, the p50 paired difference, and each voided pair with its reason.
-    file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
-
-    2.2.2: The report gives C1 to C6 for both tools in the September table shape (seconds,
-    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
-    Graphify) beside the September numbers, and states that gcode''s C2 to C6 include
-    the community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
-
-    2.2.3: The report gives C7 for both tools: the marker each used, the one planned
-    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
-    recovered state equals a fresh clean C1 state, by the September signature for
-    Graphify and by step 4''s fact, projection and vector checks for gcode, with the
-    gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
-
-    2.2.4: The report scores C8''s 14 frozen questions for both tools as in September,
-    and states whether the gcode hybrid lane was included or excluded by the embedding
-    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
-
-    2.2.5: The report records Graphify''s deterministic community names, whether current
-    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
-    the reason), and gcode''s count of communities by `label_source`, each from its
-    own untimed state, without comparing community counts. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
-
-    2.2.6: The report gives a verdict for each of the four parity+ properties by step
-    7''s producers and conditions, says whether each was measured in this run, records
-    every remap or retirement behavior no case exercised as `not-exercised`, and records
-    the label-admission property as missing in live configuration. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:2.2:2.2.1
-  - covers:gcode-graphify-parity-delta:2.2:2.2.2
-  - covers:gcode-graphify-parity-delta:2.2:2.2.3
-  - covers:gcode-graphify-parity-delta:2.2:2.2.4
-  - covers:gcode-graphify-parity-delta:2.2:2.2.5
-  - covers:gcode-graphify-parity-delta:2.2:2.2.6
-  tdd: false
-  source_section: '2.2'
-- title: Run the no-decisions label study and record the ship rule
-  category: test
-  task_type: feature
-  depends_on: []
-  validation_criteria: '2.3.1: The report records the `--no-decisions` branch and
-    Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness counts,
-    the 30 sampled communities (15 per corpus), the exact row count, and the generation-failure
-    count. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
-
-    2.3.2: The report gives the regression count for G against D over the 30 communities
-    and the ship rule it selects, 1 or 3, with the proposed `code_index.community_label.enabled`
-    value and every decision consumer `off`, and states that this branch has no J,
-    carry or sufficiency data, so rule 2 is unreachable. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
-
-    2.3.3: The committed rated sheet holds Josh''s ratings for every row of the delivered
-    sheet, its item ids, paths and names unchanged, and `score` accepted it. file:
-    `docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv`.
-
-    2.3.4: The guide no longer says the study and ship decision are pending, and states
-    the outcome with a link to the report. file: `docs/guides/llm-features.md`.
-
-    2.3.5: The instructions name the 2026-11-05 selection and the new outputs, and
-    keep their earlier text as history. file: `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:2.3:2.3.1
-  - covers:gcode-graphify-parity-delta:2.3:2.3.2
-  - covers:gcode-graphify-parity-delta:2.3:2.3.3
-  - covers:gcode-graphify-parity-delta:2.3:2.3.4
-  - covers:gcode-graphify-parity-delta:2.3:2.3.5
-  tdd: false
-  source_section: '2.3'
-- title: Route the capture's Box request through the registered evaluate tool
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '2.4.1: The Box record names `consumer` `gobby-decisions:evaluate`,
-    carries the tool''s `questions` argument with the absolute `image_path`, the image''s
-    `image_sha256`, the tool''s typed output and one recorded exchange; one Box request
-    reaches the wire; and the service cache is restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
-
-    2.4.2: A GIF `--box-image` yields the tool''s `invalid_request` finding with detail
-    "image must be a PNG or JPEG file", sends no Box request, and the six probes still
-    run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool`.
-
-    2.4.3: The tool''s HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status",
-    "detail": "HTTP 400"}` on both wires and does not block the probes. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
-
-    2.4.4: The capture section omits the key and the base64 of the image file''s bytes,
-    and the script imports none of `LIVE_CONFIG_MODULES`. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.
-
-    2.4.5: The Box record''s failed exchanges stay bounded and redacted through the
-    tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
-
-    2.4.6: All four kinds still reach the wire, and the probe and cost records are
-    unchanged. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:2.4:2.4.1
-  - covers:gcode-graphify-parity-delta:2.4:2.4.2
-  - covers:gcode-graphify-parity-delta:2.4:2.4.3
-  - covers:gcode-graphify-parity-delta:2.4:2.4.4
-  - covers:gcode-graphify-parity-delta:2.4:2.4.5
-  - covers:gcode-graphify-parity-delta:2.4:2.4.6
-  tdd: true
-  source_section: '2.4'
-  implementation_domain: backend
-- title: Capture Box on local Clef and record the consumer evidence
-  category: docs
-  task_type: feature
-  depends_on:
-  - '2.4'
-  validation_criteria: '2.5.1: The dated capture section records `wire_api` `systemone`,
-    `api_base` `http://127.0.0.1:11434`, `request_model` `clef:27b`, all four shapes,
-    and a Box record with `consumer` `gobby-decisions:evaluate`, its `image_sha256`,
-    and the tool''s parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
-
-    2.5.2: The wire note''s "Decision shape consumers" section names a product consumer
-    and live-path test for each of Choice, Noul, Score and Box, with #24248''s closing
-    commit and the Clef Box result, and when Box parsed it sets the expected edges
-    (top and left 0.25, bottom and right 0.75) beside the captured ones. file: `docs/evidence/decisions/wire-contracts.md`.
-
-    2.5.3: Section 9 of the wire note states the observed Ollama Box result in place
-    of "remains unverified". file: `docs/evidence/decisions/wire-contracts.md`.
-
-    2.5.4: The committed image is 512 by 512 and white except for red pixels covering
-    exactly [128, 384) on both axes, and its SHA-256 equals both the one sent with
-    the Orchestrator''s command and the Box record''s `image_sha256`. file: `docs/evidence/decisions/box-red-square-2026-11.png`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:2.5:2.5.1
-  - covers:gcode-graphify-parity-delta:2.5:2.5.2
-  - covers:gcode-graphify-parity-delta:2.5:2.5.3
-  - covers:gcode-graphify-parity-delta:2.5:2.5.4
-  tdd: false
-  source_section: '2.5'
-- title: Name the image's size and the bounds when Box refuses its dimensions
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '2.6.1: A 64 by 64 PNG and a 300 by 1569 JPEG are refused with
-    `invalid_request` before any HTTP call, each with a detail naming its size and
-    the 280 to 1568 px bounds. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
-
-    2.6.2: After those refusals, a 512 by 512 PNG passes validation and dials once,
-    so the refusals opened no cooldown. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
-
-    2.6.3: The 279 and 1569 px refusals, the inclusive 280 and 1568 px boundaries
-    and the no-cooldown check still pass on both wires. test: `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing`.'
-  labels:
-  - covers:gcode-graphify-parity-delta:2.6:2.6.1
-  - covers:gcode-graphify-parity-delta:2.6:2.6.2
-  - covers:gcode-graphify-parity-delta:2.6:2.6.3
-  tdd: true
-  source_section: '2.6'
-  implementation_domain: backend
-```
+7. Confirm #25788 is closed as superseded by #25789, and that #25789 closed before
+   the 2.5 capture ran.
