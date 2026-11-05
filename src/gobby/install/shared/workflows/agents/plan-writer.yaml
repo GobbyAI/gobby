@@ -6,7 +6,7 @@ description: |
   in the live Plan Advocate's dispositioned edits and the adversary's findings, and
   reaches consensus with the adversary over send_message.
 
-version: "3.2.0"
+version: "4.0.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -19,6 +19,8 @@ fallbacks:
 execution_mode: interactive
 send_message_targets: [parent, session]
 checkout_mode: none
+# Sandboxed plan seats reach the web through the trusted egress allowlist.
+network: trusted
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:
@@ -100,6 +102,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:plan-artifact-write-scope"
     exclude:
       - "tag:task-skill-gates"
   variables:

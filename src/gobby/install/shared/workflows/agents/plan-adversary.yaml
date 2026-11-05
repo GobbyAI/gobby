@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "4.2.0"
+version: "4.3.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -20,6 +20,8 @@ reviews:
 execution_mode: interactive
 reasoning_required: false
 checkout_mode: none
+# Sandboxed plan seats reach the web through the trusted egress allowlist.
+network: trusted
 send_message_targets: [parent, session]
 blocked_tools:
   - "EnterWorktree"

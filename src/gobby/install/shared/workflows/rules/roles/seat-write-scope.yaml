@@ -1,4 +1,4 @@
-version: "4.0.0"
+version: "4.1.0"
 tags: [roles, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
@@ -61,6 +61,22 @@ rules:
       - type: block
         reason: >-
           The Researcher writes only under `<project>/.gobby/plans/research/` or its
+          agent workspace folder (named in your Agent Workspace section). Name the target
+          with a literal path inside one of them. Source code remains read-only.
+
+  plan-artifact-write-scope:
+    description: "Restrict writes to plan output paths and the session workspace, shell included"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, ['.gobby/plans/', 'docs/'])
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          The Plan Writer writes only under `<project>/.gobby/plans/`, `<project>/docs/` or its
           agent workspace folder (named in your Agent Workspace section). Name the target
           with a literal path inside one of them. Source code remains read-only.
 
