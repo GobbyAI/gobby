@@ -33,6 +33,9 @@ pub enum AttachState {
         generation: Generation,
         deadline: Instant,
         supervisor_requested: bool,
+        /// A closing detach rides the writer, so keys typed behind it still go
+        /// out on the old attachment. A recovery detach holds them instead.
+        closing: bool,
     },
 }
 
@@ -136,6 +139,7 @@ impl Pane {
             generation,
             deadline: now + DETACH_DEADLINE,
             supervisor_requested: false,
+            closing: false,
         };
         self.live = false;
         self.clear_pending_input();
@@ -162,6 +166,7 @@ impl Pane {
             generation,
             deadline: Instant::now(),
             supervisor_requested: true,
+            closing: true,
         };
         self.live = false;
         Some(old_attachment_id)

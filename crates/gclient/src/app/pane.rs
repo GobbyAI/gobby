@@ -417,14 +417,16 @@ impl Pane {
         self.is_live() && !self.terminating
     }
 
-    /// Keys typed while a detach is in flight still go out: the detach runs
-    /// off the input path, so only a pane being closed refuses them.
+    /// Keys typed behind a closing detach still go out: that detach rides the
+    /// writer. A recovery detach holds its keys for the attachment that
+    /// follows, and a pane being closed refuses them (#25653).
     pub fn accepts_input(&self) -> bool {
         !self.terminating
-            && matches!(
-                self.attach,
-                AttachState::Attached { .. } | AttachState::Detaching { .. }
-            )
+            && match self.attach {
+                AttachState::Attached { .. } => true,
+                AttachState::Detaching { closing, .. } => closing,
+                AttachState::Attaching { .. } | AttachState::Detached => false,
+            }
     }
 
     /// Frames arrive on a direct socket and the backend is one gclient can

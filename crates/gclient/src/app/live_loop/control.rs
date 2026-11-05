@@ -8,7 +8,7 @@ use tokio::sync::watch;
 
 use crate::app::apply::refused_write_toast;
 use crate::daemon::LiveDaemon;
-use crate::frame_source::{FrameError, PaneFrameSource};
+use crate::frame_source::{FrameError, PaneFrameSource, Transport};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
@@ -17,9 +17,9 @@ use super::super::{AttachState, Pane, PaneId, Workspace};
 use super::jobs::{JobKey, JobOutcome, LoopJobs, Pending};
 use super::writer::PaneWriter;
 
-/// Status shown when a key lands in a native pane on the daemon's proxy. Its
-/// keys belong on its host stream, so the pane reattaches there and this key
-/// is dropped (#25653).
+/// Status shown when a key lands in a native pane on the daemon's proxy that
+/// cannot promote back to its host stream, so there is no stream to hold the
+/// key for. The pane reattaches there and this key is dropped (#25653).
 pub const PROXY_NATIVE_INPUT: &str =
     "this terminal's input runs on its host stream; reattaching it, so the key was not sent";
 /// Status shown when so much was typed while a pane was reattaching that the
@@ -45,10 +45,14 @@ pub(super) fn flush_attached_input(
     chrome: &mut Chrome,
     jobs: &LoopJobs,
 ) {
+    // A native pane on the proxy keeps its held keys until its direct promotion
+    // lands; they then go out on the host stream.
     let ready: Vec<PaneId> = workspace
         .panes
         .iter()
-        .filter(|(_, pane)| pane.writable() && !pane.pending_input.is_empty())
+        .filter(|(_, pane)| {
+            pane.writable() && !pane.native_proxy() && !pane.pending_input.is_empty()
+        })
         .map(|(id, _)| *id)
         .collect();
     for pane_id in ready {
@@ -68,14 +72,6 @@ fn flush_pending_input(
     pane_id: PaneId,
     pending: Vec<PendingInput>,
 ) {
-    // Keys queued before this pane resolved to the daemon's proxy are not
-    // relayed through the daemon any more (B2): the pane reattaches to its host,
-    // and the keys are dropped visibly.
-    if !pending.is_empty() && workspace.pane(pane_id).native_proxy() {
-        chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
-        workspace.pane_mut(pane_id).promote_now();
-        return;
-    }
     for input in pending {
         let (data, paste) = input.parts();
         if let Err(error) = send_live_write(workspace, jobs, pane_id, data, paste) {
@@ -103,6 +99,37 @@ fn queue_while_attaching(
     }
 }
 
+/// A native pane on the daemon's proxy holds its keys only when a direct
+/// promotion can land: a direct locator, direct frames allowed, and a daemon
+/// to promote through. Otherwise its keys are refused as before.
+fn held_for_promotion(workspace: &Workspace<LiveDaemon>, pane_id: PaneId) -> bool {
+    workspace.pane(pane_id).direct_available
+        && workspace.daemon_ready()
+        && workspace.frame_delivery.allows(Transport::Direct)
+}
+
+/// Holds a key typed into a native pane on the proxy until its direct promotion
+/// lands. The promotion is asked for now, not when the proxy interval runs out.
+/// Only the first held key asks, so keys typed during a retry's backoff do not
+/// restart it.
+fn queue_for_promotion(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+    data: &[u8],
+    paste: bool,
+) {
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+    let first = pane.pending_input.is_empty();
+    if !pane.queue_input(data, paste) {
+        chrome.notify(Toast::warning(INPUT_QUEUE_FULL));
+        return;
+    }
+    if first {
+        pane.promote_now();
+    }
+}
+
 /// Sends a key typed into a pane. A native pane on its host stream types
 /// straight there, with or without the daemon. A daemon-bound pane needs the
 /// daemon, so it waits on the daemon's writer. A pane still attaching keeps the
@@ -119,8 +146,12 @@ pub(super) fn send_live_input(
         return Ok(());
     }
     if workspace.pane(pane_id).native_proxy() {
-        chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
-        workspace.pane_mut(pane_id).promote_now();
+        if held_for_promotion(workspace, pane_id) {
+            queue_for_promotion(workspace, chrome, pane_id, data, paste);
+        } else {
+            chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
+            workspace.pane_mut(pane_id).promote_now();
+        }
         return Ok(());
     }
     let pane = workspace.pane(pane_id);

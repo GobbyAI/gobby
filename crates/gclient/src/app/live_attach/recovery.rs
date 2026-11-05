@@ -339,7 +339,7 @@ impl Workspace<LiveDaemon> {
                     &terminal_id,
                     &proxy_attachment,
                     outcome,
-                );
+                )?;
                 Ok(None)
             }
         }

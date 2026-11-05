@@ -3883,6 +3883,240 @@ async fn a_slow_new_terminal_attach_never_stalls_streaming_direct_panes() {
     mock.shutdown().await;
 }
 
+/// One frame socket for a host terminal that takes a direct client per
+/// connection, so two gclient clients can attach the same terminal (#25653).
+struct SharedHost {
+    _socket_dir: tempfile::TempDir,
+    socket_path: PathBuf,
+    received: mpsc::UnboundedReceiver<ClientMessage>,
+    attached: mpsc::UnboundedReceiver<()>,
+    inputs: Vec<Vec<u8>>,
+}
+
+impl SharedHost {
+    async fn start(clients: usize) -> Self {
+        let socket_dir = tempfile::tempdir().expect("direct socket dir");
+        let socket_path = socket_dir.path().join("frames.sock");
+        let listener =
+            tokio::net::UnixListener::bind(&socket_path).expect("bind direct frame socket");
+        let (received_tx, received) = mpsc::unbounded_channel();
+        let (attached_tx, attached) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            for _ in 0..clients {
+                let (mut stream, _) = listener.accept().await.expect("direct client");
+                let received_tx = received_tx.clone();
+                let attached_tx = attached_tx.clone();
+                tokio::spawn(async move {
+                    let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                        .await
+                        .expect("direct hello");
+                    write_message_async(
+                        &mut stream,
+                        &ServerMessage::Welcome {
+                            host_epoch: HOST_EPOCH.into(),
+                        },
+                    )
+                    .await
+                    .expect("direct welcome");
+                    let ClientMessage::AttachTerminal {
+                        host_terminal_id, ..
+                    } = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                        .await
+                        .expect("direct attach")
+                    else {
+                        panic!("the direct client attaches a terminal after the welcome");
+                    };
+                    write_message_async(
+                        &mut stream,
+                        &ServerMessage::Attached {
+                            created: false,
+                            host_terminal_id,
+                            host_attachment_id: 1,
+                        },
+                    )
+                    .await
+                    .expect("direct attached");
+                    let _ = attached_tx.send(());
+                    while let Ok(message) = read_message_async(&mut stream, MAX_FRAME_SIZE).await {
+                        let _ = received_tx.send(message);
+                    }
+                });
+            }
+        });
+        Self {
+            _socket_dir: socket_dir,
+            socket_path,
+            received,
+            attached,
+            inputs: Vec::new(),
+        }
+    }
+
+    fn roster_attach(&self, terminal_id: &str) -> Value {
+        json!({
+            "backend": "native",
+            "frame_host_epoch": HOST_EPOCH,
+            "host_socket": self.socket_path.to_string_lossy(),
+            "host_terminal_id": terminal_id,
+        })
+    }
+
+    fn attach_locator(&self, terminal_id: &str) -> Value {
+        json!({
+            "host_epoch": HOST_EPOCH,
+            "host_terminal_id": terminal_id,
+            "frame_socket_path": self.socket_path.to_string_lossy(),
+            "pane": null,
+        })
+    }
+
+    async fn wait_for_attaches(&mut self, count: usize) {
+        for _ in 0..count {
+            self.attached
+                .recv()
+                .await
+                .expect("a direct client attached");
+        }
+    }
+
+    async fn wait_for_inputs(&mut self, wanted: &[&[u8]]) {
+        loop {
+            while let Ok(message) = self.received.try_recv() {
+                if let ClientMessage::Input { data, .. } = message {
+                    self.inputs.push(data);
+                }
+            }
+            let landed = wanted
+                .iter()
+                .all(|bytes| self.inputs.iter().any(|data| data.as_slice() == *bytes));
+            if landed {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+/// A workspace whose one pane is the native terminal `terminal-b` on `host`.
+async fn direct_terminal_workspace(
+    mock: &MockDaemon,
+    host: &SharedHost,
+) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+    mock.use_unique_attachment_ids();
+    let item = json!({
+        "terminal_id": "terminal-b",
+        "backend": "native",
+        "state": "live",
+        "attach": host.roster_attach("terminal-b"),
+    });
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [item],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("gobby home");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n")
+        .expect("write API key");
+    let terminals: &[&str] = &["terminal-b"];
+    let focused = terminals.last().expect("at least one terminal");
+    mock.seed_workspace("project-1", &[(terminals, focused)]);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    (workspace, home)
+}
+
+/// Two gclient clients attached to one host terminal both type: each key reaches
+/// the host, and neither client raises a toast or ends up read-only (#25653).
+#[tokio::test]
+async fn two_clients_attached_to_one_terminal_both_type_without_a_toast() {
+    let mock = MockDaemon::start("local-token").await;
+    let mut host = SharedHost::start(2).await;
+    mock.serve_direct_attach(host.attach_locator("terminal-b"));
+    let (mut first, _first_home) = direct_terminal_workspace(&mock, &host).await;
+    let (mut second, _second_home) = direct_terminal_workspace(&mock, &host).await;
+    let (first_backend, first_draws, first_frames) = DrawRecorder::new(96, 30);
+    let mut first_terminal = Terminal::new(first_backend).expect("test terminal");
+    let (first_tx, first_rx) = mpsc::channel(1);
+    let (second_backend, second_draws, second_frames) = DrawRecorder::new(96, 30);
+    let mut second_terminal = Terminal::new(second_backend).expect("test terminal");
+    let (second_tx, second_rx) = mpsc::channel(1);
+    let mut first_chrome = Chrome::dark();
+    let mut second_chrome = Chrome::dark();
+
+    let driver = async {
+        let first_probe = LivenessProbe::new(&mock, &first_tx, first_draws, first_frames);
+        let second_probe = LivenessProbe::new(&mock, &second_tx, second_draws, second_frames);
+        host.wait_for_attaches(2).await;
+        first_probe
+            .key(KeyCode::Char('p'), KeyModifiers::NONE)
+            .await;
+        second_probe
+            .key(KeyCode::Char('q'), KeyModifiers::NONE)
+            .await;
+        let landed = timeout(KEY_BOUND, host.wait_for_inputs(&[b"p", b"q"])).await;
+        assert!(
+            landed.is_ok(),
+            "both clients' keys should reach the host terminal, host received {:?}",
+            host.inputs,
+        );
+        drop(first_tx);
+        drop(second_tx);
+    };
+
+    let mut first_switch = TerminalGuard::recording().0;
+    let mut second_switch = TerminalGuard::recording().0;
+    let (first_result, second_result, ()) = tokio::join!(
+        run_live_loop(
+            &mut first,
+            &mut first_terminal,
+            &mut first_chrome,
+            first_rx,
+            &mut first_switch
+        ),
+        run_live_loop(
+            &mut second,
+            &mut second_terminal,
+            &mut second_chrome,
+            second_rx,
+            &mut second_switch
+        ),
+        driver
+    );
+    first_result.expect("first client's live loop exits cleanly");
+    second_result.expect("second client's live loop exits cleanly");
+    for (name, workspace, chrome) in [
+        ("first", &first, &first_chrome),
+        ("second", &second, &second_chrome),
+    ] {
+        let pane = workspace
+            .pane_for_terminal("terminal-b")
+            .expect("terminal-b has a pane");
+        assert!(
+            workspace.pane(pane).writable(),
+            "the {name} client's pane is read-only"
+        );
+        let toasts: Vec<&str> = chrome
+            .toasts
+            .iter()
+            .map(|active| active.toast.title.as_str())
+            .collect();
+        assert!(
+            toasts.is_empty(),
+            "the {name} client raised a toast: {toasts:?}"
+        );
+    }
+    mock.shutdown().await;
+}
+
 /// A tmux pane closed while its own write is unsettled queues a detach behind
 /// that write. The daemon holds the reply, so the detach cannot be sent yet. A
 /// key typed into the still-focused pane must reach the daemon within

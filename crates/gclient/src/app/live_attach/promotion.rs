@@ -6,6 +6,10 @@
 use super::*;
 use crate::app::attach::ATTACH_RETRY_MAX;
 
+/// Shown when a direct promotion fails while keys are held for it. The held
+/// keys were never sent, and the pane stays on the proxy.
+const DIRECT_ATTACH_FAILED: &str = "direct attach failed; typed input was not sent";
+
 impl Workspace<LiveDaemon> {
     /// Starts a direct try for each proxy pane whose promotion fell due. Only
     /// auto delivery promotes; a pane's first eligible tick arms its backoff.
@@ -79,17 +83,32 @@ impl Workspace<LiveDaemon> {
         terminal_id: &str,
         proxy_attachment: &str,
         outcome: Result<DirectAttach, FrameError>,
-    ) {
+    ) -> Result<(), FrameError> {
         let pane = self.panes.get_mut(&pane_id);
         let (reply, attachment, locator, source) = match outcome {
             Ok(won) => won,
-            Err(_) => {
-                if let Some(pane) = pane {
-                    pane.promoting = false;
-                    pane.promote_at = Some(Instant::now() + pane.promote_delay);
-                    pane.promote_delay = (pane.promote_delay * 2).min(ATTACH_RETRY_MAX);
+            Err(error) => {
+                let Some(pane) = pane else {
+                    return Ok(());
+                };
+                pane.promoting = false;
+                pane.promote_at = Some(Instant::now() + pane.promote_delay);
+                pane.promote_delay = (pane.promote_delay * 2).min(ATTACH_RETRY_MAX);
+                if pane.pending_input.is_empty() {
+                    return Ok(());
                 }
-                return;
+                // Keys held for this promotion never reach a host stream that
+                // did not open. They are dropped, and the drop is reported.
+                pane.clear_pending_input();
+                pane.status_message = Some(DIRECT_ATTACH_FAILED.to_string());
+                tracing::warn!(
+                    lifecycle_stage = "direct-promotion-failed",
+                    pane = pane_id.0,
+                    terminal_id = %terminal_id,
+                    error = %error,
+                    "typed input held for a direct promotion was dropped"
+                );
+                return Err(FrameError::Refused(DIRECT_ATTACH_FAILED.into()));
             }
         };
         let current = self.daemon.generation() == generation;
@@ -105,7 +124,7 @@ impl Workspace<LiveDaemon> {
             if current {
                 self.release_attachment(terminal_id, &attachment);
             }
-            return;
+            return Ok(());
         };
         pane.promoting = false;
         // The proxy's finalization must not retire the promoted pane.
@@ -122,6 +141,7 @@ impl Workspace<LiveDaemon> {
             "pane promoted to direct frame delivery"
         );
         self.release_attachment(terminal_id, proxy_attachment);
+        Ok(())
     }
 
     /// Detaches `attachment` beside the loop.
