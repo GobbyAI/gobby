@@ -49,3 +49,5 @@ dart format lib test
 flutter analyze
 flutter test test/widget_test.dart
 ```
+
+_Version: 1.0.0_

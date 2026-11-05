@@ -29,3 +29,5 @@ Strip the copy out of your planned section and study the bare structure. Does th
 - The section is unmistakably the same brand, only more sure of itself.
 
 When the target holds its own without pulling the page apart, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.
+
+_Version: 1.0.0_

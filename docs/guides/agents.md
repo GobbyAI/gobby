@@ -217,15 +217,15 @@ checks. The current bundled catalogue is:
 | `assistant` | Operator's chat agent. Carries the operator's words to the Orchestrator and brings fleet news and decisions back; a spawned child |
 | `orchestrator` | Runs in an operator-opened pane. Assigns and coordinates repository work; never spawned |
 | `dev-team-lead` | Leads a task or epic; checks security, lands, validates the integrated SHA, closes and cleans up |
-| `plan-team-lead` | Leads one plan team: launches and relays the plan writer, plan adversary and plan advocate for one task, and delivers the reviewed plan and open objections to its report target. Writes no plan text; blocks `kill_agent` and `stop_agent` |
+| `plan-team-lead` | Leads one plan team: relays the plan writer, plan adversary and plan advocate that the plan-team runbook launches for one task, and delivers the reviewed plan and open objections to its report target. Writes no plan text; blocks `kill_agent` and `stop_agent` |
 | `developer` | Owns tests-first implementation for one DevTeam task and sends its CANDIDATE to the Dev Team Lead and Code Reviewer |
 | `code-reviewer` | Independently reviews and validates the exact candidate; claim_flow hands approved work to the lead |
 | `security-auditor` | Reviews candidate security, audits trust boundaries, and drafts security_paths for operator approval via Assistant and Orchestrator application |
 | `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
-| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed; the Orchestrator owns every daemon restart and activation |
+| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed, and runs daemon restarts and cutovers only when the Orchestrator directs them; it reports to Triage |
 | `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts Triage on quiet DevTeams |
 | `researcher` | Answers bounded research requests |
-| `research-team-lead` | Leads one research team: launches and relays the researcher and research reviewer for one research task, and delivers the reviewed report to its report target. Writes no research or code; blocks `kill_agent` and `stop_agent` |
+| `research-team-lead` | Leads one research team: relays the researcher and research reviewer that the research-team runbook launches for one research task, and delivers the reviewed report to its report target. Writes no research or code; blocks `kill_agent` and `stop_agent` |
 | `archivist` | Maintains the operational digest |
 | `triage` | Receives the reports meant for the Orchestrator and hands it one queued digest every five minutes |
 | `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; applies Orchestrator-directed folds and retirements (`superseded` or `moot` closes, with criteria merged into the survivor), and excludes protected triage and plan-expanded subtrees |
@@ -274,7 +274,7 @@ of that team; other standing seats outlive the tasks they work on. See
 
 `plan-writer`, `plan-adversary`, and `plan-advocate` are run-scoped planning
 agents, separate from the standing-seat catalogue. The plan-team runbook launches
-them, and a `plan-team-lead` launches and relays them for one task. They complete
+them and their `plan-team-lead`, and the lead relays them for one task. They complete
 their run through `end_agent_run`. Their own definitions control provider,
 lifetime, and workflow choices, so standing-seat invariants do not apply to them.
 

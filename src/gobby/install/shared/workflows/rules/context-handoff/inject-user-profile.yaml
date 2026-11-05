@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [context-handoff, profile, user-profile, lifecycle, gobby, default]
 
 rules:

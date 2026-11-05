@@ -120,3 +120,5 @@ For parsers and serializers, measure realistic payloads. Avoid repeated parse/du
 ## Benchmarks
 
 Use benchmarks for pure algorithms, parsers, serializers, and transforms. Include representative and worst-case inputs. Keep benchmarks separate from ordinary unit tests unless the repo already has a performance-test convention.
+
+_Version: 1.0.0_

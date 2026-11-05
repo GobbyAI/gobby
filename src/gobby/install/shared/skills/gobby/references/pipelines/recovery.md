@@ -40,4 +40,6 @@ overlap, readiness and capacity; changing a schedule does not repair child work.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#resume).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -28,3 +28,5 @@ parameters; a guide, menu or available endpoint grants no extra authority.
 Human entrypoints: [testing](../../../../../../../../docs/guides/testing.md),
 [adapter fidelity](../../../../../../../../docs/guides/adapter-fidelity.md), and
 [native development](native-components.md).
+
+_Version: 1.0.0_

@@ -45,3 +45,5 @@ On marker mismatch, foreign-machine rebind, invalid root, or ambiguous name,
 inspect the returned conflict and verify UUID/root ownership. Do not repair by
 copying another project's marker or writing database rows directly. Refresh
 long-lived consumers after rebind as the CLI's cache hint instructs.
+
+_Version: 1.0.0_

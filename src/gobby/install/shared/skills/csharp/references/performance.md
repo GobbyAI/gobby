@@ -43,3 +43,5 @@ Measure first, then optimize the constrained path.
 - Do not use `Task.Run` to hide blocking I/O on server request paths.
 - Use cancellation and timeouts to free resources under load.
 - Keep locks small and avoid blocking locks around async work.
+
+_Version: 1.0.0_

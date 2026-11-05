@@ -38,3 +38,5 @@ and verify service readiness and client access afterward.
 
 See [secrets](../../../../../../../../docs/guides/admin-operations.md#secrets)
 and the [secret contract](../../../../../../../../docs/contracts/secrets.md).
+
+_Version: 1.0.0_

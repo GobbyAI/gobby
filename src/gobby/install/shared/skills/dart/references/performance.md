@@ -32,3 +32,5 @@ channels, storage, and app lifecycle.
   connectivity, files, and secure storage as fallible and lifecycle-sensitive.
 - Release native/plugin resources through the repo's platform boundary.
 - Test app pause/resume, permission denial, and offline states when touched.
+
+_Version: 1.0.0_

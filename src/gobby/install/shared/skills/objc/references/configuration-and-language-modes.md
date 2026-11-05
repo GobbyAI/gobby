@@ -41,3 +41,5 @@
 - Build the smallest owning target with its normal configuration and destination.
 - Verify both Objective-C and Objective-C++ consumers when a shared header changes.
 - Verify a Swift import when a public Apple-platform module header changes.
+
+_Version: 1.0.0_

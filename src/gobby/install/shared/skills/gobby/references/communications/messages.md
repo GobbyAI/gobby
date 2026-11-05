@@ -31,4 +31,6 @@ Operator `gobby comms send CHANNEL_NAME MESSAGE` and authenticated HTTP
 metadata, while `GET /api/comms/messages` supports offset pagination.
 See [MCP tools and HTTP](../../../../../../../../docs/guides/comm-integrations.md#manage-channels).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-13_

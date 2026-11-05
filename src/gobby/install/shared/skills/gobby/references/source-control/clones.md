@@ -45,3 +45,5 @@ does not expose every MCP option; consult the live schema for base and external
 cloning.
 
 See [clones](../../../../../../../../docs/guides/worktrees.md#clones).
+
+_Version: 1.0.0_

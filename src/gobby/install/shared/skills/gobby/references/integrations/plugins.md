@@ -24,3 +24,5 @@ configuration. Keep user/project overrides and unrelated provider entries.
 Use the admin capability for coordinated install repair and the skills capability
 for scripts and skill lifecycle. See the
 [extension guide](../../../../../../../../docs/guides/webhooks-and-plugins.md#plugin-development-status).
+
+_Version: 1.0.0_

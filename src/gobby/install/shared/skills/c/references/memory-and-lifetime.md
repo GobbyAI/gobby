@@ -43,3 +43,5 @@ come from ambiguous lifetime, unchecked sizes, or incomplete cleanup.
 - Keep volatile, atomics, and memory barriers limited to code that truly needs
   them.
 - Prefer sanitizer-backed tests for fixes that touch memory or lifetime behavior.
+
+_Version: 1.0.0_

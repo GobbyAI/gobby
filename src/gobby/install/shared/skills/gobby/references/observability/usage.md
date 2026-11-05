@@ -41,3 +41,5 @@ audited/drifted/repaired summary. Rehearse repairs with isolated transcripts and
 test state; use the admin recovery procedure for live-state restoration.
 
 See [token usage and savings](../../../../../../../../docs/guides/observability.md#token-usage-and-savings).
+
+_Version: 1.0.0_

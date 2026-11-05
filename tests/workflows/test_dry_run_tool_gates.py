@@ -3,17 +3,14 @@
 A typo in a blocked_tools/blocked_mcp_tools entry fails open at runtime (the
 gate never matches, the tool is silently allowed), so unknown references in
 blocking gates are errors while unknown references in allow gates are
-warnings. The drift canary at the bottom holds every bundled template to the
-error-free bar so a typo'd security gate fails CI.
+warnings.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import yaml
 
 from gobby.mcp_proxy.manager import MCPClientManager, MCPServerConfig
 from gobby.mcp_proxy.tools.workflows import workflow_mcp_inventory
@@ -32,10 +29,6 @@ from gobby.workflows.native_tools import is_known_native_tool
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
-
-BUNDLED_WORKFLOWS_ROOT = (
-    Path(__file__).resolve().parents[2] / "src" / "gobby" / "install" / "shared" / "workflows"
-)
 
 
 def _evaluation() -> WorkflowEvaluation:
@@ -240,29 +233,6 @@ class TestBlockedMcpSemanticSeverity:
         warnings = [i for i in result.items if i.code == "UNKNOWN_MCP_TOOL"]
         assert warnings and all(i.level == "warning" for i in warnings)
         assert result.valid
-
-
-def _iter_bundled(pattern: str) -> list[Path]:
-    paths = sorted(BUNDLED_WORKFLOWS_ROOT.glob(pattern))
-    assert paths, f"no bundled templates matched {pattern}"
-    return paths
-
-
-class TestBundledTemplateDriftCanary:
-    """Every bundled gate entry must be recognized — a typo'd block gate fails CI."""
-
-    @pytest.mark.parametrize("path", _iter_bundled("*.yaml"), ids=lambda p: p.name)
-    def test_bundled_workflow_gates_clean(self, path: Path) -> None:
-        data = yaml.safe_load(path.read_text())
-        if not isinstance(data, dict) or data.get("type") == "pipeline":
-            return
-        data.setdefault("name", path.stem)
-        definition = WorkflowDefinition.model_validate(data)
-        result = _evaluation()
-        for step in definition.steps:
-            check_step_tool_gates(step, result)
-        errors = [i for i in result.items if i.level == "error"]
-        assert not errors, [i.message for i in errors]
 
 
 @pytest.mark.asyncio

@@ -34,4 +34,6 @@ not discard a protected handoff.
 Contract: [Session boundary](../../../../../../../../docs/contracts/session-boundary.md).
 Guide: [Compaction](../../../../../../../../docs/guides/sessions.md#compaction-is-in-place).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

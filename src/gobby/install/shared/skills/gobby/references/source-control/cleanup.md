@@ -39,3 +39,5 @@ Re-query the final row state; a finished task must not leave an active managed
 workspace unless explicitly handed off. See
 [deleting after landing](../../../../../../../../docs/guides/worktrees.md#deleting-after-final-landing)
 and [stale cleanup](../../../../../../../../docs/guides/worktrees.md#stale-cleanup).
+
+_Version: 1.0.0_

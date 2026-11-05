@@ -37,4 +37,6 @@ never weaken a guard simply to hide its error.
 
 Guide: [Conditions](../../../../../../../../docs/guides/rules.md#condition-expressions).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

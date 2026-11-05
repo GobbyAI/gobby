@@ -48,4 +48,6 @@ checks as successful workflow evidence.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#data-flow).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

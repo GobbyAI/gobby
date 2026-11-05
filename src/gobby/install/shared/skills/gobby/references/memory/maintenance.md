@@ -44,4 +44,6 @@ Guide: [Maintenance](../../../../../../../../docs/guides/memory.md#maintenance),
 [Backup format](../../../../../../../../docs/guides/memory.md#backup-format), and
 [Troubleshooting](../../../../../../../../docs/guides/memory.md#troubleshooting).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

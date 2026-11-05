@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [context-handoff, context, handoff, lifecycle, gobby, default]
 
 rules:

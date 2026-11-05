@@ -65,3 +65,5 @@ return rc;
 ```
 
 Adapt the convention to the project instead of copying this shape blindly.
+
+_Version: 1.0.0_

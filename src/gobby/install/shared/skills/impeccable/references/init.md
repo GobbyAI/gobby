@@ -16,3 +16,5 @@ When `init` is dispatched:
 
 Do not create `PRODUCT.md`, `DESIGN.md`, or an upstream design sidecar. Managed
 CLI setup belongs to `gobby install`; design-context setup belongs to teach mode.
+
+_Version: 1.0.0_

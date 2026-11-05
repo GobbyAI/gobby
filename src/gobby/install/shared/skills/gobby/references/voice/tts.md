@@ -32,3 +32,5 @@ service has finished its own inference operation.
 
 See [TTS providers](../../../../../../../../docs/guides/voice.md#tts-provider)
 and [Crane setup and restoration](../../../../../../../../docs/guides/crane-tts.md).
+
+_Version: 1.0.0_

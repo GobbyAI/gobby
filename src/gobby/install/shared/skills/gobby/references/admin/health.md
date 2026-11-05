@@ -26,3 +26,5 @@ navigation routes to establish daemon health.
 
 See [diagnostics](../../../../../../../../docs/guides/admin-operations.md#setup-and-diagnostics)
 and [observability](../../../../../../../../docs/guides/observability.md).
+
+_Version: 1.0.0_

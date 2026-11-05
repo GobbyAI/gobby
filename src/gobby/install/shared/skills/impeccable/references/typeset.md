@@ -71,3 +71,5 @@ Do not make type decorative at the expense of comprehension, or introduce a seco
 Answer each item with rendered or source evidence, then rerun the scan. Do not substitute a bare “yes” for verification.
 
 When the hierarchy holds, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`).
+
+_Version: 1.0.0_

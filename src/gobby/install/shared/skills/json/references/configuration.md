@@ -35,3 +35,5 @@
   points, and generated sections.
 - Check repo docs, schemas, examples, and existing validation commands before
   introducing a new config pattern.
+
+_Version: 1.0.0_

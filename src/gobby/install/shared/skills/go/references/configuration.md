@@ -30,3 +30,5 @@ Use `go.work` only when the repo already has a workspace or the task is explicit
 ## Dependencies
 
 Prefer standard library packages for HTTP, JSON, logging, synchronization, and tests unless a dependency already owns that concern in the repo. New dependencies need a clear reason: protocol support, compatibility, performance, or maintained domain logic.
+
+_Version: 1.0.0_
