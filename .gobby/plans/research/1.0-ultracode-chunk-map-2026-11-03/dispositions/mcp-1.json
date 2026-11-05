@@ -1,0 +1,139 @@
+{
+ "dispositions": [
+  {
+   "ref": "#21566",
+   "disposition": "chunk",
+   "target": "MUX-2",
+   "rationale": "Audit rewrite (upheld, verify row 1): its 'keep the policy in Python' text is stale against plan Decision 3, and its F5.1-F5.4 hub-node live criteria and plan P3/P4 are Stage 4 work inside a Stage 2 epic. D35 moves the node work (P3/P4: node-commands v6, the node MCP handler, placement and the 4.1 pair proof) to S4-NODE and has S4-PROOF rewrite #25329's criterion 2 to Decision 5's rule, while MUX-1 and MUX-2 port the hub-side pool and registry; the map lists the epic in MUX-2, which follows MUX-1, so it closes there (cutting 3.1's edge on #25207 is an edge drop, not a disposition).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MUX-2",
+   "changed": false
+  },
+  {
+   "ref": "#25259",
+   "disposition": "chunk",
+   "target": "MUX-1",
+   "rationale": "Audit rewrite (upheld, verify row 2): the multiplexer plan lost its M1 in the 2026-10-28 Rust-policy revision (committed under #25281 and 2068aaf9a0, verify row 26) and has no ledger mapping, its criterion 2. MUX-1 lists #25259, and its first deliverable records the external-MCP corpus and maps #21566's D5 registry rows to MUX-2, which is that ledger mapping; the stamp criteria are retired for port work (rulings 1 and 5).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MUX-1",
+   "changed": false
+  },
+  {
+   "ref": "#21570",
+   "disposition": "chunk",
+   "target": "MCP-FLIP",
+   "rationale": "Audit rewrite (upheld, verify row 3): no plan exists and its scope accreted (streamable /mcp, registry CRUD by #25259 D5, results paging, tool embeddings, family MCP activation), with its gateway core under #24841. The map re-homes the gateway to GW-1 and GW-2 (D26) and registry CRUD to MUX-2, and MCP-FLIP lists #21570 as the final flip 'once every internal server is native' that ends Stage 2, with tool search, recommend and the embedding routes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MCP-FLIP",
+   "changed": false
+  },
+  {
+   "ref": "#25071",
+   "disposition": "chunk",
+   "target": "MCP-FLIP",
+   "rationale": "Audit edge-fix, refuted to rewrite (verify row 4): criterion 3 needs native tool-registration producers that exist only once registry CRUD (#21570 D5) is native. MCP-FLIP lists #25071 on AI-2's serving lease and states that criterion 3 is met by MUX-2's registry CRUD, on which MCP-FLIP depends.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MCP-FLIP",
+   "changed": false
+  },
+  {
+   "ref": "#25283",
+   "disposition": "chunk",
+   "target": "MCP-FLIP",
+   "rationale": "Audit edge-fix, with the verifier moving its prerequisite to #24885, because removing Python's gobby-results handlers is an activation that needs the compatibility backend (verify row 5). MCP-FLIP lists #25283, and both its goal and GW-2's say it waits on GW-2, not only on #24884.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MCP-FLIP",
+   "changed": false
+  },
+  {
+   "ref": "#23275",
+   "disposition": "chunk",
+   "target": "MCP-CRATE",
+   "rationale": "Audit rewrite as a holder ('this holder closes when its leaves close'), and the verifier found its sole criterion 'D2.5' already delivered by #24092 in Stage 1 (verify row 6). MCP-CRATE lists #23275, records that delivery and Josh's CIMD-only ruling in its close record, and builds gmcp's native stdio server; MUX-1 owns the external client transports and OAuth for external servers, and the only CIMD work is #24360's, post-1.0; by D6, #24359 moves to S4-RELEASE and #24360 to post-1.0, and deleting the #23275 to #24359 edge is D31's edge drop.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MCP-CRATE",
+   "changed": false
+  },
+  {
+   "ref": "#24356",
+   "disposition": "superseded",
+   "target": "MCP-CRATE",
+   "rationale": "Override of chunk to superseded, keeping the listed chunk: criteria 1.7.1-1.7.9 delete the Python stdio wrapper, daemon_control and the tool_timeouts setting as a Stage 2 per-family deletion (audit: about 1.9K Python and 4.7K test lines), but D14 names '#24356's wrapper deletion' among the reversed per-family deletion leaves, which become stop-serving-and-freeze with the deletion in S3-DELETE. MCP-CRATE's goal restates #24356 that way (every CLI's MCP entry points at gmcp, written by V1B's installers; the wrapper is deleted with S3-DELETE) and serves the gobby mcp-server CLI row by gmcp instead of 1.7.8's drop, so MCP-CRATE's design replaces the node's approach; closed #24355 already made every launch site start gmcp. The tool_timeouts setting itself stays (D65), because closed #24352's gmcp reads it.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MCP-CRATE",
+   "changed": true
+  },
+  {
+   "ref": "#24359",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit needs-josh (upheld, verify row 8): escalated and parked by Josh on 2026-10-23 'until we're ready to test hub-node live', with a stale gmcp-v0.1.2 tag and a parked head on no branch. D6 settles Josh's placement: #24359 moves to S4-RELEASE as a leaf (signed releases and the gmcp release workflow, first promoted and activated at CP-NODE-CUT, which is hub-node live), and the #23275 to #24359 edge deletion that verify row 20 required is an edge drop, not a disposition.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24360",
+   "disposition": "post_1_0",
+   "target": "post-1.0 backlog outside #21542: #24360 moves out of the 1.0 tree as the OAuth 2.1 authorization-server task, with gmcp-stdio D3.1-D3.5 as its spec (D6)",
+   "rationale": "Override of the prefill, which only inherited MCP-CRATE through ancestor #23275: it is a new OAuth 2.1 authorization server (RFC 9728, 8414, 8707 and 9207; CIMD only per Josh 2026-10-13) with placeholder criteria and no Python counterpart, so no oracle exists (audit; verify row 9). D6's default makes it post-1.0, because port-as-is defers new capability, no ledger row needs it and node-to-hub uses enrollment credentials, so hub-node (ruling 2) does not depend on it; MCP-CRATE's goal repeats '#24360 is post-1.0 (D6)', and Josh confirms the move at map approval.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MCP-CRATE",
+   "changed": true
+  },
+  {
+   "ref": "#24841",
+   "disposition": "chunk",
+   "target": "GW-1",
+   "rationale": "Audit done, refuted to needs-josh on criterion 3, Josh's approval before expansion (verify row 10); criteria 1 and 2 are met by rust-internal-mcp-servers.md (M1 1564301a73). D26 settles criterion 3 at map approval, which approves the plan as amended against runner-first, and GW-1's goal names #24841 as its plan with amendments 2.1.8 and 2.1.9 folded into the brief; its expansion children close at GW-1, GW-2 and CP-MCP-CUT, so the close sweep closes them first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "GW-1",
+   "changed": false
+  },
+  {
+   "ref": "#24881",
+   "disposition": "chunk",
+   "target": "GW-1",
+   "rationale": "Audit move under #21570, refuted to needs-josh because re-parenting would inherit #21570's blockers (verify row 11). The map keeps it in GW-1 as the gateway holder and splits its leaves by D26: #24884 to GW-1 (native /mcp, routing, composition, discovery, leases) and #24885 to GW-2 (REST tool routes, per-tool Compare, the compatibility endpoint and the preflight op), so the close sweep closes it after #24885.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "GW-1",
+   "changed": false
+  },
+  {
+   "ref": "#24884",
+   "disposition": "chunk",
+   "target": "GW-1",
+   "rationale": "Audit rewrite (upheld, verify row 12): it predates runner-first, hard-depends on the native rule engine through #24151, and is too large for one session. GW-1's goal is '#24884 under runner-first (D26)': native policy, discovery and dispatch at /mcp with per-tool Native, Compare or Proxy backends and ToolRegistry composition, and its edge on #24151 narrows to GW-2's preflight worker op (s2-11:264).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "GW-1",
+   "changed": false
+  },
+  {
+   "ref": "#24885",
+   "disposition": "chunk",
+   "target": "GW-2",
+   "rationale": "Audit rewrite (upheld, verify rows 13 and 21): its private loopback endpoint overlaps R0's worker boundary, and acceptance 2.2.5 runs on the Stage 1 pair fixture, not Stage 4. GW-2's goal carries #24885 per tool under D26: the dormant, loopback-only, secret-bound compatibility endpoint, per-tool Compare, the preflight worker op until HOOK-3's joint flip (D27), and 2.2.5 on tests/e2e/test_hub_node_pair.py:253.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "GW-2",
+   "changed": false
+  },
+  {
+   "ref": "#24882",
+   "disposition": "superseded",
+   "target": "CP-MCP-CUT",
+   "rationale": "Override of chunk to superseded, keeping D31's target: it is a holder whose criterion is 'All expanded child tasks must be completed', its only open child is #24886's landing-time release proof, and its other child #24932 is closed and unrelated (verify row 14). Ruling 20 promotes only at checkpoint cuts, so CP-MCP-CUT, which 'holds the gateway's coherent release proof (#24882)', replaces that release phase.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CP-MCP-CUT",
+   "changed": true
+  },
+  {
+   "ref": "#24886",
+   "disposition": "superseded",
+   "target": "CP-MCP-CUT",
+   "rationale": "Override of chunk to superseded, keeping D31's target: it was planned as 'one final shipping change after all source/parity checks', after which the Orchestrator announces and performs the cutover (3.1.1 bumps, 3.1.2 promotion through promote_workspace_binary_set, 3.1.3 a post-cutover gmcp smoke), and the audit and verifier rate it a merge (verify row 15). Ruling 20 and D39 replace that: CP-MCP-CUT's activation commit bumps every changed shipped binary except gdaemon (which landings bump), its promotion retains the outgoing generation, and the activated build serves REC-PILOT's gateway cases through gmcp.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CP-MCP-CUT",
+   "changed": true
+  }
+ ]
+}

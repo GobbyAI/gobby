@@ -1,6 +1,6 @@
 name: assistant-status-wake
 type: pipeline
-version: "1.0.0"
+version: "1.0.1"
 description: |
   Status tick for the operator's Assistant. The status-report cron runs this pipeline at the
   project-policy cadence. It lists the Assistant sessions in this project once per live status,
@@ -108,4 +108,4 @@ steps:
         target_id: "${{ [s for r in [steps.resolve_active.output, steps.resolve_paused.output, steps.resolve_waiting.output, steps.resolve_idle.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions][0].id }}"
         wake: true
         message_type: message
-        content: "Status tick. Deliver the scheduled status now: load gobby:references/agents/procedures/assistant.md completely and follow it. Deliver it on the single path its Deliver section chooses, never both."
+        content: "Status tick. Deliver the scheduled status now: load gobby:references/agents/assistant/overview.md, gather.md and report.md completely and follow them. Deliver on the single path the Deliver section of report.md chooses, never both."

@@ -1,0 +1,364 @@
+{
+ "dispositions": [
+  {
+   "ref": "#21565",
+   "disposition": "chunk",
+   "target": "TERM-HOST",
+   "rationale": "Audit L103 (rewrite): criteria 1-8 are the tmux-fallback policy that the purge #25486 retires, criterion 10 names a corpus path that does not exist, and criterion 11 contradicts purge 4.1's PROTOCOL_VERSION 2. The epic's remaining criterion of its own, 9 (adopt gterm by epoch so a restart never kills a terminal), is TERM-HOST's goal ('Rust takes the gterm host manager ... terminal processes survive an ordinary restart (R6)'), and TERM-HOST lists #21565 in tree_nodes. Its children split across TERM-1 (#23206 M2), TERM-2 (#25263) and TERM-HOST, which is the last of the three to land.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-HOST",
+   "changed": false
+  },
+  {
+   "ref": "#23206",
+   "disposition": "chunk",
+   "target": "TERM-1",
+   "rationale": "Audit L113 (keep): the M2 expansion container, whose criterion is 'All expanded child tasks must be completed'. TERM-1 lists #23206 in tree_nodes and its goal opens '#23206 M2, landed dormant and activated at CP-WAVE1-CUT'. The epic spans two chunks: #24571, #24572, #24573 and #24574 go to TERM-HOST, and #24576 is superseded.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": false
+  },
+  {
+   "ref": "#24571",
+   "disposition": "chunk",
+   "target": "TERM-HOST",
+   "rationale": "Audit L120 (rewrite): §2.7's Python write client is unstarted and edits R0-scope Python that the purge also touches, and #25276 records that the native composer ledger has no owner. TERM-HOST's goal takes 'the native composer ledger (#24571, plan #25276)' and the native write wiring. TERM-1's goal says the Python write client planned here is not built, because host effects go through worker ops, and TERM-1 keeps #25201's hub-mode remote write branch (D21).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-HOST",
+   "changed": false
+  },
+  {
+   "ref": "#24572",
+   "disposition": "chunk",
+   "target": "TERM-HOST",
+   "rationale": "Audit L130 (keep): §2.8 is Rust-only (settler.rs, process.rs, record_absent_exit, ControlClient::revoke_input), it is the first runnable terminal leaf, and it rebases onto purge 3.1's repository narrowing. TERM-HOST's goal names 'the reconcile settler and host exit proof (#24572)' and lists it in tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-HOST",
+   "changed": false
+  },
+  {
+   "ref": "#24573",
+   "disposition": "chunk",
+   "target": "TERM-HOST",
+   "rationale": "map review: Plan section 2.9 (.gobby/plans/daemon-side-gterm-adoption-and-terminal-ws.md) keeps 2.8's settler (#24572, TERM-HOST) as the only settler, with the runtime reporting its held prepared spawns to it through Effects::holds, and the route's planned Python runtime client (#24574) is not built (D4). TERM-HOST now lists #24573 and builds 2.9's operations as the native host's in-process runtime, proven by 2.9.1-2.9.3; 2.9.4's HTTP path is not built, because no caller outside the daemon remains.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "TERM-1",
+     "rationale": "Audit L139 (rewrite): §2.9's runtime_api.rs and terminal_api.rs keep a tmux carve-out that goes once purge 3.1 removes the tmux rows. TERM-1's goal names 'the Rust runtime route (#24573)', and its second checkpoint covers the route. §2.9 also makes #24572's settler 'the only settler', and that settler now belongs to TERM-HOST, so TERM-1's brief must settle this sequencing point once D31 drops the old edge.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "Audit L139 (rewrite): §2.9's runtime_api.rs and terminal_api.rs keep a tmux carve-out that goes once purge 3.1 removes the tmux rows. TERM-1's goal names 'the Rust runtime route (#24573)', and its second checkpoint covers the route. §2.9 also makes #24572's settler 'the only settler', and that settler now belongs to TERM-HOST, so TERM-1's brief must settle this sequencing point once D31 drops the old edge."
+  },
+  {
+   "ref": "#24574",
+   "disposition": "chunk",
+   "target": "TERM-HOST",
+   "rationale": "Audit L149 (rewrite): §2.10's Python runtime client and its agents-owned spawn edits may land on code that native agents retire, and 2.14, 2.15 and 2.2 all hang off it. TERM-HOST's goal takes 'settlement branches and pane binding (#24574)'. TERM-1's goal says the Python runtime client planned here is not built, and D4 bars the Python spawn-service edits, because AG-1 owns native spawn.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-HOST",
+   "changed": false
+  },
+  {
+   "ref": "#24575",
+   "disposition": "chunk",
+   "target": "TERM-1",
+   "rationale": "Audit L160 (rewrite): §2.14 still carries the tmux probe that the purge removes. TERM-1's goal names 'terminal inventory reads and HTTP handlers (#24575)', and its selector claims the HTTP GET /api/terminals rows.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": false
+  },
+  {
+   "ref": "#24576",
+   "disposition": "superseded",
+   "target": "TERM-1",
+   "rationale": "D31 binds #24576 as superseded, and TERM-1's goal says '#24576 closes as superseded by #24797 (the team-lane runbooks it served are retired), and #24577's edge on it is dropped'. #24797 closed on 2026-10-24, and at HEAD the only consumer named in §2.15, check_runbook_seats' team-lane sizing through _lane_viewport and resolve_team_launch_inputs, survives only in the plan text (gcode grep). Audit L170 adds that its Python half edits runtime_client.py, which comes from #24574 and which TERM-1's worker-op design never builds; the default 'chunk' is wrong because no part of this node is still built.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": true
+  },
+  {
+   "ref": "#24577",
+   "disposition": "chunk",
+   "target": "TERM-1",
+   "rationale": "Audit L180 (rewrite): §2.2 routes tmux rows through tmux_write.rs, which purge 3.1 deletes, and the frame wire moves to PROTOCOL_VERSION 2. TERM-1's goal names 'the native terminal WS connection and operation state machine (#24577)' and drops its edge on #24576.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": false
+  },
+  {
+   "ref": "#24578",
+   "disposition": "chunk",
+   "target": "TERM-1",
+   "rationale": "Audit L190 (rewrite): §2.3's relay has a tmux history branch, and frames.rs and protocol_contract.rs change in purge 4.1. TERM-1's goal names 'the bounded proxy relay and frame and lifecycle fanout (#24578)'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": false
+  },
+  {
+   "ref": "#24579",
+   "disposition": "chunk",
+   "target": "TERM-1",
+   "rationale": "Audit L200 (keep): §2.12 has no tmux dependency and follows 2.2 and 2.3. TERM-1's goal keeps it ('operator input under the route action hold') and makes its test target a Rust test, because #24571's Python client is not built.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": false
+  },
+  {
+   "ref": "#24580",
+   "disposition": "chunk",
+   "target": "TERM-1",
+   "rationale": "Audit L210 (rewrite): §2.13 registers the family (TerminalFamily is a stub with no prefixes today) and activates Native with a per-leaf gdaemon release bump, overlapping R6. TERM-1's goal takes 'family registration and activation (#24580)', run after R6 and claiming its WS message types through SEAM-WS's registry. The Native flip itself rides CP-WAVE1-CUT's activation commit, promotion waits for that cut (ruling 20), and rollback is a generation restore rather than §2.13's route switch (D37, D38).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25263",
+   "disposition": "chunk",
+   "target": "TERM-2",
+   "rationale": "Audit L221 (rewrite): there is no spec, criteria 1 and 3 are gobby-plan gates (retired for port work by rulings 1 and 5), and criterion 2 collides with agents-family 11.3 over the three workspace WS ledger notes. TERM-2's goal is '#25263: the workspace WS rows and the WorkspaceOps service natively, and the gobby-workspaces descriptors'. Its workspace_ WS and gobby-workspaces MCP selectors settle the row ownership (D5).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-2",
+   "changed": false
+  },
+  {
+   "ref": "#21568",
+   "disposition": "container",
+   "target": "map-root",
+   "rationale": "Audit L239 (rewrite): the umbrella's 13-item order is superseded, and it owns 254 ledger rows directly. D5 re-homes those rows through the map's ledger selectors, and map-v2's coverage_selfcheck lists #21568 among its four containers. Its children are spread over many chunks (SKILLS, CRON, PLANS, SRC, COMMS-2, PROJ-2, the AI chunks, VOICE, OBS and others), so map-root is the target.",
+   "prefill_disposition": "container",
+   "prefill_target": "map-root",
+   "changed": false
+  },
+  {
+   "ref": "#21580",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L249 (keep): the stamped, Josh-approved Skills plan (24 leaves, 7 phases), none started, with its 54 umbrella rows re-homed by selectors (D5). SKILLS lists #21580 in tree_nodes and its goal takes P1-P4 and P6. The epic spans three chunks: P0's corpus (#24979, #24986) lands first in REC-CATALOG, and P5's CLI (#24984) lands later in V4.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24979",
+   "disposition": "chunk",
+   "target": "REC-CATALOG",
+   "rationale": "Audit L395 (keep): the P0 expansion container, with the single leaf #24986. REC-CATALOG lists #24979 in tree_nodes, and its goal records the SKILLS corpus ('absorbs #24986, the 54-row corpus').",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-CATALOG",
+   "changed": false
+  },
+  {
+   "ref": "#24986",
+   "disposition": "chunk",
+   "target": "REC-CATALOG",
+   "rationale": "Audit L399 (keep): §0.1's executable 54-row characterization corpus, unblocked today. REC-CATALOG's goal 'absorbs #24986, the 54-row corpus', and SKILLS's oracle is '#24986's executable 54-row corpus (REC-CATALOG)'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-CATALOG",
+   "changed": false
+  },
+  {
+   "ref": "#24980",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L401 (keep): the P1 expansion container (7 leaves) and a natural chunk boundary. All seven leaves are in SKILLS's goal (registry reads, lifecycle, parsing, scanner, companion files, paged delivery, search), and SKILLS owns them through #21580 in its tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24987",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L405 (keep): stamped plan §1.1, with no claim or commit, as planned. SKILLS's goal covers the 'native scoped repository and HTTP reads', and its selector owns the /api/skills HTTP rows.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24988",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L406 (keep): stamped plan §1.2, with no claim or commit, as planned. SKILLS's goal covers 'atomic registry lifecycle and notifications'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24989",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L407 (keep): stamped plan §1.3, as planned. SKILLS's goal covers 'bounded parsing and validation'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24990",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L408 (keep): stamped plan §1.4, as planned. SKILLS's goal covers 'the safety scanner and scan route', and its risks require the scanner to refuse every input that Python refuses.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24991",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L409 (keep): stamped plan §1.5, as planned. SKILLS's goal covers 'companion-file snapshots and HTTP file operations'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24992",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L410 (edge-fix): §1.6 binds opaque cursors to #24884's gateway reset generation, so the old edge put a Skills leaf behind C1. SKILLS's goal covers 'paged instruction delivery and completed-load state (the get_skill and get_skill_file cursor contract every agent depends on)'. SKILLS runs after GW-1 and CP-MCP-CUT through its B0-READ dependency, so the inversion disappears when D31 drops the old edge.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24993",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L411 (keep): stamped plan §1.7, as planned. SKILLS's goal covers 'search, list projection and index freshness'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24981",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L413 (keep): the P2 expansion container (6 leaves) and a natural chunk boundary. All six leaves are in SKILLS's goal (filesystem boundary, GitHub and ZIP loading, hubs, scanned installation, bundled sync), and SKILLS owns them through #21580.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24994",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L417 (keep): stamped plan §2.1, as planned. SKILLS's goal covers 'the node-local skill filesystem boundary', and hub-node work stays in 1.0 (ruling 2).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24995",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L418 (keep): stamped plan §2.2, as planned (the plan's own decision 8 adds the zip crate). SKILLS's goal covers 'bounded GitHub and ZIP loading', and its oracle replays recorded GitHub and ZIP fixtures.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24996",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L419 (keep): stamped plan §2.3, as planned. SKILLS's goal covers the 'API, GitHub collection, topic and Claude-plugin hubs', of which this leaf is the API hub providers.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24997",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L420 (keep): stamped plan §2.4, as planned. SKILLS's goal covers the 'GitHub collection, topic and Claude-plugin hubs'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24998",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L421 (keep): stamped plan §2.5, as planned. SKILLS's goal covers 'scanned installation and updates'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24999",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L422 (keep): stamped plan §2.6. SKILLS's goal covers 'bundled synchronization and default restoration through TPL's loader'. D15 says #24999's asset script is not built (gobby-assets embeds the templates and TPL is the single loader), and its Python publisher edits (native_sync.py, SYNC_TARGETS, run_startup_content_sync) fall outside D4's allowed edits.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24982",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L424 (keep): the P3 expansion container (2 leaves). SKILLS's goal names 'script preparation (#24982)' by ref.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#25000",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L428 (keep): stamped plan §3.1, as planned. It is the first leaf of the script preparation (#24982) that SKILLS's goal covers.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#25001",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L429 (keep): stamped plan §3.2, as planned. SKILLS's goal covers script preparation (#24982), and its engines list the script cache.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24983",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L431 (keep): the P4 expansion container, with the single leaf #25002. SKILLS's goal covers 'the gobby-skills descriptor', and SKILLS owns it through #21580.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#25002",
+   "disposition": "chunk",
+   "target": "SKILLS",
+   "rationale": "Audit L435 (keep): stamped plan §4.1, as planned. SKILLS's goal covers 'the gobby-skills descriptor', its selector owns the gobby-skills MCP rows, and GW-1's ToolRegistry composes the descriptor into the gateway (D26).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SKILLS",
+   "changed": false
+  },
+  {
+   "ref": "#24984",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit L437 (keep): the P5 expansion container (4 CLI leaves). V4 lists #24984 in tree_nodes, and its goal takes the 'skills CLI callbacks (#24984)' as gclient verbs over the public API (D16), with V4's CLI gobby skills selector. SKILLS's goal says 'P5's CLI callbacks #24984 go to V4'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  },
+  {
+   "ref": "#25003",
+   "disposition": "chunk",
+   "target": "V4",
+   "rationale": "Audit L441 (keep): stamped plan §5.1, covering the gobby skills group, list, show, enable, disable and meta rows. V4 builds them as gclient verbs over the frozen public API against REC-CLI goldens (D16: 'Family chunks add no gclient verbs'), not as the plan's gdaemon skills clap dispatcher in crates/gskills.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": false
+  }
+ ]
+}

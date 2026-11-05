@@ -1,0 +1,339 @@
+{
+ "dispositions": [
+  {
+   "ref": "#23277",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "Audit section 4 (#24150 subtree): keep; its P2 is done (#24518 and 9 children) and only #24521, #24532 and #25284 remain open. S4-HOOKS lists #23277 in tree_nodes, and its goal names the envelope carrying edited-file content for disk-reading rules, the node checkout.read handler, its live proof and #25284.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  },
+  {
+   "ref": "#24517",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "Audit: keep, a holder whose only open leaf is #24521 (#24520, #24522 and #24523 are closed). S4-HOOKS owns it through #23277 and its goal names the node checkout.read handler, so the epic closes when S4-HOOKS lands.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  },
+  {
+   "ref": "#24521",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "Audit (upheld by verify-stage3-stage4): rewrite only for 1.2.2, whose Python golden (tests/hub/test_checkout_read_facts_golden.py against src/gobby/hooks/_path_scope.py) is not yet written and cannot run after S3-DELETE; the Rust items 1.2.1 and 1.2.3-1.2.6 stand. S4-HOOKS's goal names the node checkout.read handler, and by then the hub's path helpers are Rust (RULE-N2), so 1.2.2's hub-and-node agreement becomes a Rust test under S4-HOOKS's oracle, P0-DECISIONS' corpus replayed with node-origin envelopes (ruling 7). Its #24601 edge is file-contention ordering on nodes/agents/commands.rs (hook-envelope-file-facts.md:394), dropped under D31.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  },
+  {
+   "ref": "#24519",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "Audit: keep, the holder for #24532 (hook-envelope-file-facts P3). S4-HOOKS owns it through #23277, and its goal includes the checkout.read handler's live proof.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  },
+  {
+   "ref": "#24532",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "Audit (upheld): rewrite, because its proof is a pytest e2e (tests/e2e/test_hub_node_checkout_read.py) on the Python pair_hub/pair_node fixtures, which die at S3-DELETE (F1). Its acceptance items (3.1.1-3.1.2 and the folded F2.4-F2.7) stay the contract, and S4-HOOKS's goal names 'its live proof', so the chunk rewrites it on isolated hub and node daemons (ruling 7). Its old edge on #24604 drops under D31, since S4-PROOF now depends on S4-HOOKS.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  },
+  {
+   "ref": "#25284",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "Audit: keep; a restraint deferral whose upgrade path waits on #24521: the hub reads an ended node session's held content-ownership pairs through the node checkout read, releases committed ones, keeps dirty ones held and fails closed when the node is unreachable (task text). S4-HOOKS's goal names #25284 (the node-backed close read for ended node sessions), next to the tasks-family 3.8.1-3.8.5 node close-gate work it also carries.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  },
+  {
+   "ref": "#24657",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit (upheld): rewrite for stale text and a stale needs-planning label; its planning criteria are met (node-install-enrollment plan stamped e74de3693b, #24838, expanded into 23 leaves), and its four Python-surface gaps are its children's work. Josh's operator-directed N1 placement after #24604 is settled by the map: S4-INSTALL lists #24657 in tree_nodes, D31 names the N1 edge as a drop that map approval confirms, and S4-PROOF now depends on S4-INSTALL (F4). P1-P2 (#24851, #24852) land in S4-RELEASE, enrollment before install, and S4-INSTALL depends on S4-RELEASE, so S4-INSTALL's landing completes the epic.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24851",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep, the holder for node-install-enrollment P1. S4-RELEASE lists #24851 in tree_nodes, and its goal names signed checksums for every binary release, the gmcp release workflow and node bundles in gdaemon releases.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24856",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "The audit's Windows rewrite is refuted by verify-stage3-stage4 section 4.9: the leaf only signs checksums for archives the existing release workflows already publish. S4-RELEASE's goal agrees ('#24856 stays as written: its Windows archives already ship'), so the leaf lands there unchanged.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24857",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit (upheld): rewrite; .github/workflows/release-gmcp.yml already ships four macOS and Linux targets with sha256 sidecars and no signing (c400d26b31, #24353), so what remains is signing plus a release_workflows.rs test. S4-RELEASE's goal names the gmcp release workflow (with #24359, D6); the leaf's added x86_64/aarch64-pc-windows-msvc targets are post-1.0 scope (F7, memory 83a9445f) that the chunk's debt pass trims.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24858",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep; Rust in gdaemon node_setup/release and gclient, with acceptance Rust apart from the pin items, which V1A's Rust pin authority (D15) now owns. S4-RELEASE's goal names node bundles in gdaemon releases.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24852",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep, the holder for node-install-enrollment P2. S4-RELEASE lists #24852 in tree_nodes, and its goal names gdaemon node with the no-toolchain harness, the sibling-gdaemon verbs, gobby node enroll and the remediation naming it.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24859",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep; Rust only, and F10 found no crates/gdaemon/src/node_setup/ yet, so this leaf starts that tree. S4-RELEASE's goal names 'gdaemon node and the no-toolchain harness'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24860",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep; Rust in gclient and gdaemon node_setup. S4-RELEASE's goal names 'gobby node install and enroll running the sibling gdaemon'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24861",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep; after S3-DELETE it is the only operator enrollment path, because NodeServices::prepare refuses a node without the api_key that Python's gobby auth login used to write (F4). D7 and S4-RELEASE's goal place gobby node enroll (#24861) here, and its 2.3.1 stub-hub enrollment carries part of #24863's no-Python proof (verify-stage3-stage4 section 4.3).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24862",
+   "disposition": "chunk",
+   "target": "S4-RELEASE",
+   "rationale": "Audit: keep; Rust remediation text that names gobby node enroll. S4-RELEASE's goal names the 'remediation naming it'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": false
+  },
+  {
+   "ref": "#24863",
+   "disposition": "superseded",
+   "target": "S4-RELEASE",
+   "rationale": "D31 named move: #24863 closes as superseded, and S4-RELEASE's goal says so. Every target is Python (deleting gobby auth login in auth_login.py, rewiring the pytest pair_node fixture) and the plan's D12 already decided the drop (verify-stage3-stage4 section 4.3); the map replaces that approach: D7 drops the CLI verb, V1B records the 'CLI gobby auth login' ledger drop, S3-DELETE deletes the Python whole (D14), S4-RELEASE builds gobby node enroll (#24861) as the one enrollment path, and S4-PROOF's #24604 rewrite carries the real-hub enrollment proof. The default 'chunk' would wrongly leave Python edits in a chunk that runs after S3-DELETE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-RELEASE",
+   "changed": true
+  },
+  {
+   "ref": "#24853",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep, the holder for node-install-enrollment P3 (9 open leaves). S4-INSTALL lists #24853 in tree_nodes, and its goal covers the release verification library, enrolling and promoting a bundle, SRT staging, per-CLI hooks and MCP entries, and starting the node service.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24864",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust release verification in gdaemon node_setup. S4-INSTALL's goal names the release verification library first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24865",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust. Its promotion is the shipped node installer copying a verified bundle into the node's own ~/.gobby/bin (the node-side successor to promote_workspace_binary_set), a product behavior rather than port-time promotion, so ruling 20 does not supersede it. S4-INSTALL's goal names enrolling and promoting a bundle.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24866",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "verify-stage3-stage4 section 5 corrects the audit's keep to rewrite: 3.3.4 reads Python-owned SRT files with include_str!, which S3-DELETE removes. The map resolves it: S3-FREEZE copies those inputs into gobby-assets (D15), and S4-INSTALL's goal says #24866 reads them from there.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24867",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit (upheld): rewrite; 3.4.2 has Python's installer produce the claude golden (tests/install/test_node_setup_golden.py), an oracle that dies at S3-DELETE. S4-INSTALL's goal names per-CLI hooks and MCP entries, and its oracle replaces that golden with P0-LOWTRAFFIC's install golden tree applied per node (ruling 7); per F6, V1B ports the same claude installer to Rust first, so the brief should share that writer rather than port it twice.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24868",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit (upheld): rewrite; its codex golden (hooks, trust and the MCP entry) comes from Python's installer (tests/install/test_node_setup_golden.py), which dies at S3-DELETE. S4-INSTALL's goal names the codex hooks and MCP entry, with P0-LOWTRAFFIC's install golden tree as the oracle (ruling 7); V1B's Rust codex installer is the writer to share (F6).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24869",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit (upheld): rewrite; its droid golden comes from Python's installer (tests/install/test_node_setup_golden.py), which dies at S3-DELETE. S4-INSTALL's goal names the droid hooks and MCP entry, with P0-LOWTRAFFIC's install golden tree as the oracle (ruling 7); V1B's Rust droid installer is the writer to share (F6).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24870",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit (upheld): rewrite; its grok golden comes from Python's installer (tests/install/test_node_setup_golden.py), which dies at S3-DELETE. S4-INSTALL's goal names the grok hooks and MCP entry, with P0-LOWTRAFFIC's install golden tree as the oracle (ruling 7); V1B's Rust grok installer is the writer to share (F6).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24871",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit (upheld): rewrite; its agy golden comes from Python's installer (tests/install/test_node_setup_golden.py), which dies at S3-DELETE. S4-INSTALL's goal names the agy hooks and MCP entry, with P0-LOWTRAFFIC's install golden tree as the oracle (ruling 7); V1B's Rust agy installer is the writer to share (F6).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24872",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust, and its 3.9.5 whole-install sandbox run carries part of #24863's no-Python enrollment proof (verify-stage3-stage4 section 4.3). S4-INSTALL's goal names starting the node service and waiting for the hub, and the operator-facing proofs that rely on it (#25244, F4) sit in S4-PROOF, which depends on S4-INSTALL.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24854",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep, the holder for node-install-enrollment P4 (5 open leaves). S4-INSTALL lists #24854 in tree_nodes, and its goal names hub-driven updates with skew refusal both ways, release-target resolution, idle-time activation, and node list and update.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24873",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust handshake and skew tests. S4-INSTALL's goal names version-skew refusal in both directions, and NODEHUB's risk keeps the node contract version unchanged until this skew handling lands.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24874",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust. S4-INSTALL's goal names release-target resolution on the hub.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24875",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust. Staging and idle-time activation are the shipped node's own self-update (it reuses #24865's promote_set on the node), not port-time promotion, so ruling 20 does not supersede it; S4-INSTALL's goal names idle-time activation, and CP-NODE-CUT updates the live node through this path.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24876",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; Rust. S4-INSTALL's goal names hub-driven updates, and this leaf is the hub side that drives node staging.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24877",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep, with open decision 14: gobby node list overlaps the ledger rows 'CLI gobby nodes' and 'CLI gobby nodes list', which V3's selector now owns. S4-INSTALL's goal names node list and update; the map picks no single listing verb, so the brief should alias or reuse V3's verb rather than ship two.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24855",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep, the holder for node-install-enrollment P5. S4-INSTALL lists #24855 in tree_nodes, and its goal ends with the docs.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#24878",
+   "disposition": "chunk",
+   "target": "S4-INSTALL",
+   "rationale": "Audit: keep; node setup, release and CLI docs, blocked by #24877 and #24863. S4-INSTALL's goal names the docs; with #24863 superseded under D7, they document gobby node enroll and no gobby auth login.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-INSTALL",
+   "changed": false
+  },
+  {
+   "ref": "#25201",
+   "disposition": "decision",
+   "target": "D21",
+   "rationale": "An operator ruling via #25460 placed #25201 in Stage 4 (task-25460 section 3.2 row 6, which ROADMAP decision 26 records as an operator ruling). Verify-stage3-stage4 section 4.7 flags the reversal as needs_josh. D21 is open, so the disposition is decision D21. Under D21's default it is chunk TERM-1, G4's disposition, keeping hub-mode's remote write branch.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-1",
+   "changed": true,
+   "reviewer_rationale": "Josh's task-25460 section 3.2 row 6 put #25201 in Stage 4 (verify-stage3-stage4 section 4.7: needs Josh), and the map settles it: D21 moves it to TERM-1, which lists it in tree_nodes and says 'the Rust write path keeps hub-mode's remote write branch', a reversal that map approval confirms. The RustWriteCoordinatorClient it names is never built (TERM-1 drops #24571's Python write client and reaches host writes through worker ops), so criterion 1 (a node-owned terminal's write reaches remote_terminal.write, never the local host) holds on TERM-1's Rust write path and criterion 2 becomes a Rust test (ruling 7). TERM-HOST replays TERM-1's corpora against the native host, which carries the case past the host switch."
+  },
+  {
+   "ref": "#25269",
+   "disposition": "decision",
+   "target": "D21",
+   "rationale": "The same operator ruling via #25460 placed #25269 in Stage 4 (section 3.2 row 5; verify section 4.6, needs_josh). D21 is open, so the disposition is decision D21. Under D21's default, ruling 1 retires its plan-gate criteria, so its D31 close is superseded NODEHUB rather than done; that is consistent with #25276 and #25291. The RemoteRunReconciler map gap holds under either outcome.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "NODEHUB",
+   "changed": true,
+   "reviewer_rationale": "MAP GAP: NODEHUB covers #25269's reported pane store, remote idle and terminate, but no chunk goal names its third item, the run reconciler (src/gobby/hub/remote_reconcile.py), whose only caller, AgentHealthMonitor's health pass (agents/agent_health.py:158 and :460, built at lifecycle_monitor.py:185), ports natively in AG-2 two waves earlier while the node report inbox it drains stays Python until NODEHUB. Josh's task-25460 section 3.2 row 5 Stage 4 placement (verify-stage3-stage4 section 4.6: needs Josh) is settled by D11 and D21's default, which give NODEHUB the hub side and list #25269 in its tree_nodes, a reversal that map approval confirms. Its own criteria (a stamped .gobby/plans file passing gobby plans validate) are retired for port work by rulings 1 and 5, so it closes on NODEHUB's landing."
+  }
+ ]
+}

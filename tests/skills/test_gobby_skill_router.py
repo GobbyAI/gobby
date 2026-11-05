@@ -42,17 +42,15 @@ def test_reference_contract_3_1_2() -> None:
 @pytest.mark.parametrize(
     ("prompt", "role"),
     [
-        ("/gobby admin", "orchestrator"),
-        ("$gobby admin", "orchestrator"),
-        ("/gobby assistant", "assistant"),
-        ("$gobby assistant\n", "assistant"),
+        ("/gobby admin", "synthetic-admin-seat"),
+        ("$gobby admin", "synthetic-admin-seat"),
     ],
 )
 def test_typed_operator_command_cold_starts_the_pane(prompt: str, role: str) -> None:
     handler = AgentEventHandlerMixin()
     handler._skill_manager = HookSkillManager()
     handler._session_manager = MagicMock()
-    roles = {"admin": "orchestrator", "assistant": "assistant"}
+    roles = {"admin": "synthetic-admin-seat"}
     with (
         patch.object(handler._skill_manager, "discover_core_skills", return_value=[]),
         patch.object(handler, "_skill_not_found_context", return_value="Skill not found."),

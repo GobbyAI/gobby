@@ -11,8 +11,12 @@ import pytest
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.sessions.mailbox import MailboxSendResult
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.asyncio
 
@@ -458,6 +462,94 @@ async def test_agent_command_lists_a_real_clear_successor(
         for button in row
     ]
     assert "✓ Lane 4" in labels
+
+
+def _spawned_seat(
+    sessions: SessionManager, project_id: str, external_id: str, definition: str, title: str
+) -> Session:
+    seat = sessions.register(external_id, None, "codex", project_id, title=title, agent_depth=1)
+    spawner = sessions.register(f"{external_id}-spawner", None, "codex", project_id)
+    run = LocalAgentRunManager(sessions.db).create(
+        parent_session_id=spawner.id,
+        child_session_id=seat.id,
+        provider="codex",
+        prompt=title,
+    )
+    sessions.update_terminal_pickup_metadata(seat.id, agent_run_id=run.id)
+    SessionVariableManager(sessions.db).set_variable(seat.id, "_agent_type", definition)
+    return seat
+
+
+async def test_agent_menu_follows_the_definition_grant_for_spawned_seats(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    seed_seat(temp_db, "granted-inbox", capabilities=["auto_attach_operator_conversations"])
+    seed_seat(temp_db, "plain-worker", capabilities=[])
+    sessions = SessionManager(temp_db)
+    project_id = sample_project["id"]
+    sessions.register("menu-top-level", None, "codex", project_id, title="Top level terminal")
+    _spawned_seat(sessions, project_id, "menu-granted", "granted-inbox", "Granted seat")
+    _spawned_seat(sessions, project_id, "menu-plain", "plain-worker", "Plain worker")
+    controller, manager, _, _ = _controller()
+    controller._session_manager = sessions
+
+    await controller.handle(_channel().name, _message(content="/agent"))
+
+    labels = [
+        button["text"]
+        for row in manager.send_message.await_args.kwargs["metadata"]["inline_keyboard"]
+        for button in row
+    ]
+    assert "Top level terminal" in labels
+    assert "Granted seat" in labels
+    assert "Plain worker" not in labels
+
+
+@pytest.mark.parametrize("granted", [True, False])
+async def test_agent_button_follows_the_definition_grant_for_spawned_seats(
+    temp_db: HubDatabase, sample_project: dict[str, Any], granted: bool
+) -> None:
+    definition = "granted-inbox" if granted else "plain-worker"
+    seed_seat(
+        temp_db,
+        definition,
+        capabilities=["auto_attach_operator_conversations"] if granted else [],
+    )
+    sessions = SessionManager(temp_db)
+    target = _spawned_seat(sessions, sample_project["id"], "button-seat", definition, "Button seat")
+    controller, manager, _, _ = _controller()
+    controller._session_manager = sessions
+    manager.edit_message = AsyncMock()
+    source = _source_message()
+    source.metadata_json.update(
+        {"callback_action": "agent_target", "agent_channel_id": _channel().id}
+    )
+    manager.store.get_message_by_platform_id.return_value = source
+    callback = _message(
+        content="select",
+        content_type="callback",
+        metadata={
+            "callback_action": "agent_target",
+            "callback_source_message_id": "900",
+            "callback_value": json.dumps(
+                {"op": "set", "channel_id": _channel().id, "session_id": target.id}
+            ),
+        },
+    )
+
+    consumed = await controller.handle(_channel().name, callback)
+
+    assert consumed is True
+    if granted:
+        manager.switch_conversation.assert_called_once_with(_channel().name, "dm:chat-1", target.id)
+    else:
+        manager.switch_conversation.assert_not_called()
+        manager.send_message.assert_awaited_once_with(
+            _channel().name,
+            "This agent is no longer running.",
+            session_id=None,
+            metadata={"platform_destination": "chat-1"},
+        )
 
 
 async def test_agent_command_is_published_in_telegram_menu() -> None:

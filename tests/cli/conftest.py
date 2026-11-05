@@ -7,6 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.releases import activation
+
+
+@pytest.fixture(autouse=True)
+def operator_pane_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLI tests run as the unspawned operator; their isolated home holds no daemon credential."""
+    monkeypatch.setattr(activation, "operator_credential_readable", lambda: True)
+
 
 @pytest.fixture(autouse=True)
 def isolate_cli_runtime_database(monkeypatch: pytest.MonkeyPatch) -> None:

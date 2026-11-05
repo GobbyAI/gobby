@@ -10,25 +10,134 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from gobby.storage.project_checkouts import require_root
+from gobby.utils.daemon_url import DaemonUrlError, validate_daemon_url
+from gobby.utils.local_token import (
+    GOBBY_AGENT_API_TOKEN_ENV,
+    AgentApiTokenClaims,
+    operator_bootstrap_path,
+    read_managed_api_token,
+)
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.agent_resolver import session_has_capability
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
+ACTIVATE_DAEMON = "activate_daemon"
+# Only a restart can be granted to a spawned identity, and the daemon route decides it. Stop,
+# start and cutover are refused for every spawned seat.
+_GRANTABLE_OPERATIONS = frozenset({"restart"})
+# The API token is a run credential that only a spawned seat is given; daemon_auth_headers would
+# send it as a bearer, so its presence marks the caller as spawned rather than as the operator.
+_SPAWNED_ENV_NAMES = (
+    "GOBBY_AGENT_RUN_ID",
+    "GOBBY_MANAGED_EXECUTION_ID",
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+    GOBBY_AGENT_API_TOKEN_ENV,
+)
+_REFUSED = "spawned_agent_refused"
 
-def agent_activation_refusal() -> str | None:
-    """Refuse a daemon activation step from a spawned agent.
 
-    The operator, persona and unspawned coordination panes carry no agent run id and pass. A
-    spawned agent is refused, whatever environment it carries.
+def claims_may_activate(db: HubDatabase, claims: AgentApiTokenClaims, operation: str) -> bool:
+    """Whether a verified managed identity's installed definition admits a daemon operation.
+
+    Only restart can be admitted, and only for an identity bound to a run or
+    managed execution whose session resolves to an enabled installed definition that holds
+    activate_daemon. Anything unresolved is refused.
     """
-    if os.environ.get("GOBBY_AGENT_RUN_ID", "").strip():
+    if operation not in _GRANTABLE_OPERATIONS:
+        return False
+    if claims.agent_run_id is None and claims.managed_execution_id is None:
+        return False
+    return session_has_capability(db, claims.session_id, ACTIVATE_DAEMON)
+
+
+def operator_credential_readable() -> bool:
+    """Whether this process can open the operator's bootstrap credential at its canonical path.
+
+    The path comes from the passwd entry only, so no environment variable can point this check at
+    a file the caller chose. Readability is the test, not validity: a malformed bootstrap still
+    belongs to the operator, and the start path reports its error. The sandbox denies this file to
+    spawned seats, so a caller that cleared its markers and cannot open it is refused.
+    """
+    path = operator_bootstrap_path()
+    if path is None:
+        return False
+    try:
+        with path.open("rb"):
+            pass
+    except OSError:
+        return False
+    return True
+
+
+def caller_is_spawned() -> bool:
+    """Whether this process carries any spawn marker. The markers are evidence, never a grant."""
+    return any(os.environ.get(name, "").strip() for name in _SPAWNED_ENV_NAMES)
+
+
+def agent_activation_refusal(operation: str) -> str | None:
+    """Refuse a daemon activation step from a spawned agent unless its verified identity admits it.
+
+    A caller with no spawn marker passes only when it can read the operator's bootstrap
+    credential. A cleared environment is not evidence of the operator, so it is refused when
+    that credential is unreadable. The run id in the environment is only a marker and grants
+    nothing. A marked caller is refused for stop, start and cutover, whatever its grant, its
+    key or its GOBBY_HOME says. A marked restart is never admitted here: the daemon route decides
+    it with the daemon's own key (spawned_restart_refusal then posts it).
+    """
+    if not caller_is_spawned():
+        if operator_credential_readable():
+            return None
         return (
-            "spawned_agent_refused: spawned agents may not stop, start, restart or cut over "
-            "the daemon; activation follows the configured owner"
+            f"{_REFUSED}: no spawn marker and no readable operator credential; "
+            "daemon activation follows the configured owner"
         )
+    if operation == "restart":
+        return f"{_REFUSED}: a spawned seat's restart is decided by the daemon route, not locally"
+    if operation == "cutover":
+        return spawned_cutover_refusal()
+    return spawned_whole_daemon_refusal()
+
+
+def spawned_whole_daemon_refusal() -> str:
+    """The refusal for a marked caller's stop or start, which no spawned seat may run."""
+    return (
+        f"{_REFUSED}: spawned agents may not stop or start the daemon; "
+        "activation follows the configured owner"
+    )
+
+
+def spawned_cutover_refusal() -> str:
+    """The refusal for a marked caller's cutover, which stays with the configured owner."""
+    return (
+        f"{_REFUSED}: spawned agents may not cut over the daemon; "
+        "activation follows the configured owner"
+    )
+
+
+def spawned_restart_refusal() -> str | None:
+    """Refuse a marked caller's restart before it posts, without reading the operator bootstrap.
+
+    The seat must present its private managed envelope and the daemon URL it was spawned with.
+    Nothing here grants the restart: the route verifies the presented token with the daemon's
+    key and the installed definition, and refuses before any stop.
+    """
+    try:
+        token = read_managed_api_token()
+    except RuntimeError as exc:
+        return f"{_REFUSED}: {exc}"
+    if token is None:
+        return f"{_REFUSED}: no managed capability is presented for restart"
+    try:
+        url = validate_daemon_url(os.environ.get("GOBBY_DAEMON_URL", ""), source="GOBBY_DAEMON_URL")
+    except DaemonUrlError:
+        return f"{_REFUSED}: no daemon URL is presented for restart"
+    if urlsplit(url).port is None:
+        return f"{_REFUSED}: no daemon URL is presented for restart"
     return None
 
 

@@ -89,6 +89,9 @@ class SpawnRequest:
     # Binds the reserved pane to the terminal id after ``create_pending`` and
     # before exec; set only for a placed spawn.
     placement_binder: Callable[[str], Awaitable[None]] | None = None
+    # Releases the placed pane bound to a terminal id after the spawn has already
+    # reported success, e.g. when a deferred Codex prompt delivery fails.
+    placement_releaser: Callable[[str], Awaitable[None]] | None = None
 
 
 @dataclass

@@ -1,0 +1,13 @@
+{
+ "dispositions": [
+  {
+   "ref": "#21544",
+   "disposition": "container",
+   "target": "map-root",
+   "rationale": "Stage 2 root epic with no validation criteria; its exit is that 'every route family is either delegated to Rust or dropped by a recorded decision, tracked in the S3.3 parity ledger' (task text, get_task), which S3-FREEZE's ledger closure enforces with zero rows proxied, and its per-family plans give way to chunk briefs (rulings 1 and 5). Its descendants are owned by 72 chunks (prefill basis), and map-v2's coverage self-check lists #21544 with #21545, #21546 and #21568 as the map-root containers that D31 closes.",
+   "prefill_disposition": "container",
+   "prefill_target": "map-root",
+   "changed": false
+  }
+ ]
+}
