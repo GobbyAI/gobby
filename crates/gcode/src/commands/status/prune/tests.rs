@@ -590,11 +590,14 @@ mod serial_db {
     }
 
     fn candidate_ids(database_url: &str, project_id: &str) -> Vec<String> {
-        discover_content_gc(database_url, 17, Some(project_id))
-            .expect("discover GC candidates")
-            .into_iter()
-            .map(|candidate| candidate.id)
-            .collect()
+        discover_content_gc(
+            &prune_test_context(database_url.to_string(), project_id, false),
+            17,
+        )
+        .expect("discover GC candidates")
+        .into_iter()
+        .map(|candidate| candidate.id)
+        .collect()
     }
 
     fn content_row_count(conn: &mut postgres::Client, file_id: &str) -> i64 {
