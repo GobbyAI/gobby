@@ -232,8 +232,10 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
 
     All of this runs through three actions of one committed, dated script:
     `launch_services.py provision`, `observe` and `teardown`. Every other step
-    stays with the developer. The Orchestrator's confirmation of this scope is
-    recorded in the changelog.
+    stays with the developer. The Orchestrator confirmed this scope on
+    2026-11-05: it runs each action from the root pane after reading the
+    committed script and checking its SHA-256, and Josh's D1 button is the go
+    for registrations in the isolated hub only.
 14. **The isolated daemon is mandatory and runs in the developer's sandbox.**
     The October report's "launches no daemon" scope cannot stand. gcode's
     credentials come only through a signed v2 daemon grant, so no gcode case
@@ -246,7 +248,9 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     (`allowLocalBinding`) and confines the daemon's writes to the epic folder,
     which matters: September's early daemon probe wrote trust entries into
     global Qwen stores (`environment.md`, lines 48-53). Rejected: the
-    Orchestrator launches it, which would run that daemon unsandboxed.
+    Orchestrator launches it, which would run that daemon unsandboxed. The
+    Orchestrator confirmed on 2026-11-05 that the developer runs it, with an
+    isolated `GOBBY_HOME` and ports 59480-59482.
 15. **The runtime root lives in the epic folder.** The root is
     `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11/`.
     The October roots sat in seat session folders, and a relaunched seat lost
@@ -258,7 +262,8 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     conditions as the September root. The worktree's `var/` path stays rejected:
     the sandbox denied dotfile names there. The scripts themselves are committed
     under `docs/evidence/gcode-graphify-rerun-2026-11/`, because the October
-    copies existed only in folders no later seat could read.
+    copies existed only in folders no later seat could read. The Orchestrator
+    confirmed this root on 2026-11-05.
 16. **Each gcode repetition has its own registered project, created empty.**
     `crates/gcode/src/index/indexer/lifecycle.rs::invalidate` deletes only
     machine state and retains the facts (`code_symbols`, `code_content_chunks`,
@@ -279,22 +284,25 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     configuration, so `prepare` cannot run under SRT. `--no-decisions` builds
     no decision client and resolves no decision secret, and no key appears on
     its command line. No seat enters or reads a credential. Josh's one manual
-    step is rating `sheet.csv`. The Orchestrator's confirmation is recorded in
-    the changelog.
+    step is rating `sheet.csv`, delivered through the Assistant. The
+    Orchestrator confirmed on 2026-11-05 that it runs `prepare` from the root
+    pane into the epic folder, and that D2 counts as D4's go for re-registering
+    C1 under its existing id.
 18. **#24701 (Symbol summaries and community labels) waits on leaf 2.3.** Its
     coordination line reads "Start only after #22604 closes, its Python study
     included". #22604 closed without the study, so the line no longer holds
-    the order it names. At expansion the Orchestrator edits that line or adds
-    the `blocked-by`, naming the 2.3 task. Seats do not edit it.
+    the order it names. By the Orchestrator's 2026-11-05 ruling, it edits #24701
+    at expansion to be blocked by the 2.3 task. Seats do not edit it.
 
 ## Constraints
 `kind: framing`
 
 - Leaves 2.1 and 2.2 are heavy measurement work. The Orchestrator launches
   them in a Dev Team in epic mode for #22948, the only mode that grants the
-  epic folder. The fleet's load hold in `project_policy` applies, and no timed
-  run happens during `project_policy.quiet_hours`. Decision 3's comparative
-  protocol replaces any quiet-load preflight.
+  epic folder. That launch waits on Josh's freeze: no new teams until #25765
+  and #25653 are proven live. The fleet's load hold in `project_policy` applies,
+  and no timed run happens during `project_policy.quiet_hours`. Decision 3's
+  comparative protocol replaces any quiet-load preflight.
 - Both leaves use only the fresh root named in Decision 15, with its own
   compose services and Gobby home. They never touch the live daemon, the live
   database, or port 60891, and they never write under the September root. The
@@ -927,7 +935,17 @@ Targets:
    `<root>/results/index-comparison/`. Start a fresh isolated daemon with
    `launch_daemon.py <attempt>`, and rerun `validate_environment.py --live` against the
    latest `observe` receipt. A relaunched seat restarts here under a new attempt id and
-   passes the owner session recorded in `ownership.json`.
+   passes the owner session recorded in `ownership.json`. Before continuing, it inventories
+   completed valid pairs and consumed projects from
+   `<root>/results/index-comparison/run-records.normalized.jsonl` and
+   `config/project-manifest.json`. Each completed pair stays unchanged and counts once. An
+   interrupted or incomplete pair is recorded void, and the whole pair is replaced on an unused
+   spare in the same AB or BA slot. With no spare left, the seat stops, adds the manifest
+   entries, stops the isolated daemon, and asks the Orchestrator through the Dev Team Lead and
+   Triage to rerun `provision`. New projects have no cached grant
+   (`crates/gcore/src/grant/cache.rs::interactive_cache_path` keys on the project id), so their
+   registration stays empty as in 2.1. The runner loop and its records carry all of this, with no
+   separate checkpoint store.
 2. **Starting states.** Each case starts from the state the matrix names, in that
    repetition's own project and Graphify state directory, with the starting state built
    untimed. For C3, replace the workspace from its sealed change corpus and check the
@@ -1207,6 +1225,15 @@ Targets:
   their closed leaves, and new work takes new section ids. Leaves 2.1 and 2.2
   replace the undelivered measurement and carry its protocol, so they stand alone.
   Leaf 2.3 adds the label study. The prior M1 is removed for re-derivation.
+- 2026-11-05: The Orchestrator gobby#19309's rulings, relayed through the lead
+  gobby#19945. It confirms the three `launch_services.py` invocations, the
+  developer-run isolated daemon on ports 59480-59482, the runtime root and an
+  epic-mode launch, its own run of `prepare`, and D2 as D4's go for C1. The launch
+  waits on Josh's freeze until #25765 and #25653 are proven live. #24701 is edited
+  at expansion to be blocked by the 2.3 task. It accepts the Plan Advocate
+  gobby#19939's PA-22948-01 as written, adding the resume rule to 2.2 step 1 with
+  no new store. D3 stays with Josh, and Decision 12 holds on this plan owning
+  neither unless he differs.
 
 ## V2: Verification
 `kind: verification`
@@ -1222,4 +1249,4 @@ After the leaves pass:
    the main checkout lists equal-size communities in ascending id order.
 5. Confirm `label-quality.md` exists and `docs/guides/llm-features.md` no longer calls
    the study pending. The Orchestrator then soft-deletes the C1 registration, and
-   confirms #24701's coordination names the closed study leaf.
+   confirms #24701's `blocked-by` names the closed study leaf.
