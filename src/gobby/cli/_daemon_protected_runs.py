@@ -13,8 +13,10 @@ from typing import Any
 
 import httpx
 
+from gobby.runtime_grants.signed_request import PROTECTED_RUNS_PATH
 from gobby.utils.local_token import daemon_auth_headers
 
+from ._signed_daemon_request import signed_daemon_headers
 from .utils_process import format_uptime
 
 PROTECTED_RUN_POLL_INTERVAL_SECONDS = 15.0
@@ -37,12 +39,36 @@ def fetch_protected_runs(http_port: int) -> list[dict[str, Any]]:
     """
     try:
         response = httpx.get(
-            f"http://localhost:{http_port}/api/admin/cron/protected-runs",
+            f"http://localhost:{http_port}{PROTECTED_RUNS_PATH}",
             headers=daemon_auth_headers(),
             timeout=_FETCH_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError:
         return []
+    return _runs_from(response)
+
+
+def fetch_signed_protected_runs(http_port: int) -> list[dict[str, Any]]:
+    """A spawned seat's protected-run check: a signed GET, so its bearer never leaves the process.
+
+    A seat that cannot sign a request or reach its daemon holds no lease it can honor, so it
+    reports no runs. The daemon's restart route still refuses a protected restart unless forced.
+    """
+    headers = signed_daemon_headers(http_port, method="GET", path=PROTECTED_RUNS_PATH)
+    if headers is None:
+        return []
+    try:
+        response = httpx.get(
+            f"http://localhost:{http_port}{PROTECTED_RUNS_PATH}",
+            headers=headers,
+            timeout=_FETCH_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError:
+        return []
+    return _runs_from(response)
+
+
+def _runs_from(response: httpx.Response) -> list[dict[str, Any]]:
     if response.status_code != 200:
         return []
     try:

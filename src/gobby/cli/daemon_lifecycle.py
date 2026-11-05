@@ -26,6 +26,7 @@ from gobby.config.logging import (
     resolved_logs_dir,
 )
 from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+from gobby.runtime_grants.signed_request import RESTART_PATH
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.daemon_url import validate_daemon_url
 from gobby.utils.dependency_requirements import (
@@ -36,8 +37,12 @@ from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.status import fetch_rich_status, format_status_message
 
 from ._daemon_handoffs import protect_pending_handoffs
-from ._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
-from ._managed_destination import daemon_proves_managed_capability
+from ._daemon_protected_runs import (
+    clear_protected_runs,
+    fetch_protected_runs,
+    fetch_signed_protected_runs,
+)
+from ._signed_daemon_request import signed_daemon_headers
 from .daemon import _services_stop
 from .installers.service import (
     get_service_status,
@@ -583,8 +588,8 @@ def _restart_from_spawned_seat(
 def _spawned_daemon_port() -> int:
     """The port of the daemon URL a spawned seat was started with, read without the bootstrap.
 
-    The port is only a dial target. Nothing authenticated goes to it until
-    ``daemon_proves_managed_capability`` passes for that port.
+    The port is only a dial target. A spawned seat sends nothing authenticated to it
+    unless ``signed_daemon_headers`` produces a signed request for that port.
     """
     url = validate_daemon_url(os.environ.get("GOBBY_DAEMON_URL", ""), source="GOBBY_DAEMON_URL")
     return urlsplit(url).port or 0
@@ -601,9 +606,9 @@ def _restart_backend(
 ) -> bool | None:
     """Restart a serving backend; None requires a full lifecycle replacement.
 
-    A spawned seat has no runtime: it takes the port from the URL it was spawned with, presents
-    its bearer only after that daemon proves the capability, and leaves the handoff admission to
-    the daemon route that the CLI owns for an operator.
+    A spawned seat has no runtime: it takes the port from the URL it was spawned with, sends only
+    signed requests, and never sends its bearer, and it leaves the handoff admission to the daemon
+    route that the CLI owns for an operator.
     """
     from gobby.cli.runtime import get_cli_runtime
 
@@ -619,16 +624,8 @@ def _restart_backend(
         return None
     if not _is_daemon_healthy(port):
         return None
-    if spawned and not daemon_proves_managed_capability(port):
-        _step(
-            "The daemon at the spawned URL did not prove it holds this seat's managed capability; "
-            "no bearer was sent",
-            error=True,
-        )
-        return False
-    if not clear_protected_runs(
-        port, force=force, wait=wait, step=_step, fetch=fetch_protected_runs
-    ):
+    fetch = fetch_signed_protected_runs if spawned else fetch_protected_runs
+    if not clear_protected_runs(port, force=force, wait=wait, step=_step, fetch=fetch):
         return False
     try:
         with (
@@ -642,15 +639,25 @@ def _restart_backend(
                 logged_stale_markers=logged_stale_markers,
             )
         ):
+            # The CLI guard above owns admission; a spawned seat's route does. A spawned seat signs
+            # this request instead of sending its bearer.
+            params = {
+                "force": "true" if runtime is not None else str(force).lower(),
+                "terminals": str(drain_terminals).lower(),
+            }
+            headers = (
+                signed_daemon_headers(port, method="POST", path=RESTART_PATH, params=params)
+                if spawned
+                else daemon_auth_headers()
+            )
+            if headers is None:
+                _step("No signed restart request could be made; no bearer was sent", error=True)
+                return False
             try:
                 response = httpx.post(
-                    f"http://localhost:{port}/api/admin/restart",
-                    # The CLI guard above owns admission; a spawned seat's route does.
-                    params={
-                        "force": "true" if runtime is not None else str(force).lower(),
-                        "terminals": str(drain_terminals).lower(),
-                    },
-                    headers=daemon_auth_headers(),
+                    f"http://localhost:{port}{RESTART_PATH}",
+                    params=params,
+                    headers=headers,
                     timeout=RESTART_REQUEST_TIMEOUT_SECONDS,
                 )
             except httpx.HTTPError as exc:
