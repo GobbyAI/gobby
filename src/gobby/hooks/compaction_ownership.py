@@ -1,28 +1,31 @@
-"""Hold Claude auto-compaction hooks until the parent's own compaction settles (#25683).
+"""Hold Claude compaction hooks until the parent's own compaction settles (#25683).
 
 A Claude subagent shares its parent's Gobby session. Its auto-compaction fires PreCompact,
 SessionStart(source=compact) and PostCompact with the parent's session id and transcript path,
-and no agent_id or subagents/ path, so the subagent skip cannot classify them. They are held
-per session, and their payloads cannot tell the parent from a subagent:
+and no agent_id, so the payloads cannot tell the parent from a subagent. A subagent's boundary
+is written to its own transcript, never to the parent's.
 
-- An auto PreCompact, a SessionStart(source=compact) and a PostCompact are held. A manual
-  compaction runs immediately, after any held hooks settle, and its boundary is verified at
-  its tails. A held PreCompact is not replayed when a manual boundary settles, because the
-  manual PreCompact already ran its rules.
+- An auto PreCompact, a SessionStart(source=compact) and a PostCompact are held per session.
+  A manual PreCompact runs its rules at once. Its boundary, like every parent compaction's,
+  settles at the next main-thread event.
 - The next non-compaction main-thread event settles the held hooks. It counts the
   compact_boundary records in the parent's main transcript since the last verified boundary.
-  None drops every held hook. One or more runs one parent lifecycle, built from the latest held
-  payload of each kind, and records the newest boundary as verified. The lifecycle's response
-  context is merged into the settling event's response. An unreadable transcript leaves the held
-  hooks and their state unchanged, so the next main-thread event tries again.
+  None drops every held hook, so a session_start(compact) alone never resets. One or more runs
+  one parent lifecycle, built from the latest held payload of each kind, and records the newest
+  boundary as verified. A held PreCompact is skipped when a manual PreCompact ran since the last
+  settle. The lifecycle's response context is merged into the settling event's response. An
+  unreadable transcript leaves the held hooks and their state unchanged, so the next
+  main-thread event tries again.
 - Subagent transcripts are never read. Parent timestamps are read only for an unknown baseline:
   when the session's first compaction hook cannot read the transcript, a boundary counts as new
   when its timestamp is at or after that hook's millisecond.
+- Each route decision is logged with its hook, trigger, source and signal.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from collections.abc import Generator
@@ -35,11 +38,12 @@ from typing import Any
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.subagent_boundary import subagent_payload_signal
 
+logger = logging.getLogger(__name__)
+
 REPLAY_FLAG = "_compaction_settled"
 COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
 
 _AUTO = "auto"
-_MANUAL = "manual"
 _COMPACT_SOURCE = "compact"
 _BOUNDARY_MARKER = b'"compact_boundary"'
 _READ_CHUNK_BYTES = 1 << 20
@@ -52,13 +56,12 @@ _LIFECYCLE = (_PRE, _START, _POST)
 
 @dataclass
 class _SessionState:
-    last_trigger: str | None = None
     held: dict[str, HookEvent] = field(default_factory=dict)
     verified: str | None = None
     # Set while the baseline is unknown: the receive time of the session's first compaction hook,
     # floored to its millisecond. Parent boundaries written at or after it are new.
     unknown_since: datetime | None = None
-    # A manual PreCompact ran its rules for the boundary that has not been verified yet.
+    # A manual PreCompact ran its rules since the last settle; a held PreCompact is then skipped.
     manual_pre_ran: bool = False
 
 
@@ -102,44 +105,19 @@ class CompactionOwnership:
             state = _baseline(event)
             self._sessions[event.session_id] = state
         if event.event_type == HookEventType.PRE_COMPACT:
-            trigger = str(event.data.get("trigger", _AUTO))
-            state.last_trigger = trigger
-            if trigger != _AUTO:
-                # The manual boundary is written after this PreCompact, so settling now counts
-                # only earlier boundaries. When the read fails, the held lifecycle waits for a
-                # later settle, and this PreCompact's rules run without it.
-                if state.held:
-                    replays = self._settle(state, event)
-                    if replays is None:
-                        state.manual_pre_ran = False
-                        return [], False
-                else:
-                    replays = []
+            if str(event.data.get("trigger", _AUTO)) != _AUTO:
+                # The manual PreCompact runs its rules now. Its boundary settles at the next
+                # main-thread event, which also skips any PreCompact held before it.
                 state.manual_pre_ran = True
-                return replays, False
-            kind = _PRE
-        else:
-            if state.last_trigger == _MANUAL:
-                if state.held:
-                    # The held lifecycle is unsettled, so the parent boundaries it covers are not
-                    # counted yet. Verifying the manual boundary now would skip them.
-                    return [], False
-                # The manual boundary is written before its tails. Verify it so that no later
-                # settle counts it again.
-                try:
-                    boundary = _newest_boundary(_transcript_of(event))
-                except OSError:
-                    # Unverified. The manual boundary was written before this hook, so the time
-                    # anchor counts it as old and any later parent boundary as new.
-                    state.unknown_since = _receive_time()
-                    boundary = None
-                if boundary is not None:
-                    state.verified = boundary
-                    state.unknown_since = None
-                state.manual_pre_ran = False
+                _log_route("manual", event, "manual_pre_compact")
                 return [], False
-            kind = _START if event.event_type == HookEventType.SESSION_START else _POST
+            kind = _PRE
+        elif event.event_type == HookEventType.SESSION_START:
+            kind = _START
+        else:
+            kind = _POST
         state.held[kind] = event
+        _log_route("held", event, "awaiting_main_event")
         return [], True
 
     def _settle(self, state: _SessionState, event: HookEvent) -> list[HookEvent] | None:
@@ -150,6 +128,7 @@ class CompactionOwnership:
         """
         transcript = _transcript_of(event)
         if transcript is None:
+            _log_route("kept", event, "no_transcript")
             return None
         try:
             if state.unknown_since is None:
@@ -158,18 +137,28 @@ class CompactionOwnership:
             else:
                 fresh, newest = _boundaries_since(transcript, state.unknown_since)
         except OSError:
+            _log_route("kept", event, "unreadable_transcript")
             return None
+        kinds = [kind for kind in _LIFECYCLE if kind in state.held]
         # A manual PreCompact already ran its rules for the boundary being settled.
         lifecycle = [
-            state.held[kind]
-            for kind in _LIFECYCLE
-            if kind in state.held and not (kind == _PRE and state.manual_pre_ran)
+            state.held[kind] for kind in kinds if not (kind == _PRE and state.manual_pre_ran)
         ]
         state.held.clear()
         state.manual_pre_ran = False
         state.verified = newest
         state.unknown_since = None
-        return [_settled(held) for held in lifecycle] if fresh else []
+        held = ",".join(kinds)
+        if not fresh:
+            _log_route("dropped", event, "no_parent_boundary", f" held={held}")
+            return []
+        _log_route(
+            "settled",
+            event,
+            "parent_boundary",
+            f" boundaries={len(fresh)} held={held} replays={len(lifecycle)}",
+        )
+        return [_settled(held_event) for held_event in lifecycle]
 
 
 def merge_replayed_context(response: HookResponse, replayed: list[HookResponse]) -> HookResponse:
@@ -275,6 +264,20 @@ def _written_before(record: dict[str, Any], since: datetime) -> bool:
 def _settled(event: HookEvent) -> HookEvent:
     """Copy a held hook marked so route() passes it to the rules instead of holding it."""
     return replace(event, metadata={**event.metadata, REPLAY_FLAG: True})
+
+
+def _log_route(decision: str, event: HookEvent, signal: str, detail: str = "") -> None:
+    """Log one route decision with the hook, trigger, source and signal that produced it."""
+    logger.info(
+        "compaction route %s: hook=%s trigger=%s source=%s signal=%s%s session=%s",
+        decision,
+        event.event_type.value,
+        event.data.get("trigger", "-"),
+        event.data.get("source", "-"),
+        signal,
+        detail,
+        event.session_id,
+    )
 
 
 def _is_claude_main(event: HookEvent) -> bool:
