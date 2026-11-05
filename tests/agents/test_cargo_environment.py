@@ -7,6 +7,7 @@ launches do: pytest's tmp_path exceeds macOS's 103-byte socket path limit.
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -44,6 +45,10 @@ def _sccache_values(env: Mapping[str, str]) -> tuple[str | None, ...]:
     return tuple(env.get(key) for key in SCCACHE_KEYS)
 
 
+def _covers(grant: Path | str, path: Path) -> bool:
+    return path.resolve().is_relative_to(Path(grant).resolve())
+
+
 def _run_paths(root: Path, shared: Path = Path("/shared")) -> SandboxRunPaths:
     return SandboxRunPaths(
         root=root,
@@ -65,7 +70,7 @@ def test_launch_paths_share_one_cargo_environment(
     sandboxed = _run_paths(Path("/run"), shared)
     granted = sandboxed.environment("codex", run_sockets=True)
     assert _sccache_values(granted) == (
-        str(shared / "cargo-home" / "rustc-wrapper"),
+        str(shared / "bin" / "rustc-wrapper"),
         str(shared / "cargo-home" / "sccache"),
         "/run/tmp/sccache.sock",
     )
@@ -110,9 +115,9 @@ def test_rustc_wrapper_shim_hides_target_dirs_from_sccache(fake_sccache: Path) -
             f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_record}"\n/usr/bin/env > "{env_record}"\n',
             encoding="utf-8",
         )
-        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock")
+        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock", root / "bin")
         wrapper = env["RUSTC_WRAPPER"]
-        assert wrapper == str(root / "cache" / "rustc-wrapper")
+        assert wrapper == str(root / "bin" / "rustc-wrapper")
         assert os.access(wrapper, os.X_OK)
 
         rustc_args = [
@@ -146,9 +151,63 @@ def test_unwritable_shim_fails_open_to_blank_sccache(fake_sccache: Path) -> None
     with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
         root = Path(short)
         (root / "cache").write_text("not a directory", encoding="utf-8")
-        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock")
+        env = cargo_environment(
+            root / "cache" / "sccache", root / "sccache.sock", root / "cache" / "bin"
+        )
         assert _sccache_values(env) == BLANK
         assert env["CARGO_BUILD_JOBS"] == "4"
+
+
+def _published_shim(root: Path) -> Path:
+    env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock", root / "bin")
+    return Path(env["RUSTC_WRAPPER"])
+
+
+def test_shim_reuse_rejects_a_link_planted_at_the_shim(fake_sccache: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
+        root = Path(short)
+        shim = _published_shim(root)
+        # A link whose target holds the exact script must not pass as the shim.
+        victim = root / "victim"
+        victim.write_bytes(shim.read_bytes())
+        victim.chmod(0o755)
+        shim.unlink()
+        shim.symlink_to(victim)
+
+        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock", root / "bin")
+
+        assert env["RUSTC_WRAPPER"] == str(shim)
+        assert not shim.is_symlink()
+        assert os.access(shim, os.X_OK)
+        assert stat.S_IMODE(victim.stat().st_mode) == 0o755
+
+
+def test_shim_reuse_rewrites_a_shim_with_group_or_other_write(fake_sccache: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
+        root = Path(short)
+        shim = _published_shim(root)
+        shim.chmod(0o777)
+
+        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock", root / "bin")
+
+        assert env["RUSTC_WRAPPER"] == str(shim)
+        assert stat.S_IMODE(shim.stat().st_mode) == 0o500
+
+
+def test_shim_reuse_rewrites_a_shim_owned_by_another_user(
+    fake_sccache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
+        root = Path(short)
+        shim = _published_shim(root)
+        before = shim.stat().st_ino
+        owner = os.getuid()
+        monkeypatch.setattr(os, "getuid", lambda: owner + 1)
+
+        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock", root / "bin")
+
+        assert env["RUSTC_WRAPPER"] == str(shim)
+        assert shim.stat().st_ino != before
 
 
 @pytest.mark.parametrize(
@@ -220,17 +279,26 @@ async def test_sandbox_cache_grants_keep_the_trust_split(
         try:
             policy = json.loads(Path(launch.policy_path or "").read_text(encoding="utf-8"))
             writes = [Path(path) for path in policy["filesystem"]["allowWrite"]]
+            reads = [Path(path) for path in policy["filesystem"]["allowRead"]]
+            denies = [Path(path) for path in policy["filesystem"]["denyRead"]]
             sockets = [Path(path) for path in policy["network"]["allowUnixSockets"]]
             # Launch callers merge the provider env over the spawn env.
             child_env = {**spawn_env, **launch.provider_env}
             if cached:
                 cargo_home = Path(child_env["CARGO_HOME"])
+                shim_dir = cargo_home.parent / "bin"
                 wrapper, cache_dir, socket = _sccache_values(child_env)
                 assert (wrapper, cache_dir) == (
-                    str(cargo_home / "rustc-wrapper"),
+                    str(shim_dir / "rustc-wrapper"),
                     str(cargo_home / "sccache"),
                 )
                 assert cargo_home.resolve() in writes
+                # Sandboxed runs exec the shim, so no write grant may cover its directory.
+                assert not any(_covers(grant, shim_dir) for grant in writes)
+                # The shim must be readable: no read deny may cover it unless an allow overrides.
+                assert not any(_covers(deny, shim_dir) for deny in denies) or any(
+                    _covers(allow, shim_dir) for allow in reads
+                )
                 assert Path(socket or "") == run_tmp / "sccache.sock"
                 assert run_tmp.resolve() in sockets
             else:
