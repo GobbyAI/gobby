@@ -546,6 +546,8 @@ CALL_FORMS = {
     "e_string_backslash_before_call": r"SELECT E'\\' || run_text('SELECT 1')::text AS v",
     "e_string_quote_before_extension": r"SELECT E'\'', pdb.score(1)::text AS v",
     "qualified_keyword_call": "SELECT pdb.all(1)::text AS v",
+    "attribute_notation_plpgsql": "SELECT ('SELECT 1').run_text::text AS v",
+    "attribute_notation_extension": "SELECT ('x').score::text AS v",
 }
 
 
