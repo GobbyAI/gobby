@@ -66,13 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Input grant handshake** — the grant checks on native writes and the
   `input_not_granted` refusal are gone. Every attached pane writes on its own
-  attachment, and the grant wire goldens are deleted. Version: `0.1.21`.
+  attachment, and the grant wire goldens are deleted. Version: `0.1.22`.
 
 #### gobby-client
 
 - **Read-only pane mode and take-control** — a pane is always writable. The
   take-control key and menu item, the take-control UI, the read-only state and
-  the "Input delivery unconfirmed." toast are gone. Version: `0.1.108`.
+  the "Input delivery unconfirmed." toast are gone. Version: `0.1.109`.
 - **Qwen provider label** — the sidebar no longer maps the `qwen` source.
   Version: `0.1.27`.
 
@@ -197,7 +197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Typing no longer waits on the daemon** (#25653) — keys to a native pane go
   straight to its gterm host. Daemon load no longer delays a keystroke, since no
   take grant sits on the path. Closing an external or adopted pane detaches its
-  attachment. Version: `0.1.108`.
+  attachment. Version: `0.1.109`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 
