@@ -199,6 +199,37 @@ def test_fragment_event_encodes_a_bounded_multiple_of_its_input(
     assert sum(encoded) <= 4 * len(raw)
 
 
+def test_fragment_event_base64_encodes_each_input_byte_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each event byte reaches the base64 encoder exactly once.
+
+    The encoder input total is fixed by the event, so the assertion holds at any host load.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    raw = canonical_json(
+        _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    )
+    encoded: list[int] = []
+    real_b64encode = base64.b64encode
+
+    def counting(data: bytes) -> bytes:
+        encoded.append(len(data))
+        return real_b64encode(data)
+
+    monkeypatch.setattr(base64, "b64encode", counting)
+    frames = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert len(frames) > 2
+    assert sum(encoded) == len(raw)
+    assert b"".join(base64.b64decode(frame["payload"]) for frame in frames) == raw
+
+
 class _Host(BroadcastMixin):
     """A broadcaster whose only sink is the native publisher."""
 
