@@ -70,7 +70,6 @@ async def init_stateful_services(runner: GobbyRunner) -> None:
     _init_stateful_dependencies(runner)
     await _register_stateful_services(runner)
     _apply_stateful_services(runner)
-    _schedule_scoped_tool_backfill(runner)
     _init_project_context(runner)
     listener = getattr(runner, "definition_revision_listener", None)
     start = getattr(listener, "start", None)
@@ -139,21 +138,25 @@ class MemoryServiceBundle:
         return self._memory_manager
 
 
-def _schedule_scoped_tool_backfill(runner: GobbyRunner) -> None:
-    """Kick the one-shot scoped-payload embedding backfill on the daemon path."""
+def schedule_scoped_tool_backfill(runner: GobbyRunner) -> None:
+    """Kick the one-shot scoped-payload embedding backfill once the HTTP server exists.
+
+    The internal registry manager lives on the HTTP server, so this runs from server
+    init rather than stateful init. Node mode is hub-only and skips it.
+    """
     if runner.bootstrap_config.run_mode() == "node":
         logger.info("skipping hub-only scoped tool backfill in node mode")
         return
     from gobby.runner_init.mcp_stack import schedule_scoped_embedding_backfill
 
-    memory = runner.config_runtime.capture().services.get("memory_services")
-    search = memory.semantic_search if isinstance(memory, MemoryServiceBundle) else None
-    if search is None:
+    tools_handler = runner.http_server._tools_handler
+    if tools_handler is None:
         return
     schedule_scoped_embedding_backfill(
-        search,
+        tools_handler._semantic_search,
         runner.mcp_proxy,
         config_store=ConfigStore(runner.database),
+        internal_manager=runner.http_server._internal_manager,
     )
 
 

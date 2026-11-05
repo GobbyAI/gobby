@@ -111,63 +111,52 @@ class _MarkerStore:
         self.values[key] = value
 
 
-def _memory_bundle(search: Any) -> Any:
-    return services.MemoryServiceBundle(
-        vector_store=MagicMock(),
-        _memory_manager=MagicMock(),
-        memory_backup_manager=None,
-        semantic_search=search,
-    )
+_INTERNAL_MANAGER = object()
 
 
-async def _run_stateful_init(
-    bundle: Any,
+def _tools_handler(search: Any) -> Any:
+    return SimpleNamespace(_semantic_search=search)
+
+
+async def _run_backfill(
+    tools_handler: Any,
     proxy: Any,
     store: Any,
     bootstrap_config: BootstrapConfig | None = None,
 ) -> set[Any]:
-    """Drive the real init_stateful_services with unrelated phases mocked."""
+    """Drive the live scheduling with the HTTP server it reads its search and registries from."""
     from gobby.runner_init import mcp_stack
 
     runner = _fake_runner(
         bootstrap_config=bootstrap_config or BootstrapConfig(),
-        config_runtime=SimpleNamespace(
-            capture=lambda: SimpleNamespace(services={"memory_services": bundle})
-        ),
         mcp_proxy=proxy,
         database=object(),
-        definition_revision_listener=None,
+        http_server=SimpleNamespace(
+            _tools_handler=tools_handler, _internal_manager=_INTERNAL_MANAGER
+        ),
     )
     before = set(mcp_stack._BACKFILL_TASKS)
-    with (
-        patch.object(services, "_init_stateful_dependencies") as deps,
-        patch.object(services, "_register_stateful_services", new=AsyncMock()) as register,
-        patch.object(services, "_apply_stateful_services") as apply_services,
-        patch.object(services, "_init_project_context") as project_context,
-        patch.object(services, "ConfigStore", return_value=store),
-    ):
-        await services.init_stateful_services(runner)
-    deps.assert_called_once_with(runner)
-    register.assert_awaited_once_with(runner)
-    apply_services.assert_called_once_with(runner)
-    project_context.assert_called_once_with(runner)
+    with patch.object(services, "ConfigStore", return_value=store):
+        services.schedule_scoped_tool_backfill(runner)
     created = set(mcp_stack._BACKFILL_TASKS) - before
     await asyncio.gather(*created)
     return created
 
 
 @pytest.mark.asyncio
-async def test_stateful_init_schedules_scoped_backfill() -> None:
+async def test_scoped_backfill_schedules_with_internal_registries() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
     store = _MarkerStore()
     proxy = MagicMock()
 
-    created = await _run_stateful_init(_memory_bundle(search), proxy, store)
+    created = await _run_backfill(_tools_handler(search), proxy, store)
 
     assert len(created) == 1
-    search.embed_all_tools.assert_awaited_once_with(GLOBAL_PROJECT_ID, proxy)
+    search.embed_all_tools.assert_awaited_once_with(
+        GLOBAL_PROJECT_ID, proxy, internal_manager=_INTERNAL_MANAGER
+    )
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
@@ -192,9 +181,7 @@ async def test_node_mode_skips_scoped_tool_backfill(
     store = _MarkerStore()
 
     with caplog.at_level(logging.INFO, logger=services.__name__):
-        created = await _run_stateful_init(
-            _memory_bundle(search), MagicMock(), store, bootstrap_config
-        )
+        created = await _run_backfill(_tools_handler(search), MagicMock(), store, bootstrap_config)
 
     skip = "skipping hub-only scoped tool backfill in node mode"
     if schedules:
@@ -210,59 +197,41 @@ async def test_node_mode_skips_scoped_tool_backfill(
 
 
 @pytest.mark.asyncio
-async def test_stateful_init_runs_backfill_once_across_restarts() -> None:
+async def test_scoped_backfill_runs_once_across_restarts() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
     store = _MarkerStore()
-    bundle = _memory_bundle(search)
+    tools_handler = _tools_handler(search)
 
-    await _run_stateful_init(bundle, MagicMock(), store)
-    await _run_stateful_init(bundle, MagicMock(), store)
+    await _run_backfill(tools_handler, MagicMock(), store)
+    await _run_backfill(tools_handler, MagicMock(), store)
 
     search.embed_all_tools.assert_awaited_once()
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
 @pytest.mark.asyncio
-async def test_stateful_init_skips_backfill_when_marker_current() -> None:
+async def test_scoped_backfill_skips_when_marker_current() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock())
     store = _MarkerStore()
     store.set(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY, mcp_stack.SCOPED_PAYLOAD_VERSION)
 
-    await _run_stateful_init(_memory_bundle(search), MagicMock(), store)
+    await _run_backfill(_tools_handler(search), MagicMock(), store)
 
     search.embed_all_tools.assert_not_awaited()
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
 @pytest.mark.asyncio
-async def test_stateful_init_backfill_skipped_without_memory_bundle() -> None:
-    from gobby.runner_init import mcp_stack
-
-    runner = _fake_runner(
-        bootstrap_config=BootstrapConfig(),
-        config_runtime=SimpleNamespace(capture=lambda: SimpleNamespace(services={})),
-        mcp_proxy=MagicMock(),
-        database=object(),
-        definition_revision_listener=None,
-    )
+async def test_scoped_backfill_skipped_without_tools_handler() -> None:
     store = _MarkerStore()
-    before = set(mcp_stack._BACKFILL_TASKS)
-    with (
-        patch.object(services, "_init_stateful_dependencies") as deps,
-        patch.object(services, "_register_stateful_services", new=AsyncMock()) as register,
-        patch.object(services, "_apply_stateful_services") as apply_services,
-        patch.object(services, "_init_project_context"),
-        patch.object(services, "ConfigStore", return_value=store),
-    ):
-        await services.init_stateful_services(runner)
-    deps.assert_called_once_with(runner)
-    register.assert_awaited_once_with(runner)
-    apply_services.assert_called_once_with(runner)
-    assert set(mcp_stack._BACKFILL_TASKS) == before
+
+    created = await _run_backfill(None, MagicMock(), store)
+
+    assert created == set()
     assert store.values == {}
 
 
