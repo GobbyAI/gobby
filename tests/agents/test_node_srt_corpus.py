@@ -33,7 +33,12 @@ from gobby.agents.cargo_target import (
     sandbox_checkout_cargo_target_dir,
 )
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
-from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions, prepare_sandbox_run_paths
+from gobby.agents.sandbox_policy import (
+    canonical_path,
+    gcode_runtime_write_exceptions,
+    prepare_sandbox_run_paths,
+    previous_run_write_paths,
+)
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
 from gobby.agents.srt_settings import render_srt_settings
 from gobby.utils.project_context import get_project_sandbox_config
@@ -410,6 +415,18 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
         config, env, agent_name=None, project_config=main_config, resume_metadata_json=None
     )
     assert spawned is not None
+    # The production launch drops grants the run's own roots supersede (srt_runtime's
+    # previous_run_write_paths step), so the oracle drops them before adding run grants.
+    superseded_writes = previous_run_write_paths(env)
+    spawned = spawned.model_copy(
+        update={
+            "extra_write_paths": [
+                path
+                for path in spawned.extra_write_paths
+                if canonical_path(path, base=workspace) not in superseded_writes
+            ]
+        }
+    )
 
     run_paths = prepare_sandbox_run_paths(
         str(inputs["run_id"]),

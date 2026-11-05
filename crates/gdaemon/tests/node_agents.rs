@@ -1769,6 +1769,38 @@ fn srt_spawn_time_grants() -> Result<()> {
 }
 
 #[test]
+fn srt_run_refuses_shared_cargo_grants() -> Result<()> {
+    // The shared Cargo home and the shared per-checkout target are what unsandboxed builds
+    // execute from, so a sandboxed run must not be granted write access to either.
+    let corpus = srt_corpus()?;
+    let root = tempfile::tempdir()?;
+    let inputs = srt_case_inputs(&corpus, "claude-srt-empty")?;
+    let tree = SrtTree::new(&root.path().join("shared-cargo"))?;
+    tree.materialize(&inputs)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let grants = &policy.sandbox.extra_write_paths;
+    let shared_home = tree.path("gobby_home").join("cache").join("cargo-home");
+    assert!(
+        !grants.iter().any(|grant| Path::new(grant) == shared_home),
+        "the shared Cargo home is writable: {shared_home:?} in {grants:?}"
+    );
+    assert!(
+        !grants.iter().any(|grant| grant.contains("cargo-target-v2")),
+        "a shared per-checkout Cargo target is writable: {grants:?}"
+    );
+    let own_home = tree
+        .path("gobby_home")
+        .join("cache")
+        .join("sandbox")
+        .join("cargo-home");
+    assert!(
+        srt_covered(grants, &own_home),
+        "the run's own Cargo home is not writable: {own_home:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn srt_agent_workspace_grants_match_python_corpus() -> Result<()> {
     // #25148: a spawned seat writes its own `<definition>/session-<seq>/` folder and
     // its team's `epics/epic-<seq>/` folder under the project's workspace anchor,

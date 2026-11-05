@@ -5,12 +5,12 @@
 
 use super::{
     PolicyInputs,
-    paths::{dedupe, expand_user, resolve_nonstrict, text},
+    paths::{canonical_paths, dedupe, expand_user, resolve_nonstrict, text},
 };
 use crate::node_commands::Sandbox;
 use anyhow::{Result, anyhow, bail};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -310,6 +310,40 @@ pub(super) fn spawn_grants(
     }
     config.extra_write_paths = extra;
     config.allow_package_registries = true;
+    config
+}
+
+/// `previous_run_write_paths`: the canonical cache and Cargo paths the spawn env names. The
+/// run's own roots supersede them, and unsandboxed builds execute from the shared Cargo home
+/// and target, so a sandboxed run keeps no write grant on any of them.
+pub(super) fn superseded_write_paths(
+    env: &BTreeMap<String, String>,
+    home: &Path,
+) -> BTreeSet<String> {
+    let raws: Vec<&str> = RUN_CACHE_ENV_VARS
+        .iter()
+        .copied()
+        .chain([CARGO_HOME, CARGO_TARGET_DIR])
+        .filter_map(|name| non_empty(env, name))
+        .collect();
+    canonical_paths(raws, None, home).into_iter().collect()
+}
+
+/// `srt_runtime`'s retained-writes step: drop each spawn write grant that the run supersedes,
+/// compared in the same canonical form as the superseded set.
+pub(super) fn retain_unsuperseded(
+    mut config: Sandbox,
+    superseded: &BTreeSet<String>,
+    inputs: &PolicyInputs,
+) -> Sandbox {
+    config.extra_write_paths.retain(|path| {
+        let canonical = canonical_paths(
+            [path.as_str()],
+            Some(inputs.workspace.as_path()),
+            &inputs.home,
+        );
+        !canonical.iter().any(|value| superseded.contains(value))
+    });
     config
 }
 
