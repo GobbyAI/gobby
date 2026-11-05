@@ -543,13 +543,14 @@ impl HostState {
                 "commit_state": "committed",
             }),
         };
+        // An exited leader has its exit watch (runtime.rs sets both), which settles this removal.
         if already_exited {
             remove_terminal_slot(&mut inner, &identity, None);
         }
         drop(inner);
         #[cfg(feature = "vt-engine")]
         if let Some(exit_watch) = exit_watch {
-            self.watch_leader_exit(identity, host_terminal_id, exit_watch);
+            self.watch_leader_exit(identity, host_terminal_id, exit_watch, already_exited);
         }
         response
     }
@@ -562,6 +563,7 @@ impl HostState {
         identity: Identity,
         host_terminal_id: String,
         exit_watch: crate::pane::ChildExitWatch,
+        exit_at_commit: bool,
     ) {
         let state = Arc::clone(self);
         #[cfg(unix)]
@@ -575,7 +577,7 @@ impl HostState {
                 until_write_owned(&state.mutation_gate).await;
             }
             state
-                .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code)
+                .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code, exit_at_commit)
                 .await;
         });
     }
@@ -738,22 +740,23 @@ impl HostState {
 
     /// Removes a committed pane whose leader exited and emits its
     /// `terminal_exited`, under the `inner` lock and then the events lock.
-    /// The exit watcher is the only caller, so it alone removes a committed
-    /// pane for an exit. Returns `false`, doing nothing, when a kill owns
-    /// the slot: one in flight, or an unproven one whose group lives on.
+    /// `exit_at_commit` means commit removed the slot for this exit, so an
+    /// absent slot is ours to emit. Otherwise a kill owns the slot: returns
+    /// `false`, doing nothing, when it is absent or held by a live group.
     #[cfg(any(feature = "vt-engine", test))]
     async fn settle_leader_exit(
         &self,
         identity: &Identity,
         host_terminal_id: &str,
         exit_code: Option<u32>,
+        exit_at_commit: bool,
     ) -> bool {
         let _gate = self.mutation_gate.read().await;
         // A slot that holds a live group belongs to its kill: leave it alone and
         // do not drain. Otherwise the leader's last writes are already queued on
         // its PTY, and the exit tail is read from the terminal the reader feeds.
         // Wait for the reader to take them.
-        let (present, drain) = {
+        let drain = {
             let inner = self.inner.lock().await;
             match inner
                 .terminals
@@ -761,8 +764,9 @@ impl HostState {
                 .filter(|slot| slot.host_terminal_id == host_terminal_id)
             {
                 Some(slot) if holds_live_group(slot) => return false,
-                Some(slot) => (true, output_drain(slot)),
-                None => (false, None),
+                Some(slot) => output_drain(slot),
+                None if exit_at_commit => None,
+                None => return false,
             }
         };
         if let Some(drain) = drain {
@@ -776,9 +780,8 @@ impl HostState {
         {
             Some(slot) if holds_live_group(slot) => return false,
             Some(_) => remove_terminal_slot(&mut inner, identity, None),
-            // Removed while the drain ran: the path that removed it settled the
-            // exit, so this one emits nothing.
-            None if present => return false,
+            // Absent after the drain: a kill removed it while the drain ran.
+            None if !exit_at_commit => return false,
             None => {}
         }
         // Emitted before the `inner` lock is released: no reader sees the

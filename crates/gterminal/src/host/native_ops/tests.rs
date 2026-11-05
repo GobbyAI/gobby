@@ -123,7 +123,7 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
 
     assert!(
         !state
-            .settle_leader_exit(&identity, "ht-lingering", Some(0))
+            .settle_leader_exit(&identity, "ht-lingering", Some(0), false)
             .await,
         "leader exit settled a live group after an unproven kill"
     );
@@ -143,7 +143,7 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
     }
     assert!(
         state
-            .settle_leader_exit(&identity, "ht-lingering", Some(0))
+            .settle_leader_exit(&identity, "ht-lingering", Some(0), false)
             .await,
         "a dead group's exit was withheld"
     );
@@ -191,7 +191,7 @@ async fn kill_during_the_exit_drain_emits_no_terminal_exited() {
     // The leader's exit settles first and parks in its drain; the kill then
     // proves the group gone and removes the slot while that drain is parked.
     let (settled, killed) = tokio::join!(
-        state.settle_leader_exit(&identity, "ht-drain", Some(0)),
+        state.settle_leader_exit(&identity, "ht-drain", Some(0), false),
         state.kill(&target, Some(0)),
     );
     assert_eq!(killed["killed"], true, "{killed}");
@@ -202,6 +202,50 @@ async fn kill_during_the_exit_drain_emits_no_terminal_exited() {
     assert!(
         !listed(&state, "ht-drain").await,
         "killed slot still listed"
+    );
+}
+
+#[cfg(feature = "vt-engine")]
+#[tokio::test]
+async fn kill_that_removes_the_slot_first_leaves_the_exit_watcher_silent() {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: as root, process group 1 probes as signallable");
+        return;
+    }
+    let (shutdown, _) = watch::channel(false);
+    let state = HostState::new(
+        HostConfig::default(),
+        "control".to_string(),
+        "epoch".to_string(),
+        crate::host::image::PinnedImage::for_tests(),
+        1,
+        shutdown,
+    );
+    insert_native_slot(&state, "ht-won", 24, 80).await;
+    let mut reaped = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn true");
+    let dead_pgid = i32::try_from(reaped.id()).expect("pid fits pgid");
+    reaped.wait().expect("reap true");
+    let identity = {
+        let mut inner = state.inner.lock().await;
+        let identity = inner.by_host_id["ht-won"].clone();
+        inner.terminals.get_mut(&identity).expect("slot").pgid = dead_pgid;
+        identity
+    };
+    // The kill proves the group gone and removes the slot before the exit
+    // watcher settles. Nothing removed the slot for an exit at commit, so the
+    // watcher must emit nothing.
+    let target = object(json!({"host_terminal_id": "ht-won"}));
+    let killed = state.kill(&target, Some(0)).await;
+    assert_eq!(killed["killed"], true, "{killed}");
+    let settled = state
+        .settle_leader_exit(&identity, "ht-won", Some(0), false)
+        .await;
+    assert!(
+        !settled,
+        "exit watcher emitted terminal_exited after a kill had removed the slot"
     );
 }
 

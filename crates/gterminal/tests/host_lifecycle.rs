@@ -585,6 +585,54 @@ fn leader_exit_under_kill_emits_no_terminal_exited() {
 }
 
 #[test]
+fn leader_that_exits_before_commit_emits_one_terminal_exited() {
+    let token = "control-token-exit-before-commit";
+    let (dir, mut host, mut stream) = test_host(token);
+    let mut events = connect(&dir.path().join(CONTROL_SOCKET));
+    assert_eq!(hello(&mut events, token)["ok"], true);
+    send_json(&mut events, &json!({"method": "subscribe_events"}));
+    assert_eq!(recv_json(&mut events)["gap"], false);
+    let (terminal_id, spawn_key, _, _) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "exit-before-commit",
+        &["/bin/sh", "-c", "exit 7"],
+        BTreeMap::from([("GTERM_TEST_WAIT_FOR_CHILD_EXIT_BEFORE_STATUS", "1")]),
+    );
+    // The status waits for the leader's exit, so commit finds it exited and
+    // removes its slot for that exit. The exit watcher must emit exactly once.
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    assert_eq!(response["terminal_state"], "exited", "{response}");
+    events
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("read timeout");
+    let mut reader = BufReader::with_capacity(1, &events);
+    let mut exits = Vec::new();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) if line.contains("\"terminal_exited\"") => exits.push(line),
+            Ok(_) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break
+            }
+            Err(err) => panic!("event stream failed: {err}"),
+        }
+    }
+    assert_eq!(exits.len(), 1, "expected one terminal_exited: {exits:?}");
+    assert!(exits[0].contains("\"exit_code\":7"), "{exits:?}");
+    assert_no_terminals(&mut stream);
+}
+
+#[test]
 fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
     let (_dir, mut host, mut stream) = test_host("control-token-preexec-faults");
     let (terminal_id, spawn_key, _, _) = prepare_terminal(

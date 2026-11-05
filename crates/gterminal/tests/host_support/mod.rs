@@ -533,7 +533,14 @@ pub fn held_probe(dir: &Path, name: &str, exit_code: u8) -> (PathBuf, PathBuf) {
         .status()
         .expect("run mkfifo");
     assert!(made.success(), "mkfifo: {made}");
-    let body = format!("read line < '{}'\nexit {exit_code}", fifo.display());
+    // The marker shows the probe started, so a timed-out wait can tell an
+    // absent probe from one that never opened the FIFO.
+    let started = fifo.with_extension("started");
+    let body = format!(
+        ": > '{}'\nread line < '{}'\nexit {exit_code}",
+        started.display(),
+        fifo.display()
+    );
     (candidate_script(dir, &format!("{name}.sh"), &body), fifo)
 }
 
@@ -549,23 +556,46 @@ pub fn send_held_upgrade(
 ) -> std::fs::File {
     use std::os::unix::fs::OpenOptionsExt;
     send_upgrade(stream, exe, attempt_id, Value::Null);
-    let mut release = None;
-    wait_until(&format!("{attempt_id}'s probe holds its FIFO"), || {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
         // A non-blocking open for writing succeeds only once the probe has
         // the FIFO open for reading.
-        release = std::fs::OpenOptions::new()
+        if let Ok(release) = std::fs::OpenOptions::new()
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(fifo)
-            .ok();
-        if release.is_none() && replied(stream) {
+        {
+            return release;
+        }
+        if replied(stream) {
             let reply = recv_json(stream);
             assert_eq!(reply["error"], "upgrade_in_progress", "{reply}");
             send_upgrade(stream, exe, attempt_id, Value::Null);
         }
-        release.is_some()
-    });
-    release.expect("the probe holds its FIFO")
+        if Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for {attempt_id}'s probe holds its FIFO; {}",
+                held_upgrade_report(fifo, stream)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// What a timed-out `send_held_upgrade` wait saw: the host's process state,
+/// whether the probe started, whether an unread reply waits, and the log tail.
+fn held_upgrade_report(fifo: &Path, stream: &UnixStream) -> String {
+    let dir = fifo.parent().unwrap_or(fifo);
+    let spawned = std::fs::read_to_string(dir.join(SPAWN_PID_FILE)).unwrap_or_default();
+    let state = host_process_state(&spawned);
+    let started = fifo.with_extension("started").exists();
+    let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
+    let tail: Vec<&str> = log.lines().rev().take(20).collect();
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    format!(
+        "host_state={state:?}; probe_started={started}; unread_reply={}; log_tail={tail:?}",
+        replied(stream)
+    )
 }
 
 /// Whether a reply waits on `stream`, without reading it.
