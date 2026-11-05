@@ -54,11 +54,14 @@ class ProviderQuotaMonitor:
         """Drop a terminal's prior capture after an outage, so its next capture starts fresh."""
         self._tracker.rebaseline(pane_generation(terminal))
 
-    async def retire_dead(self, live_by_provider: Mapping[str, Collection[str]]) -> None:
-        """Retire pane generations whose terminal left the live set since the last pass.
+    async def retire_dead(
+        self, live_by_provider: Mapping[str, Collection[str]], *, owner: str
+    ) -> None:
+        """Retire pane generations whose terminal left this owner's live set since the last pass.
 
         A provider's generations are retired only when its live set changed, so a
         steady pass writes nothing. Failed retirements keep their state and retry.
+        The sink keeps any generation another owner still reports live.
         """
         current = {provider: frozenset(live) for provider, live in live_by_provider.items()}
         for provider in self._live.keys() | current.keys():
@@ -66,7 +69,7 @@ class ProviderQuotaMonitor:
             after = current.get(provider, frozenset())
             if before == after:
                 continue
-            await self._service.retire_pane_generations(provider, after)
+            await self._service.retire_pane_generations(provider, after, owner=owner)
             for generation in before - after:
                 self._tracker.rebaseline(generation)
             if after:

@@ -180,7 +180,7 @@ class IdleCheckHandler:
             for _run, terminal, provider in targets:
                 live.setdefault(provider, set()).add(pane_generation(terminal))
             try:
-                await monitor.retire_dead(live)
+                await monitor.retire_dead(live, owner="spawned")
             except Exception:
                 logger.warning("Failed to retire pane quota generations", exc_info=True)
         checked = 0

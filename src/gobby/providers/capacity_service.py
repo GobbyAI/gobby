@@ -160,6 +160,8 @@ class ProviderCapacityService:
         self._run_db = run_db
         self._alert_sink = alert_sink
         self._inflight: dict[tuple[str, str], asyncio.Task[ProviderCapacitySnapshot]] = {}
+        # Each pane-scan owner's last reported live generations, per provider.
+        self._pane_live: dict[tuple[str, str], frozenset[str]] = {}
         self._write_locks: dict[str, asyncio.Lock] = {}
 
     @classmethod
@@ -246,14 +248,28 @@ class ProviderCapacityService:
         self._schedule_alerts(edges)
         return snapshot
 
-    async def retire_pane_generations(self, provider: str, live: Collection[str]) -> None:
-        """Drop pane-hint generations whose terminal is no longer live; no write when none died."""
+    async def retire_pane_generations(
+        self, provider: str, live: Collection[str], *, owner: str = ""
+    ) -> None:
+        """Drop pane-hint generations that no pane-scan owner still reports live.
+
+        Each owner (the spawned-run and placed-seat scans) reports its own live set, so
+        one owner's pass never drops a generation the other owner is still watching.
+        """
         name = _provider_name(provider)
         async with self._write_lock(name):
+            self._pane_live[(name, owner)] = frozenset(live)
+            keep = frozenset().union(
+                *(
+                    gens
+                    for (provider_name, _), gens in self._pane_live.items()
+                    if provider_name == name
+                )
+            )
             for _ in range(_MAX_CAS_ATTEMPTS):
                 record = await self._run_store(self.storage.get, name)
                 section = _row_section(record, HINT_SECTION)
-                retired = retire_pane_hint_generations(section, live)
+                retired = retire_pane_hint_generations(section, keep)
                 if retired == section:
                     return
                 components, pane_hints = _decode(record)
