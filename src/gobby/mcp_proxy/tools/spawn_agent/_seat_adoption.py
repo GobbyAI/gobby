@@ -7,11 +7,12 @@ adopts the run its first attempt launched instead of launching the seat again.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID
 
 from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
-from gobby.agents.team_lifecycle import check_team_spawn
+from gobby.agents.team_lifecycle import bind_seat_run, check_team_spawn
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import _definition_snapshot
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -152,3 +153,13 @@ def pipeline_invocation_reply(
     except TeamAdmissionRefused as exc:
         return _refusal(exc.code, str(exc))
     return None
+
+
+async def bind_seat_reply(
+    db: HubDatabase | None, caller: Session | None, agent: str, reply: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind the run a pipeline spawn launched or adopted to its team; the reply passes through."""
+    run_id = reply.get("run_id")
+    if db is not None and caller is not None and reply.get("success") and run_id:
+        await asyncio.to_thread(bind_seat_run, db, caller, agent, str(run_id))
+    return reply

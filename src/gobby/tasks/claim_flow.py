@@ -28,6 +28,17 @@ def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
     )
 
 
+def _dead_team_seat(db: HubDatabase, session_id: str, team_id: str) -> bool:
+    """Whether ``session_id`` is a seat of team ``team_id`` whose session has ended."""
+    from gobby.agents.team_lifecycle import seat_team
+
+    session = SessionManager(db).get(session_id)
+    if session is None or session.status in LIVE_SESSION_STATUSES:
+        return False
+    seat = seat_team(db, session_id)
+    return seat is not None and seat.team_id == team_id
+
+
 def advance_claim_flow(
     db: HubDatabase,
     conn: Transaction,
@@ -35,13 +46,18 @@ def advance_claim_flow(
     record: TaskAttestation,
     records: list[TaskAttestation],
 ) -> None:
-    """Only the holder's current stage can move the claim; a failed move rolls back evidence."""
-    if task.claimed_by_session_id != record.session_id:
-        return
+    """Only the holder's current stage can move the claim; a failed move rolls back evidence.
+
+    A live stage seat takes the claim from a dead seat of its team, as a relaunch leaves it.
+    """
     from gobby.agents.team_lifecycle import seat_team
 
+    holder = task.claimed_by_session_id
     team = seat_team(db, record.session_id)
     if team is None:
+        return
+    takeover = holder != record.session_id
+    if takeover and (holder is None or not _dead_team_seat(db, holder, team.team_id)):
         return
     executions = LocalPipelineExecutionManager(db, task.project_id)
     execution = executions.get_execution(team.team_id)
@@ -115,6 +131,12 @@ def advance_claim_flow(
 
     if stage_session(name) != record.session_id:
         return
+    if takeover:
+        if author.status not in LIVE_SESSION_STATUSES:
+            return
+        LocalTaskManager(db).claim_task_for_agent(
+            task.id, record.session_id, expected_owner=holder, handed=True
+        )
     superseded = {item.supersedes_id for item in records if item.supersedes_id}
     active = {
         item.kind: item

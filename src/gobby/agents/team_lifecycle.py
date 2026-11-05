@@ -568,6 +568,35 @@ def bind_primary_run(
     _bind_run(db, team_id, project_id, "primaries", domain, run_id)
 
 
+# The attestation kinds a seat definition declares for its role on a team.
+_PRIMARY_KIND = "implementation"
+_REVIEWER_KIND = "independent-review"
+_UNDOMAINED_DOMAIN = "fullstack"
+
+
+def bind_seat_run(db: HubDatabase, caller: Session, agent: str, run_id: str) -> None:
+    """Bind a seat that pipeline ``caller`` launched to its team by the kinds ``agent`` writes.
+
+    A definition writing the implementation kind is the team's primary for the task's domain;
+    one writing the independent-review kind is a reviewer. Any other seat binds nothing.
+    """
+    from gobby.workflows.agent_resolver import resolve_agent_with_row
+
+    binding = _caller_binding(db, caller)
+    if binding is None:
+        return
+    resolved = resolve_agent_with_row(agent, db, project_id=binding.project_id)
+    if resolved is None:
+        return
+    writes = set(resolved[0].task_attestation_writes)
+    if _REVIEWER_KIND in writes:
+        bind_reviewer_run(db, binding.team_id, binding.project_id, agent, run_id)
+    if _PRIMARY_KIND in writes:
+        task = LocalTaskManager(db).get_task(binding.task_id)
+        domain = task.implementation_domain or _UNDOMAINED_DOMAIN
+        bind_primary_run(db, binding.team_id, binding.project_id, domain, run_id)
+
+
 def _bind_run(
     db: HubDatabase, team_id: str, project_id: str, key: str, name: str, run_id: str
 ) -> None:
