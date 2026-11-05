@@ -1623,3 +1623,274 @@ After the leaves pass:
    `clef:27b` capture, whose Box record names `consumer` `gobby-decisions:evaluate`.
 7. Rerun `tests/ai/test_decisions_service.py` under `GOBBY_TEST_PROTECT=1` against the
    isolated test hub, and confirm #25788 is closed as superseded by the 2.6 leaf.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Rerun the Graphify comparison on current gcode
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The report records the fresh runtime root and its ownership
+    receipt, the dated script copies'' SHA-256 values, both tools'' identities (gcode
+    version, contract, and SHA-256 of the copied installed binary; Graphify''s PyPI
+    version and executable and lock SHA-256), the corpus commits, and at least five
+    interleaved, order-balanced pairs for each timed comparison (an even number, six
+    minimum, with equal AB/BA orders), with the load recorded at each run, raw samples,
+    both tools'' p50 timings and the p50 paired difference. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.2: The report gives C1 to C6 for both tools in the 09 table shape (seconds,
+    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
+    Graphify) beside the 09 numbers, and states that gcode''s C2 to C6 include the
+    community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.3: The report gives C7 for both tools: the marker each used, the one planned
+    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
+    recovered state equals a fresh clean C1 state, by the 09 signature for Graphify
+    and by step 4''s fact, projection and vector checks for gcode, with the gcode
+    row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.4: The report scores C8''s 14 frozen questions for both tools as in 09, and
+    states whether the gcode hybrid lane was included or excluded by the embedding
+    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.5: The report records Graphify''s deterministic community names, whether current
+    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
+    the reason), and gcode''s count of communities by `label_source`, each from its
+    own untimed state, without comparing community counts, and a section that states
+    the evidence for Josh''s #22604 decision without making it. behavior: "Decision
+    input for #22604" in `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.6: The report gives a verdict for each of the four parity+ properties by step
+    7''s producers and conditions, says whether each was measured in this run, records
+    every remap or retirement behavior no case exercised as `not-exercised`, and records
+    the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:1.1:1.1.1
+  - covers:gcode-graphify-parity-delta:1.1:1.1.2
+  - covers:gcode-graphify-parity-delta:1.1:1.1.3
+  - covers:gcode-graphify-parity-delta:1.1:1.1.4
+  - covers:gcode-graphify-parity-delta:1.1:1.1.5
+  - covers:gcode-graphify-parity-delta:1.1:1.1.6
+  tdd: false
+  source_section: '1.1'
+- title: Order size ties by community id in the graph views
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: `build_view_payload` lists two communities of equal
+    size with ids 10 and 2 as `community:2` then `community:10`, after any larger
+    community. test: `crates/gcode/src/commands/graph/view/render_tests.rs::view_orders_size_ties_by_numeric_community_id`.
+
+    1.2.2: The communities list view returns `["community:2", "community:10", "community:1"]`
+    for the existing three-community fixture. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id`.
+
+    1.2.3: An MCG view over stored communities 10 and 2 of equal size lists `community:2`
+    first, in the payload and in the Mermaid subgraph order. test: `crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:1.2:1.2.1
+  - covers:gcode-graphify-parity-delta:1.2:1.2.2
+  - covers:gcode-graphify-parity-delta:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Provision the rerun harness and pass C0
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: The record gives the runtime root and its ownership
+    receipt with owner task `#22948`, the commit and SHA-256 of every dated copy,
+    and each edit against its September copy, with no check removed beyond the Docker
+    probes replaced by the `observe` receipt and the `opendeepwiki` assertions. file:
+    `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.2: The record states the deviation: the Orchestrator ran `provision` and `observe`
+    from the main checkout, with each exact invocation, the `launch_services.py` SHA-256
+    and the service receipts, and no seat called Docker. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.3: The record shows the corpus commits and the verification of cases C0 to
+    C7, C8-baseline and C8-change against the September manifests with 0 mismatches,
+    and all 54 manifest projects registered with zero `code_indexed_file_states` rows
+    before the daemon started. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.4: The record shows the isolated binary set''s SHA-256 values and stamp, `binary_set_apply_refusal`
+    returning `None`, the daemon launch receipt under SRT with no worktree override,
+    and a passing `validate_environment.py --live` covering the signed grant, its
+    rejected tampered copy and all three services. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.5: The record gives C0 for both tools: gcode version, contract and schema
+    identity; Graphify''s PyPI version and executable and lock SHA-256; the embedding
+    preflight''s outcome; both C7 markers as observed before completion; the probe
+    set; and the SHA-256 of the frozen `command-manifest.json`. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.6: A source-manifest symlink record passes only when its stored target equals
+    `os.readlink`, and `contained_file` still refuses that path for a content read.
+    test: `docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py::test_symlink_record_verifies_target_without_following`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.1:2.1.1
+  - covers:gcode-graphify-parity-delta:2.1:2.1.2
+  - covers:gcode-graphify-parity-delta:2.1:2.1.3
+  - covers:gcode-graphify-parity-delta:2.1:2.1.4
+  - covers:gcode-graphify-parity-delta:2.1:2.1.5
+  - covers:gcode-graphify-parity-delta:2.1:2.1.6
+  tdd: false
+  source_section: '2.1'
+- title: Measure C1 to C8 and report the verdicts
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The report gives both tools'' identities from `provisioning.md`,
+    the corpus commits, and six interleaved pairs for each timed comparison with equal
+    AB and BA orders, with the load recorded at each run, raw samples, both tools''
+    p50 timings, the p50 paired difference, and each voided pair with its reason.
+    file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.2: The report gives C1 to C6 for both tools in the September table shape (seconds,
+    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
+    Graphify) beside the September numbers, and states that gcode''s C2 to C6 include
+    the community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.3: The report gives C7 for both tools: the marker each used, the one planned
+    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
+    recovered state equals a fresh clean C1 state, by the September signature for
+    Graphify and by step 4''s fact, projection and vector checks for gcode, with the
+    gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.4: The report scores C8''s 14 frozen questions for both tools as in September,
+    and states whether the gcode hybrid lane was included or excluded by the embedding
+    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.5: The report records Graphify''s deterministic community names, whether current
+    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
+    the reason), and gcode''s count of communities by `label_source`, each from its
+    own untimed state, without comparing community counts. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.6: The report gives a verdict for each of the four parity+ properties by step
+    7''s producers and conditions, says whether each was measured in this run, records
+    every remap or retirement behavior no case exercised as `not-exercised`, and records
+    the label-admission property as missing in live configuration. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.2:2.2.1
+  - covers:gcode-graphify-parity-delta:2.2:2.2.2
+  - covers:gcode-graphify-parity-delta:2.2:2.2.3
+  - covers:gcode-graphify-parity-delta:2.2:2.2.4
+  - covers:gcode-graphify-parity-delta:2.2:2.2.5
+  - covers:gcode-graphify-parity-delta:2.2:2.2.6
+  tdd: false
+  source_section: '2.2'
+- title: Run the no-decisions label study and record the ship rule
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.3.1: The report records the `--no-decisions` branch and
+    Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness counts,
+    the 30 sampled communities (15 per corpus), the exact row count, and the generation-failure
+    count. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
+
+    2.3.2: The report gives the regression count for G against D over the 30 communities
+    and the ship rule it selects, 1 or 3, with the proposed `code_index.community_label.enabled`
+    value and every decision consumer `off`, and states that this branch has no J,
+    carry or sufficiency data, so rule 2 is unreachable. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
+
+    2.3.3: The committed rated sheet holds Josh''s ratings for every row of the delivered
+    sheet, its item ids, paths and names unchanged, and `score` accepted it. file:
+    `docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv`.
+
+    2.3.4: The guide no longer says the study and ship decision are pending, and states
+    the outcome with a link to the report. file: `docs/guides/llm-features.md`.
+
+    2.3.5: The instructions name the 2026-11-05 selection and the new outputs, and
+    keep their earlier text as history. file: `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.3:2.3.1
+  - covers:gcode-graphify-parity-delta:2.3:2.3.2
+  - covers:gcode-graphify-parity-delta:2.3:2.3.3
+  - covers:gcode-graphify-parity-delta:2.3:2.3.4
+  - covers:gcode-graphify-parity-delta:2.3:2.3.5
+  tdd: false
+  source_section: '2.3'
+- title: Route the capture's Box request through the registered evaluate tool
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.4.1: The Box record names `consumer` `gobby-decisions:evaluate`,
+    carries the tool''s `questions` argument with the absolute `image_path`, the image''s
+    `image_sha256`, the tool''s typed output and one recorded exchange; one Box request
+    reaches the wire; and the service cache is restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
+
+    2.4.2: A GIF `--box-image` yields the tool''s `invalid_request` finding with detail
+    "image must be a PNG or JPEG file", sends no Box request, and the six probes still
+    run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool`.
+
+    2.4.3: The tool''s HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status",
+    "detail": "HTTP 400"}` on both wires and does not block the probes. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
+
+    2.4.4: The capture section omits the key and the base64 of the image file''s bytes,
+    and the script imports none of `LIVE_CONFIG_MODULES`. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.
+
+    2.4.5: The Box record''s failed exchanges stay bounded and redacted through the
+    tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
+
+    2.4.6: All four kinds still reach the wire, and the probe and cost records are
+    unchanged. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.4:2.4.1
+  - covers:gcode-graphify-parity-delta:2.4:2.4.2
+  - covers:gcode-graphify-parity-delta:2.4:2.4.3
+  - covers:gcode-graphify-parity-delta:2.4:2.4.4
+  - covers:gcode-graphify-parity-delta:2.4:2.4.5
+  - covers:gcode-graphify-parity-delta:2.4:2.4.6
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Capture Box on local Clef and record the consumer evidence
+  category: docs
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: The dated capture section records `wire_api` `systemone`,
+    `api_base` `http://127.0.0.1:11434`, `request_model` `clef:27b`, all four shapes,
+    and a Box record with `consumer` `gobby-decisions:evaluate`, its `image_sha256`,
+    and the tool''s parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
+
+    2.5.2: The wire note''s "Decision shape consumers" section names a product consumer
+    and live-path test for each of Choice, Noul, Score and Box, with #24248''s closing
+    commit and the Clef Box result, and when Box parsed it sets the expected edges
+    (top and left 0.25, bottom and right 0.75) beside the captured ones. file: `docs/evidence/decisions/wire-contracts.md`.
+
+    2.5.3: Section 9 of the wire note states the observed Ollama Box result in place
+    of "remains unverified". file: `docs/evidence/decisions/wire-contracts.md`.
+
+    2.5.4: The committed image is 512 by 512 and white except for red pixels covering
+    exactly [128, 384) on both axes, and its SHA-256 equals both the one sent with
+    the Orchestrator''s command and the Box record''s `image_sha256`. file: `docs/evidence/decisions/box-red-square-2026-11.png`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.5:2.5.1
+  - covers:gcode-graphify-parity-delta:2.5:2.5.2
+  - covers:gcode-graphify-parity-delta:2.5:2.5.3
+  - covers:gcode-graphify-parity-delta:2.5:2.5.4
+  tdd: false
+  source_section: '2.5'
+- title: Name the image's size and the bounds when Box refuses its dimensions
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.6.1: A 64 by 64 PNG and a 300 by 1569 JPEG are refused with
+    `invalid_request` before any HTTP call, each with a detail naming its size and
+    the 280 to 1568 px bounds. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
+
+    2.6.2: After those refusals, a 512 by 512 PNG passes validation and dials once,
+    so the refusals opened no cooldown. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
+
+    2.6.3: The 279 and 1569 px refusals, the inclusive 280 and 1568 px boundaries
+    and the no-cooldown check still pass on both wires. test: `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.6:2.6.1
+  - covers:gcode-graphify-parity-delta:2.6:2.6.2
+  - covers:gcode-graphify-parity-delta:2.6:2.6.3
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+```
