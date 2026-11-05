@@ -1,6 +1,7 @@
 """Lightweight helpers for the install-scoped daemon API token."""
 
 import base64
+import ctypes
 import hashlib
 import hmac
 import json
@@ -33,13 +34,57 @@ def daemon_bootstrap_path() -> Path:
 
 
 def account_home() -> Path | None:
-    """The account's home from its passwd entry; no environment variable selects it."""
+    """The account's home from the OS account record; no environment variable selects it.
+
+    POSIX reads the passwd entry. Where the pwd module is missing (native Windows), the profile
+    comes from the known-folder API. A passwd entry that is missing stays None.
+    """
     try:
         from pwd import getpwuid
-
+    except ImportError:
+        return _windows_account_home()
+    try:
         return Path(getpwuid(os.getuid()).pw_dir)
-    except (ImportError, AttributeError, KeyError):
+    except (AttributeError, KeyError):
         return None
+
+
+def _windows_account_home() -> Path | None:  # pragma: no cover - Windows only
+    """The account's profile folder from the known-folder API, which reads the process token.
+
+    The profile comes from the account's own record, not from USERPROFILE or any other environment
+    variable. It is the profile the Rust side resolves through dirs::home_dir().
+    """
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        return None
+
+    class _Guid(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_uint32),
+            ("Data2", ctypes.c_uint16),
+            ("Data3", ctypes.c_uint16),
+            ("Data4", ctypes.c_uint8 * 8),
+        ]
+
+    # FOLDERID_Profile from knownfolders.h: {5E6C858F-0E22-4760-9AFE-EA3317B67173}.
+    profile_id = _Guid(
+        0x5E6C858F,
+        0x0E22,
+        0x4760,
+        (ctypes.c_uint8 * 8)(0x9A, 0xFE, 0xEA, 0x33, 0x17, 0xB6, 0x71, 0x73),
+    )
+    shell32 = win_dll("shell32")
+    ole32 = win_dll("ole32")
+    folder = ctypes.c_void_p()
+    # A NULL token resolves the calling account's profile; flags 0 asks for the plain path.
+    hresult = shell32.SHGetKnownFolderPath(ctypes.byref(profile_id), 0, None, ctypes.byref(folder))
+    if hresult != 0 or folder.value is None:
+        return None
+    try:
+        return Path(ctypes.wstring_at(folder.value))
+    finally:
+        ole32.CoTaskMemFree(folder)
 
 
 def operator_bootstrap_path() -> Path | None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -137,3 +138,68 @@ def test_an_account_without_a_passwd_entry_has_no_operator_credential(
     monkeypatch.setattr(local_token, "account_home", lambda: None)
 
     assert activation.operator_credential_readable() is False
+
+
+@pytest.fixture
+def windows_account(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cleared_markers: None) -> Path:
+    """A platform without pwd: the account's profile comes from the profile lookup.
+
+    Returns the profile's ``.gobby`` directory, where the operator bootstrap lives.
+    """
+    monkeypatch.setitem(sys.modules, "pwd", None)
+    monkeypatch.delenv(local_token.GOBBY_AGENT_API_TOKEN_ENV, raising=False)
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    monkeypatch.setattr(local_token, "_windows_account_home", lambda: profile)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "unused-gobby-home"))
+    monkeypatch.setenv("HOME", str(tmp_path / "unused-home"))
+    gobby_dir = profile / ".gobby"
+    gobby_dir.mkdir()
+    return gobby_dir
+
+
+def test_account_home_uses_the_profile_only_when_pwd_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setitem(sys.modules, "pwd", None)
+    profile = tmp_path / "profile"
+    monkeypatch.setattr(local_token, "_windows_account_home", lambda: profile)
+
+    assert local_token.account_home() == profile
+
+
+def test_unix_account_without_a_passwd_entry_never_consults_the_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed: the profile lookup is for a missing pwd module, never for a missing entry."""
+    pwd = pytest.importorskip("pwd")
+
+    def no_entry(_uid: int) -> None:
+        raise KeyError("uid not found")
+
+    def must_not_run() -> Path | None:
+        raise AssertionError("the profile lookup ran for a Unix account with no passwd entry")
+
+    monkeypatch.setattr(pwd, "getpwuid", no_entry)
+    monkeypatch.setattr(local_token, "_windows_account_home", must_not_run)
+
+    assert local_token.account_home() is None
+
+
+@pytest.mark.parametrize("operation", _OPERATIONS)
+def test_unmarked_operator_without_pwd_is_admitted_from_the_profile(
+    windows_account: Path, operation: str
+) -> None:
+    (windows_account / "bootstrap.yaml").write_text("api_key: operator-key\n")
+
+    assert agent_activation_refusal(operation) is None
+
+
+@pytest.mark.parametrize("operation", _OPERATIONS)
+def test_marker_cleared_caller_without_pwd_or_profile_credential_is_refused(
+    windows_account: Path, operation: str
+) -> None:
+    refusal = agent_activation_refusal(operation)
+
+    assert refusal is not None
+    assert refusal.startswith("spawned_agent_refused")
