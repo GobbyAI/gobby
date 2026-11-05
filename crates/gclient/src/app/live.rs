@@ -59,6 +59,7 @@ impl Workspace<LiveDaemon> {
             pending_placements: HashSet::new(),
             placed_panes: Vec::new(),
             requested_focus: None,
+            open_failures: HashSet::new(),
         }
     }
 

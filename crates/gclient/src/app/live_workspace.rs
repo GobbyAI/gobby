@@ -161,7 +161,22 @@ impl Workspace<LiveDaemon> {
     pub(super) async fn open_unresolved_terminals(&mut self) {
         for terminal_id in self.unresolved_terminal_ids() {
             // Best effort: an unavailable row leaves the slot empty.
-            let _ = self.open_live_terminal(&terminal_id).await;
+            let opened = self.open_live_terminal(&terminal_id).await.is_ok();
+            self.set_open_failed(&terminal_id, !opened);
         }
+    }
+
+    /// Records whether the latest open of `terminal_id` failed. A failed open
+    /// is not retried until a later event, so its split stops holding focus.
+    pub(super) fn set_open_failed(&mut self, terminal_id: &str, failed: bool) {
+        if failed {
+            self.open_failures.insert(terminal_id.to_string());
+        } else {
+            self.open_failures.remove(terminal_id);
+        }
+    }
+
+    pub(super) fn open_failed(&self, terminal_id: &str) -> bool {
+        self.open_failures.contains(terminal_id)
     }
 }

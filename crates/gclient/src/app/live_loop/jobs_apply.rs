@@ -251,6 +251,7 @@ fn apply_open(
     }
     match result {
         Ok(row) => {
+            workspace.set_open_failed(terminal_id, false);
             workspace.install_unresolved_rows(vec![row]);
             // The read cannot await the attach, so the render tick's
             // `start_due_attaches` picks the new pane up.
@@ -258,13 +259,16 @@ fn apply_open(
                 workspace.pane_mut(pane).attach_retry_at = Some(tokio::time::Instant::now());
             }
         }
-        Err(error) => tracing::warn!(
-            terminal_id = %terminal_id,
-            generation = generation.0,
-            error_class = %error.code(),
-            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-            "unresolved terminal open failed: {error}"
-        ),
+        Err(error) => {
+            workspace.set_open_failed(terminal_id, true);
+            tracing::warn!(
+                terminal_id = %terminal_id,
+                generation = generation.0,
+                error_class = %error.code(),
+                elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                "unresolved terminal open failed: {error}"
+            );
+        }
     }
 }
 

@@ -157,6 +157,9 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// `(project, tab)` the last `workspace.select` asked every window to
     /// show, drained by the chrome sync that shows it on the tab row's pane.
     requested_focus: Option<(String, String)>,
+    /// Terminals whose latest open failed and has not been retried: a split
+    /// waiting on one no longer holds focus, since it cannot resolve yet.
+    open_failures: HashSet<String>,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -240,6 +243,7 @@ impl Workspace {
             pending_placements: HashSet::new(),
             placed_panes: Vec::new(),
             requested_focus: None,
+            open_failures: HashSet::new(),
         }
     }
 

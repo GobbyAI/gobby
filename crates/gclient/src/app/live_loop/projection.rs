@@ -66,9 +66,11 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
     }
 }
 
-/// Whether `slot` holds a daemon pane whose terminal has no pane yet. Its
-/// focus is the daemon's or a placement's, not stale, so projection keeps it
-/// until the terminal resolves.
+/// Whether `slot` holds a daemon pane still waiting on its terminal: a reserved
+/// pane has none until its spawn binds one, and a bound terminal has none
+/// until it resolves. Its focus is the daemon's or a placement's, not stale,
+/// so projection keeps it. A terminal whose open failed is not waited on: no
+/// retry is pending, so the focus falls back as for a vanished pane.
 fn awaiting_pane(
     workspace: &Workspace<LiveDaemon>,
     viewer: &ViewerState,
@@ -77,17 +79,21 @@ fn awaiting_pane(
     let Some(model) = workspace.workspace_model() else {
         return false;
     };
-    viewer
+    let Some(pane) = viewer
         .panes
         .daemon_id(slot)
         .and_then(|pane_id| model.pane(pane_id))
-        .and_then(|pane| pane.terminal_id.as_deref())
-        .is_some_and(|terminal_id| {
-            viewer
-                .unresolved
-                .iter()
-                .any(|id| id.as_str() == terminal_id)
-        })
+    else {
+        return false;
+    };
+    let Some(terminal_id) = pane.terminal_id.as_deref() else {
+        return true;
+    };
+    !workspace.open_failed(terminal_id)
+        && viewer
+            .unresolved
+            .iter()
+            .any(|id| id.as_str() == terminal_id)
 }
 
 /// Project the workspace model onto the focused project's tab bar when it
@@ -183,3 +189,7 @@ pub(super) fn close_slot(tab: &mut Tab, viewer: &mut ViewerState, slot: layout::
         }
     }
 }
+
+#[cfg(test)]
+#[path = "projection/tests.rs"]
+mod tests;
