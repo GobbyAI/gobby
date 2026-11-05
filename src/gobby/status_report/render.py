@@ -73,7 +73,7 @@ def _header(data: StatusData, zone: ZoneInfo) -> str:
 
 def _in_flight_section(data: StatusData, zone: ZoneInfo) -> list[str]:
     if not data.in_flight:
-        return ["## In flight", "No task in flight.", ""]
+        return []
     rows = [_in_flight_line(item, data.now, zone) for item in data.in_flight]
     return _section("In flight", rows)
 

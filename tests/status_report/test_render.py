@@ -84,12 +84,14 @@ def test_header_reads_window_in_central_time() -> None:
     assert text.splitlines()[0] == "Status, 2026-11-05 14:00-14:30 CT"
 
 
-def test_empty_in_flight_says_so_and_stays_nominal() -> None:
+def test_empty_in_flight_section_is_omitted_and_stays_nominal() -> None:
     data = _data()
 
     text = render_markdown(data, CT)
 
-    assert "No task in flight." in text
+    assert "In flight" not in text
+    assert "No task in flight." not in text
+    assert text.splitlines()[-1] == "Systems nominal"
     assert is_nominal(data)
 
 
