@@ -189,12 +189,6 @@ impl Workspace<LiveDaemon> {
             PaneFrameSource::Direct(source),
         );
         pane.host_themes = super::theme_sync::host_accepts_themes(reply);
-        pane.observe_lease_holder(
-            reply
-                .get("lease_holder")
-                .and_then(|holder| holder.get("attachment_id"))
-                .and_then(Value::as_str),
-        );
     }
 
     /// The next frame of one pane, recovering its source inline when it fails.
@@ -432,12 +426,6 @@ impl Workspace<LiveDaemon> {
             PaneFrameSource::Proxy(source),
         );
         pane.host_themes = super::theme_sync::host_accepts_themes(reply);
-        pane.observe_lease_holder(
-            reply
-                .get("lease_holder")
-                .and_then(|holder| holder.get("attachment_id"))
-                .and_then(Value::as_str),
-        );
     }
 
     pub(super) fn clear_fallback_flight(&mut self, pane_id: PaneId) {

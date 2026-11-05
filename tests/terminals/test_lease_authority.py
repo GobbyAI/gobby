@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import TERMINAL_WS_SAFE_INTEGER_MAX
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +19,9 @@ pytestmark = pytest.mark.unit
 async def test_write_fingerprint_distinguishes_kind_payload_boundaries() -> None:
     registry = TerminalLeaseRegistry()
     socket = object()
-    holder = await registry.attach("term-1", frame_delivery="direct", websocket=socket)
+    holder = await registry.attach(
+        "term-1", frame_delivery="direct", websocket=socket, viewer="web"
+    )
     control = await registry.take_control("term-1", holder.attachment_id, takeover=False)
     assert control.granted is True
     original = registry.admit_write(
@@ -59,92 +61,27 @@ async def test_write_fingerprint_distinguishes_kind_payload_boundaries() -> None
 
 
 @pytest.mark.asyncio
-async def test_cancelled_holder_cleanup_is_retried_by_shutdown() -> None:
+async def test_shutdown_finalization_fences_new_attachments() -> None:
     registry = TerminalLeaseRegistry()
-    attachment = await registry.attach("cancelled-terminal", websocket=object())
-    await registry.take_control("cancelled-terminal", attachment.attachment_id, takeover=False)
-    entered = asyncio.Event()
-    notifications: list[HolderChange] = []
-
-    async def interrupted(change: HolderChange) -> bool | None:
-        entered.set()
-        await asyncio.Event().wait()
-        return None
-
-    registry.set_holder_observer(interrupted)
-    disconnect = asyncio.create_task(registry.finalize(attachment.attachment_id, "ws_close"))
-    await entered.wait()
-    disconnect.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await disconnect
-    assert registry.holder("cancelled-terminal") == attachment.attachment_id
-    assert not attachment.finalized
-
-    async def persisted(change: HolderChange) -> bool | None:
-        notifications.append(change)
-        return True
-
-    registry.set_holder_observer(persisted)
-    await registry.finalize_shutdown_attachments()
-    assert attachment.finalized
-    assert registry.holder("cancelled-terminal") is None
-    assert len(notifications) == 1
-    assert notifications[0].holder is None
-
-
-@pytest.mark.asyncio
-async def test_shutdown_finalization_joins_disconnect_and_fences_new_attachments() -> None:
-    registry = TerminalLeaseRegistry()
-    attachment = await registry.attach("shutdown-terminal", websocket=object())
-    granted = await registry.take_control(
-        "shutdown-terminal", attachment.attachment_id, takeover=False
-    )
+    attachment = await registry.attach("shutdown-terminal", websocket=object(), viewer="web")
+    granted = await registry.take_control("shutdown-terminal", attachment.attachment_id)
     assert granted.granted
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    recording: list[HolderChange] = []
 
-    async def observe(change: HolderChange) -> bool | None:
-        entered.set()
-        await release.wait()
-        recording.append(change)
-        return True
+    await registry.finalize_shutdown_attachments()
 
-    registry.set_holder_observer(observe)
-    disconnect = asyncio.create_task(registry.finalize(attachment.attachment_id, "ws_close"))
-    settlement: asyncio.Task[None] | None = None
-    try:
-        async with asyncio.timeout(2):
-            await entered.wait()
-        settlement = asyncio.create_task(registry.finalize_shutdown_attachments())
-        await asyncio.sleep(0)
-        assert not settlement.done()
-        with pytest.raises(RuntimeError, match="admission closed"):
-            await registry.attach("shutdown-terminal")
-        release.set()
-        async with asyncio.timeout(2):
-            await disconnect
-            await settlement
-        assert registry.get(attachment.attachment_id) is None
-        assert registry.holder("shutdown-terminal") is None
-        assert len(recording) == 1
-        assert recording[0].holder is None
-        await registry.finalize_shutdown_attachments()
-        assert len(recording) == 1
-    finally:
-        release.set()
-        await asyncio.gather(disconnect, return_exceptions=True)
-        if settlement is not None:
-            await asyncio.gather(settlement, return_exceptions=True)
+    assert registry.get(attachment.attachment_id) is None
+    assert registry.holder("shutdown-terminal") is None
+    with pytest.raises(RuntimeError, match="admission closed"):
+        await registry.attach("shutdown-terminal")
 
 
 @pytest.mark.asyncio
-async def test_single_grant_point_across_all_paths() -> None:
+async def test_single_lease_point_across_all_paths() -> None:
     registry = TerminalLeaseRegistry()
-    first = await registry.attach("term-1", frame_delivery="proxy")
+    first = await registry.attach("term-1", frame_delivery="proxy", viewer="web")
     granted = await registry.take_control("term-1", first.attachment_id, takeover=False)
     assert granted.granted is True
-    second = await registry.attach("term-1", frame_delivery="direct")
+    second = await registry.attach("term-1", frame_delivery="direct", viewer="web")
     held = await registry.take_control("term-1", second.attachment_id, takeover=False)
     assert held.granted is False
     assert held.reason == "held"
@@ -156,29 +93,53 @@ async def test_single_grant_point_across_all_paths() -> None:
 
 
 @pytest.mark.asyncio
-async def test_focus_held_requires_a_focused_holder_of_either_viewer() -> None:
+async def test_gclient_pane_never_takes_the_writer_lease() -> None:
     registry = TerminalLeaseRegistry()
-    for viewer in ("gclient", "web"):
-        terminal_id = f"focus-held-{viewer}"
-        holder = await registry.attach(terminal_id, viewer=viewer)
-        watcher = await registry.attach(terminal_id, viewer=viewer)
-        assert holder.focused is False
-        granted = await registry.take_control(terminal_id, holder.attachment_id, takeover=False)
-        assert granted.granted is True
-        assert registry.focus_held(terminal_id) is False
+    gclient = await registry.attach("term-1", frame_delivery="direct", viewer="gclient")
+    refused = await registry.take_control("term-1", gclient.attachment_id, takeover=True)
+    assert refused.granted is False
+    assert refused.reason == "not_web_viewer"
+    assert registry.holder("term-1") is None
 
-        assert await registry.set_focus(holder.attachment_id, True) is True
-        assert registry.focus_held(terminal_id) is True
 
-        assert await registry.set_focus(holder.attachment_id, False) is True
-        assert await registry.set_focus(watcher.attachment_id, True) is True
-        assert registry.focus_held(terminal_id) is False
+@pytest.mark.asyncio
+async def test_focus_held_requires_a_focused_web_holder() -> None:
+    registry = TerminalLeaseRegistry()
+    holder = await registry.attach("focus-held-web", viewer="web")
+    watcher = await registry.attach("focus-held-web", viewer="web")
+    assert holder.focused is False
+    granted = await registry.take_control("focus-held-web", holder.attachment_id, takeover=False)
+    assert granted.granted is True
+    assert registry.focus_held("focus-held-web") is False
+
+    assert await registry.set_focus(holder.attachment_id, True) is True
+    assert registry.focus_held("focus-held-web") is True
+
+    assert await registry.set_focus(holder.attachment_id, False) is True
+    assert await registry.set_focus(watcher.attachment_id, True) is True
+    assert registry.focus_held("focus-held-web") is False
+
+
+@pytest.mark.asyncio
+async def test_focused_gclient_pane_holds_focus_without_a_lease() -> None:
+    registry = TerminalLeaseRegistry()
+    fired: list[str] = []
+    registry.set_focus_observer(fired.append)
+    pane = await registry.attach("focus-held-gclient", viewer="gclient")
+    assert registry.focus_held("focus-held-gclient") is False
+
+    assert await registry.set_focus(pane.attachment_id, True) is True
+    assert registry.focus_held("focus-held-gclient") is True
+
+    assert await registry.set_focus(pane.attachment_id, False) is True
+    assert registry.focus_held("focus-held-gclient") is False
+    assert fired == ["focus-held-gclient"]
 
 
 @pytest.mark.asyncio
 async def test_release_finalize_and_takeover_clear_focus() -> None:
     registry = TerminalLeaseRegistry()
-    released = await registry.attach("focus-release", viewer="gclient")
+    released = await registry.attach("focus-release", viewer="web")
     await registry.take_control("focus-release", released.attachment_id, takeover=False)
     assert await registry.set_focus(released.attachment_id, True) is True
     await registry.release_control(released.attachment_id)
@@ -193,7 +154,7 @@ async def test_release_finalize_and_takeover_clear_focus() -> None:
     assert registry.focus_held("focus-finalize") is False
     assert await registry.set_focus(finalized.attachment_id, True) is False
 
-    displaced = await registry.attach("focus-takeover", viewer="gclient")
+    displaced = await registry.attach("focus-takeover", viewer="web")
     successor = await registry.attach("focus-takeover", viewer="web")
     await registry.take_control("focus-takeover", displaced.attachment_id, takeover=False)
     assert await registry.set_focus(displaced.attachment_id, True) is True
@@ -209,7 +170,7 @@ async def test_focus_observer_fires_on_focus_loss_and_holder_change() -> None:
     registry = TerminalLeaseRegistry()
     fired: list[str] = []
     registry.set_focus_observer(fired.append)
-    holder = await registry.attach("focus-observer", viewer="gclient")
+    holder = await registry.attach("focus-observer", viewer="web")
     watcher = await registry.attach("focus-observer", viewer="web")
 
     await registry.take_control("focus-observer", holder.attachment_id, takeover=False)
@@ -228,11 +189,6 @@ async def test_focus_observer_fires_on_focus_loss_and_holder_change() -> None:
     assert len(fired) == 3
     await registry.release_control(watcher.attachment_id)
     assert len(fired) == 4
-
-    async def holder_observer(change: HolderChange) -> bool | None:
-        return True
-
-    registry.set_holder_observer(holder_observer)
     await registry.take_control("focus-observer", holder.attachment_id, takeover=False)
     assert len(fired) == 5
     await registry.finalize(holder.attachment_id, "ws_close")
@@ -410,7 +366,7 @@ async def test_lock_cells_are_refcounted() -> None:
 async def test_attach_does_not_wait_behind_a_held_terminal_lock() -> None:
     """A slow lock holder (a write sequence, a holder grant) must not stall attach."""
     registry = TerminalLeaseRegistry()
-    holder = await registry.attach("term-1")
+    holder = await registry.attach("term-1", viewer="web")
     await registry.take_control("term-1", holder.attachment_id)
     owner_entered = asyncio.Event()
     release_owner = asyncio.Event()

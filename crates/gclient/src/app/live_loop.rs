@@ -52,7 +52,6 @@ pub(super) mod menu_dispatch;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
-mod outage_grant;
 mod project_paths;
 mod projection;
 pub(super) mod projects;
@@ -68,10 +67,7 @@ mod workspaces;
 pub(super) mod writer;
 
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
-use control::{
-    apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input,
-    start_live_control, UNCONFIRMED_INPUT,
-};
+use control::{apply_live_write_outcome, flush_attached_input, focus_live_pane, send_live_input};
 use focus_hints::{offer_focus_hints, FocusMemo};
 use focus_hold::{is_activity, FocusHold};
 use jobs::{issue_response, stage_live_geometry, JobKey, LoopJobs, Pending};
@@ -178,10 +174,6 @@ pub async fn run_live_loop<B: Backend>(
     let mut focus_hold = FocusHold::new(std::time::Instant::now());
     let mut recoveries: FuturesUnordered<RecoveryFuture> = FuturesUnordered::new();
     let mut host_recoveries = HostRecoveries::default();
-    // Control replies come back on a channel rather than a single in-flight
-    // slot: a grant still out for one pane must never hold up the grant the
-    // pane someone just clicked is waiting for (#22573).
-    let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut sidebar_error_shown = false;
     // Focus hints and geometry run as jobs beside the loop (plan A1).
     let mut jobs = LoopJobs::new(workspace);
@@ -215,12 +207,9 @@ pub async fn run_live_loop<B: Backend>(
         {
             workspace.roster_landed = false;
             recoveries.extend(workspace.start_due_attaches(Instant::now(), true));
-            request_focused_control(workspace, chrome);
+            sync_focus(workspace, chrome);
         }
-        // The click and the keystroke only record the control request they
-        // need; it is started here so neither ever waits on the daemon
-        // (#22573).
-        start_live_control(workspace, &jobs, &control_tx);
+        flush_attached_input(workspace, chrome, &jobs);
         if !launch_pending && reconnect_stage.is_none() && relist_job.is_none() {
             workspace.refresh_relist();
             relist_job = workspace.start_relist();
@@ -240,14 +229,6 @@ pub async fn run_live_loop<B: Backend>(
                     workspace.latch_exit(error.to_string());
                     loop_error = Some(error);
                 }
-            }
-            // Above input on purpose: `biased` stops at the first ready
-            // branch, so a grant sitting below a busy keyboard would never be
-            // polled, its request would never leave, and the keys queued for
-            // it would wait forever (#22573).
-            Some(outcome) = control_rx.recv() => {
-                apply_control_outcome(workspace, chrome, &jobs, outcome);
-                sync_live_chrome(workspace, chrome);
             }
             Some(outcome) = jobs.rx.recv() => {
                 apply_job_outcome(workspace, chrome, &mut jobs, outcome);
@@ -309,7 +290,7 @@ pub async fn run_live_loop<B: Backend>(
                             workspace.queue_initial_sidebar_fetch();
                             sync_live_chrome(workspace, chrome);
                             recoveries.extend(workspace.start_due_attaches(Instant::now(), true));
-                            request_focused_control(workspace, chrome);
+                            sync_focus(workspace, chrome);
                             events = Some(receiver);
                             supervisor.handshake_complete(generation);
                             chrome.connection.retry_at = None;
@@ -400,14 +381,6 @@ pub async fn run_live_loop<B: Backend>(
                     let mut output = std::io::stdout();
                     apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
                     output.flush()?;
-                }
-                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::InputRefused {
-                    ..
-                }))) = &frame
-                {
-                    if workspace.panes.get(pane_id).is_some_and(super::Pane::let_go) {
-                        chrome.notify(Toast::warning(UNCONFIRMED_INPUT));
-                    }
                 }
                 if let Some((pane_id, Err(error))) = frame {
                     // A direct pane reconnects straight to its host first; its
@@ -664,10 +637,6 @@ pub async fn run_live_loop<B: Backend>(
         // A pane replaced or closed while its host connect was in flight must
         // not come back and attach (#23076).
         host_recoveries.retain_existing(workspace);
-        // Again after the event, not only before it: the event just handled is
-        // usually the click or key that asked for the grant, and an event that
-        // also ends the loop gets no next iteration to start it in (#22573).
-        start_live_control(workspace, &jobs, &control_tx);
         // The settings toggle only records the wish; the terminal flag is
         // flipped here, outside any borrow of the chrome.
         if let Some(on) = chrome.pending_mouse_capture.take() {
@@ -691,11 +660,9 @@ pub async fn run_live_loop<B: Backend>(
     recoveries.clear();
     host_recoveries.clear();
     // A reply still in flight has nowhere to land: the exit latch is set, a
-    // latched exit issues no further requests, and `shutdown` releases the
-    // lease this client asked for either way. Waiting for it here would hang on
-    // a daemon that is already gone, which is the common reason this loop is
+    // latched exit issues no further requests. Waiting for them here would hang
+    // on a daemon that is already gone, which is the common reason this loop is
     // exiting.
-    control_rx.close();
     jobs.rx.close();
     supervisor.cancel(DaemonError::Protocol {
         detail: workspace
@@ -712,14 +679,10 @@ pub async fn run_live_loop<B: Backend>(
     }
 }
 
-/// Asks for control of the focused pane, unless another client holds it.
-fn request_focused_control(workspace: &mut Workspace<LiveDaemon>, chrome: &Chrome) {
+/// Mirrors the chrome's focused pane onto the workspace.
+fn sync_focus(workspace: &mut Workspace<LiveDaemon>, chrome: &Chrome) {
     if let Some(pane_id) = chrome.focused_pane() {
         workspace.focus = Some(pane_id);
-        if !workspace.pane(pane_id).is_held() && !workspace.pane(pane_id).take_back {
-            // The loop sends this once the pane's new attachment becomes live.
-            workspace.request_control(pane_id, false);
-        }
     }
 }
 

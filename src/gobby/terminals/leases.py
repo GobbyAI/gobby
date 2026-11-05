@@ -50,9 +50,6 @@ class ControlResult:
     lease_generation: int
     displaced_attachment_id: str | None = None
     sizing: SizingDecision | None = None
-    # What the gterm input grant did on this transition: True granted to the
-    # holder, False the host refused or was unreachable, None no grant applies.
-    host_input_granted: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -144,8 +141,6 @@ class _Attachment:
     # The user the creating caller was bound to. Only that user may write with this
     # attachment, so a holder id that leaks to another caller grants nothing.
     creator_user: str | None = None
-    host_input_granted: bool = False
-    host_attachment_id: int | None = None
     # Viewer report that the pane is focused. Only the holder's report counts.
     focused: bool = False
 
@@ -155,19 +150,6 @@ class _Lease:
     holder: str | None = None
     generation: int = 0
     sizing_owner: str | None = None
-
-
-@dataclass(frozen=True)
-class HolderChange:
-    """One writer-lease holder transition, reported under the terminal lock."""
-
-    terminal_id: str
-    terminal: Terminal | None
-    holder: _Attachment | None
-    reason: str = "lease_change"
-
-
-HolderObserver = Callable[[HolderChange], Awaitable[bool | None]]
 
 
 @dataclass(slots=True)
@@ -205,7 +187,6 @@ class TerminalLeaseRegistry:
         self._lifecycle_current: _LifecyclePublication | None = None
         self._lifecycle_closed = False
         self._lifecycle_error: LifecyclePublicationError | None = None
-        self._holder_observer: HolderObserver | None = None
         self._focus_observer: Callable[[str], None] | None = None
         self._attachment_admission_closed = False
 
@@ -456,15 +437,6 @@ class TerminalLeaseRegistry:
     def generation(self, terminal_id: str) -> int:
         return self._lease(terminal_id).generation
 
-    def set_holder_observer(self, observer: HolderObserver | None) -> None:
-        """Install the one callback that follows every holder transition.
-
-        It runs under the terminal lock after the holder changed and before the
-        transition is answered, so the gterm input grant is never observed out
-        of order with the lease it mirrors.
-        """
-        self._holder_observer = observer
-
     def set_focus_observer(self, observer: Callable[[str], None] | None) -> None:
         """Install the one callback that follows focus loss and holder changes.
 
@@ -476,7 +448,11 @@ class TerminalLeaseRegistry:
     def focus_held(self, terminal_id: str) -> bool:
         attachment_id = self.holder(terminal_id)
         record = None if attachment_id is None else self.get(attachment_id)
-        return record is not None and record.focused
+        if record is not None and record.focused:
+            return True
+        return any(
+            record.focused and record.viewer != "web" for record in self._live_viewers(terminal_id)
+        )
 
     async def set_focus(self, attachment_id: str, focused: bool) -> bool:
         record = self.get(attachment_id)
@@ -487,7 +463,10 @@ class TerminalLeaseRegistry:
             if record is None:
                 return False
             record.focused = focused
-            if not focused and self.holder(record.terminal_id) == attachment_id:
+            # A gclient pane is always writable, so its focus counts whoever holds the lease.
+            if not focused and (
+                record.viewer != "web" or self.holder(record.terminal_id) == attachment_id
+            ):
                 self._notify_focus(record.terminal_id)
             return True
 
@@ -495,28 +474,12 @@ class TerminalLeaseRegistry:
         if self._focus_observer is not None:
             self._focus_observer(terminal_id)
 
-    async def _notify_holder(
-        self,
-        terminal_id: str,
-        terminal: Terminal | None,
-        holder: _Attachment | None,
-        reason: str = "lease_change",
-        *,
-        holder_changed: bool = True,
-    ) -> bool | None:
-        if holder_changed:
-            self._notify_focus(terminal_id)
-        if self._holder_observer is None:
-            return None
-        return await self._holder_observer(HolderChange(terminal_id, terminal, holder, reason))
-
     async def take_control(
         self,
         terminal_id: str,
         attachment_id: str,
         *,
         takeover: bool = False,
-        host_attachment_id: int | None = None,
     ) -> ControlResult:
         async with self.lock(terminal_id):
             record = self.get(attachment_id)
@@ -525,27 +488,20 @@ class TerminalLeaseRegistry:
                     attachment_id, False, "stale_attachment", self.generation(terminal_id)
                 )
             lease = self._lease(terminal_id)
+            # Only web viewers take the writer lease; a gclient pane is always writable.
+            if record.viewer != "web":
+                return ControlResult(attachment_id, False, "not_web_viewer", lease.generation)
             if lease.holder == attachment_id:
-                record.host_attachment_id = host_attachment_id
-                # A repeated take is the holder's retry after a failed grant.
-                granted = await self._notify_holder(
-                    terminal_id, record.terminal, record, holder_changed=False
-                )
-                record.host_input_granted = granted is True
-                return ControlResult(
-                    attachment_id, True, None, lease.generation, host_input_granted=granted
-                )
+                return ControlResult(attachment_id, True, None, lease.generation)
             if lease.holder is not None and not takeover:
                 return ControlResult(attachment_id, False, "held", lease.generation)
-            record.host_attachment_id = host_attachment_id
             displaced = lease.holder
             displaced_record = None if displaced is None else self.get(displaced)
             if displaced_record is not None:
                 displaced_record.focused = False
             self._bump(lease)
             lease.holder = attachment_id
-            granted = await self._notify_holder(terminal_id, record.terminal, record)
-            record.host_input_granted = granted is True
+            self._notify_focus(terminal_id)
             return ControlResult(
                 attachment_id,
                 True,
@@ -553,7 +509,6 @@ class TerminalLeaseRegistry:
                 lease.generation,
                 displaced_attachment_id=displaced,
                 sizing=self._reelect_sizing(terminal_id, lease),
-                host_input_granted=granted,
             )
 
     async def release_control(self, attachment_id: str) -> ControlResult:
@@ -570,14 +525,13 @@ class TerminalLeaseRegistry:
             self._bump(lease)
             lease.holder = None
             record.focused = False
-            granted = await self._notify_holder(record.terminal_id, record.terminal, None)
+            self._notify_focus(record.terminal_id)
             return ControlResult(
                 attachment_id,
                 False,
                 "released",
                 lease.generation,
                 sizing=self._reelect_sizing(record.terminal_id, lease),
-                host_input_granted=granted,
             )
 
     async def finalize(self, attachment_id: str, reason: str) -> FinalizedEvent | None:
@@ -590,49 +544,13 @@ class TerminalLeaseRegistry:
             if record is None or record.finalized:
                 return None
             lease = self._lease(terminal_id)
+            focus_lost = record.focused and record.viewer != "web"
             if lease.holder == attachment_id:
                 self._bump(lease)
                 lease.holder = None
-                preserve_native_grant = (
-                    reason == "daemon_shutdown"
-                    and record.frame_delivery == "direct"
-                    and record.viewer == "gclient"
-                    and record.backend == "native"
-                    and record.terminal is not None
-                    and record.terminal.backend == "native"
-                    and record.host_input_granted
-                )
-                if preserve_native_grant:
-                    try:
-                        preserve_native_grant = (
-                            await self._notify_holder(
-                                terminal_id, record.terminal, record, "daemon_shutdown"
-                            )
-                        ) is True
-                    except asyncio.CancelledError:
-                        # Recording did not confirm durable authority. Attempt the
-                        # ordinary revoke before propagating shutdown cancellation.
-                        try:
-                            await self._notify_holder(terminal_id, record.terminal, None)
-                        finally:
-                            # Keep unfinished cleanup discoverable by the shutdown
-                            # barrier if persistence or revocation was interrupted.
-                            lease.holder = attachment_id
-                            raise
-                    except Exception:
-                        preserve_native_grant = False
-                if not preserve_native_grant:
-                    try:
-                        await self._notify_holder(terminal_id, record.terminal, None)
-                    except asyncio.CancelledError:
-                        lease.holder = attachment_id
-                        raise
-                    except Exception:
-                        # Finalize is cleanup after socket loss; the lease is already
-                        # released and the next take re-syncs the host grant.
-                        logger.exception(
-                            "holder observer failed while finalizing %s", attachment_id
-                        )
+                focus_lost = True
+            if focus_lost:
+                self._notify_focus(terminal_id)
             record.finalized = True
             record.focused = False
             record.writes.clear()
@@ -715,8 +633,13 @@ class TerminalLeaseRegistry:
         except SafeIntegerOverflowError:
             return WriteAdmit(False, "safe_integer_overflow")
         lease = self._lease(terminal_id)
-        if lease.holder != attachment_id or (
-            expected_lease_generation is not None and expected_lease_generation != lease.generation
+        # Only web viewers are gated by the writer lease; a gclient write is always admitted.
+        if record.viewer == "web" and (
+            lease.holder != attachment_id
+            or (
+                expected_lease_generation is not None
+                and expected_lease_generation != lease.generation
+            )
         ):
             return WriteAdmit(False, "held")
         kind_bytes = kind.encode()

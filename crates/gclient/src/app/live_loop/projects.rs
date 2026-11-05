@@ -20,7 +20,7 @@ use crate::ui::{Chrome, Mode};
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{activate_live_tab, open_live_rename};
-use super::control::{close_barrier, focus_live_pane, release_live_control};
+use super::control::{close_barrier, focus_live_pane};
 use super::daemon_ops::{kill_live_panes, place_live_terminal};
 use super::jobs::JobOutcome;
 use super::lifecycle::{close_live_pane, spawn_live_shell, terminate_live_terminal};
@@ -196,12 +196,10 @@ pub(super) async fn close_live_terminal(
     }
     // An external pane is a terminal the user attached rather than one
     // gclient spawned, so closing it is a detach. A shown pane also leaves
-    // its slot; an unshown pane only needs its control lease released.
+    // its slot.
     if workspace.pane(pane_id).external {
         if chrome.focus_pane(pane_id) {
             close_live_pane(workspace, chrome, outcomes).await?;
-        } else {
-            release_live_control(workspace, pane_id);
         }
         return Ok(());
     }

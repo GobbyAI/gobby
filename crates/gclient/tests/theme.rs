@@ -1,7 +1,6 @@
 //! 3.1.5 / 3.1.9 / 3.1.10: the token map matches `.impeccable.md`, survives
 //! monochrome, and keeps AA contrast on every surface in both themes.
 
-use gobby_client::app::ControlState;
 use gobby_client::theme::{
     contrast_ratio, relative_luminance, Palette, Theme, ThemeKind, ThemeName, BRAND_HUE,
     DESTRUCTIVE_HUE, IDENTIFIER_HUE, INFO_HUE, WARNING_HUE,
@@ -9,8 +8,7 @@ use gobby_client::theme::{
 use gobby_client::ui::chrome::RowState;
 use gobby_client::ui::settings::ClientPrefs;
 use gobby_client::ui::status::{
-    control_indicator, render_toast_notification, state_dot, state_label, toast_cue, Toast,
-    ToastKind,
+    render_toast_notification, state_dot, state_label, toast_cue, Toast, ToastKind,
 };
 use gobby_client::ui::Chrome;
 use ratatui::backend::TestBackend;
@@ -220,20 +218,6 @@ fn tokens_match_design_contract_and_survive_monochrome() {
             RowState::ALL.len(),
             "row states share a cue: {cues:?}"
         );
-        let mut control = HashSet::new();
-        for (state, take_back) in [
-            (ControlState::Observe, false),
-            (ControlState::Held, false),
-            (ControlState::LeaseLost, false),
-            (ControlState::UncertainReadOnly, false),
-            (ControlState::Held, true),
-        ] {
-            let (glyph, label, _) = control_indicator(state, take_back, &palette);
-            assert!(!glyph.trim().is_empty() && !label.is_empty());
-            control.insert((glyph, label));
-        }
-        assert_eq!(control.len(), 5, "control states share a cue: {control:?}");
-
         // Toasts: every kind leads its title with a fixed cue, so the four
         // title rows stay distinct with colour stripped, and the cue keeps AA
         // contrast on the toast surface.

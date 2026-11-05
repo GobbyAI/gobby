@@ -142,6 +142,15 @@ pub(super) fn spawn_in_adopted_local_tab(
     placement: Placement,
     cwd: Option<String>,
 ) -> bool {
+    if chrome
+        .active_tab()
+        .is_some_and(|tab| chrome.viewer.adopting.contains(&tab.id))
+    {
+        chrome.notify(Toast::warning(
+            "This tab is still opening; split again once it settles",
+        ));
+        return true;
+    }
     let plan = match plan_local_adoption(workspace, chrome) {
         Ok(Some(plan)) => plan,
         Ok(None) => return true,
@@ -150,6 +159,7 @@ pub(super) fn spawn_in_adopted_local_tab(
             return true;
         }
     };
+    chrome.viewer.adopting.insert(plan.old_tab.clone());
     let axis = match placement {
         Placement::SplitRight => LayoutAxis::Horizontal,
         Placement::SplitDown => LayoutAxis::Vertical,

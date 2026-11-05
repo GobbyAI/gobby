@@ -108,12 +108,6 @@ impl Workspace<LiveDaemon> {
             return;
         };
         pane.promoting = false;
-        // Installing resets control to observe, so a focused pane that held or
-        // was taking the lease asks again under the new attachment.
-        let held = pane.is_held();
-        let reask = self.focus == Some(pane_id) && (held || pane.is_acquiring());
-        // A take still in flight answers for the proxy attachment (#22747).
-        pane.control_request = None;
         // The proxy's finalization must not retire the promoted pane.
         pane.tombstones.insert(proxy_attachment.to_string());
         self.install_direct_source(pane_id, &reply, attachment.clone(), &locator, source);
@@ -128,12 +122,6 @@ impl Workspace<LiveDaemon> {
             "pane promoted to direct frame delivery"
         );
         self.release_attachment(terminal_id, proxy_attachment);
-        if reask {
-            // A held lease names this client's proxy attachment until its
-            // release lands, so only a takeover moves it. An unanswered take
-            // asks again without one: a peer holder is never displaced.
-            self.request_control(pane_id, held);
-        }
     }
 
     /// Detaches `attachment` beside the loop.

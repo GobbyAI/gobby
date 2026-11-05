@@ -349,7 +349,11 @@ async def test_non_owner_cannot_list_machine_holder_ids(
     token = bind_caller(OWNER_USER_ID, owners)
     try:
         await server._leases().attach(
-            held.id, attachment_id="holder-id", websocket=MockWebSocket(), terminal=held
+            held.id,
+            attachment_id="holder-id",
+            websocket=MockWebSocket(),
+            terminal=held,
+            viewer="web",
         )
         granted = await server._leases().take_control(held.id, "holder-id")
         assert granted.granted

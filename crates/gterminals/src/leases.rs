@@ -1,75 +1,10 @@
 //! Connection-scoped terminal lease state and ordered lifecycle publication.
 pub use crate::repository::Backend;
-use gobby_core::postgres_pool::Pool;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError, Weak};
-use std::{future::Future, time::Duration};
 use tokio::sync::{Mutex, OwnedMutexGuard, mpsc, watch};
-use tokio::time::timeout;
 use uuid::Uuid;
-
-use crate::repository::{self, InputHandoff};
-
-/// How long shutdown waits for a handoff record before treating it as cancelled.
-pub const HANDOFF_RECORD_DEADLINE: Duration = Duration::from_secs(5);
-
-/// How an attachment's frames and input reach the gterm host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Delivery {
-    /// The viewer speaks to the host itself; the host enforces its input grant.
-    Direct,
-    /// The daemon relays frames and input; the host holds no grant for it.
-    Proxy,
-}
-
-/// The host input step a holder transition leaves for the caller.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HostInput {
-    /// No native grant changes.
-    Unchanged,
-    /// Grant this direct holder input, then confirm it with `confirm_input_grant`.
-    Grant(Uuid),
-    /// Revoke any standing grant.
-    Revoke,
-    /// Shutdown kept the grant behind a durable handoff record.
-    Preserved,
-}
-
-/// The live native host identity a confirmed input grant was issued against.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GrantIdentity {
-    pub machine_id: Uuid,
-    pub host_epoch: String,
-    pub host_terminal_id: String,
-}
-
-/// Durable home of daemon-shutdown input handoffs.
-pub trait HandoffStore: Sync {
-    /// Compare-and-set `handoff` onto the row's full live identity; `Ok(false)` on a miss.
-    fn record(
-        &self,
-        terminal_id: Uuid,
-        machine_id: Uuid,
-        handoff: &InputHandoff,
-    ) -> impl Future<Output = anyhow::Result<bool>> + Send;
-}
-
-impl HandoffStore for Pool {
-    async fn record(
-        &self,
-        terminal_id: Uuid,
-        machine_id: Uuid,
-        handoff: &InputHandoff,
-    ) -> anyhow::Result<bool> {
-        self.transaction(None, async |tx| {
-            Ok::<_, anyhow::Error>(
-                repository::record_input_handoff(tx, terminal_id, machine_id, handoff).await?,
-            )
-        })
-        .await
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Viewer {
@@ -113,14 +48,12 @@ pub struct Control {
     pub generation: u64,
     pub displaced: Option<Uuid>,
     pub sizing: Option<Sizing>,
-    pub input: HostInput,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finalized {
     pub generation: u64,
     pub holder_lost: bool,
     pub sizing: Option<Sizing>,
-    pub input: HostInput,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScrollApplied {
@@ -217,35 +150,14 @@ struct Record {
     caller: Uuid,
     viewer: Viewer,
     backend: Backend,
-    delivery: Delivery,
     finalized: bool,
     geometry: Option<(u16, u16)>,
     resize_sequence: u64,
     view: AttachmentView,
     writes: BTreeMap<u64, Write>,
     high_water: Option<u64>,
-    /// The host identity of this holder's confirmed input grant.
-    grant: Option<GrantIdentity>,
 }
 
-impl Record {
-    /// The host input step owed when this record becomes the holder.
-    fn grant_step(&self) -> HostInput {
-        match (self.backend, self.delivery) {
-            (Backend::Tmux, _) => HostInput::Unchanged,
-            (Backend::Native, Delivery::Direct) => HostInput::Grant(self.token.id),
-            (Backend::Native, Delivery::Proxy) => HostInput::Revoke,
-        }
-    }
-}
-
-fn revoke_step(backend: Backend) -> HostInput {
-    if backend == Backend::Native {
-        HostInput::Revoke
-    } else {
-        HostInput::Unchanged
-    }
-}
 struct Write {
     fingerprint: [u8; 32],
     completion: Option<(String, Option<String>)>,
@@ -457,7 +369,6 @@ impl Registry {
         requester: Requester,
         viewer: Viewer,
         backend: Backend,
-        delivery: Delivery,
     ) -> Result<Attachment, Error> {
         let connection = requester.connection;
         let mut state = self.state.lock().await;
@@ -482,7 +393,6 @@ impl Registry {
                 caller: requester.caller,
                 viewer,
                 backend,
-                delivery,
                 finalized: false,
                 geometry: None,
                 resize_sequence: 0,
@@ -492,7 +402,6 @@ impl Registry {
                 },
                 writes: BTreeMap::new(),
                 high_water: None,
-                grant: None,
             },
         );
         let event = self.event(token, sequence, "attached", &t.view, None);
@@ -511,19 +420,25 @@ impl Registry {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal_mut(attachment)?;
-        t.record_owned(attachment, requester, false)?;
+        if t.record_owned(attachment, requester, false)?.viewer == Viewer::Gclient {
+            // A gclient pane is always writable and never takes the writer lease.
+            return Ok(Control {
+                granted: false,
+                reason: Some("not_web_viewer".into()),
+                generation: t.view.generation,
+                displaced: None,
+                sizing: None,
+            });
+        }
         let generation = t.view.generation;
         if t.view.holder == Some(attachment.id) {
-            // A repeated take is the holder's retry after a refused host grant.
-            let r = t.record_mut(attachment)?;
-            r.grant = None;
+            // A repeated take by the holder changes nothing.
             return Ok(Control {
                 granted: true,
                 reason: None,
                 generation,
                 displaced: None,
                 sizing: None,
-                input: r.grant_step(),
             });
         }
         if t.view.holder.is_some() && !takeover {
@@ -533,7 +448,6 @@ impl Registry {
                 generation,
                 displaced: None,
                 sizing: None,
-                input: HostInput::Unchanged,
             });
         }
         let generation = increment(generation)?;
@@ -541,13 +455,7 @@ impl Registry {
         let permit = self.reserve(&mut state, None)?;
         let t = state.terminal_mut(attachment)?;
         let displaced = t.view.holder.replace(attachment.id);
-        if let Some(r) = displaced.and_then(|id| t.records.get_mut(&id)) {
-            r.grant = None;
-        }
         t.view.generation = generation;
-        let r = t.record_mut(attachment)?;
-        r.grant = None;
-        let input = r.grant_step();
         let sizing = t.elect();
         let event = self.event(attachment, sequence, "control_taken", &t.view, None);
         state.sequence = sequence;
@@ -558,7 +466,6 @@ impl Registry {
             generation,
             displaced,
             sizing,
-            input,
         })
     }
     pub async fn release_control(
@@ -578,7 +485,6 @@ impl Registry {
                 generation: t.view.generation,
                 displaced: None,
                 sizing: None,
-                input: HostInput::Unchanged,
             });
         }
         let generation = increment(t.view.generation)?;
@@ -587,9 +493,6 @@ impl Registry {
         let t = state.terminal_mut(attachment)?;
         t.view.holder = None;
         t.view.generation = generation;
-        let r = t.record_mut(attachment)?;
-        r.grant = None;
-        let input = revoke_step(r.backend);
         let sizing = t.elect();
         let event = self.event(
             attachment,
@@ -606,7 +509,6 @@ impl Registry {
             generation,
             displaced: None,
             sizing,
-            input,
         })
     }
     pub async fn finalize(
@@ -620,28 +522,7 @@ impl Registry {
         state
             .terminal(attachment)?
             .record_owned(attachment, requester, true)?;
-        self.finalize_locked(&mut state, attachment, reason, None::<&Pool>)
-            .await
-    }
-    /// Record that the host accepted `grant_input` for this holder at `identity`.
-    /// Only a direct native holder at the lease generation it took can confirm.
-    pub async fn confirm_input_grant(
-        &self,
-        attachment: Attachment,
-        generation: u64,
-        identity: GrantIdentity,
-    ) -> Result<bool, Error> {
-        let mut state = self.state.lock().await;
-        state.healthy(self, None)?;
-        let t = state.terminal_mut(attachment)?;
-        t.record(attachment, false)?;
-        let current = t.view.holder == Some(attachment.id) && t.view.generation == generation;
-        let r = t.record_mut(attachment)?;
-        let confirmed = current && r.grant_step() == HostInput::Grant(attachment.id);
-        if confirmed {
-            r.grant = Some(identity);
-        }
-        Ok(confirmed)
+        self.finalize_locked(&mut state, attachment, reason).await
     }
     /// Fence new attachments and list the live ones shutdown must settle.
     pub async fn close_admission(&self) -> Vec<Attachment> {
@@ -655,19 +536,16 @@ impl Registry {
             .map(|r| r.token)
             .collect()
     }
-    /// Settle one attachment after `close_admission`. A confirmed direct native
-    /// gclient grant is preserved only once `store` commits its handoff record;
-    /// a missed, failed, or overdue record revokes. Dropping the future commits
-    /// nothing, so the attachment stays live for the shutdown barrier to retry.
+    /// Settle one attachment after `close_admission`: finalize it as
+    /// `daemon_shutdown`. Dropping the future commits nothing, so the attachment
+    /// stays live for the shutdown barrier to retry.
     pub async fn finalize_shutdown(
         &self,
         attachment: Attachment,
-        store: &impl HandoffStore,
     ) -> Result<Option<Finalized>, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
-        let store = state.admission_closed.then_some(store);
-        self.finalize_locked(&mut state, attachment, "daemon_shutdown", store)
+        self.finalize_locked(&mut state, attachment, "daemon_shutdown")
             .await
     }
     async fn finalize_locked(
@@ -675,7 +553,6 @@ impl Registry {
         state: &mut RegistryState,
         attachment: Attachment,
         reason: &str,
-        store: Option<&impl HandoffStore>,
     ) -> Result<Option<Finalized>, Error> {
         state.healthy(self, None)?;
         let t = state.terminal(attachment)?;
@@ -684,23 +561,6 @@ impl Registry {
             return Ok(None);
         }
         let holder_lost = t.view.holder == Some(attachment.id);
-        let backend = r.backend;
-        let handoff = r
-            .grant
-            .as_ref()
-            .filter(|_| {
-                holder_lost
-                    && r.viewer == Viewer::Gclient
-                    && r.grant_step() == HostInput::Grant(attachment.id)
-            })
-            .map(|identity| {
-                let handoff = InputHandoff {
-                    attachment_id: attachment.id,
-                    host_epoch: identity.host_epoch.clone(),
-                    host_terminal_id: identity.host_terminal_id.clone(),
-                };
-                (identity.machine_id, handoff)
-            });
         let generation = if holder_lost {
             increment(t.view.generation)?
         } else {
@@ -708,13 +568,6 @@ impl Registry {
         };
         let sequence = increment(state.sequence)?;
         let permit = self.reserve(state, None)?;
-        let preserved = match (store, handoff) {
-            (Some(store), Some((machine, handoff))) => {
-                let record = store.record(attachment.terminal_id, machine, &handoff);
-                matches!(timeout(HANDOFF_RECORD_DEADLINE, record).await, Ok(Ok(true)))
-            }
-            _ => false,
-        };
         let t = state.terminal_mut(attachment)?;
         if holder_lost {
             t.view.holder = None;
@@ -723,7 +576,6 @@ impl Registry {
         let r = t.record_mut(attachment)?;
         r.finalized = true;
         r.writes.clear();
-        r.grant = None;
         let sizing = t.elect();
         let sizing = if t.records.values().all(|r| r.finalized) {
             Some(t.sizing(None))
@@ -733,18 +585,24 @@ impl Registry {
         let event = self.event(attachment, sequence, "finalized", &t.view, Some(reason));
         state.sequence = sequence;
         permit.send(event);
-        let input = match (holder_lost, preserved) {
-            (false, _) => HostInput::Unchanged,
-            (true, true) => HostInput::Preserved,
-            (true, false) => revoke_step(backend),
-        };
         Ok(Some(Finalized {
             generation,
             holder_lost,
             sizing,
-            input,
         }))
     }
+    /// Whether `attachment` is a live gclient record: it holds no lease, so its
+    /// operator writes are admitted without a holder or generation check. A
+    /// finalized record admits nothing, as in the Python registry.
+    pub async fn is_gclient_attachment(&self, terminal: Uuid, attachment: Uuid) -> bool {
+        let state = self.state.lock().await;
+        state
+            .terminals
+            .get(&terminal)
+            .and_then(|t| t.records.get(&attachment))
+            .is_some_and(|r| !r.finalized && r.viewer == Viewer::Gclient)
+    }
+
     pub async fn snapshot(&self, terminal: Uuid) -> TerminalView {
         self.state
             .lock()
@@ -834,15 +692,19 @@ impl Registry {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal_mut(attachment)?;
-        t.record_owned(attachment, requester, false)?;
+        let viewer = t.record_owned(attachment, requester, false)?.viewer;
         if seq > MAX_SAFE_INTEGER || expected_generation > MAX_SAFE_INTEGER {
             return Err(Error::SafeIntegerOverflow);
         }
-        if t.view.holder != Some(attachment.id) {
-            return Err(Error::Held);
-        }
-        if t.view.generation != expected_generation {
-            return Err(Error::StaleGeneration);
+        // A gclient pane holds no lease, so its writes are admitted on any
+        // attachment; only web holders are checked against control state.
+        if viewer == Viewer::Web {
+            if t.view.holder != Some(attachment.id) {
+                return Err(Error::Held);
+            }
+            if t.view.generation != expected_generation {
+                return Err(Error::StaleGeneration);
+            }
         }
         let r = t.record_mut(attachment)?;
         let mut hash = Sha256::new();

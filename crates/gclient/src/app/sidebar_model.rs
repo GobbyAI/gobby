@@ -101,7 +101,7 @@ pub struct AgentEntry {
     pub terminal_id: String,
     pub backend: Backend,
     pub name: String,
-    /// The run's agent definition (`backend-developer`); no rung of `name`.
+    /// The run's agent definition; no rung of `name`.
     pub agent_definition_name: Option<String>,
     /// The session's manual or definition title without its ref prefix; it takes the
     /// definition's place in the row's line 1 and the pane header.

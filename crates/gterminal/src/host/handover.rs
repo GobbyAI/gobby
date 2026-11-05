@@ -98,7 +98,6 @@ pub struct CarriedPane {
     pub dropped_bytes: u64,
     pub total_bytes: u64,
     pub truncated: bool,
-    pub input_grant: Option<String>,
     pub locator: Option<PaneLocator>,
     pub reported_cwd: Option<PathBuf>,
     pub reservation_id: String,

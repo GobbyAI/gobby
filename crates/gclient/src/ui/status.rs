@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::app::{ControlState, Pane};
+use crate::app::Pane;
 use crate::daemon::DaemonError;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
@@ -116,24 +116,6 @@ pub fn state_label(state: RowState) -> &'static str {
 /// herdr `state_label_color`.
 pub fn state_label_color(state: RowState, p: &Palette) -> Color {
     state_dot(state, p).1
-}
-
-/// Control-state indicator for a pane: glyph, label, colour. Gobby-specific;
-/// colour is the fourth signal after glyph, label, and title position.
-pub fn control_indicator(
-    control: ControlState,
-    take_back: bool,
-    p: &Palette,
-) -> (&'static str, &'static str, Color) {
-    if take_back {
-        return ("▲", "take-back", p.yellow);
-    }
-    match control {
-        ControlState::Observe => ("○", "observe", p.subtext0),
-        ControlState::Held => ("●", "held", p.accent),
-        ControlState::LeaseLost => ("◌", "lease lost", p.red),
-        ControlState::UncertainReadOnly => ("◌", "read-only", p.yellow),
-    }
 }
 
 /// Kind cue for a toast: glyph plus label, so Info, Warning, Error, and
@@ -330,7 +312,6 @@ pub fn render_copy_feedback(frame: &mut Frame, area: Rect, chrome: &Chrome, mess
 /// Interactive cells drawn into the status row.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct StatusHits {
-    pub control_indicator: Option<Rect>,
     pub count: Option<Rect>,
 }
 
@@ -338,7 +319,6 @@ pub struct StatusHits {
 /// this machine's agents by legend class, the right end the prefix hint and
 /// the mode word. A pane's title and metadata live on its edges; the focused
 /// pane's metadata leads this line instead when no edge has room for it.
-/// The control indicator offers take-control only for exceptional pane states.
 pub fn render_status_line<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
@@ -444,9 +424,9 @@ pub fn render_status_line<W: WorkspaceView>(
         hits.count = Some(Rect::new(area.x.saturating_add(start), area.y, width, 1));
     }
     let mut optional_spans = 0;
-    // Pane overflow can contain an actionable control button. Let it take
-    // the left slot before the informational counts on a narrow row. A
-    // count of zero draws nothing.
+    // Focused-pane overflow can name a pane's metadata. Let it take the left
+    // slot before the informational counts on a narrow row. A count of zero
+    // draws nothing.
     if focused_overflow(ws, chrome).is_none() {
         let (gone, gone_color) = state_dot(RowState::Orphaned, p);
         for (count, text, color) in [
@@ -477,39 +457,18 @@ pub fn render_status_line<W: WorkspaceView>(
             continue;
         };
         let mut style = base.fg(p.subtext0);
-        let actionable = if segment == StatusSegment::Focus {
-            focused_overflow(ws, chrome).map(|pane| {
+        if segment == StatusSegment::Focus {
+            if let Some(pane) = focused_overflow(ws, chrome) {
                 let corners = pane_corners(ws, chrome, pane, true);
                 style = base.fg(corners.tone.color(p)).add_modifier(Modifier::BOLD);
-                corners.actionable
-            })
-        } else {
-            None
+            }
         }
-        .unwrap_or(false);
-        if actionable && matches!(chrome.hover, Some(Hit::ControlIndicator)) {
-            style = style.add_modifier(Modifier::UNDERLINED);
-        }
-        let width = display_width_u16(&text);
-        let (start, first) = append(
+        let (_, first) = append(
             vec![Span::styled(text, style)],
             if optional_started { " · " } else { " │ " },
         );
         optional_started = true;
         optional_spans += if first { 1 } else { 2 };
-        if actionable {
-            let x = if first {
-                area.x
-            } else {
-                area.x.saturating_add(start)
-            };
-            hits.control_indicator = Some(Rect::new(
-                x,
-                area.y,
-                width.saturating_add(u16::from(first)),
-                1,
-            ));
-        }
     }
     // The prefix is the way into every chord, quit included, so the status
     // line always names it; under an outer tmux it is the shifted chord.
@@ -576,11 +535,6 @@ pub fn render_status_line<W: WorkspaceView>(
         width: right_area.x - area.x,
         ..area
     };
-    hits.control_indicator = hits
-        .control_indicator
-        .filter(|button| button.right() <= area.x.saturating_add(left_width))
-        .map(|button| button.intersection(uncovered))
-        .filter(|button| !button.is_empty());
     hits.count = hits
         .count
         .map(|count| count.intersection(uncovered))
@@ -677,20 +631,18 @@ mod tests {
         assert!(rects.iter().all(|rect| rect.x + rect.width == 70));
     }
 
-    fn status_terminal(ws: &Workspace, chrome: &Chrome) -> (Terminal<TestBackend>, Option<Rect>) {
+    fn status_terminal(ws: &Workspace, chrome: &Chrome) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-        let mut indicator = None;
         terminal
             .draw(|frame| {
-                indicator = render_status_line(frame, frame.area(), ws, chrome).control_indicator
+                render_status_line(frame, frame.area(), ws, chrome);
             })
             .unwrap();
-        (terminal, indicator)
+        terminal
     }
 
-    fn draw_status(ws: &Workspace, chrome: &Chrome) -> (String, Option<Rect>) {
-        let (terminal, indicator) = status_terminal(ws, chrome);
-        (screen(&terminal), indicator)
+    fn draw_status(ws: &Workspace, chrome: &Chrome) -> String {
+        screen(&status_terminal(ws, chrome))
     }
 
     #[test]
@@ -718,12 +670,11 @@ mod tests {
 
         // The focused pane's border carries its title and metadata; the
         // prefix and the mode word sit at the right end on surface0.
-        let (text, indicator) = draw_status(&ws, &chrome);
+        let text = draw_status(&ws, &chrome);
         // One agent, and it needs you: no zero counts beside it.
         assert!(text.starts_with(" ⍾ 1 needs you  "), "{text}");
         assert!(text.ends_with("prefix ctrl+b │ navigate "), "{text}");
-        assert_eq!(indicator, None);
-        let (terminal, _) = status_terminal(&ws, &chrome);
+        let terminal = status_terminal(&ws, &chrome);
         let buffer = terminal.backend().buffer();
         let p = &chrome.palette;
         for x in 0..80 {
@@ -745,7 +696,7 @@ mod tests {
         // Under an outer tmux the shifted prefix is named instead.
         chrome.nested = true;
         chrome.keymap = Keymap::defaults(default_prefix(true));
-        let (text, _) = draw_status(&ws, &chrome);
+        let text = draw_status(&ws, &chrome);
         assert!(
             text.contains("prefix ctrl+]"),
             "status lacks the prefix cue: {text}"
@@ -761,7 +712,7 @@ mod tests {
         let now = Instant::now();
         chrome.connection.now = now;
         chrome.connection.retry_at = Some(now + Duration::from_secs(3));
-        let (text, _) = draw_status(&ws, &chrome);
+        let text = draw_status(&ws, &chrome);
         assert!(
             text.starts_with(" × Daemon unreachable · retrying in 3 s"),
             "status should show the retry countdown: {text}"
@@ -770,7 +721,7 @@ mod tests {
             !text.contains("idle"),
             "an empty roster counts nothing: {text}"
         );
-        let (terminal, _) = status_terminal(&ws, &chrome);
+        let terminal = status_terminal(&ws, &chrome);
         let buffer = terminal.backend().buffer();
         assert_eq!(
             buffer[(1, 0)].fg,
@@ -805,17 +756,8 @@ mod tests {
             chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
             assert_eq!(chrome.view.pane_infos[0].borders, Borders::ALL);
 
-            let (text, indicator) = draw_status(&ws, &chrome);
+            let text = draw_status(&ws, &chrome);
             assert_eq!(text.trim(), "prefix ctrl+b", "{text}");
-            assert_eq!(indicator, None);
-
-            // An exception's button stays on the edge too.
-            ws.pane_mut(id).control = ControlState::LeaseLost;
-            ws.pane_mut(id).take_back = true;
-            let (text, indicator) = draw_status(&ws, &chrome);
-            assert_eq!(text.trim(), "prefix ctrl+b", "{text}");
-            assert_eq!(indicator, None);
-            assert!(crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome).is_some());
         }
     }
 
@@ -850,54 +792,21 @@ mod tests {
         let corners = pane_corners(&ws, &chrome, ws.pane(focused), true);
         assert_eq!(title_rect(&info, &corners), None, "{:?}", info.rect);
 
-        let (text, indicator) = draw_status(&ws, &chrome);
+        let text = draw_status(&ws, &chrome);
         assert_eq!(
             text,
             format!(" ○ term-beta · Focused{:>58}", "prefix ctrl+b ")
         );
-        assert_eq!(indicator, None);
 
-        // An exception with no room on the edge is still a button, here.
-        ws.pane_mut(focused).control = ControlState::LeaseLost;
-        let (text, indicator) = draw_status(&ws, &chrome);
-        assert_eq!(
-            text,
-            format!(" ○ term-beta · Read-only{:>56}", "prefix ctrl+b ")
-        );
-        let width = display_width_u16("○ term-beta · Read-only") + 1;
-        assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
-        assert_eq!(
-            crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome),
-            None,
-            "the edge offers no second button"
-        );
-
-        // The pointer resting on the button underlines its words.
-        chrome.hover = Some(Hit::ControlIndicator);
-        let mut terminal = Terminal::new(TestBackend::new(60, 1)).unwrap();
+        // A row too narrow for the focus words keeps the hint at its right
+        // end, and the hint takes none of the status row's emphasis.
+        let mut terminal = Terminal::new(TestBackend::new(30, 1)).unwrap();
         terminal
             .draw(|frame| {
                 render_status_line(frame, frame.area(), &ws, &chrome);
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        assert!(buffer[(1, 0)].modifier.contains(Modifier::UNDERLINED));
-        assert!(!buffer[(width + 1, 0)]
-            .modifier
-            .contains(Modifier::UNDERLINED));
-
-        // A row too narrow for both keeps the hint at its right end and drops
-        // the optional button whole, so no clipped label remains clickable.
-        let mut terminal = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        let mut indicator = None;
-        terminal
-            .draw(|frame| {
-                indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator
-            })
-            .unwrap();
         assert_eq!(screen(&terminal), "                prefix ctrl+b ");
-        assert_eq!(indicator, None);
-        // The hint takes none of the button's bold or underline.
         let buffer = terminal.backend().buffer();
         let styled: Vec<u16> = (16..30)
             .filter(|&x| !buffer[(x, 0)].modifier.is_empty())

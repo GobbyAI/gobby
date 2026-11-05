@@ -325,18 +325,7 @@ impl Workspace<LiveDaemon> {
                     .unwrap_or_default();
                 let pane = self.panes.get_mut(&pane_id).expect("pane exists");
                 pane.adopt_attachment(attachment, generation, lease_generation);
-                pane.observe_lease_holder(
-                    reply
-                        .get("lease_holder")
-                        .and_then(|holder| holder.get("attachment_id"))
-                        .and_then(Value::as_str),
-                );
                 self.attached_generation.insert(pane_id, generation);
-                // The carried grant named the dead attachment; the focused
-                // pane asks again under the fresh one.
-                if self.focus == Some(pane_id) {
-                    self.request_control(pane_id, false);
-                }
                 Ok(None)
             }
             RecoveryStep::Promoted {

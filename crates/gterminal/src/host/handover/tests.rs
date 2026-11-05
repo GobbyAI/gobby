@@ -176,7 +176,6 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
         dropped_bytes: 1,
         total_bytes: 11,
         truncated: false,
-        input_grant: Some("att-1".into()),
         locator: None,
         reported_cwd: None,
         reservation_id: "res-17".into(),
@@ -230,7 +229,6 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
         (slot.title.as_str(), slot.rows, slot.cols, slot.last_seq),
         ("agent", 24, 80, 9)
     );
-    assert_eq!(slot.input_grant.as_deref(), Some("att-1"));
     assert!(matches!(
         &slot.observer_bind,
         ObserverBind::Entitled { reservation_id, generation: 2 } if reservation_id == "res-17"

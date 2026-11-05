@@ -101,13 +101,6 @@ pub(crate) struct TerminalSlot {
     #[cfg(feature = "vt-engine")]
     pub(crate) truncated: bool,
     pub(crate) user_attachments: HashSet<u64>,
-    /// Daemon attachment id allowed to type on the frame stream, set by the
-    /// `grant_input` control verb. Survives control disconnects; only
-    /// `revoke_input` or slot removal clears it.
-    pub(crate) input_grant: Option<String>,
-    /// Only the trusted control grant selects a frame stream. A client's
-    /// daemon attachment name never grants input authority.
-    pub(crate) input_grant_attachment: Option<u64>,
     pub(crate) locator: Option<crate::protocol::PaneLocator>,
     pub(crate) tmux_history_bytes: u64,
     pub(crate) history: Option<crate::protocol::ServerMessage>,
@@ -125,8 +118,8 @@ pub struct Attachment {
     pub cols: u16,
     pub scroll: u32,
     pub reservation_id: Option<String>,
-    /// Daemon attachment name used for theme relay. Input authority is bound
-    /// separately to this attachment's host-owned `id` by the control grant.
+    /// Daemon attachment name this stream bound with `BindAttachment`. It names
+    /// the stream for input attribution and theme relay.
     pub client_attachment_id: Option<String>,
     pub mailbox: FrameMailbox,
     pub last_send: Instant,
@@ -141,9 +134,10 @@ pub struct Attachment {
     pub(crate) built_generation: Option<u64>,
     /// Per-attachment diff state for `terminal_ansi` frames.
     pub(crate) encoder: BlitEncoder,
-    /// Last `SetTerminalTheme` this stream declared; applied to the slot
-    /// whenever this stream's bound attachment holds the input grant.
-    pub(crate) declared_theme: Option<crate::terminal_theme::ThemeDeclaration>,
+    /// Last `SetTerminalTheme` this stream declared, with the host-wide
+    /// sequence it was declared at. The slot shows the newest declaration
+    /// among its streams.
+    pub(crate) declared_theme: Option<(u64, crate::terminal_theme::ThemeDeclaration)>,
 }
 
 pub(crate) struct Inner {
@@ -153,6 +147,8 @@ pub(crate) struct Inner {
     pub(crate) reservations: HashMap<String, Reservation>,
     pub(crate) attachments: HashMap<u64, Attachment>,
     pub(crate) next_attachment: u64,
+    /// Sequence of the most recent theme declaration on this host.
+    pub(crate) next_theme_seq: u64,
     control_owners: HashSet<u64>,
 }
 
@@ -176,6 +172,7 @@ impl Inner {
             reservations,
             attachments: HashMap::new(),
             next_attachment,
+            next_theme_seq: 0,
             control_owners: HashSet::new(),
         }
     }
@@ -500,8 +497,6 @@ impl HostState {
                 total_bytes: 0,
                 truncated: false,
                 user_attachments: HashSet::new(),
-                input_grant: None,
-                input_grant_attachment: None,
                 locator: None,
                 tmux_history_bytes: 0,
                 history: None,
@@ -626,9 +621,6 @@ impl HostState {
         if let Some(identity) = inner.by_host_id.get(&att.host_terminal_id).cloned() {
             if let Some(slot) = inner.terminals.get_mut(&identity) {
                 slot.user_attachments.remove(&attachment_id);
-                if slot.input_grant_attachment == Some(attachment_id) {
-                    slot.input_grant_attachment = None;
-                }
                 if let ObserverBind::Bound {
                     reservation_id,
                     generation,
@@ -658,21 +650,11 @@ impl HostState {
             .get(&attachment_id)
             .ok_or("terminal_gone")?;
         let host_terminal_id = attachment.host_terminal_id.clone();
-        let reserved = inner
-            .by_host_id
-            .get(&host_terminal_id)
-            .and_then(|identity| inner.terminals.get(identity))
-            .is_some_and(|slot| {
-                slot.input_grant.as_deref() == Some(client_attachment_id.as_str())
-                    && slot.input_grant_attachment != Some(attachment_id)
-            });
-        if reserved
-            || inner.attachments.iter().any(|(id, other)| {
-                *id != attachment_id
-                    && other.host_terminal_id == host_terminal_id
-                    && other.client_attachment_id.as_deref() == Some(&client_attachment_id)
-            })
-        {
+        if inner.attachments.iter().any(|(id, other)| {
+            *id != attachment_id
+                && other.host_terminal_id == host_terminal_id
+                && other.client_attachment_id.as_deref() == Some(&client_attachment_id)
+        }) {
             return Err("attachment_already_bound");
         }
         inner
@@ -680,7 +662,7 @@ impl HostState {
             .get_mut(&attachment_id)
             .expect("attachment checked above")
             .client_attachment_id = Some(client_attachment_id);
-        super::theme::apply_holder_theme(&inner, &host_terminal_id);
+        super::theme::apply_slot_theme(&inner, &host_terminal_id);
         Ok(())
     }
 
@@ -834,8 +816,6 @@ pub(crate) async fn insert_native_slot(
         #[cfg(feature = "vt-engine")]
         truncated: false,
         user_attachments: HashSet::new(),
-        input_grant: None,
-        input_grant_attachment: None,
         locator: None,
         tmux_history_bytes: 0,
         history: None,

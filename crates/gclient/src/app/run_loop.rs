@@ -184,13 +184,8 @@ fn apply_scripted_mouse_outcome(
         MouseOutcome::Modal(outcome) => {
             return apply_scripted_modal_outcome(workspace, chrome, outcome);
         }
-        MouseOutcome::Focus { pane, observe_only } => {
-            scripted_focus(workspace, chrome, pane, observe_only)?;
-        }
+        MouseOutcome::Focus { pane } => scripted_focus(workspace, chrome, pane),
         MouseOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
-        MouseOutcome::TakeFreeControl { pane } => workspace
-            .take_control(pane)
-            .map_err(|error| FrameError::Other(error.to_string()))?,
         MouseOutcome::Menu { kind, action } => {
             return apply_scripted_menu_action(workspace, chrome, kind, action);
         }
@@ -199,9 +194,7 @@ fn apply_scripted_mouse_outcome(
             .map_err(|error| FrameError::Other(error.to_string()))?,
         MouseOutcome::FocusWrite { pane, bytes } => {
             chrome.focus_pane(pane);
-            workspace
-                .focus_pane(pane)
-                .map_err(|error| FrameError::Other(error.to_string()))?;
+            workspace.focus_pane(pane);
             workspace
                 .send_input(pane, &bytes)
                 .map_err(|error| FrameError::Other(error.to_string()))?;
@@ -213,7 +206,7 @@ fn apply_scripted_mouse_outcome(
         MouseOutcome::FocusAgent(entry_id) => {
             if let Some(pane) = attention_pane(&*workspace, &entry_id) {
                 chrome.reveal_pane(pane, workspace.pane(pane).display_name());
-                scripted_focus(workspace, chrome, pane, true)?;
+                scripted_focus(workspace, chrome, pane);
             }
         }
         // The scripted daemon spawns nothing, so a worktree has no shell to open.
@@ -243,28 +236,10 @@ fn apply_scripted_action(chrome: &mut Chrome, action: Action) -> bool {
     false
 }
 
-/// Focus `pane` on the chrome and the workspace; `observe_only` moves focus
-/// without taking control, releasing the previous pane's lease instead.
-fn scripted_focus(
-    workspace: &mut Workspace,
-    chrome: &mut Chrome,
-    pane: PaneId,
-    observe_only: bool,
-) -> Result<(), FrameError> {
+/// Focus `pane` on the chrome and the workspace.
+fn scripted_focus(workspace: &mut Workspace, chrome: &mut Chrome, pane: PaneId) {
     chrome.focus_pane(pane);
-    if observe_only {
-        if let Some(previous) = workspace.focus.filter(|previous| *previous != pane) {
-            workspace
-                .release_control(previous)
-                .map_err(|error| FrameError::Other(error.to_string()))?;
-        }
-        workspace.focus = Some(pane);
-    } else {
-        workspace
-            .focus_pane(pane)
-            .map_err(|error| FrameError::Other(error.to_string()))?;
-    }
-    Ok(())
+    workspace.focus_pane(pane);
 }
 
 /// A context menu item in the scripted loop: a keymap action runs as its
@@ -283,7 +258,7 @@ fn apply_scripted_menu_action(
     };
     match kind {
         ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(pane) => {
-            scripted_focus(workspace, chrome, pane, true)?;
+            scripted_focus(workspace, chrome, pane);
         }
         ContextMenuKind::Tab(index) if index != chrome.active_index() => {
             if let Some(pane) = chrome
@@ -292,7 +267,7 @@ fn apply_scripted_menu_action(
                 .get(index)
                 .and_then(|tab| chrome.viewer.focused_pane(tab))
             {
-                scripted_focus(workspace, chrome, pane, false)?;
+                scripted_focus(workspace, chrome, pane);
             }
         }
         _ => {}
@@ -320,14 +295,12 @@ fn apply_scripted_modal_outcome(
         | ModalOutcome::DestroyOrphans(_) => {}
         ModalOutcome::Focus(pane) => {
             chrome.focus_pane(pane);
-            workspace
-                .focus_pane(pane)
-                .map_err(|error| FrameError::Other(error.to_string()))?;
+            workspace.focus_pane(pane);
         }
         ModalOutcome::FocusTerminal(terminal_id) => {
             if let Some(pane) = workspace.pane_for_terminal(&terminal_id) {
                 chrome.reveal_pane(pane, workspace.pane(pane).display_name());
-                scripted_focus(workspace, chrome, pane, true)?;
+                scripted_focus(workspace, chrome, pane);
             }
         }
         ModalOutcome::FocusProject(project_id) => {
@@ -337,7 +310,7 @@ fn apply_scripted_modal_outcome(
         ModalOutcome::FocusAgent(entry_id) => {
             if let Some(pane) = attention_pane(&*workspace, &entry_id) {
                 chrome.reveal_pane(pane, workspace.pane(pane).display_name());
-                scripted_focus(workspace, chrome, pane, true)?;
+                scripted_focus(workspace, chrome, pane);
             }
         }
         ModalOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),

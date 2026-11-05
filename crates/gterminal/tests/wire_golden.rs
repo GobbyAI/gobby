@@ -146,7 +146,7 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     write_bin(
         "frame_input_refused.bin",
         &ServerMessage::InputRefused {
-            code: "input_not_granted".into(),
+            code: "attach_required".into(),
         },
     );
     write_bin(
@@ -325,14 +325,6 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     write_json(
         "control_release_observer.json",
         serde_json::json!({"id":"release-1","method":"release_observer","reservation_id":"rsv","reserve_key":"rk"}),
-    );
-    write_json(
-        "control_grant_input.json",
-        serde_json::json!({"id":"grant-1","method":"grant_input","host_terminal_id":"ht-1","attachment_id":"att-1","host_attachment_id":42}),
-    );
-    write_json(
-        "control_revoke_input.json",
-        serde_json::json!({"id":"revoke-1","method":"revoke_input","host_terminal_id":"ht-1","attachment_id":"att-1"}),
     );
     write_json(
         "control_input_activity.json",

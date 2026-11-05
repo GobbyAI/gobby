@@ -2,7 +2,7 @@
 //!
 //! The daemon may be away for the whole window: `Hello` authenticates against
 //! the local token file, a user `AttachTerminal` needs no daemon reservation,
-//! and the host keeps the pane's input grant across the exec (1.2). These
+//! and the pane types on the restored stream with no grant (#25653). These
 //! tests drive the real live loop against a real frame socket, so a reconnect
 //! that went through the daemon would be visible as a second `terminal_attach`.
 
@@ -18,7 +18,7 @@ use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
-use gobby_terminal::protocol::{ClientMessage, ServerMessage};
+use gobby_terminal::protocol::ClientMessage;
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::{live_workspace_on_direct_host, DirectHost, MockDaemon};
 use ratatui::backend::TestBackend;
@@ -49,6 +49,26 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     })
     .await
     .unwrap_or_else(|_| panic!("mock daemon never saw {expected} {kind} requests"));
+}
+
+/// The attachment the last `terminal_focus` report for `terminal_id` names,
+/// while that report says the pane is focused.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .rev()
+        .find(|request| request["terminal_id"] == terminal_id)
+        .filter(|request| request["focused"] == true)
+        .and_then(|request| request["attachment_id"].as_str().map(str::to_string))
+}
+
+/// Wait for the loop to report `terminal_id` focused: it runs with the pane
+/// live and focused.
+async fn wait_for_focus(mock: &MockDaemon, terminal_id: &str) {
+    wait_until("the startup focus report", || {
+        focused_attachment(mock, terminal_id).is_some()
+    })
+    .await;
 }
 
 /// Wait for `predicate`, yielding the loop, then fail with `what`.
@@ -89,8 +109,8 @@ async fn settle() {
 
 /// 2.3.1: with the daemon disconnected across the host's exec, a pane whose
 /// frame source hits EOF reconnects straight to the host, keeps the same
-/// terminal and epoch, never retires, and its input is accepted through the
-/// carried grant.
+/// terminal and epoch, never retires, and its input types on the restored
+/// stream with no grant.
 #[tokio::test]
 async fn pane_reconnects_to_host_without_daemon() {
     let mock = MockDaemon::start("local-token").await;
@@ -110,9 +130,7 @@ async fn pane_reconnects_to_host_without_daemon() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        // Startup focus takes the lease; the mock's grant carries the host's
-        // input grant with it.
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         // The daemon goes away and the host stream dies in the same window:
         // the exec that replaces the host image.
         mock.drop_websockets();
@@ -144,7 +162,7 @@ async fn pane_reconnects_to_host_without_daemon() {
                 message,
                 ClientMessage::Input { data } if data == b"x"
             )),
-            "the carried grant delivers the input payload: {seen:?}"
+            "the restored stream delivers the input payload: {seen:?}"
         );
         assert!(
             seen.iter()
@@ -199,102 +217,17 @@ async fn pane_reconnects_to_host_without_daemon() {
     );
     assert!(
         websocket_requests(&mock, "terminal_input").is_empty(),
-        "the carried grant types on the frame stream, never through the daemon"
+        "the restored stream types on the frame socket, never through the daemon"
     );
     host.shutdown().await;
     mock.shutdown().await;
 }
 
-/// A daemon-only outage leaves the existing host grant usable. The host can
-/// still revoke that authority on the same frame stream while the daemon is away.
+/// Keys typed while the returned daemon replaces a native attachment reach the
+/// host instead of disappearing during its host handshake. No grant gates
+/// them, before or after the replacement (#25653).
 #[tokio::test]
-async fn held_native_input_survives_daemon_outage_and_host_refusal_still_applies() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    let terminal_id = "terminal-held-through-daemon-outage";
-    let host = DirectHost::start("epoch-1").await;
-    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("direct pane");
-    let attachment_before = workspace.pane(pane_id).attachment_id().to_string();
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
-        host.wait_for("input before the daemon outage", |seen| {
-            seen.iter()
-                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"a"))
-        })
-        .await;
-        let reconnect = mock.pause_next_websocket();
-        mock.close_websockets_going_away();
-        // Starting the held reconnect proves that the loop observed the close.
-        // Keep it held until after the loop exits, so no reply can restore control.
-        wait_until("the held daemon reconnect", || {
-            mock.websocket_handshakes() >= 2
-        })
-        .await;
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
-        host.wait_for("input while the daemon is unavailable", |seen| {
-            seen.iter()
-                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"b"))
-        })
-        .await;
-        host.to_client
-            .send(ServerMessage::InputRefused {
-                code: "input_not_granted".into(),
-            })
-            .expect("host refuses the carried grant");
-        settle().await;
-        drop(input_tx);
-        reconnect
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, reconnect) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    reconnect.notify_one();
-    result.expect("daemon-only outage loop");
-    let pane = workspace.pane(pane_id);
-    assert!(pane.is_observe(), "host refusal ends the carried authority");
-    assert!(!pane.direct_input(), "a refused host grant cannot type");
-    assert!(
-        pane.has_take_back(),
-        "the refusal offers explicit take-back"
-    );
-    assert_eq!(
-        pane.status_message(),
-        Some("terminal refused input (input_not_granted); take control again")
-    );
-    assert_eq!(pane.attachment_id(), attachment_before);
-    assert_eq!(pane.transport(), Some(Transport::Direct));
-    assert_eq!(host.attaches(), 1, "the host stream never needed recovery");
-    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 1);
-    assert!(
-        websocket_requests(&mock, "terminal_input").is_empty(),
-        "offline native input never falls back through the daemon"
-    );
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-/// Keys typed while the returned daemon replaces a native attachment wait for
-/// that attachment's grant instead of disappearing during its host handshake.
-#[tokio::test]
-async fn native_input_during_daemon_reattach_waits_for_the_new_grant() {
+async fn native_input_during_daemon_reattach_reaches_the_host() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-daemon-reattach-input";
@@ -309,7 +242,8 @@ async fn native_input_during_daemon_reattach_waits_for_the_new_grant() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
+        let first = focused_attachment(&mock, terminal_id).expect("startup focus");
         send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
         host.wait_for("input before reconnect", |seen| {
             seen.iter()
@@ -340,16 +274,24 @@ async fn native_input_during_daemon_reattach_waits_for_the_new_grant() {
         // answer its handshake. This is a live-loop input event in that window.
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
         settle().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            1,
-            "the new attachment cannot ask for a grant before its host is ready"
+        let early: Vec<_> = websocket_requests(&mock, "terminal_focus")
+            .into_iter()
+            .filter(|request| {
+                request["focused"] == true && request["attachment_id"] != first.as_str()
+            })
+            .collect();
+        assert!(
+            early.is_empty(),
+            "the new attachment is not reported focused before its host is ready: {early:?}"
         );
         host.release_accepts(&gate);
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        host.wait_for("the key queued during native reattachment", |seen| {
+        host.wait_for("the key typed during native reattachment", |seen| {
             seen.iter()
                 .any(|message| matches!(message, ClientMessage::Input { data } if data == b"b"))
+        })
+        .await;
+        wait_until("focus on the replacement attachment", || {
+            focused_attachment(&mock, terminal_id).is_some_and(|id| id != first)
         })
         .await;
         drop(input_tx);
@@ -370,79 +312,7 @@ async fn native_input_during_daemon_reattach_waits_for_the_new_grant() {
     assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
     assert!(
         websocket_requests(&mock, "terminal_input").is_empty(),
-        "queued native input must stay on the granted host stream"
-    );
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-/// Losing the daemon cannot create host authority for an ungranted native pane.
-#[tokio::test]
-async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    let terminal_id = "terminal-ungranted-through-daemon-outage";
-    let host = DirectHost::start("epoch-1").await;
-    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("direct pane");
-    mock.enqueue_take_control_reply_without_host_grant(1);
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        settle().await;
-        let reconnect = mock.pause_next_websocket();
-        mock.close_websockets_going_away();
-        wait_until("the held daemon reconnect", || {
-            mock.websocket_handshakes() >= 2
-        })
-        .await;
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        // The grant is asked of the host's control socket, which this host
-        // does not serve, so the key waits on an answer that says no.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        drop(input_tx);
-        reconnect
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, reconnect) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    reconnect.notify_one();
-    result.expect("ungranted daemon-only outage loop");
-    let pane = workspace.pane(pane_id);
-    assert!(pane.is_observe());
-    assert!(
-        !pane.direct_input(),
-        "disconnect cannot create a host grant"
-    );
-    assert_eq!(
-        pane.status_message(),
-        Some("terminal control unavailable while the daemon is down; input not sent"),
-        "a key the outage cannot deliver says so"
-    );
-    assert_eq!(pane.transport(), Some(Transport::Direct));
-    assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 1);
-    assert!(websocket_requests(&mock, "terminal_input").is_empty());
-    assert!(
-        host.drain().iter().all(|message| !matches!(
-            message,
-            ClientMessage::Input { .. } | ClientMessage::Paste { .. }
-        )),
-        "an ungranted pane writes no input on the surviving host stream"
+        "native input typed during the reattachment stays on the host stream"
     );
     host.shutdown().await;
     mock.shutdown().await;
@@ -471,7 +341,7 @@ async fn host_local_failure_falls_back_to_daemon_attach() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         host.set_host_epoch("epoch-2");
         host.disconnect();
         // The old attachment is detached and the daemon re-attach is asked
@@ -556,7 +426,7 @@ async fn host_local_budget_falls_back_to_daemon_attach() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         // The host is gone for the whole exec window.
         std::fs::remove_file(&socket_path).expect("remove the host socket");
         host.disconnect();
@@ -626,7 +496,7 @@ async fn same_epoch_attach_refusal_falls_back_to_daemon() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         // Same epoch: only the attach itself is refused, and the socket stays
         // open, so nothing but the reply tells the client it failed.
         host.refuse_next_attach();
@@ -705,7 +575,7 @@ async fn stalled_handshake_falls_back_within_the_budget() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         host.disconnect();
         tokio::time::pause();
         for _ in 0..64 {
@@ -759,13 +629,12 @@ async fn stalled_handshake_falls_back_within_the_budget() {
 /// #23419: a pane restored straight onto its host keeps an attachment the
 /// daemon finalizes when its socket closes. Once the daemon is back on a new
 /// generation, the pane takes a fresh attachment, keeps its host stream and
-/// takes control under the fresh id; it never asks for control under the dead
-/// one (`stale_attachment`).
+/// reports focus under the fresh id; no focus report after the first names the
+/// dead one (`stale_attachment`).
 #[tokio::test]
 async fn host_recovered_pane_reattaches_after_daemon_generation_change() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    mock.finalize_attachments_on_close();
     let terminal_id = "terminal-recovered-then-reconnected";
     let host = DirectHost::start("epoch-1").await;
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
@@ -780,7 +649,7 @@ async fn host_recovered_pane_reattaches_after_daemon_generation_change() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         // The host stream dies and the host-local reconnect restores it.
         host.disconnect();
         host.expect_attaches(2).await;
@@ -793,14 +662,8 @@ async fn host_recovered_pane_reattaches_after_daemon_generation_change() {
         })
         .await;
         wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        wait_until("control under the fresh attachment", || {
-            websocket_requests(&mock, "terminal_take_control")
-                .iter()
-                .any(|request| {
-                    request["attachment_id"]
-                        .as_str()
-                        .is_some_and(|id| id != attachment_before)
-                })
+        wait_until("focus under the fresh attachment", || {
+            focused_attachment(&mock, terminal_id).is_some_and(|id| id != attachment_before)
         })
         .await;
         settle().await;
@@ -831,14 +694,14 @@ async fn host_recovered_pane_reattaches_after_daemon_generation_change() {
         2,
         "the restored host stream is kept; only the daemon attachment is new"
     );
-    let stale_takes: Vec<_> = websocket_requests(&mock, "terminal_take_control")
+    let stale_focus: Vec<_> = websocket_requests(&mock, "terminal_focus")
         .into_iter()
         .skip(1)
         .filter(|request| request["attachment_id"] == json!(attachment_before))
         .collect();
     assert!(
-        stale_takes.is_empty(),
-        "no control request names the finalized attachment: {stale_takes:?}"
+        stale_focus.is_empty(),
+        "no focus report names the finalized attachment: {stale_focus:?}"
     );
     assert!(
         chrome
@@ -846,112 +709,6 @@ async fn host_recovered_pane_reattaches_after_daemon_generation_change() {
             .iter()
             .all(|active| !active.toast.title.contains("stale_attachment")),
         "no stale_attachment refusal reaches the user"
-    );
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-/// A take-control action while a host-recovered pane re-registers with the
-/// daemon waits for the fresh attachment: it is never sent under the
-/// attachment that died with the old generation (#23419).
-#[tokio::test]
-async fn take_control_during_host_reregister_waits_for_the_fresh_attachment() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.finalize_attachments_on_close();
-    let terminal_id = "terminal-control-during-reregister";
-    let host = DirectHost::start("epoch-1").await;
-    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("direct pane");
-    let attachment_before = workspace.pane(pane_id).attachment_id().to_string();
-
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    chrome.keymap = gobby_client::ui::keymap::Keymap::from_toml(
-        "prefix = \"ctrl+b\"\n[bindings]\ntake_control = \"prefix+t\"\n",
-        "ctrl+b",
-    )
-    .expect("take-control keymap");
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        host.disconnect();
-        host.expect_attaches(2).await;
-        settle().await;
-        // The fresh attachment's reply is held, so the take-control lands
-        // while the pane still holds the dead generation's attachment.
-        let release_attach = mock.hold_ws("terminal_attach", |_| true);
-        mock.close_websockets_going_away();
-        wait_until("the daemon to reconnect", || {
-            mock.websocket_handshakes() >= 2
-        })
-        .await;
-        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
-        settle().await;
-        release_attach.notify_one();
-        wait_until("control under the fresh attachment", || {
-            websocket_requests(&mock, "terminal_take_control")
-                .iter()
-                .any(|request| {
-                    request["attachment_id"]
-                        .as_str()
-                        .is_some_and(|id| id != attachment_before)
-                })
-        })
-        .await;
-        settle().await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("take-control during a host-recovered pane's re-registration");
-    assert!(
-        chrome
-            .alert_log
-            .iter()
-            .all(|toast| toast.title
-                != "The attachment's control scope has an indeterminate result."),
-        "take-control during re-registration waits for the fresh attachment"
-    );
-    let stale_takes: Vec<_> = websocket_requests(&mock, "terminal_take_control")
-        .into_iter()
-        .skip(1)
-        .filter(|request| request["attachment_id"] == json!(attachment_before))
-        .collect();
-    assert!(
-        stale_takes.is_empty(),
-        "no control request names the dead attachment: {stale_takes:?}"
-    );
-    assert_ne!(workspace.pane(pane_id).attachment_id(), attachment_before);
-    let fresh_take = websocket_requests(&mock, "terminal_take_control")
-        .into_iter()
-        .find(|request| request["attachment_id"] == workspace.pane(pane_id).attachment_id())
-        .expect("control request under the fresh attachment");
-    assert_eq!(
-        fresh_take["takeover"],
-        json!(true),
-        "the explicit take-control takeover intent survives re-registration"
-    );
-    assert_eq!(
-        host.attaches(),
-        2,
-        "the restored host stream is kept while control waits"
     );
     host.shutdown().await;
     mock.shutdown().await;
@@ -966,7 +723,6 @@ async fn take_control_during_host_reregister_waits_for_the_fresh_attachment() {
 async fn host_local_recovery_survives_daemon_attempts() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    mock.finalize_attachments_on_close();
     let terminal_id = "terminal-survives-daemon";
     let host = DirectHost::start("epoch-1").await;
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
@@ -984,7 +740,7 @@ async fn host_local_recovery_survives_daemon_attempts() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         // The host stream dies while the host itself is mid-exec, so the
         // host-local reconnect stays in flight.
         host.disconnect();
@@ -1050,6 +806,7 @@ async fn closing_the_pane_during_recovery_sends_nothing_to_the_host() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-closed-mid-recovery";
+    const BARRIER: &str = "terminal-ordering-barrier";
     let host = DirectHost::start("epoch-1").await;
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
     // Armed after the initial attach so only the in-flight reconnect is held.
@@ -1061,7 +818,7 @@ async fn closing_the_pane_during_recovery_sends_nothing_to_the_host() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         host.disconnect();
         settle().await;
         // The terminal leaves the workspace while the reconnect is in flight.
@@ -1083,7 +840,23 @@ async fn closing_the_pane_during_recovery_sends_nothing_to_the_host() {
             "seq": 3,
         }))
         .await;
-        settle().await;
+        // The loop applies daemon events in arrival order, so the attach that a
+        // later terminal's pane sends proves the orphaned event above applied.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_event",
+            "event": "created",
+            "terminal_id": BARRIER,
+            "backend": "native",
+            "daemon_epoch": "epoch-1",
+            "seq": 4,
+        }))
+        .await;
+        wait_until("the orphaned event applied", || {
+            websocket_requests(&mock, "terminal_attach")
+                .iter()
+                .any(|request| request.get("terminal_id") == Some(&json!(BARRIER)))
+        })
+        .await;
         host.release_accepts(&gate);
         settle().await;
         drop(input_tx);
@@ -1138,7 +911,7 @@ async fn attached_reply_for_a_different_host_terminal_falls_back_to_daemon() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id).await;
         // Same epoch, but the reconnect's attach is answered as a different
         // terminal. Only the reply tells the pane it was not restored.
         host.answer_next_attach_with_terminal_id("terminal-somewhere-else");

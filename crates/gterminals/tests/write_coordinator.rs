@@ -376,13 +376,7 @@ fn requester() -> leases::Requester {
 async fn controller(leases: &Registry, terminal: Uuid) -> anyhow::Result<LeaseClaim> {
     let req = requester();
     let attachment = leases
-        .attach(
-            terminal,
-            req,
-            Viewer::Web,
-            Backend::Native,
-            leases::Delivery::Proxy,
-        )
+        .attach(terminal, req, Viewer::Web, Backend::Native)
         .await?;
     let control = leases.take_control(attachment, req, true).await?;
     anyhow::ensure!(control.granted, "control granted");
@@ -460,6 +454,89 @@ async fn runtime_is_resolved_from_terminal_row() -> anyhow::Result<()> {
         "{refused:?}"
     );
     assert_eq!(native.calls().len() + tmux.calls().len(), 2);
+    Ok(())
+}
+
+/// A gclient attachment holds no lease, so its operator writes are delivered on
+/// its own claim whether or not a web holder has taken control since.
+#[tokio::test]
+async fn gclient_operator_write_is_admitted_without_a_lease() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = hub.insert(Backend::Native).await?;
+    let (leases, _events) = Registry::new(16);
+    let leases = Arc::new(leases);
+    let native = FakeRuntime::new();
+    let tmux = FakeRuntime::new();
+    let coordinator = Arc::new(Coordinator::new(
+        hub.pool.clone(),
+        leases.clone(),
+        runtimes(&native, &tmux),
+    ));
+
+    let pane_req = requester();
+    let pane = leases
+        .attach(row, pane_req, Viewer::Gclient, Backend::Native)
+        .await?;
+    let claim = LeaseClaim {
+        attachment_id: pane.id,
+        generation: 0,
+    };
+    let outcome = coordinator
+        .write(operator(row, "op:gclient", text("typed"), Some(claim)))
+        .await?;
+    assert_eq!(outcome, Outcome::Delivered);
+
+    // A web holder takes control and moves the generation; the gclient claim is
+    // still admitted at its own generation, and no holder changes.
+    let web = controller(&leases, row).await?;
+    assert!(web.generation > 0);
+    let outcome = coordinator
+        .write(operator(
+            row,
+            "op:gclient-2",
+            text("typed again"),
+            Some(claim),
+        ))
+        .await?;
+    assert_eq!(outcome, Outcome::Delivered);
+    assert_eq!(leases.snapshot(row).await.holder, Some(web.attachment_id));
+    Ok(())
+}
+
+#[tokio::test]
+async fn finalized_gclient_claim_is_refused_like_any_stale_lease() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = hub.insert(Backend::Native).await?;
+    let (leases, _events) = Registry::new(16);
+    let leases = Arc::new(leases);
+    let native = FakeRuntime::new();
+    let tmux = FakeRuntime::new();
+    let coordinator = Arc::new(Coordinator::new(
+        hub.pool.clone(),
+        leases.clone(),
+        runtimes(&native, &tmux),
+    ));
+
+    let pane_req = requester();
+    let pane = leases
+        .attach(row, pane_req, Viewer::Gclient, Backend::Native)
+        .await?;
+    let claim = LeaseClaim {
+        attachment_id: pane.id,
+        generation: 0,
+    };
+    leases
+        .finalize(pane, pane_req, "socket_closed")
+        .await?
+        .expect("the pane finalizes");
+
+    // A finalized pane no longer admits writes, so its claim is refused before
+    // any bytes exist, as the Python registry refuses it.
+    let refused = coordinator
+        .write(operator(row, "op:late", text("late"), Some(claim)))
+        .await;
+    assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
+    assert!(native.payloads().is_empty());
     Ok(())
 }
 

@@ -146,7 +146,11 @@ async def _server(
     token = None if owners is None else bind_caller(user_id, owners)
     try:
         await server._leases().attach(
-            terminal.id, attachment_id=attachment_id, websocket=owner, terminal=terminal
+            terminal.id,
+            attachment_id=attachment_id,
+            websocket=owner,
+            terminal=terminal,
+            viewer="web",
         )
     finally:
         if token is not None:
@@ -378,7 +382,7 @@ async def test_operator_writes_route_through_coordinator() -> None:
         }
         takeover_task: asyncio.Task[Any] | None = None
         if kind == "input":
-            await server.lease_registry.attach(terminal.id, attachment_id="takeover")
+            await server.lease_registry.attach(terminal.id, attachment_id="takeover", viewer="web")
             write_task = asyncio.create_task(server._handle_terminal_input(websocket, data))
         elif kind == "paste":
             write_task = asyncio.create_task(server._handle_terminal_paste(websocket, data))
@@ -486,7 +490,9 @@ async def test_operator_write_uses_attach_snapshot() -> None:
     websocket = _WebSocket()
 
     await TerminalWsMixin._handle_terminal_attach(
-        server, websocket, {"request_id": "attach-1", "terminal_id": terminal.id}
+        server,
+        websocket,
+        {"request_id": "attach-1", "terminal_id": terminal.id, "viewer": "web"},
     )
     attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
     assert attach_result["success"] is True
@@ -514,6 +520,42 @@ async def test_operator_write_uses_attach_snapshot() -> None:
     assert awaited is not None
     assert awaited.args[0].terminal is terminal
     assert row_reads.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_gclient_pane_types_without_a_take() -> None:
+    """A gclient pane is always writable: its attach takes no lease and its keys deliver.
+
+    Another attachment holds the writer lease here, so the delivery cannot come
+    from holding the lease.
+    """
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    server, _, _ = await _server(terminal, runtime)
+    cast(Any, server)._start_proxy_attach = AsyncMock(return_value=None)
+    websocket = _WebSocket()
+    holder_before = server._leases().holder(terminal.id)
+    assert holder_before is not None
+
+    await TerminalWsMixin._handle_terminal_attach(
+        server,
+        websocket,
+        {"request_id": "attach-1", "terminal_id": terminal.id, "viewer": "gclient"},
+    )
+    attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"] is True
+    attachment_id = attach_result["attachment_id"]
+    record = server._leases().get(attachment_id)
+    assert record is not None
+    assert record.viewer == "gclient"
+    assert server._leases().holder(terminal.id) == holder_before
+
+    await server._handle_terminal_input(
+        websocket, _input_message(terminal, attachment_id, seq=1, data="a")
+    )
+
+    assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+    assert runtime.inputs == [b"a"]
 
 
 @pytest.mark.asyncio

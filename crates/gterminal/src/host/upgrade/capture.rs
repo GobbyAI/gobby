@@ -96,7 +96,6 @@ pub(super) fn capture(
             dropped_bytes: slot.dropped_bytes,
             total_bytes: slot.total_bytes,
             truncated: slot.truncated,
-            input_grant: slot.input_grant.clone(),
             locator: slot.locator.clone(),
             reported_cwd: child.runtime.reported_cwd(),
             reservation_id: slot.reservation_id.clone(),

@@ -203,12 +203,10 @@ impl PaneModes {
     }
 }
 
-/// Messages sent from the client to the host over the frame socket. The stream
-/// is read-only until the daemon grants it input, or gclient during a daemon
-/// outage grants its own frame attachment id: `grant_input` names an attachment
-/// id on the control socket, the client binds that id with
-/// [`ClientMessage::BindAttachment`], and only then do `Input` and `Paste`
-/// reach the PTY.
+/// Messages sent from the client to the host over the frame socket. Every
+/// attached stream types into its pane: `Input` and `Paste` reach the PTY once
+/// the stream is attached, with no grant. [`ClientMessage::BindAttachment`] only
+/// names the stream in `input_activity` events.
 ///
 /// Variant indices 1–3 are reserved so a hand-built fork-point `Input` /
 /// `ClipboardImage` / `Resize` payload cannot alias a live verb. The host
@@ -280,9 +278,8 @@ pub enum ClientMessage {
     },
     /// The client's terminal colours for the attached pane. Any authenticated
     /// stream may declare (no `BindAttachment` needed, so unfocused panes
-    /// re-theme). A declaration applies only when the slot has no input grant
-    /// or this stream's bound attachment holds it; a later grant applies the
-    /// holder's declaration. Send only to hosts whose control hello advertises
+    /// re-theme). Each declaration applies on arrival, so the newest declaration
+    /// across the pane's streams wins. Send only to hosts whose control hello advertises
     /// the `terminal_theme` capability: older hosts cannot decode this tag.
     /// Keep this variant last so earlier tags stay stable.
     SetTerminalTheme {
@@ -547,12 +544,11 @@ pub enum ServerMessage {
     Attached {
         created: bool,
         host_terminal_id: String,
-        /// Host-owned identity of this frame attachment; input grants name it
-        /// together with the terminal, through the trusted control socket.
+        /// Host-owned identity of this frame attachment.
         host_attachment_id: u64,
     },
     /// Typed refusal of `BindAttachment`, `Input` or `Paste`; the stream stays
-    /// open. Codes: `attach_required`, `attachment_already_bound`, `input_not_granted`, `not_native`,
+    /// open. Codes: `attach_required`, `attachment_already_bound`, `not_native`,
     /// `request_too_large`, `pty_busy`, `terminal_gone`.
     InputRefused {
         code: String,

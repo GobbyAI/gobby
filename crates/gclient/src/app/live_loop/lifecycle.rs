@@ -11,7 +11,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::{PaneId, Workspace};
-use super::control::{close_barrier, release_live_control};
+use super::control::{close_barrier, detach_barrier};
 use super::daemon_ops::{
     close_daemon_pane, close_daemon_tab, kill_live_panes, op_tag, pane_close_op, tab_close_op,
 };
@@ -60,10 +60,10 @@ pub(super) async fn close_live_pane(
         close_daemon_pane(workspace, chrome, outcomes, slot, Vec::new());
         return Ok(());
     };
-    // The close waits until the pane's accepted input (and its release) went out.
+    // An external or adopted terminal outlives the pane, so the close detaches
+    // this client's attachment once the pane's accepted input went out.
     if workspace.pane(pane_id).external || daemon_pane_is_adopted(workspace, chrome, slot)? {
-        release_live_control(workspace, pane_id);
-        let after = close_barrier(workspace, outcomes, pane_id)
+        let after = detach_barrier(workspace, outcomes, pane_id)
             .into_iter()
             .collect();
         if !close_daemon_pane(workspace, chrome, outcomes, slot, after) {
@@ -116,8 +116,7 @@ pub(super) async fn close_live_tab(
     {
         let mut after = Vec::new();
         for &(_, pane_id, _) in &panes {
-            release_live_control(workspace, pane_id);
-            after.extend(close_barrier(workspace, outcomes, pane_id));
+            after.extend(detach_barrier(workspace, outcomes, pane_id));
         }
         close_daemon_tab(workspace, chrome, outcomes, after);
         sync_live_chrome(workspace, chrome);
@@ -127,8 +126,7 @@ pub(super) async fn close_live_tab(
     let mut owned_after = Vec::new();
     for &(slot, pane_id, preserve_terminal) in &panes {
         if preserve_terminal {
-            release_live_control(workspace, pane_id);
-            let after = close_barrier(workspace, outcomes, pane_id)
+            let after = detach_barrier(workspace, outcomes, pane_id)
                 .into_iter()
                 .collect();
             if local || !close_daemon_pane(workspace, chrome, outcomes, slot, after) {

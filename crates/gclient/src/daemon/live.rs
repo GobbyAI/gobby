@@ -1,6 +1,5 @@
 use super::live_reader::{
     connect_socket, encode_frame_text, run_connection, Outbound, WRITE_CANCELLED, WRITE_QUEUED,
-    WRITE_STARTED,
 };
 use super::rest::RestClient;
 use super::{
@@ -23,7 +22,6 @@ use tokio::time::{timeout_at, Instant};
 use uuid::Uuid;
 
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
-pub const CONTROL_REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 pub const BROADCAST_CAPACITY: usize = 256;
 /// Rows per WS `terminal_list` inventory page; the daemon caps at 500.
 const INVENTORY_PAGE_SIZE: u16 = 200;
@@ -55,11 +53,8 @@ pub(super) struct LiveState {
     pub(super) outbound: Option<mpsc::Sender<Outbound>>,
     pub(super) requests: HashMap<String, ReplySender>,
     pub(super) writes: HashMap<(String, u64), ReplySender>,
-    pub(super) controls: HashMap<String, ReplySender>,
-    pub(super) control_write_states: HashMap<String, Arc<AtomicU8>>,
     pub(super) active_attachments: HashSet<String>,
     pub(super) attachment_tombstones: HashSet<String>,
-    pub(super) control_tombstones: HashSet<String>,
     /// Request ids of in-flight `workspace_attach`es.
     pub(super) workspace_attaches: HashSet<String>,
     /// The workspace this connection attached; the reader drops every other
@@ -82,11 +77,8 @@ impl Default for LiveState {
             outbound: None,
             requests: HashMap::new(),
             writes: HashMap::new(),
-            controls: HashMap::new(),
-            control_write_states: HashMap::new(),
             active_attachments: HashSet::new(),
             attachment_tombstones: HashSet::new(),
-            control_tombstones: HashSet::new(),
             workspace_attaches: HashSet::new(),
             attached_workspace: None,
             terminal_theme: None,
@@ -133,10 +125,6 @@ impl LiveInner {
         for (_, waiter) in state.writes.drain() {
             let _ = waiter.send(Err(error.clone()));
         }
-        for (_, waiter) in state.controls.drain() {
-            let _ = waiter.send(Err(error.clone()));
-        }
-        state.control_write_states.clear();
     }
 
     pub(super) async fn stall_close_stage(&self, stage: CloseStage) {
@@ -170,21 +158,9 @@ impl LiveDaemon {
         self.inner.state().last_error.clone()
     }
 
-    pub fn pending_counts(&self) -> (usize, usize, usize) {
+    pub fn pending_counts(&self) -> (usize, usize) {
         let state = self.inner.state();
-        (
-            state.requests.len(),
-            state.writes.len(),
-            state.controls.len(),
-        )
-    }
-
-    pub fn control_write_started(&self, attachment_id: &str) -> bool {
-        self.inner
-            .state()
-            .control_write_states
-            .get(attachment_id)
-            .is_some_and(|state| state.load(Ordering::Acquire) == WRITE_STARTED)
+        (state.requests.len(), state.writes.len())
     }
 
     #[doc(hidden)]
@@ -226,7 +202,6 @@ impl LiveDaemon {
         &self,
         key: &RouteKey,
         sender: ReplySender,
-        write_state: &Arc<AtomicU8>,
     ) -> Result<mpsc::Sender<Outbound>, DaemonError> {
         let mut state = self.inner.state();
         if state.closed {
@@ -261,25 +236,11 @@ impl LiveDaemon {
                 }
                 state.writes.insert(key, sender);
             }
-            RouteKey::Control(attachment_id) => {
-                if state.control_tombstones.contains(attachment_id)
-                    || state.attachment_tombstones.contains(attachment_id)
-                {
-                    return Err(DaemonError::ControlScopeIndeterminate);
-                }
-                if state.controls.contains_key(attachment_id) {
-                    return Err(DaemonError::ControlRequestInFlight);
-                }
-                state.controls.insert(attachment_id.clone(), sender);
-                state
-                    .control_write_states
-                    .insert(attachment_id.clone(), Arc::clone(write_state));
-            }
         }
         Ok(outbound)
     }
 
-    fn remove_waiter(&self, key: &RouteKey, post_write: bool) {
+    fn remove_waiter(&self, key: &RouteKey) {
         let mut state = self.inner.state();
         match key {
             RouteKey::Request(request_id) => {
@@ -287,13 +248,6 @@ impl LiveDaemon {
             }
             RouteKey::Write(attachment_id, sequence) => {
                 state.writes.remove(&(attachment_id.clone(), *sequence));
-            }
-            RouteKey::Control(attachment_id) => {
-                state.controls.remove(attachment_id);
-                state.control_write_states.remove(attachment_id);
-                if post_write {
-                    state.control_tombstones.insert(attachment_id.clone());
-                }
             }
         }
     }
@@ -313,8 +267,8 @@ impl LiveDaemon {
             .await
     }
 
-    /// `send` under `deadline` in place of its kind's, so a test can hold a
-    /// control request open past `CONTROL_REQUEST_DEADLINE`.
+    /// `send` under `deadline` in place of `REQUEST_DEADLINE`, so a test can
+    /// hold a request open past it.
     #[doc(hidden)]
     pub async fn send_with_deadline(
         &self,
@@ -338,15 +292,11 @@ impl LiveDaemon {
         let key = route_key(&message).ok_or_else(|| DaemonError::Protocol {
             detail: "request has no correlation key".into(),
         })?;
-        let duration = override_deadline.unwrap_or(if matches!(key, RouteKey::Control(_)) {
-            CONTROL_REQUEST_DEADLINE
-        } else {
-            REQUEST_DEADLINE
-        });
+        let duration = override_deadline.unwrap_or(REQUEST_DEADLINE);
         let deadline = Instant::now() + duration;
         let (reply_tx, reply_rx) = oneshot::channel();
         let write_state = Arc::new(AtomicU8::new(WRITE_QUEUED));
-        let outbound = self.register_waiter(&key, reply_tx, &write_state)?;
+        let outbound = self.register_waiter(&key, reply_tx)?;
         let mut guard = PendingGuard {
             daemon: self,
             key: &key,
@@ -475,16 +425,14 @@ struct PendingGuard<'a> {
 impl Drop for PendingGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
-            let post_write = self
-                .write_state
-                .compare_exchange(
-                    WRITE_QUEUED,
-                    WRITE_CANCELLED,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_err_and(|state| state == WRITE_STARTED);
-            self.daemon.remove_waiter(self.key, post_write);
+            // A request cancelled before its socket write never reaches the sink.
+            let _ = self.write_state.compare_exchange(
+                WRITE_QUEUED,
+                WRITE_CANCELLED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            self.daemon.remove_waiter(self.key);
         }
     }
 }

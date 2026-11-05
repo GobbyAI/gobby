@@ -139,9 +139,9 @@ impl PaneWriter {
                             .as_str()
                             .unwrap_or_default()
                             .to_owned();
-                        // An unconfirmed write leaves the pane read-only, so
-                        // nothing queued behind it may go out under that
-                        // uncertainty; nor may a write typed for a connection
+                        // An unconfirmed write stops this writer, so nothing
+                        // queued behind it may go out under that uncertainty;
+                        // nor may a write typed for a connection
                         // that has since been replaced.
                         if drained.stopped.load(Ordering::Acquire)
                             || generation != daemon.generation()
@@ -204,8 +204,8 @@ impl PaneWriter {
                                 }
                             }
                         }
-                        // A release that cannot reach the daemon lost the
-                        // connection, which drops the lease with it.
+                        // A detach that cannot reach the daemon lost the
+                        // connection, which drops the attachment with it.
                         if let Some(message) = message {
                             let _ = daemon.notify(message).await;
                         }

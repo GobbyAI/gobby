@@ -131,7 +131,7 @@ async def test_send_and_capture_are_backend_neutral(temp_db: HubDatabase) -> Non
 async def test_send_keys_uses_daemon_origin_and_idempotency(temp_db: HubDatabase) -> None:
     send, runtime, store, coordinator = _registered_send_keys(temp_db)
     terminal = next(iter(store.rows.values()))
-    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator", viewer="web")
     await coordinator.lease_registry.take_control(terminal.id, "operator")
     coordinator_write = AsyncMock(wraps=coordinator.write)
 
@@ -165,7 +165,7 @@ async def test_send_keys_reaches_an_external_tmux_pane(temp_db: HubDatabase) -> 
     send, runtime, store, coordinator = _registered_send_keys(temp_db, backend="tmux")
     terminal = next(iter(store.rows.values()))
     native = coordinator.runtime_for(make_memory_terminal(backend="native"))
-    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator", viewer="web")
     await coordinator.lease_registry.take_control(terminal.id, "operator")
 
     with patch(

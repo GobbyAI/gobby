@@ -2,8 +2,8 @@
 
 `gclient` is Gobby's terminal workspace client. It runs in your terminal, attaches
 to a workspace the Gobby daemon owns, shows its tabs and split panes of hosted
-terminals, lists the agents that need your attention, and lets you take or hand
-back keyboard control of any terminal. This guide covers the client as a user: how
+terminals, lists the agents that need your attention, and lets you type into any
+terminal it shows. This guide covers the client as a user: how
 to launch it, what is on screen, how workspaces work, every default keybinding,
 the mouse, and what happens across daemon restarts.
 
@@ -30,7 +30,7 @@ Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daem
 | `--node NODE` | The node that owns the workspace: a ref (`2`), a node id, a hostname, or a label. Defaults to the daemon's own node. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
 | `--token-file PATH` | Explicit plaintext API-key file. Without this flag, the client reads `api_key` from `~/.gobby/bootstrap.yaml`. |
-| `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive, and with them your keystrokes. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. Forcing `proxy` puts typing back on the daemon for every pane. |
+| `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive, and with them your keystrokes. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. Forcing `proxy` sends every pane's frames through the daemon. |
 | `--no-mouse` | Leave mouse events to your terminal emulator. Same as turning off `Mouse capture` in settings, for this run only. |
 | `--version`, `-V` | Print the version and exit. |
 | `--help`, `-h` | Print the usage line and exit. |
@@ -78,17 +78,17 @@ tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View ›
 Pin sidebar** pins it again. The menus remain usable while the client connects.
 
 **Menus.** Click a title on row 0 or move between open menus with the keyboard.
-Items that need a focused pane, an attention prompt, or control are disabled
+Items that need a focused pane or an attention prompt are disabled
 when those conditions are absent. Slashes below separate alternative labels:
 
 | Menu | Items |
 | --- | --- |
 | Gobby | Settings, Reload config, Quit |
-| File | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals…, Detach |
+| File | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
 | View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
-| Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
+| Agent | Respond, Mark seen, Open alert target, Next attention, Previous attention |
 | Help | Keybinds, Alerts…, Daemon, About Gobby |
 
 **File › New project…** creates a directory (or uses an existing empty one),
@@ -296,10 +296,8 @@ without repeating the `project#seq:` prefix the title carries. The project
 leads the reference (`○ gobby#1742: Codex`) only in the all-projects priority
 view. A seat with no definition names its provider, such as `○ Claude Code`,
 and a bare shell shows its name, such as `○ zsh`. The focused pane appends
-` · Focused`, or ` · Read-only` / ` · Uncertain` when typing is unsafe;
-unfocused panes carry no condition word. The focused title is bold in the
-accent, a seat that needs you reads in the warning hue, and a read-only or
-uncertain focused pane is dimmed. The task title stays on the Agents row.
+` · Focused`; unfocused panes carry no condition word. The focused title is
+bold in the accent, and a seat that needs you reads in the warning hue. The task title stays on the Agents row.
 Over-long pane titles share the Agents ticker. The bottom-left corner is
 empty. The bottom-right corner reads the sandbox lock on an SRT pane, then
 `tmux` for a tmux pane, then its address, joined by ` · `: `0:0:1:2` for a
@@ -351,10 +349,7 @@ shifted when the client runs inside tmux, and the current mode when it is not
 plain terminal mode. Pane-local title, address, and control state stay on that
 pane's borders. Every pane draws a top edge; a focused pane four cells wide or
 narrower has no room for its title there and hands it here, where it leads the
-line. The title is clickable only while it names an exception: clicking a title
-that ends `Read-only` or `Uncertain`, on the border or here, takes control, and
-hovering it underlines the title's words. `Focused` is a
-condition, not a button.
+line. `Focused` is a condition, not a button.
 
 **Alerts.** Messages that used to sit in the status line are toasts: they
 stack at the top-right corner of the pane area, newest at the bottom, up to
@@ -421,8 +416,7 @@ also has a UUID.
 window keeps its own focus, zoom, active tab, scrollback position, copy mode, and
 sidebar filters. The rows hold focus hints (the focused project, tab, and pane)
 that every window writes as its focus moves and that the next window, or the next
-launch, opens on. Two windows typing into one pane are arbitrated by the control
-lease described under [Attach and control](#attach-and-control).
+launch, opens on. Both windows can type into one pane; nothing arbitrates between them.
 
 **Pane environment.** A shell the workspace starts inherits `GOBBY_TERMINAL_ID`,
 `GOBBY_NODE_ID`, `GOBBY_NODE_REF`, `GOBBY_WORKSPACE_ID`, `GOBBY_TAB_ID`,
@@ -447,7 +441,7 @@ the daemon should track starts in one of three places:
 - A tmux session you start by hand on the default socket. The daemon lists it as
   an external terminal, and `gclient` opens it in a pane with ownership
   `external`, so `close_pane`, closing the tab, and `close terminal` on its
-  sidebar row all release it rather than kill it.
+  sidebar row all detach it rather than kill it.
 - A provider session resumed inside a `gclient` pane, for example
   `claude --resume <id>`. The session start binds it to the pane's terminal
   through `GOBBY_TERMINAL_ID`, it appears on the sidebar roster with backend
@@ -472,9 +466,6 @@ the outer tmux keeps `ctrl+b`. The status line always names the active prefix
 
 Pressing the prefix twice sends a literal prefix chord to the focused terminal.
 Any other unbound key after the prefix is forwarded to the terminal as itself.
-
-`ctrl+\` is the escape hatch: it releases control of the focused terminal in
-every mode, without the prefix, so a held pane is never a trap.
 
 ## Default keybindings
 
@@ -519,10 +510,6 @@ and only work after you bind them; every action also appears in the help popup
 
 | Chord | Action | Name |
 | --- | --- | --- |
-| `prefix+t` | Take control of the focused terminal | `take_control` |
-| `prefix+u` | Release control of the focused terminal | `release_control` |
-| `prefix+shift+a` | Accept the take-back prompt | `take_back` |
-| `ctrl+\` | Release control, in any mode, no prefix | (built in) |
 | `prefix+a` | Answer the current attention prompt | `respond` |
 | `prefix+w` | Open the terminal picker (the navigator) | `terminal_picker` |
 | `prefix+g` | Open the navigator with search focused | `goto` |
@@ -561,7 +548,6 @@ the focused terminal.
 | `prefix+?` | Keybinding help | `help` |
 | `prefix+s` | Settings | `settings` |
 | `prefix+shift+r` | Reload `prefs.toml` and the keymap file | `reload_config` |
-| `prefix+q` | Release control of the focused terminal (same as `release_control`; it does not exit) | `detach` |
 | `prefix+shift+q` | Quit the client | `quit` |
 
 The **Help › Keybinds** overlay shows the current bindings after overrides. In a
@@ -586,13 +572,12 @@ workspace. Those existing terminals stay adopted; the new shell is owned.
 
 **Closing kills gobby's terminals, not yours.** `close_pane`, `close_terminal`,
 and `close tab` ask the daemon to kill a terminal gobby started. The terminal is
-not backgrounded and does not reappear in the sidebar; use `release_control` or
-`detach` if you only want to stop typing into it. A tmux session you started
+not backgrounded and does not reappear in the sidebar. A tmux session you started
 yourself (the sidebar lists it because the daemon found it, ownership
-`external`) is never killed by `close_pane` or `close tab`: the pane leaves the
-tab, its control lease is released, and the session stays in the sidebar to
-reopen later. Only `close_terminal` kills an external session. Closing a tab
-kills every gobby-owned pane in it. With `Confirm close` on (the default),
+`external`) is detached, not killed: `close_pane`, `close tab`, and
+`close terminal` each take the pane out of the tab, and the session stays in the
+sidebar to reopen later. `close_pane` and `close tab` detach an adopted terminal
+the same way. Closing a tab kills every gobby-owned pane in it. With `Confirm close` on (the default),
 closing a tab first opens a dialog that names the tab and counts its panes; `y`
 or `enter` confirms, `n` or `esc` cancels. If the daemon refuses a kill, that
 pane stays, and so does its tab.
@@ -610,44 +595,39 @@ workspace and survive detach and reattach.
 
 ## Attach and control
 
-Every pane you open is *attached*: it receives frames. Whether your keystrokes
-reach it depends on the control lease, summarized at the pane's bottom-right.
+Every pane you open is *attached*: it receives frames and takes your typing.
+Every attached pane is writable. Typing needs no permission, no take-control
+step, and no grant from the daemon.
 
 | Pane title ends | Meaning |
 | --- | --- |
-| ` · Focused` | This is the focused pane. It holds the lease or is acquiring it; keys, pastes, and mouse reports are delivered in order. |
-| (no condition word) | An ordinary unfocused pane, including one deliberately observed with `alt+click`. |
-| ` · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the title or use `prefix+shift+a` to take control. |
-| ` · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the title or take control again to continue. |
+| ` · Focused` | This is the focused pane. Keys, pastes, and mouse reports go to it. |
+| (no condition word) | An ordinary unfocused pane. |
 
 A focused pane's focus is reported to the daemon, which holds operator messages
 for that pane's seat while it is focused. Activity is a key, a paste, or a mouse
 event other than pointer motion, anywhere in gclient (scrolling and clicks count;
 moving the pointer alone does not). After `focus_hold_seconds` (default 300, set
 under `[ui]`; see [Settings](#settings)) with no activity, gclient reports the
-focused pane unfocused. The lease stays with the pane, and the next activity
-reports it focused again. Moving focus to another pane reports that pane focused.
+focused pane unfocused. The next activity reports it focused again. Moving focus to another pane reports that pane focused.
 Focus-in and focus-out events from your terminal do not count as activity.
 
 ### Where your keystrokes go
 
-A local native pane you hold types straight to the terminal host over the same
-socket its frames arrive on. Nothing waits on the daemon between the key and the
-PTY, so a busy or slow daemon no longer stalls the window. The daemon still
-decides who may type: taking the lease makes it grant your attachment input on
-the host, and releasing it, losing it to a takeover, or detaching revokes that
-grant.
+A native pane types straight to the terminal host over the same socket its
+frames arrive on, whether or not the daemon is up. Nothing waits on the daemon
+between the key and the PTY, so a busy or slow daemon no longer stalls the
+window, and the daemon never gates that input.
 
-Every other pane keeps typing through the daemon — tmux panes, remote panes,
-and any pane whose direct connection failed and fell back to `proxy`. Those
-are the panes that can show `· Uncertain`, because only a write the daemon
-acknowledges can have an unknown outcome. No indicator tells the two apart; a
-pane that typed instantly and then went sluggish fell back, and
-`~/.gobby/logs/gclient.log` records it as `direct-fallback`. Under `auto`, a
+Tmux panes and remote panes type through the daemon. A native pane whose direct
+connection fell back to `proxy` does not: a key typed there is dropped with a
+toast, and the pane reattaches to its host. A pane that typed instantly and then
+went sluggish fell back, and `~/.gobby/logs/gclient.log` records it as
+`direct-fallback`. Under `auto`, a
 fallen-back pane keeps trying the direct connection beside its proxy, first
 after 5 seconds and then backing off to once a minute. The proxy keeps
-delivering until the host accepts and the direct stream is in place. Then the
-pane switches back, a lease you held follows it, and the log records
+delivering frames until the host accepts and the direct stream is in place. Then the
+pane switches back, and the log records
 `direct-promotion`.
 
 On hosts that support the kitty keyboard protocol, gclient enables disambiguated
@@ -658,42 +638,26 @@ application enables the kitty keyboard protocol, modified Enter and other extend
 keys reach it as distinct keys; a pane that has not enabled the protocol keeps
 legacy terminal encoding, where modified Enter is indistinguishable from Enter.
 
-Three messages belong to the direct path:
+These messages belong to the direct path:
 
 | Status line | What happened |
 | --- | --- |
-| `terminal did not grant input; take control again` | The daemon gave you the lease but the host did not accept the matching grant. The pane drops to take-back; asking again is the only honest offer, since there is no daemon path to fall back to. |
-| `terminal refused input (<code>); take control again` | The host refused a key, normally `input_not_granted` after your grant was revoked. Output keeps flowing; the pane returns to observing. |
+| `this terminal's input runs on its host stream; reattaching it, so the key was not sent` | A native pane whose frames come over the daemon's proxy. The key is not sent, and the pane reattaches to its host. |
+| `terminal refused input (<code>)` | The host refused a key, normally `attach_required` or `terminal_gone` once the PTY went away. Output keeps flowing, and the pane stays writable. |
 | `terminal input backlog; key dropped` | You typed faster than the terminal drained. That one keystroke is gone and is not retried, because a retried keystroke is the wrong keystroke. |
 
-Keyboard and navigator focus claim a free pane. A completed left click does the
-same, including when its previous holder released it. Pressing alone does not
-take control, so dragging to select text leaves the lease alone. Clicking a pane
-you already control sends no new take request. If another live agent holds the
-pane, the click focuses it and shows the read-only takeover control; use that
-indicator or `prefix+t` for a deliberate take-back.
+A left press on an unfocused pane focuses it. A press on the focused pane starts
+a selection, so dragging to select text does not move focus.
 
-Asking the daemon who may type costs one round trip, and that round trip belongs
-to the focus change or completed click, never to a key. For a free pane, keys,
-pastes, and forwarded mouse reports you produce before the grant lands
-are held in order and written the instant it does. Nothing is dropped and nothing
-announces a mode — the pane's title ends `· Focused` throughout. Only a daemon
-that stops answering can overrun that queue, and then a warning toast says
-`too much typed while acquiring control; the rest was dropped`.
+Keys typed while a pane is still attaching queue in order and are written once
+its attachment is up. If that queue fills, a warning toast says
+`too much typed while the terminal reattached; the rest was dropped`.
 
-Moving focus away before the grant lands discards whatever that pane was holding,
-rather than replaying it whenever the pane next wins control — a command that
-runs long after you typed it is worse than one that never ran.
+Alt is an ordinary modifier. `alt+click` a pane focuses it; when the pane's
+application tracks the mouse, the press is also forwarded with the Alt bit set,
+like any other modifier.
 
-To look at a pane without taking it, `alt+click` it. An observed pane still
-types: the first key takes control for you. A forwarded mouse report does not,
-so a pane you deliberately left observing stays that way under the pointer.
-
-`prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
-take: the pane's title then ends `· Read-only`, the reason arrives
-as a toast, and clicking the title takes control back.
-On quit, the client releases every held lease and detaches every pane; the
-terminals keep running.
+On quit, the client detaches every pane; the terminals keep running.
 
 ## Attention prompts and respond
 
@@ -865,9 +829,9 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 
 | Gesture | Effect |
 | --- | --- |
-| Left-click a free pane | Focus it and take control on release; an agent-held pane focuses and shows the takeover indicator |
-| `alt+click` a pane | Focus it without taking control (observe) |
-| Left-drag in a pane | Select and copy text without taking control (see copy mode) |
+| Left-click a pane | Focus it. A press on the focused pane starts a selection |
+| `alt+click` a pane | Focus it. A mouse-tracking application also gets the press, with the Alt bit set |
+| Left-drag in the focused pane | Select and copy text (see copy mode) |
 | Double-click / triple-click | Select a word / a line |
 | `ctrl+click` a link | Open the URL with `open` on macOS, `xdg-open` elsewhere |
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
@@ -880,7 +844,6 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Drag a project card | Reorder projects |
 | Click a `▸`/`▾` fold mark | Fold or unfold the card's worktrees |
 | Click a session or bare terminal row | Focus its pane (a needs-you row's question is already on screen) |
-| Click the control indicator | Take, release, or take back control |
 | Drag the sidebar edge or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |
 | Click a dialog or overlay button | Act as the key its hint names (`↵`, `esc`, `^c`, ...) |
@@ -888,10 +851,8 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 
 When a pane's application tracks the mouse (a TUI, `vim`, `less` with mouse on),
 clicks, drags, and the wheel are forwarded to it as mouse reports. Hold `shift`
-to keep a gesture for the client instead. A wheel notch in an unfocused pane
-focuses it and claims control if it is free, so subsequent typing goes there. If another
-viewer holds control, the wheel focuses the pane without taking control or
-forwarding the report.
+to keep a gesture for the client instead. A wheel notch that is forwarded to an
+unfocused pane's application focuses that pane first.
 
 **Menus.** Right-click opens a context menu; clicking a title on row 0 opens
 that menu. Use `j` / `k` or the arrows to move, `enter` or `space` to activate,
@@ -900,25 +861,25 @@ close.
 
 | Target | Items |
 | --- | --- |
-| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Take / Release control, Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
+| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
 | Tab | New tab, Rename tab, Arrange ▸ (for that tab), Sort tabs A–Z (with two or more workspace tabs on the bar), Close tab |
 | Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
 | Worktree row | Rename, Close, Delete worktree checkout… |
-| Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Take / Release control, Close terminal / Destroy orphaned terminal (when orphaned) |
-| Empty tab bar or empty sidebar | New terminal, New tab, New project…, Open project…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Detach, Quit |
+| Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Close terminal / Destroy orphaned terminal (when orphaned) |
+| Empty tab bar or empty sidebar | New terminal, New tab, New project…, Open project…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Quit |
 | **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
-| **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals…, Detach |
+| **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
 | **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
 | **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |
-| **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
+| **Agent** on the menu bar (click) | Respond, Mark seen, Open alert target, Next / Previous attention |
 | **Help** on the menu bar (click) | Keybinds, Alerts…, Daemon, About Gobby |
 
 `Send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `Right-click passthrough` setting does the same for every pane
 while its modifier is held. `Close terminal` acts on the row you right-clicked
 rather than on the focused pane, and on an external terminal (a tmux pane
-`gclient` never created) it releases the lease and drops the pane instead of
+`gclient` never created) it detaches and drops the pane instead of
 killing it. `Close` on a project card kills every terminal in the
 project's tabs (after a confirm-close dialog) but leaves the project registered.
 `Delete worktree checkout…` kills the worktree's terminals and removes the
@@ -955,13 +916,11 @@ the restarted daemon adopts the surviving host. `gobby stop --terminals` and
 
 The client rides through the gap. When the daemon's connection drops:
 
-1. A direct native pane keeps receiving frames from its gterm host. If you
-   already hold its host input grant, you can keep typing while the daemon is
-   unreachable; host refusal still ends that authority. Typing into a direct
-   pane you do not hold asks the host for its grant instead; see
-   [While the daemon is away](#while-the-daemon-is-away). Panes that use the
+1. A direct native pane keeps receiving frames from its gterm host, and you can
+   keep typing into it while the daemon is unreachable. Panes that use the
    daemon's proxy keep their last visible frame frozen, and typing into one
-   shows status rather than sending.
+   shows status rather than sending; see
+   [While the daemon is away](#while-the-daemon-is-away).
    A toast names the URL and cause (`Daemon unreachable at <url>: <error>`),
    while the status bar's left slot shows
    `× Daemon unreachable · retrying in <n> s` and counts down to the next attempt.
@@ -972,8 +931,8 @@ The client rides through the gap. When the daemon's connection drops:
 3. On reconnect it re-attaches the workspace and takes the daemon's fresh
    snapshot of its rows: a pane whose terminal was killed during the restart is
    gone, and so is a tab that lost every pane.
-4. It then re-attaches every surviving pane to the same terminal ids, retakes
-   control of the focused pane, refreshes the sidebar, and resumes live frames.
+4. It then re-attaches every surviving pane to the same terminal ids, refreshes
+   the sidebar, and resumes live frames.
    The retry segment clears itself after the connection succeeds; the event
    toast expires normally or clears at the next keypress.
 
@@ -982,14 +941,8 @@ The client rides through the gap. When the daemon's connection drops:
 Focus moves locally while the daemon is away, and wheel scroll on a direct pane
 scrolls its scrollback through the host, so both work without the daemon.
 
-Typing into a direct pane you do not hold asks the host for the grant on your
-behalf. gclient reaches the host's control socket, `gterm-control.sock`, beside
-the frame socket, and authenticates with the token in `gterm-control.token`. It
-reads that token only after checking that both files belong to you and are
-owner-only (mode `0600`), and it never writes the token to a log or an error.
-Keys you type wait for the grant and are then written in order. The pane you
-left keeps its host grant until your next key into another pane revokes it, as
-a daemon release would have.
+Typing into a direct native pane needs nothing from the daemon: keys go straight
+to its host.
 
 A key or scroll that cannot be sent says why on its pane:
 
@@ -997,17 +950,11 @@ A key or scroll that cannot be sent says why on its pane:
 | --- | --- |
 | `daemon is down; input not sent` | The pane types through the daemon, which is unreachable. The key was not sent. |
 | `daemon is down; scroll not sent` | The pane scrolls through the daemon, which is unreachable. The scroll was not sent. |
-| `terminal control unavailable while the daemon is down; input not sent` | The host's control socket is missing, is not owner-only, or did not answer, so no grant could be asked for. The key was not sent. |
-| `terminal did not grant input; take control again` | The host refused the grant. The pane drops to take-back and its queued keys are discarded. |
 
-When the daemon returns, the focused pane retakes control as described above,
-and that grant replaces the outage grant on the host, so typing carries on
-without a take-back.
+When the daemon returns, typing into a pane that goes through the daemon resumes.
 
-Panes, tabs, and held control therefore survive `gobby restart`. On a pane that
-types through the daemon, a write whose outcome the daemon never confirmed leaves
-it `· Uncertain` until you take control again; a direct native pane has no such
-write to lose, and retaking control re-grants its input on the host. If the host
+Panes and tabs therefore survive `gobby restart`. A write whose outcome the
+daemon never confirmed does not stop the pane: it keeps typing. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.
 
@@ -1054,4 +1001,4 @@ A Ghostty tab is a plain shell and never appears here; see
 [Bringing a bare terminal in](#bringing-a-bare-terminal-in) for where
 daemon-tracked work starts.
 
-_Last verified: 2026-10-10_
+_Last verified: 2026-11-04_

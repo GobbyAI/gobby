@@ -82,7 +82,7 @@ async def _grant(
     *,
     takeover: bool = False,
 ) -> int:
-    await coordinator.lease_registry.attach(terminal_id, attachment_id=attachment_id)
+    await coordinator.lease_registry.attach(terminal_id, attachment_id=attachment_id, viewer="web")
     result = await coordinator.lease_registry.take_control(
         terminal_id,
         attachment_id,
@@ -555,7 +555,7 @@ async def test_revalidate_before_persist() -> None:
     coordinator, _fake, store = _coordinator(runtime)
     terminal = next(iter(store.rows.values()))
     await _grant(coordinator, terminal.id)
-    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-2")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-2", viewer="web")
 
     async def first() -> None:
         await coordinator.write(
@@ -784,7 +784,9 @@ async def test_lease_mutations_linearize_with_dispatch() -> None:
         terminal = next(iter(store.rows.values()))
         generation = await _grant(coordinator, terminal.id)
         if mutation == "takeover":
-            await coordinator.lease_registry.attach(terminal.id, attachment_id="att-2")
+            await coordinator.lease_registry.attach(
+                terminal.id, attachment_id="att-2", viewer="web"
+            )
 
         write_task = asyncio.create_task(
             coordinator.write(
@@ -829,14 +831,16 @@ async def test_lease_mutations_linearize_with_dispatch() -> None:
         assert not coordinator.lock_held(terminal.id)
 
     registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
-    attachment = await registry.attach("term-reuse", attachment_id="att-old")
+    attachment = await registry.attach("term-reuse", attachment_id="att-old", viewer="web")
     async with registry.lock("term-reuse"):
         cell = registry._lock_cells["term-reuse"]
         finalize_task = asyncio.create_task(
             registry.finalize(attachment.attachment_id, reason="test")
         )
         await _let_tasks_run()
-        reattach_task = asyncio.create_task(registry.attach("term-reuse", attachment_id="att-new"))
+        reattach_task = asyncio.create_task(
+            registry.attach("term-reuse", attachment_id="att-new", viewer="web")
+        )
         await _let_tasks_run()
         assert registry._lock_cells["term-reuse"] is cell
     await finalize_task
@@ -1394,7 +1398,9 @@ async def test_partial_host_refusal_keeps_the_latch() -> None:
 async def test_observe_operator_input_lifts_quarantine_once() -> None:
     coordinator, _runtime, store, terminal = _counting_coordinator()
     leases = coordinator.lease_registry
-    await leases.attach(terminal.id, "direct", attachment_id="att-1", terminal=terminal)
+    await leases.attach(
+        terminal.id, "direct", attachment_id="att-1", terminal=terminal, viewer="web"
+    )
     assert (await leases.take_control(terminal.id, "att-1")).granted
     coordinator.quarantine(terminal.id, "wake:lost")
     store.calls.clear()

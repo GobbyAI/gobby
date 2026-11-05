@@ -263,6 +263,7 @@ struct Shared {
     gates: Mutex<HashMap<Uuid, ActionGate<Pending>>>,
     holds: Mutex<HashMap<Uuid, HeldAction>>,
     active: AtomicUsize,
+    busy_waits: AtomicUsize,
 }
 
 struct Pending {
@@ -299,6 +300,7 @@ impl Route {
                 gates: Mutex::new(HashMap::new()),
                 holds: Mutex::new(HashMap::new()),
                 active: AtomicUsize::new(0),
+                busy_waits: AtomicUsize::new(0),
             }),
         }
     }
@@ -306,6 +308,18 @@ impl Route {
     /// Admitted effects that have not settled.
     pub fn active(&self) -> usize {
         self.shared.active.load(Ordering::SeqCst)
+    }
+
+    /// Writes queued behind the terminal's action gate.
+    pub fn queued(&self, terminal: Uuid) -> usize {
+        lock(&self.shared.gates)
+            .get(&terminal)
+            .map_or(0, ActionGate::queued)
+    }
+
+    /// Acquire attempts that found the gate busy and went to wait for it.
+    pub fn busy_waits(&self) -> usize {
+        self.shared.busy_waits.load(Ordering::SeqCst)
     }
 
     pub async fn handle(&self, token: &Arc<str>, call: Value) -> Value {
@@ -526,6 +540,7 @@ impl Route {
             match taken {
                 Ok(hold) => break hold,
                 Err((HoldError::Busy, true)) if Instant::now() < deadline => {
+                    self.shared.busy_waits.fetch_add(1, Ordering::SeqCst);
                     tokio::time::sleep(ADMIT_POLL).await;
                     pump(&self.shared, terminal);
                 }

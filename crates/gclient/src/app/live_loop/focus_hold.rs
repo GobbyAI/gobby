@@ -1,5 +1,5 @@
-//! Reports the focused pane's lease to the daemon, and lets that report expire
-//! after `focus_hold_seconds` pass with no operator activity.
+//! Reports the focused pane to the daemon as `terminal_focus`, and lets that
+//! report expire after `focus_hold_seconds` pass with no operator activity.
 
 use std::time::{Duration, Instant};
 
@@ -39,6 +39,10 @@ pub(super) struct FocusHold {
     /// A focus move, a replaced attachment or returning activity makes it moot,
     /// so it is dropped and the next report is the normal one.
     owed_unfocus: Option<(PaneId, String)>,
+    /// The pane focus just left. Its attachment keeps the daemon's focus flag until
+    /// an unfocused report arrives, and nothing else clears it, so the report goes
+    /// out on the tick after the move.
+    moved_from: Option<(PaneId, String)>,
     last_activity: Instant,
 }
 
@@ -48,6 +52,7 @@ impl FocusHold {
             reported: None,
             in_flight: None,
             owed_unfocus: None,
+            moved_from: None,
             last_activity: now,
         }
     }
@@ -77,24 +82,33 @@ impl FocusHold {
                 >= Duration::from_secs(hold_seconds)
     }
 
-    /// The one report this tick owes. `key` is the focused pane when it is live
-    /// and held. Moving focus needs no unfocused report: the release already
-    /// cleared the daemon's flag, so the old key is forgotten silently.
+    /// The one report this tick owes. `key` is the focused pane when it is live.
+    /// A move sends the new pane's focus report, then the left pane's unfocus on
+    /// the next tick: the daemon's flag is per attachment and only an unfocus
+    /// clears it.
     pub(super) fn step(
         &mut self,
         key: Option<(PaneId, String)>,
         idle: bool,
     ) -> Option<FocusReport> {
-        let report = match self.owed_unfocus.take() {
-            Some(owed) if idle && key.as_ref() == Some(&owed) => {
-                let (pane, attachment_id) = owed;
-                Some(FocusReport {
-                    pane,
-                    attachment_id,
-                    focused: false,
-                })
+        let report = if let Some((pane, attachment_id)) = self.moved_from.take() {
+            Some(FocusReport {
+                pane,
+                attachment_id,
+                focused: false,
+            })
+        } else {
+            match self.owed_unfocus.take() {
+                Some(owed) if idle && key.as_ref() == Some(&owed) => {
+                    let (pane, attachment_id) = owed;
+                    Some(FocusReport {
+                        pane,
+                        attachment_id,
+                        focused: false,
+                    })
+                }
+                _ => self.next_report(key, idle),
             }
-            _ => self.next_report(key, idle),
         };
         self.in_flight = report.clone();
         report
@@ -102,16 +116,18 @@ impl FocusHold {
 
     fn next_report(&mut self, key: Option<(PaneId, String)>, idle: bool) -> Option<FocusReport> {
         let mut report = None;
-        if let Some(reported) = self.reported.as_ref() {
-            if idle || key.as_ref() != Some(reported) {
-                if idle {
+        if let Some(reported) = self.reported.clone() {
+            if idle || key.as_ref() != Some(&reported) {
+                self.reported = None;
+                if !idle && key.is_some() {
+                    self.moved_from = Some(reported);
+                } else {
                     report = Some(FocusReport {
                         pane: reported.0,
-                        attachment_id: reported.1.clone(),
+                        attachment_id: reported.1,
                         focused: false,
                     });
                 }
-                self.reported = None;
             }
         }
         if let Some(key) = key.filter(|_| !idle) {
@@ -128,8 +144,8 @@ impl FocusHold {
     }
 
     /// The `terminal_focus` message this tick owes, if any. Runs on every render
-    /// tick, so a granted take, a reconnect (the re-taken lease carries a new
-    /// attachment) and a return after expiry each report within one tick.
+    /// tick, so a focus change, a reconnect (the new attachment has a new id)
+    /// and a return after expiry each report within one tick.
     pub(super) fn sync(
         &mut self,
         workspace: &Workspace<LiveDaemon>,
@@ -141,8 +157,9 @@ impl FocusHold {
             return None;
         }
         let key = chrome.focused_pane().and_then(|pane| {
-            let held = workspace.panes.get(&pane)?;
-            (held.is_live() && held.is_held()).then(|| (pane, held.attachment_id().to_string()))
+            let live = workspace.panes.get(&pane)?;
+            live.is_live()
+                .then(|| (pane, live.attachment_id().to_string()))
         });
         let idle = self.is_idle(now, hold_seconds);
         let report = self.step(key, idle)?;
@@ -189,7 +206,7 @@ mod tests {
                 attachment_id: "attach-1".to_string(),
                 focused: true,
             }),
-            "a granted take reports its pane focused"
+            "a focused pane reports itself focused"
         );
         assert_eq!(
             hold.step(Some((first, "attach-1".to_string())), false),
@@ -203,9 +220,59 @@ mod tests {
                 attachment_id: "attach-2".to_string(),
                 focused: true,
             }),
-            "a focus move reports only the new pane"
+            "a focus move reports the new pane focused"
         );
+        assert_eq!(
+            hold.step(Some((second, "attach-2".to_string())), false),
+            Some(FocusReport {
+                pane: first,
+                attachment_id: "attach-1".to_string(),
+                focused: false,
+            }),
+            "the tick after a move unfocuses the pane it left"
+        );
+        assert_eq!(
+            hold.step(Some((second, "attach-2".to_string())), false),
+            None,
+            "a settled focus sends nothing"
+        );
+        assert_eq!(
+            hold.step(None, false),
+            Some(FocusReport {
+                pane: second,
+                attachment_id: "attach-2".to_string(),
+                focused: false,
+            }),
+            "leaving for an unheld pane unfocuses the held pane"
+        );
+    }
+
+    #[test]
+    fn a_refused_focus_goes_out_again_and_a_move_still_unfocuses_the_pane_it_left() {
+        let mut hold = FocusHold::new(Instant::now());
+        let (first, second) = (PaneId(1), PaneId(2));
+        hold.step(Some((first, "attach-1".to_string())), false);
         hold.unsent();
+        assert_eq!(
+            hold.step(Some((first, "attach-1".to_string())), false),
+            Some(FocusReport {
+                pane: first,
+                attachment_id: "attach-1".to_string(),
+                focused: true,
+            }),
+            "a focus the daemon refused goes out again"
+        );
+        hold.step(Some((second, "attach-2".to_string())), false);
+        hold.unsent();
+        assert_eq!(
+            hold.step(Some((second, "attach-2".to_string())), false),
+            Some(FocusReport {
+                pane: first,
+                attachment_id: "attach-1".to_string(),
+                focused: false,
+            }),
+            "the left pane is unfocused even when the new focus was refused"
+        );
         assert_eq!(
             hold.step(Some((second, "attach-2".to_string())), false),
             Some(FocusReport {
@@ -213,12 +280,7 @@ mod tests {
                 attachment_id: "attach-2".to_string(),
                 focused: true,
             }),
-            "a report the daemon refused goes out again"
-        );
-        assert_eq!(
-            hold.step(None, false),
-            None,
-            "leaving for an unheld pane sends no unfocused report"
+            "the refused new focus goes out after the unfocus"
         );
     }
 

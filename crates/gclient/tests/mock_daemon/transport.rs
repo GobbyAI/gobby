@@ -85,17 +85,8 @@ struct MockState {
     websocket_closes: usize,
     unique_attachment_ids: bool,
     next_attachment_id: u64,
-    /// When set, a closed websocket finalizes every attachment it was issued,
-    /// as the daemon's `finalize_websocket` does, and `terminal_take_control`
-    /// refuses a finalized id as `stale_attachment` (#23419).
-    finalize_attachments_on_close: bool,
-    live_attachments: HashSet<String>,
     attach_lease_holders: Vec<(String, Value)>,
     attach_backends: Vec<(String, String)>,
-    /// `(granted, lease_generation, reason, host_input_granted)`. The last
-    /// field is the terminal host's input grant, which a direct native pane
-    /// needs before it may type on its own frame socket (#22573).
-    take_control_replies: VecDeque<(bool, u64, Option<String>, Option<bool>)>,
     write_outcomes: VecDeque<(String, Option<String>)>,
     /// Reasons the next `terminal_kill` replies refuse with, in order.
     kill_refusals: VecDeque<String>,
@@ -157,11 +148,8 @@ impl MockDaemon {
             websocket_closes: 0,
             unique_attachment_ids: false,
             next_attachment_id: 0,
-            finalize_attachments_on_close: false,
-            live_attachments: HashSet::new(),
             attach_lease_holders: Vec::new(),
             attach_backends: Vec::new(),
-            take_control_replies: VecDeque::new(),
             write_outcomes: VecDeque::new(),
             kill_refusals: VecDeque::new(),
             workspace_refusals: VecDeque::new(),
@@ -333,6 +321,20 @@ impl MockDaemon {
             .seed(project, tabs)
     }
 
+    /// Seed like [`Self::seed_workspace`], with balanced split trees
+    /// (`WorkspaceSim::seed_balanced`) for tabs too wide for a chain.
+    pub fn seed_balanced_workspace(
+        &self,
+        project: &str,
+        tabs: &[(&[&str], &str)],
+    ) -> Vec<(String, Vec<String>)> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .seed_balanced(project, tabs)
+    }
+
     pub fn queue_owned_terminal_id(&self, terminal_id: &str) {
         self.state
             .lock()
@@ -394,15 +396,6 @@ impl MockDaemon {
         self.state.lock().expect("mock state").unique_attachment_ids = true;
     }
 
-    /// Model the daemon finalizing a closed socket's attachments: a later
-    /// `terminal_take_control` naming one is refused `stale_attachment`.
-    pub fn finalize_attachments_on_close(&self) {
-        self.state
-            .lock()
-            .expect("mock state")
-            .finalize_attachments_on_close = true;
-    }
-
     pub fn set_attach_backend(&self, terminal_id: &str, backend: &str) {
         self.state
             .lock()
@@ -417,35 +410,6 @@ impl MockDaemon {
             .expect("mock state")
             .attach_lease_holders
             .push((terminal_id.to_string(), holder));
-    }
-
-    pub fn enqueue_take_control_reply(
-        &self,
-        granted: bool,
-        lease_generation: u64,
-        reason: Option<&str>,
-    ) {
-        self.state
-            .lock()
-            .expect("mock state")
-            .take_control_replies
-            .push_back((
-                granted,
-                lease_generation,
-                reason.map(ToString::to_string),
-                Some(granted),
-            ));
-    }
-
-    /// A grant the terminal host never matched: the daemon hands out the
-    /// writer lease and omits `host_input_granted`. A direct native pane must
-    /// refuse to type rather than fall back to the daemon (#22573).
-    pub fn enqueue_take_control_reply_without_host_grant(&self, lease_generation: u64) {
-        self.state
-            .lock()
-            .expect("mock state")
-            .take_control_replies
-            .push_back((true, lease_generation, None, None));
     }
 
     /// Answer direct attaches for this locator's `host_terminal_id` with it, so
@@ -986,9 +950,6 @@ async fn serve_websocket(
     {
         let mut state = state.lock().expect("mock state");
         state.active_websockets -= 1;
-        if state.finalize_attachments_on_close {
-            state.live_attachments.clear();
-        }
     }
     Ok(())
 }
@@ -1117,7 +1078,6 @@ fn websocket_reply(
                 } else {
                     "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into()
                 };
-                state.live_attachments.insert(attachment_id.clone());
                 attachment_id
             };
             let lease_holder = state
@@ -1222,32 +1182,6 @@ fn websocket_reply(
                 "client_write_seq": request.get("client_write_seq"),
                 "outcome": outcome,
                 "reason": reason,
-            }))
-        }
-        "terminal_take_control" => {
-            let reply = {
-                let mut state = state.lock().expect("mock state");
-                let finalized = state.finalize_attachments_on_close
-                    && !request
-                        .get("attachment_id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| state.live_attachments.contains(id));
-                if finalized {
-                    (false, 0, Some("stale_attachment".to_string()), None)
-                } else {
-                    state
-                        .take_control_replies
-                        .pop_front()
-                        .unwrap_or((true, 1, None, Some(true)))
-                }
-            };
-            Some(json!({
-                "type": "terminal_control_result",
-                "attachment_id": request.get("attachment_id"),
-                "granted": reply.0,
-                "lease_generation": reply.1,
-                "reason": reply.2,
-                "host_input_granted": reply.3,
             }))
         }
         "terminal_release_control" => Some(json!({

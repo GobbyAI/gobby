@@ -6,7 +6,7 @@
 //! with no top edge hands its title to status.
 
 use crate::app::sidebar_model::{pane_state, AgentEntry, SandboxState};
-use crate::app::{ControlState, Pane};
+use crate::app::Pane;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::pane_layout::PaneInfo;
@@ -25,8 +25,6 @@ pub enum MetadataTone {
     Focused,
     /// The seat needs you.
     Attention,
-    /// Focused, but another client or the host holds input.
-    Held,
 }
 
 impl MetadataTone {
@@ -35,7 +33,6 @@ impl MetadataTone {
             Self::Ordinary => p.overlay0,
             Self::Focused => p.accent,
             Self::Attention => p.yellow,
-            Self::Held => p.subtext0,
         }
     }
 }
@@ -54,8 +51,6 @@ pub struct PaneCorners {
     /// The mark `sandbox` draws as, from the glyph preference.
     pub sandbox_mark: Option<&'static str>,
     pub tone: MetadataTone,
-    /// An exceptional condition a click resolves by taking control.
-    pub actionable: bool,
 }
 
 impl PaneCorners {
@@ -85,10 +80,9 @@ pub fn sandbox_mark(state: SandboxState, nerd_glyphs: bool) -> Option<&'static s
 
 /// `<glyph> <ref>: <definition> · <focus word>` for a seat, `<glyph> <name>`
 /// for a bare shell. The project leads the ref only where rows from every
-/// project mix, as on the Agents row. The focus word is Focused, or
-/// Read-only (another viewer took the lease, or the host refused input) or
-/// Uncertain, and is absent on unfocused panes. Asking for control is the
-/// normal focused state (#22573): input queues until the grant lands.
+/// project mix, as on the Agents row. The focus word is Focused on the
+/// focused pane and absent elsewhere. Every attached pane accepts keys
+/// directly, so the chrome carries no input-state word.
 pub fn pane_corners<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
@@ -130,25 +124,15 @@ pub fn pane_corners<W: WorkspaceView>(
             },
         );
     let (glyph, _) = state_dot(state, &chrome.palette);
-    let condition = if pane.is_acquiring() {
-        None
-    } else if pane.take_back || pane.control == ControlState::LeaseLost {
-        Some("Read-only")
-    } else if pane.control == ControlState::UncertainReadOnly {
-        Some("Uncertain")
-    } else {
-        None
-    };
-    let (title, tone) = match (focused, condition) {
-        (true, Some(word)) => (format!("{glyph} {identity} · {word}"), MetadataTone::Held),
-        (true, None) => (
+    let (title, tone) = if focused {
+        (
             format!("{glyph} {identity} · Focused"),
             MetadataTone::Focused,
-        ),
-        (false, _) if state == RowState::Attention => {
-            (format!("{glyph} {identity}"), MetadataTone::Attention)
-        }
-        (false, _) => (format!("{glyph} {identity}"), MetadataTone::Ordinary),
+        )
+    } else if state == RowState::Attention {
+        (format!("{glyph} {identity}"), MetadataTone::Attention)
+    } else {
+        (format!("{glyph} {identity}"), MetadataTone::Ordinary)
     };
     // A pane with no agent row (a bare shell) has no SRT launch record.
     let sandbox = agent.map_or(SandboxState::Unrestricted, |agent| agent.sandbox);
@@ -168,7 +152,6 @@ pub fn pane_corners<W: WorkspaceView>(
         sandbox,
         sandbox_mark: sandbox_mark(sandbox, chrome.prefs.nerd_glyphs),
         tone,
-        actionable: focused && condition.is_some(),
     }
 }
 
@@ -276,17 +259,6 @@ pub fn title_travel<W: WorkspaceView>(
         return 0;
     }
     display_width(corners.title.trim()).saturating_sub(budget)
-}
-
-/// The focused pane's Read-only or Uncertain title, which a click resolves.
-pub fn control_indicator_hit_area<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Option<Rect> {
-    let tab = chrome.active_tab()?;
-    let info = chrome.view.pane_infos.iter().find(|info| info.is_focused)?;
-    let corners = pane_corners(ws, chrome, ws.pane(*tab.slots.get(&info.id)?), true);
-    if !corners.actionable {
-        return None;
-    }
-    title_rect(info, &corners)
 }
 
 #[cfg(test)]

@@ -58,9 +58,6 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
     if focused_pane_removed {
         if let Some(survivor) = chrome.focused_pane() {
             workspace.focus = Some(survivor);
-            if !workspace.pane(survivor).take_back {
-                workspace.request_control(survivor, false);
-            }
         }
     }
 }

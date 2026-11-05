@@ -1,6 +1,6 @@
 //! Attachment lifecycle transitions and request guards.
 
-use super::{ControlState, Pane, PaneId, Workspace};
+use super::{Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, DaemonError, Generation};
 use crate::frame_source::{FrameError, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_terminal::protocol::ClientMessage;
@@ -51,7 +51,6 @@ impl Pane {
         self.attach_retry_at = None;
         self.reattach_after_indeterminate = false;
         self.live = false;
-        self.control = ControlState::Observe;
         // Keys typed while a recovery detached the pane belong to the
         // attachment it asks for now (#23559).
         if !self.fallback_in_flight {
@@ -87,13 +86,8 @@ impl Pane {
             lease_generation,
         };
         self.live = true;
-        self.control = ControlState::Observe;
-        self.take_back = false;
-        // A host grant names the attachment it was given to; this one waits
-        // for its own grant before it types on the host.
-        self.host_input_granted = false;
-        // Input typed after begin_attaching belongs to the grant this new
-        // attachment is waiting for. A refusal or focus loss still clears it.
+        // Input typed after begin_attaching waits for this attachment. A
+        // refusal or focus loss still clears it.
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;
@@ -117,9 +111,6 @@ impl Pane {
             lease_generation,
         };
         self.live = true;
-        self.control = ControlState::Observe;
-        self.take_back = false;
-        self.host_input_granted = false;
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;
@@ -147,11 +138,6 @@ impl Pane {
             supervisor_requested: false,
         };
         self.live = false;
-        self.control = ControlState::Observe;
-        // A grant still out was asked for this attachment: moot once it goes,
-        // and never to be applied to the one that replaces it (#22747).
-        self.control_request = None;
-        self.take_back = false;
         self.clear_pending_input();
         let _ = self.take_frame_source();
         Some((old_attachment_id, generation))
@@ -186,8 +172,6 @@ impl Pane {
             self.fallback_in_flight && matches!(self.attach, AttachState::Detaching { .. });
         self.attach = AttachState::Detached;
         self.live = false;
-        self.control = ControlState::Observe;
-        self.take_back = false;
         if !recovering {
             self.clear_pending_input();
         }
@@ -201,8 +185,6 @@ impl Pane {
     pub(super) fn refuse_attach(&mut self, code: &str, reason: &str) {
         self.attach = AttachState::Detached;
         self.live = false;
-        self.control = ControlState::Observe;
-        self.take_back = false;
         self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = Some(format!("{code}: {reason}"));
@@ -230,21 +212,10 @@ impl Pane {
         self.attach_retry_at.is_some_and(|at| at > now)
     }
 
-    pub(super) fn clear_control(&mut self, reason: impl Into<String>) {
-        self.control = ControlState::Observe;
-        self.take_back = false;
+    pub(super) fn clear_input(&mut self, reason: impl Into<String>) {
         self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = Some(reason.into());
-    }
-
-    pub(super) fn set_lease_generation(&mut self, generation: u64) {
-        if let AttachState::Attached {
-            lease_generation, ..
-        } = &mut self.attach
-        {
-            *lease_generation = generation;
-        }
     }
 
     pub(super) fn detaching_deadline(&self) -> Option<Instant> {

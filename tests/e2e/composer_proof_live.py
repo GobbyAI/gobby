@@ -249,7 +249,9 @@ class LiveProof:
                 or details.get("project_id") != self.scope.project_id
             ):
                 raise ProofRefused("real provider registration mismatch")
-            await ws.attach(terminal_id, delivery="direct", request_id=f"proof-{provider}")
+            await ws.attach(
+                terminal_id, delivery="direct", request_id=f"proof-{provider}", viewer="web"
+            )
             control = await ws.take(terminal_id, takeover=False)
             if control.get("granted") is not True:
                 raise ProofRefused("proof control refused")

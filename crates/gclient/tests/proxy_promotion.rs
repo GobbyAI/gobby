@@ -103,6 +103,28 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     .unwrap_or_else(|_| panic!("mock daemon never saw {expected} {kind} requests"));
 }
 
+/// The attachment the last `terminal_focus` report for `terminal_id` names,
+/// while that report says the pane is focused.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .rev()
+        .find(|request| request["terminal_id"] == terminal_id)
+        .filter(|request| request["focused"] == true)
+        .and_then(|request| request["attachment_id"].as_str().map(str::to_string))
+}
+
+/// Wait for the loop to report `terminal_id` focused under `attachment_id`.
+async fn wait_for_focus(mock: &MockDaemon, terminal_id: &str, attachment_id: &str) {
+    timeout(WAIT, async {
+        while focused_attachment(mock, terminal_id).as_deref() != Some(attachment_id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{terminal_id} was never reported focused under {attachment_id}"));
+}
+
 /// Moves paused time on two seconds at a time, letting the loop run between
 /// steps, until `reached` holds or 128 seconds have passed. Returns whether
 /// it held.
@@ -237,14 +259,15 @@ async fn a_failed_initial_direct_attach_is_promoted_after_a_bounded_proxy_interv
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id, "attachment-2").await;
         let promoted =
             advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 3).await;
         assert!(promoted, "no direct retry within 128s of proxy delivery");
         wait_for_websocket_requests(&mock, "terminal_detach", 2).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        // The promoted pane types at once: no take precedes its first key.
         send_key(&input_tx, KeyCode::Char('x')).await;
         let seen = typed_on_host(&host, b"x").await;
+        wait_for_focus(&mock, terminal_id, "attachment-3").await;
         drop(input_tx);
         seen
     };
@@ -282,13 +305,6 @@ async fn a_failed_initial_direct_attach_is_promoted_after_a_bounded_proxy_interv
             Some("attachment-3".into())
         ],
         "the refused direct attachment, the replaced proxy attachment, then the promoted one at exit"
-    );
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(takes[1]["attachment_id"], json!("attachment-3"));
-    assert_eq!(
-        takes[1]["takeover"],
-        json!(true),
-        "the retake displaces this client's own proxy holder"
     );
     assert_eq!(
         bound_before_input(&seen, b"x").as_deref(),
@@ -341,7 +357,7 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id, "attachment-1").await;
         // The host-local reconnect is refused, so recovery lands on the proxy.
         host.refuse_next_attach();
         host.disconnect();
@@ -351,9 +367,10 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
             advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 3).await;
         assert!(promoted, "no direct retry within 128s of proxy delivery");
         wait_for_websocket_requests(&mock, "terminal_detach", 2).await;
-        // The daemon re-attach left the pane observing, so the key asks.
+        // Every attached pane is writable, so the key needs no take first.
         send_key(&input_tx, KeyCode::Char('x')).await;
         let seen = typed_on_host(&host, b"x").await;
+        wait_for_focus(&mock, terminal_id, "attachment-3").await;
         drop(input_tx);
         seen
     };
@@ -370,13 +387,6 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
         driver
     );
     result.expect("recovered promotion loop");
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(
-        takes.len(),
-        2,
-        "the start-up take, then the key's: {takes:?}"
-    );
-    assert_eq!(takes[1]["attachment_id"], json!("attachment-3"));
     drop(log_guard);
 
     assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
@@ -434,7 +444,7 @@ async fn idle_proxy_pane(
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id, "attachment-1").await;
         let reattached =
             advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 2).await;
         drop(input_tx);

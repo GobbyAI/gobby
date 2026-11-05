@@ -7,12 +7,12 @@
 //! whether the chrome consumes the key. Text commits and bracketed pastes
 //! bypass the keymap through [`text_bytes`].
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyEvent, KeyEventKind};
 use gobby_terminal::input::{encode_terminal_key, KeyboardProtocol};
 use gobby_terminal::raw_input::RawInputEvent;
 
 use crate::ui::chrome::Mode;
-use crate::ui::keymap::{key_event_matches_combo, Action, KeyCombo, Keymap};
+use crate::ui::keymap::{Action, Keymap};
 
 /// One key press as the chrome sees it and as the focused pane receives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,14 +48,8 @@ pub enum Resolution {
     Unbound,
 }
 
-/// The keyboard exit from a held pane: `ctrl+\` releases control in every
-/// mode, armed or not, before any forwarding. It needs no prefix, so an outer
-/// tmux that eats the prefix can never lock the keyboard into a pane.
-pub const RELEASE_ESCAPE: KeyCombo = (KeyCode::Char('\\'), KeyModifiers::CONTROL);
-
 /// Resolve `key` against `keymap`. Outside prefix mode the prefix chord arms
 /// and direct chords match; inside it only `prefix+` chords match.
-/// [`RELEASE_ESCAPE`] resolves first, whatever the mode.
 ///
 /// `Mode::Terminal` is the exception, and it is the whole point of taking a
 /// mode here: a focused terminal owns the keyboard, so only the prefix is
@@ -70,9 +64,6 @@ pub fn resolve_chord(
     key: &KeyEvent,
     prefix_armed: bool,
 ) -> Resolution {
-    if key_event_matches_combo(key, RELEASE_ESCAPE) {
-        return Resolution::Action(Action::ReleaseControl);
-    }
     let action = if prefix_armed {
         keymap.lookup_prefix(key)
     } else if keymap.is_prefix(key) {

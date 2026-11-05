@@ -287,12 +287,10 @@ impl Workspace<LiveDaemon> {
         match outcome {
             HostRecoveryOutcome::Restored(source) if live => {
                 let pane = self.panes.get_mut(&pane_id).expect("pane exists");
-                // The daemon lease survives, but the host grant belonged to
-                // the old physical stream. The next input requests a fresh grant.
+                // The restored stream carries input straight to the host, so
+                // there is no grant to re-ask for.
                 pane.install_frame_source(PaneFrameSource::Direct(source));
                 pane.live = true;
-                pane.restore_host_control();
-                pane.host_input_granted = false;
                 pane.fallback_in_flight = false;
                 let minted_on = pane.attached_generation();
                 self.host_recovered.insert(pane_id);

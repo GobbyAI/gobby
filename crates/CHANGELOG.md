@@ -62,8 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `2` with empty JSON like any unknown CLI. The Qwen structured allow/block
   response path, which also carried `Stop` blocks, is gone. Version: `0.9.11`.
 
+#### gobby-terminal
+
+- **Input grant handshake** — the grant checks on native writes and the
+  `input_not_granted` refusal are gone. Every attached pane writes on its own
+  attachment, and the grant wire goldens are deleted. Version: `0.1.21`.
+
 #### gobby-client
 
+- **Read-only pane mode and take-control** — a pane is always writable. The
+  take-control key and menu item, the take-control UI, the read-only state and
+  the "Input delivery unconfirmed." toast are gone. Version: `0.1.108`.
 - **Qwen provider label** — the sidebar no longer maps the `qwen` source.
   Version: `0.1.27`.
 
@@ -105,6 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon lease against `gobby-core 0.9.1`. Version: `0.3.0`.
 - **Foundation alignment** — require `gobby-core 0.9.2`. Version: `0.3.1`.
 - **Minor version bump** — `0.4.0`; requires `gobby-core 0.10.0`. The managed `gdaemon` floor (`MANAGED_BIN_VERSION_PINS`) moves to `0.4.0` with it. Version: `0.4.0`.
+- **Input grant handshake removed** (#25653) — rebuilt against `gobby-terminals` without the grant checks and control routes that only existed for read-only mode. Version: `0.4.134`.
 
 #### gcode
 
@@ -184,6 +194,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each query re-arms the input reader through
   `gobby_terminal::raw_input::HostColorQueryArm`, so a reply split at its ESC
   is stitched rather than sent to the focused pane as an Escape key.
+- **Typing no longer waits on the daemon** (#25653) — keys to a native pane go
+  straight to its gterm host. Daemon load no longer delays a keystroke, since no
+  take grant sits on the path. Closing an external or adopted pane detaches its
+  attachment. Version: `0.1.108`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

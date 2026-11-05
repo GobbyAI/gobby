@@ -45,8 +45,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     )
     from gobby.terminals.composer_lock import bind_composer_coordinator
     from gobby.terminals.host_manager import TerminalHostManager
-    from gobby.terminals.input_grants import sync_host_input_grant
-    from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
     from gobby.terminals.services import TerminalServices
     from gobby.terminals.sync_bridge import TerminalEffectBridge
@@ -118,18 +117,6 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         TmuxTerminalRuntime(host_control=HostManagerControl(runner.terminal_host_manager))
     )
 
-    async def follow_lease_holder(change: HolderChange) -> bool | None:
-        return await sync_host_input_grant(
-            native_runtime,
-            change.terminal,
-            change.holder,
-            manager=runner.terminal_manager,
-            reason=change.reason,
-        )
-
-    # The gterm input grant mirrors the writer lease; this is the one place it
-    # is wired, so every take, release, and socket loss re-syncs the host.
-    runner.lease_registry.set_holder_observer(follow_lease_holder)
     runner.frame_client = getattr(runner.terminal_host_manager, "_frame_client", None)
     runner.terminal_runtime_registry = terminal_runtime_registry
     runner.write_coordinator = WriteCoordinator(

@@ -609,7 +609,8 @@ impl Daemon for TraceDaemon {
         if self.stall_detach && kind == "terminal_detach" {
             pending::<()>().await;
         }
-        if self.completed_cleanup.fetch_add(1, Ordering::SeqCst) == 1 {
+        // Detach is the only cleanup request, so its completion is the last.
+        if self.completed_cleanup.fetch_add(1, Ordering::SeqCst) == 0 {
             self.trace
                 .lock()
                 .unwrap()
@@ -687,10 +688,7 @@ impl ShutdownWorkspace for ShutdownFixture {
 }
 
 fn cleanup_requests() -> Vec<Value> {
-    vec![
-        json!({"type": "terminal_release_control"}),
-        json!({"type": "terminal_detach"}),
-    ]
+    vec![json!({"type": "terminal_detach"})]
 }
 
 struct TraceModeBackend(Arc<Mutex<Vec<String>>>);
@@ -795,6 +793,35 @@ async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
     .unwrap_or_else(|_| panic!("timed out waiting for {kind}"));
 }
 
+/// Attachment id of the terminal's latest `terminal_focus` report, when it reported focus.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    let last = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .rfind(|body| {
+            body.get("type") == Some(&json!("terminal_focus"))
+                && body.get("terminal_id") == Some(&json!(terminal_id))
+        })?;
+    if last.get("focused") != Some(&json!(true)) {
+        return None;
+    }
+    last.get("attachment_id")?.as_str().map(str::to_owned)
+}
+
+async fn wait_for_focused_attachment(mock: &MockDaemon) {
+    timeout(Duration::from_secs(1), async {
+        while ["terminal-shutdown", "terminal-exit"]
+            .iter()
+            .all(|id| focused_attachment(mock, id).is_none())
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("timed out waiting for a focused attachment report");
+}
+
 async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
     timeout(Duration::from_secs(1), async {
         loop {
@@ -883,7 +910,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
 
     let driver = async {
         wait_for_ws_request(&mock, "terminal_set_viewport").await;
-        wait_for_ws_request(&mock, "terminal_take_control").await;
+        wait_for_focused_attachment(&mock).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         wait_for_ws_request(&mock, "terminal_input").await;
         let reconnect = if matches!(stall, LiveShutdownStall::ReconnectJoin) {
@@ -1047,7 +1074,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
 
     let driver = async {
         wait_for_ws_request(&mock, "terminal_set_viewport").await;
-        wait_for_ws_request(&mock, "terminal_take_control").await;
+        wait_for_focused_attachment(&mock).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         wait_for_ws_request(&mock, "terminal_input").await;
         match cause {
@@ -1159,7 +1186,6 @@ async fn graceful_exit_releases_and_detaches_within_deadline() {
         [
             "latch-exit",
             "exit-reason:quit",
-            "terminal_release_control",
             "terminal_detach",
             "cleanup-awaited",
             "close",
@@ -1205,13 +1231,7 @@ async fn shutdown_closes_the_daemon_through_the_trait() {
     assert_eq!(closed.load(Ordering::SeqCst), 1);
     assert_eq!(
         *trace.lock().unwrap(),
-        [
-            "latch-exit",
-            "exit-reason:quit",
-            "terminal_release_control",
-            "terminal_detach",
-            "close"
-        ]
+        ["latch-exit", "exit-reason:quit", "terminal_detach", "close"]
     );
 
     shutdown(&mut workspace, daemon, Instant::now())
