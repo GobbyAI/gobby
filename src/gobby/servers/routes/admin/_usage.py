@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from gobby.storage.token_events import TokenEventStore
+from gobby.storage.usage_ledger import UsageLedgerStore
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -23,8 +25,14 @@ def register_usage_routes(router: APIRouter, server: HTTPServer) -> None:
         cursor: str | None = Query(None),
         limit: int = Query(200),
     ) -> dict[str, Any]:
-        """Stub: implemented in the green step."""
-        raise NotImplementedError("get_usage_ledger")
+        """Usage ledger page for one session or one task, given as UUIDs (exactly one)."""
+        store = UsageLedgerStore(server.services.database)
+        try:
+            return await asyncio.to_thread(
+                store.page, session_id=session_id, task_id=task_id, cursor=cursor, limit=limit
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/usage")
     async def get_usage(

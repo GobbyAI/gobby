@@ -77,7 +77,8 @@ def test_ledger_tool_and_route_scope_and_errors(
         INSERT INTO task_claim_intervals (task_id, session_id, claimed_at, released_at)
         VALUES (%s, %s, %s, %s)
         """,
-        (task.id, session_id, BASE, None),
+        # Closed, so claimed_ms does not move with the clock between the two reads below.
+        (task.id, session_id, BASE, datetime(2026, 10, 20, 11, 0, tzinfo=UTC)),
     )
     other_project = LocalProjectManager(temp_db).create("ledger-other")
     foreign_session = _session(session_manager, other_project.id, "foreign")

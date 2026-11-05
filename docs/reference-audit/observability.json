@@ -225,6 +225,22 @@
     {
       "surface": "mcp",
       "server": "gobby-metrics",
+      "tool": "get_usage_ledger",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_usage_ledger"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
       "tool": "reset_metrics",
       "audience": "agent",
       "reference": "src/gobby/install/shared/skills/gobby/references/observability/retention.md",
@@ -325,6 +341,21 @@
       "implementation": {
         "path": "src/gobby/servers/routes/admin/_usage.py",
         "symbol": "register_usage_routes.get_usage"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/admin/usage/ledger",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_usage.py",
+        "symbol": "register_usage_routes.get_usage_ledger"
       },
       "verification": [
         "source",

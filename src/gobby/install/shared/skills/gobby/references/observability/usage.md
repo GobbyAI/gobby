@@ -18,6 +18,28 @@ session-storage fallback has different source data.
    scope; `/api/admin/tokens/timeseries` adds a supported bucket granularity.
    Both accept zero hours for all recorded history. Do not compare differently
    scoped windows as though they were the same report.
+5. For per-call rows in one session or one task, call `gobby-metrics:get_usage_ledger`
+   with exactly one of `session_id` or `task_id`. The operator route
+   `GET /api/admin/usage/ledger` takes the same parameters as UUIDs. Each call returns
+   one page of `token_events` rows in `(event_at, session_id, message_key)` order and a
+   `next_cursor`. Continue with the same scope and `cursor`. A malformed cursor, or a
+   missing or doubled scope, is an error.
+
+The ledger's totals, spend, durations, attribution and coverage cover the whole scope
+and are recomputed on every page. Paging is a live traversal: a call appended after
+page one raises the totals and can land on a later page. A row sorted before the
+cursor, such as a late subagent row, counts in totals but never appears on a later page.
+A traversal does not repeat rows. Read `coverage` before any ledger number. Each source
+gives `tokens`, `api_calls` and `spend` as a `mode` of `exact`, `reported` or `unknown`,
+with a `reason` when unknown. An unknown mode is not a zero. `spend_observed` is unknown
+with reason `no reported run` when a source has rows but no provider run.
+
+`spend.reported` sums provider-reported amounts per unit, as strings. A run counts toward
+a task only when one of its claim intervals covers the run's span and no other interval
+in its session opens inside that span. Any other run that touches the task is listed in
+`spend.unattributed` and is never split across tasks. The ledger reads only
+`token_events`; rows that retention has moved to `token_event_retention_totals` are not
+counted.
 
 An unconfigured usage tracker returns an explicit error. The current admin
 usage route instead logs a storage failure and returns empty totals; consult
@@ -42,4 +64,4 @@ test state; use the admin recovery procedure for live-state restoration.
 
 See [token usage and savings](../../../../../../../../docs/guides/observability.md#token-usage-and-savings).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
