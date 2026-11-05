@@ -57,7 +57,9 @@ decided all three on 2026-11-05 (Decision 12):
   `docs/evidence/community-labels-2026-09/label-quality.md` does not exist and
   the ship decision is open (2.3).
 - Box has no live consumer evidence. Its OpenRouter attempt returned HTTP 400,
-  and the wire note names no consumer per decision shape (2.4).
+  the capture script's Box request bypasses the registered
+  `gobby-decisions:evaluate` tool (2.4), and the wire note names no consumer per
+  decision shape (2.5).
 
 **When the leaves close:**
 - A provisioning record shows a fresh isolated harness, the Orchestrator's
@@ -70,8 +72,11 @@ decided all three on 2026-11-05 (Decision 12):
   parity+ property (2.2).
 - A label-quality report records Josh's ratings of 30 sampled communities and
   the ship rule they select, with every decision consumer `off` (2.3).
-- A dated `clef:27b` capture on local Ollama records Box's round trip or its
-  finding, and the wire note names a consumer and live-path test per shape (2.4).
+- The capture script sends its one Box request through the registered
+  `gobby-decisions:evaluate` tool and keeps the raw exchange (2.4).
+- A dated `clef:27b` capture on local Ollama records Box's round trip through that
+  tool or its finding, and the wire note names a consumer and live-path test per
+  shape (2.5).
 
 ## Decision Record
 `kind: framing`
@@ -209,8 +214,9 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
       orchestrator to load Clef (not Clef flash) with Ollama and use that".
       The Orchestrator scoped it: "capture the Box evidence on Clef (full, not
       Flash) served locally by Ollama", with model `clef:27b`, and drop the
-      OpenRouter dependency. Leaf 2.4 owns that evidence, and the Orchestrator
-      owns its capture step. LM Studio's `clef-flash` is not used. The V2
+      OpenRouter dependency. Leaf 2.4 sends the capture's Box request through the
+      registered `gobby-decisions:evaluate` tool, leaf 2.5 owns the evidence, and
+      the Orchestrator owns its capture step. LM Studio's `clef-flash` is not used. The V2
       checks gate enforcement, and this plan enables none: the
       `--no-decisions` branch ships every consumer `off`, so no leaf needs
       them, parity+ property 3 stays missing, and 2.2 records it so.
@@ -304,7 +310,7 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
 ## Constraints
 `kind: framing`
 
-- The Orchestrator launches all four leaves in a Dev Team in epic mode for
+- The Orchestrator launches all five leaves in a Dev Team in epic mode for
   #22948, the only mode that grants the epic folder. That launch waits on Josh's
   freeze: no new teams until #25765 and #25653 are proven live.
 - Leaves 2.1 and 2.2 are heavy measurement work. The fleet's load hold in
@@ -664,15 +670,18 @@ Consumers unchanged:
 **Goal**: parity+ claims rest on numbers measured on current gcode, and the
 label gate has its quality evidence and ship rule.
 
-**Granularity:** four leaves. Provisioning (2.1) and measurement (2.2) split
+**Granularity:** five leaves. Provisioning (2.1) and measurement (2.2) split
 at the boundary where all four October roots stopped, so provisioning closes
 with its own durable record and a relaunched seat resumes measurement from it.
 Each lists more than six files, and the count does not call for a further
 split: 2.1's are dated copies of one harness that only runs together, and
 2.2's are the runner copies and the records its report traces to. Each leaf
 keeps to six acceptance items. The study (2.3) shares no target or service with
-the other two, so it has no edge to them. The Box capture (2.4) shares no
-target with any of them, so it has no edge either.
+the other two, so it has no edge to them. The Box route (2.4) and the Box
+capture (2.5) share no target with any of them, so they have no edge to them.
+The route is a script change with its own tests and closes on them. The capture
+waits on operator steps, and it depends on 2.4 because it runs the script from
+the main checkout after 2.4 lands. The two share no target.
 
 ### 2.1 Provision the rerun harness and pass C0 [category: test]
 `kind: deliverable`
@@ -1183,7 +1192,104 @@ Targets:
 `DATABASE_URL` at the isolated test hub, and every number in `label-quality.md` traces to the committed
 `label-quality-results.md` or `run.json`.
 
-### 2.4 Capture Box on local Clef and record the consumer evidence [category: docs]
+### 2.4 Route the capture's Box request through the registered evaluate tool [category: code]
+`kind: deliverable`
+
+Targets:
+- `scripts/decisions_live_capture.py::_capture`
+- `tests/scripts/test_decisions_live_capture.py::*` — scope-reason: two new tests pin the registered-tool route, and four existing tests pin the Box finding, redaction, exchange and shape records the route must keep
+
+Consumers unchanged:
+- `scripts/community_label_study.py` — no-edit-reason: `_cost` reads only `wire_api`, `measured_chars_per_token` and `probes` from a capture, never a shape record
+- `tests/scripts/test_community_label_study.py` — no-edit-reason: its `_capture` helper passes a PNG `--box-image` to `decisions_live_capture.main` and reads the capture only through `_cost`
+
+**Research context:**
+- The Adversary gobby#19936's GP-20261105-04: 2.5 names `gobby-decisions:evaluate` as Box's
+  consumer, but `_capture` calls `service.box("live_capture", ...)` on its own `DecisionService`,
+  so a live run never crosses that consumer's boundary. The repair replaces that request with the
+  registered tool's path. It adds no second Box request, no product consumer, no daemon and no
+  live configuration.
+- The tool: `src/gobby/mcp_proxy/tools/decisions.py::create_decisions_registry(config_resolver)`
+  registers `evaluate(state, questions, timeout_seconds=None)`. `_parse` validates the request, and
+  `_box` requires an absolute `image_path`, reads the file, and accepts PNG or JPEG by signature,
+  else `invalid_request` with detail "image must be a PNG or JPEG file". The handler then reads
+  `config.ai.decisions`, takes its service from `src/gobby/ai/decisions.py::get_decision_service`,
+  and `_decide` calls `service.box(CONSUMER, ...)` with `CONSUMER = "mcp_evaluate"`. Success
+  returns `_answered`: `success` true, `type`, `answers`, `response_model`, `backend_identity`.
+  Failure returns `_failure`: `success` false, `reason`, `detail`, `error`, including every
+  `DecisionsUnavailable` reason.
+- In-memory configuration precedent:
+  `tests/mcp_proxy/tools/test_decisions_tools.py::_registry` calls
+  `create_decisions_registry(lambda: DaemonConfig(ai=AIConfig(decisions=config)))`, importing
+  `gobby.config.app` and `gobby.config.ai`, and `::_evaluate` awaits
+  `registry.call("evaluate", {...})`. Neither module is in the capture test's
+  `LIVE_CONFIG_MODULES`, which `::test_capture_output_omits_key_and_image` checks against the
+  script's imports.
+- Raw exchange: `get_decision_service` caches one `DecisionService(config)` per
+  `_fingerprint(config)` in the module global `gobby.ai.decisions._service_cache`, built with no
+  `exchange_observer`. `_capture` already builds an observed service for each shape
+  (`exchange_observer=partial(_observe_exchange, config, record, redactions=redactions)`).
+  Setting the cache to `(decisions._fingerprint(config), service)` before the call makes the tool
+  use that observed service, so the Box record keeps its `exchanges` and parse diagnostics.
+  Rejected: a service-factory parameter on `create_decisions_registry`, a product change whose
+  only caller would be this script.
+- Redaction: the tool sends `base64.b64encode(data)` of the file's raw bytes, so the capture
+  redacts that encoding. `prepare_image_data` is no longer on the Box path.
+- Behavior the existing tests pin, on the fake wire of
+  `tests/scripts/conftest.py::openrouter_wire`, which answers Box and also resets
+  `decisions._service_cache`:
+  `::test_capture_box_failure_does_not_block_raw_probes` expects `box["finding"] ==
+  {"reason": "http_status", "detail": "HTTP 400"}` on both wires;
+  `::test_capture_output_omits_key_and_image` expects the image's base64 absent;
+  `::test_capture_records_bounded_redacted_http_errors` reads the Box record's `exchanges`;
+  `::test_capture_records_every_shape_and_probe` expects all four kinds sent.
+- `main` calls `_capture(config, args)` and writes its dict as JSON, so it needs no edit.
+  `_parse_diagnostics` treats only Score questions specially, so the Box `questions` shape below
+  is safe. 2.5 runs this script from the main checkout, so this leaf lands first.
+
+**Implementation:**
+1. **Tests first,** in `tests/scripts/test_decisions_live_capture.py`:
+   - `test_capture_box_runs_through_registered_evaluate_tool`: on the fake wire, the Box record has
+     `consumer` `gobby-decisions:evaluate`; its `questions` equal the tool argument
+     `{"square": {"type": "box", "instructions": "Locate the red square.", "image_path": <the
+     resolved image path>}}`; `image_sha256` equals the file's SHA-256; `tool_output` has
+     `success` true, `type` `box`, the fake wire's Box answer and `response_model`; `exchanges`
+     holds one 200 exchange; exactly one Box request reached the wire; and
+     `gobby.ai.decisions._service_cache` equals its value before the run.
+   - `test_capture_box_rejects_unsupported_image_through_the_tool`: a GIF file as `--box-image`
+     gives `finding` `{"reason": "invalid_request", "detail": "image must be a PNG or JPEG
+     file"}`, sends no Box request, and the six probes still run.
+2. **Route.** In `_capture`'s Box branch, replace the `prepare_image_data`, `BoxImage` and
+   `service.box` steps:
+   - Read the bytes of `args.box_image.resolve()`, append `base64.b64encode(data).decode("ascii")`
+     to `redactions`, and set `record["image_sha256"]`.
+   - Set `record["consumer"] = "gobby-decisions:evaluate"` and `record["questions"]` to the tool's
+     `questions` argument above.
+   - Save `decisions._service_cache`, set it to `(decisions._fingerprint(config), service)`, and
+     await `create_decisions_registry(lambda: DaemonConfig(ai=AIConfig(decisions=config))).call(
+     "evaluate", {"state": _STATE, "questions": record["questions"]})` once. Restore the saved
+     value in `finally`.
+   - Store the result as `record["tool_output"]`. When `success` is false, set
+     `record["finding"]` to its `reason` and `detail`.
+   - An `OSError` reading the image stays an `image_input` finding. Drop the imports the change
+     leaves unused.
+
+**Acceptance:**
+
+- 2.4.1 - The Box record names `consumer` `gobby-decisions:evaluate`, carries the tool's `questions` argument with the absolute `image_path`, the image's `image_sha256`, the tool's typed output and one recorded exchange; one Box request reaches the wire; and the service cache is restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
+- 2.4.2 - A GIF `--box-image` yields the tool's `invalid_request` finding with detail "image must be a PNG or JPEG file", sends no Box request, and the six probes still run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool`.
+- 2.4.3 - The tool's HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status", "detail": "HTTP 400"}` on both wires and does not block the probes. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
+- 2.4.4 - The capture section omits the key and the base64 of the image file's bytes, and the script imports none of `LIVE_CONFIG_MODULES`. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.
+- 2.4.5 - The Box record's failed exchanges stay bounded and redacted through the tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
+- 2.4.6 - All four kinds still reach the wire, and the probe and cost records are unchanged. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.
+
+**Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
+GOBBY_TEST_PROTECT=1 uv run pytest tests/scripts/test_decisions_live_capture.py
+tests/scripts/test_community_label_study.py -v`, then `uv run ruff check
+scripts/decisions_live_capture.py tests/scripts/test_decisions_live_capture.py` and
+`uv run ruff format --check` on the same paths.
+
+### 2.5 Capture Box on local Clef and record the consumer evidence (depends: 2.4) [category: docs]
 `kind: deliverable`
 
 Targets:
@@ -1208,12 +1314,21 @@ Targets:
   `::test_sufficient_deterministic_label_skips_generation`; Box, #24248's
   `gobby-decisions:evaluate` tool,
   `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_round_trips_every_decision_shape`,
-  which posts all four shapes. #24248's closing commit is
-  `fe0c921cbe2780838fcb0c339d4e3f8a23e943b6`.
-- Capture tool: `scripts/decisions_live_capture.py::main` runs Choice, Noul, Score and Box through
-  `DecisionService`, then the raw probes, and appends one dated section to `--out`. It requires
+  which posts all four shapes, and this leaf's live capture through that tool. #24248's closing
+  commit is `fe0c921cbe2780838fcb0c339d4e3f8a23e943b6`.
+- Capture tool: `scripts/decisions_live_capture.py::main` runs Choice, Noul and Score through
+  `DecisionService`. After 2.4 it sends Box through the registered `gobby-decisions:evaluate` tool
+  and records `consumer`, `image_sha256`, the tool's `questions` argument and its typed
+  `tool_output`. It then runs the raw probes and appends one dated section to `--out`. It requires
   `--alias`, `--box-image` and `--out`. `build_decisions_config` fixes the service timeout at 30 s,
   and `--probe-timeout-seconds` sets the probes'. A failed shape is recorded as a `finding`.
+- Order: the Orchestrator runs the capture from the main checkout, so it needs 2.4's commit on
+  0.5.0. 2.4 closes only after it lands, and this leaf's dependency on 2.4 orders the capture
+  after the route change.
+- Ground truth (the Plan Advocate gobby#19939's PA-22948-02, which the Orchestrator accepted): the
+  red square covers pixels [128, 384) on both axes of the 512 by 512 white image, so its expected
+  normalized edges are top and left 0.25, bottom and right 0.75. The capture adds no tolerance,
+  retry or second request.
 - Ollama precedent: `systemone-live.md` Run 8 ran `clef:27b` at `http://127.0.0.1:11434` on the
   `systemone` wire with `response_version` identity, for Choice, Noul and Score only. Box on a local
   `systemone` surface is unverified (`wire-contracts.md`, section 9), and LM Studio's route rejected
@@ -1226,8 +1341,10 @@ Targets:
   stays `off`, and this leaf changes no configuration.
 
 **Implementation:**
-1. **Image.** With Pillow through `uv run`, write a 512 by 512 PNG of a red square centered on white
-   to `<dir>/red-square-512.png`, where `<dir>` is
+1. **Image.** With Pillow through `uv run`, make a 512 by 512 white RGB image, draw a red filled
+   rectangle with corners (128, 128) and (383, 383), which Pillow draws inclusive so the square
+   covers pixels [128, 384) on both axes, and save it as a PNG to `<dir>/red-square-512.png`,
+   where `<dir>` is
    `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/box-capture-2026-11/`.
    Record its SHA-256.
 2. **Orchestrator steps.** Send these through the Dev Team Lead and Triage with the exact commands
@@ -1243,21 +1360,23 @@ Targets:
 3. **Record.** Append `<dir>/clef-capture.md` unchanged to `systemone-live.md`, and commit the image
    as `docs/evidence/decisions/box-red-square-2026-11.png`.
 4. **Wire note.** Add a "Decision shape consumers" section to `wire-contracts.md` that names each
-   shape's consumer and live-path test above, #24248's closing commit, and the Clef Box result: the
-   edges and confidence when Box parsed, or the finding's reason and detail verbatim when it did
-   not. In section 9, replace "Box runtime support remains unverified there" with the observed
-   Ollama result. A Box finding stays a finding: the section says Box live evidence on Clef is
-   unmet, and no consumer leaves `off`.
+   shape's consumer and live-path test above, #24248's closing commit, and the Clef Box result.
+   When Box parsed, it gives the captured edges and confidence beside the expected edges (top and
+   left 0.25, bottom and right 0.75) and states each difference. When Box did not parse, it gives
+   the finding's reason and detail verbatim. In section 9, replace "Box runtime support remains
+   unverified there" with the observed Ollama result. A Box finding stays a finding: the section
+   says Box live evidence on Clef is unmet, and no consumer leaves `off`.
 
 **Acceptance:**
 
-- 2.4.1 - The dated capture section records `wire_api` `systemone`, `api_base` `http://127.0.0.1:11434`, `request_model` `clef:27b`, all four shapes, and the Box shape's parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
-- 2.4.2 - The wire note's "Decision shape consumers" section names a product consumer and live-path test for each of Choice, Noul, Score and Box, with #24248's closing commit and the Clef Box result. file: `docs/evidence/decisions/wire-contracts.md`.
-- 2.4.3 - Section 9 of the wire note states the observed Ollama Box result in place of "remains unverified". file: `docs/evidence/decisions/wire-contracts.md`.
-- 2.4.4 - The committed image's SHA-256 equals the one sent with the Orchestrator's command. file: `docs/evidence/decisions/box-red-square-2026-11.png`.
+- 2.5.1 - The dated capture section records `wire_api` `systemone`, `api_base` `http://127.0.0.1:11434`, `request_model` `clef:27b`, all four shapes, and a Box record with `consumer` `gobby-decisions:evaluate`, its `image_sha256`, and the tool's parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
+- 2.5.2 - The wire note's "Decision shape consumers" section names a product consumer and live-path test for each of Choice, Noul, Score and Box, with #24248's closing commit and the Clef Box result, and when Box parsed it sets the expected edges (top and left 0.25, bottom and right 0.75) beside the captured ones. file: `docs/evidence/decisions/wire-contracts.md`.
+- 2.5.3 - Section 9 of the wire note states the observed Ollama Box result in place of "remains unverified". file: `docs/evidence/decisions/wire-contracts.md`.
+- 2.5.4 - The committed image is 512 by 512 and white except for red pixels covering exactly [128, 384) on both axes, and its SHA-256 equals both the one sent with the Orchestrator's command and the Box record's `image_sha256`. file: `docs/evidence/decisions/box-red-square-2026-11.png`.
 
 **Verification:** the committed capture section is byte-equal to `<dir>/clef-capture.md`, the image
-hash matches, and the diff changes no configuration file.
+hash matches, a Pillow read of the committed image confirms the red pixel bounds, and the diff
+changes no configuration file.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1348,6 +1467,14 @@ hash matches, and the diff changes no configuration file.
   Ollama and records the consumer evidence, and 2.3's inert decision flags name
   the same backend, so the plan has no OpenRouter dependency. This resolves the
   Adversary gobby#19936's GP-20261105-01.
+- 2026-11-05: The Orchestrator gobby#19309 accepted the Plan Advocate
+  gobby#19939's PA-22948-02 as suggested: the capture image's red square covers
+  pixels [128, 384) on both axes of a 512 by 512 white image, and the wire note
+  sets the expected edges 0.25 and 0.75 beside the captured ones, with no
+  tolerance, retry or extra request. For the Adversary's GP-20261105-04, new leaf
+  2.4 replaces the capture script's direct Box request with the registered
+  `gobby-decisions:evaluate` tool path, keeping the raw exchange through the
+  observed service, and the capture becomes 2.5, which depends on 2.4.
 
 ## V2: Verification
 `kind: verification`
@@ -1364,5 +1491,7 @@ After the leaves pass:
 5. Confirm `label-quality.md` exists and `docs/guides/llm-features.md` no longer calls
    the study pending. The Orchestrator then soft-deletes the C1 registration, and
    confirms #24701's `blocked-by` names the closed study leaf.
-6. Confirm `wire-contracts.md` has the "Decision shape consumers" section and
-   `systemone-live.md` the dated `clef:27b` capture.
+6. Rerun `tests/scripts/test_decisions_live_capture.py` under
+   `GOBBY_TEST_PROTECT=1` against the isolated test hub. Confirm `wire-contracts.md`
+   has the "Decision shape consumers" section and `systemone-live.md` the dated
+   `clef:27b` capture, whose Box record names `consumer` `gobby-decisions:evaluate`.
