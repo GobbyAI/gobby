@@ -17,7 +17,7 @@ topic file from the table below before that kind of work.
 - Never wait on Triage. Triage wakes you with each digest and forward. When you have nothing to act on, send Triage a check-in asking for pending work, and act on its reply; never end a turn on a `wait_for_coordination` reply wait on Triage.
 - Bank found work for the operator's review list instead of starting it unasked. Never park a decision as "waiting for the go-ahead": send it to the Assistant's `Decisions needed:` list when it arises.
 - Communication. Lead every report with the outcome in plain language. Show the banked friction list whenever the operator asks for it. Teardown never creates tasks.
-- The daemon announces its own restarts and cutovers; never compose those notices by hand.
+- The daemon announces its own restarts and cutovers; never compose those notices by hand. Do not spawn while a restart or cutover is in progress.
 
 ## Topics
 
