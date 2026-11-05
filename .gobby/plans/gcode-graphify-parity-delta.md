@@ -1588,6 +1588,19 @@ tests/ai/test_decisions_service.py`, `uv run ruff format --check` on the same pa
     traced the 2026-10-26 HTTP 400 to the 64x64 test image, and the plan notes
     OpenRouter's catalog listing of `cloudflare/clef`, `clef-flash` and
     `clef-omni`. The local `clef:27b` capture stays as ruled.
+- 2026-11-05: Consensus, replacing the consensus withdrawn on
+  `dc44dc4db4fa0482655e9afff4c1a482a23f7417`. The Plan Writer gobby#19935 and the
+  Adversary gobby#19936 reached technical consensus on plan commit
+  `9f725f1e614ee6dbc2953c97924717b90862348d` (plan SHA-256
+  `173d09bb428ba4f91066d2b37a03b835bd1a2157c33b09b4592dbd575dc12ae8`), with base
+  validation passing for both. The Adversary verified the existing
+  `_check_images` guard, its run before the cooldown check and dial, and the
+  existing boundary and no-cooldown test. It mapped #25788's four criteria to
+  2.6.1 through 2.6.3 and the focused verification. It found the detail-only
+  change proportionate, needing no fixture change, and found that Decision 19
+  gives the section one owner at expansion. GP-20261105-01 through
+  GP-20261105-04 stay resolved, and no new finding or open decision remains.
+  The Plan Advocate gobby#19939 converged on the same bytes with no suggestions.
 
 ## V2: Verification
 `kind: verification`
