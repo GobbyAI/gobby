@@ -36,7 +36,11 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
                 tab.slots.remove(&slot);
             }
         }
-        if !tab.slots.is_empty() && !tab.slots.contains_key(&viewer.focus_of(tab)) {
+        let focus = viewer.focus_of(tab);
+        if !tab.slots.is_empty()
+            && !tab.slots.contains_key(&focus)
+            && !awaiting_pane(workspace, viewer, focus)
+        {
             if let Some(slot) = tab
                 .layout
                 .pane_ids()
@@ -60,6 +64,30 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
             workspace.focus = Some(survivor);
         }
     }
+}
+
+/// Whether `slot` holds a daemon pane whose terminal has no pane yet. Its
+/// focus is the daemon's or a placement's, not stale, so projection keeps it
+/// until the terminal resolves.
+fn awaiting_pane(
+    workspace: &Workspace<LiveDaemon>,
+    viewer: &ViewerState,
+    slot: layout::PaneId,
+) -> bool {
+    let Some(model) = workspace.workspace_model() else {
+        return false;
+    };
+    viewer
+        .panes
+        .daemon_id(slot)
+        .and_then(|pane_id| model.pane(pane_id))
+        .and_then(|pane| pane.terminal_id.as_deref())
+        .is_some_and(|terminal_id| {
+            viewer
+                .unresolved
+                .iter()
+                .any(|id| id.as_str() == terminal_id)
+        })
 }
 
 /// Project the workspace model onto the focused project's tab bar when it
