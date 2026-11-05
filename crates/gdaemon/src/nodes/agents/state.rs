@@ -55,6 +55,10 @@ pub struct WorkspaceRecord {
     pub base_branch: Option<String>,
     pub source_root: PathBuf,
     pub reused: bool,
+    /// Set once this run's create made the tree and its branch. Only a created tree is removed:
+    /// a path or branch that already existed when create refused it is never this run's.
+    #[serde(default)]
+    pub created: bool,
 }
 
 impl WorkspaceRecord {

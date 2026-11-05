@@ -1214,10 +1214,11 @@ async fn cancel_during_host_spawn_never_commits() -> Result<()> {
     Ok(())
 }
 
-/// 2.7.4: a cancel committed while the host's commit reply is in flight still settles the run
-/// unlaunched. The child is aborted and the run is never recorded as launched.
+/// 2.7.4: a cancel that lands while the host's commit reply is in flight does not undo the
+/// commit. The host committed a live child, so the run is recorded as launched, the child is
+/// aborted, and the tree stays for the run's completion owner.
 #[tokio::test]
-async fn cancel_during_host_commit_settles_unlaunched() -> Result<()> {
+async fn cancel_during_host_commit_keeps_the_launched_tree() -> Result<()> {
     let fixture = CommandsFixture::new(false).await?;
     let id = fixture.launch.payload.run_id.clone();
     fixture.launch.host.hold_next_reply("spawn_commit");
@@ -1242,14 +1243,47 @@ async fn cancel_during_host_commit_settles_unlaunched() -> Result<()> {
         "cancel",
         json!({"stopped": true}),
     );
-    assert!(
-        !persisted_state(&fixture.launch.agents.home)?
+    {
+        let state = persisted_state(&fixture.launch.agents.home)?;
+        let run = state
             .runs
-            .contains_key(&id),
-        "a run cancelled before its launch record must not be recorded as launched"
+            .get(&id)
+            .context("the committed child is recorded")?;
+        // The exit may already have settled the run, so either launched phase is accepted.
+        assert!(
+            matches!(run.phase, RunPhase::Launched | RunPhase::Exited),
+            "a commit that returned a child records the run as launched"
+        );
+        assert!(run.host_terminal_id.is_some());
+    }
+    // The run is launched now, so its exit is owned by the watcher, as in `cancel_launched_run`.
+    let watcher = tokio::spawn({
+        let agents = fixture.launch.agents.clone();
+        async move { watch_exits(&agents).await }
+    });
+    let _watcher = AbortTask(watcher);
+    tokio::time::timeout(WAIT, async {
+        while !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "subscribe_events")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    fixture.launch.host.terminal_exited()?;
+    let exit = fixture.exit(ExitReason::Cancelled, true).await?;
+    assert!(
+        exit.workspace.is_some(),
+        "a launched exit reports its tree for its completion owner"
     );
-    fixture.exit(ExitReason::Cancelled, false).await?;
-    assert!(!workspace.exists());
+    assert!(
+        workspace.exists(),
+        "a seat's stop must never delete its worktree"
+    );
     assert_eq!(launch_methods(&fixture), ["spawn", "spawn_commit", "kill"]);
     Ok(())
 }

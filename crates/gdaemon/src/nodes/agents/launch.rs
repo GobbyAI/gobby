@@ -147,8 +147,9 @@ pub(super) async fn start_planned(
     let host_terminal_id = start_child(agents, payload, run_id, cwd, argv, env).await?;
     match record_launched(agents, run_id, &host_terminal_id).await {
         Ok(true) => Ok(()),
-        // A cancel committed while the commit was in flight; the committed child must not run.
-        Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
+        // A cancel landed while the commit was in flight. The commit launched the child and the run
+        // is recorded as launched, so the cancel's own turn stops it with the requested signal.
+        Ok(false) => Err(cancelled_failure()),
         Err(error) => {
             // The child is live but unrecorded, so it is killed rather than left unowned.
             let abort = abort_child(agents, &host_terminal_id).await;
@@ -393,17 +394,16 @@ async fn record_host(
 }
 
 /// Marks the run launched with its host terminal id, durably, before the in-memory state moves.
-/// Answers `false` and records nothing when a cancel was committed meanwhile, so the run settles
-/// unlaunched.
+/// Records the committed child as the run's launch even when a cancel landed meanwhile: the host
+/// already runs the child, so the run owns it. Answers `false` for such a cancel, so the caller
+/// reports the run cancelled and the cancel's own turn stops the launched child.
 async fn record_launched(
     agents: &NodeAgents,
     run_id: &str,
     host_terminal_id: &str,
 ) -> Result<bool, String> {
     let mut state = agents.state.lock().await;
-    if state.cancelled.contains_key(run_id) {
-        return Ok(false);
-    }
+    let cancelled = state.cancelled.contains_key(run_id);
     let mut next = state.clone();
     let run = next
         .runs
@@ -419,18 +419,29 @@ async fn record_launched(
     next.commit(&agents.home, &agents.changed)
         .map_err(|error| format!("{error:#}"))?;
     *state = next;
-    Ok(true)
+    Ok(!cancelled)
 }
 
 /// Records a failed launch as the run's exit, so a launch that returned never leaves its run
 /// owned. The workspace leaves disk before the exit commits, so an observed exit means it is
 /// gone; a failed removal stays queued for `retry_removals`. A failed commit reports the
-/// unrecorded exit beside the launch failure.
+/// unrecorded exit beside the launch failure. A run whose commit returned a child is launched:
+/// its exit settles it and keeps the tree, so nothing is rolled back here.
 pub(super) async fn record_failure(
     agents: &NodeAgents,
     run_id: &str,
     failure: LaunchFailure,
 ) -> LaunchFailure {
+    let launched = agents
+        .state
+        .lock()
+        .await
+        .runs
+        .get(run_id)
+        .is_some_and(|run| matches!(run.phase, RunPhase::Launched | RunPhase::Exited));
+    if launched {
+        return failure;
+    }
     let queued = {
         let mut state = agents.state.lock().await;
         let mut next = state.clone();

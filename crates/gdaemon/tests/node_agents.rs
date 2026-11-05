@@ -320,6 +320,7 @@ fn workspace(root: &Path, reused: bool) -> WorkspaceRecord {
         base_branch: Some("main".into()),
         source_root: root.join("source"),
         reused,
+        created: !reused,
     }
 }
 
@@ -768,7 +769,14 @@ async fn prepare_cancelled_after_create_skips_repair() -> Result<()> {
     let persisted = persisted_state(&home)?;
     let on_disk = persisted.runs.get("run-12").expect("run is persisted");
     assert_eq!(on_disk.phase, RunPhase::Preparing);
-    assert_eq!(on_disk.workspace.as_ref(), Some(&planned));
+    // Create ran before the cancel, so the persisted record marks the tree as made.
+    assert_eq!(
+        on_disk.workspace.as_ref(),
+        Some(&WorkspaceRecord {
+            created: true,
+            ..planned.clone()
+        })
+    );
     Ok(())
 }
 
@@ -926,7 +934,14 @@ async fn failed_removal_keeps_record_and_retries() -> Result<()> {
     workspace::prepare(&agents, "run-4", &record, "codex", &env, &never).await?;
     {
         let mut state = agents.state.lock().await;
-        state.removals.insert("run-4".into(), record.clone());
+        // The queued record is the one the create marked as made, as `to_removals` would copy it.
+        state.removals.insert(
+            "run-4".into(),
+            WorkspaceRecord {
+                created: true,
+                ..record.clone()
+            },
+        );
         state.commit(&agents.home, &agents.changed)?;
     }
 
@@ -991,6 +1006,11 @@ async fn restart_at_each_boundary_cleans_up() -> Result<()> {
             &home,
         )?
         .expect("worktree mode plans a record");
+        // Only a boundary past create has a tree this run made.
+        let record = WorkspaceRecord {
+            created: boundary != Boundary::AfterRecord,
+            ..record
+        };
         if boundary != Boundary::AfterRecord {
             add_worktree(&source, &record)?;
         }
@@ -1121,6 +1141,55 @@ async fn failed_create_keeps_preexisting_branch() -> Result<()> {
     workspace::retry_removals(&agents).await?;
     assert!(
         !git(&source, &["branch", "--list", "agent/collide-run-8"])?
+            .trim()
+            .is_empty(),
+        "a failed create must not delete a branch it did not create"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_create_keeps_an_unrelated_directory() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+    git(&source, &["branch", "agent/unrelated-run-9"])?;
+    let record = workspace::plan_workspace(
+        "run-9",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/unrelated-run-9"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    // An unrelated directory already occupies the path the run would take.
+    fs::create_dir_all(&record.path)?;
+    fs::write(record.path.join("keep.txt"), "not ours\n")?;
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-9").await?;
+    assert!(
+        workspace::prepare(&agents, "run-9", &record, "codex", &env, &never)
+            .await
+            .is_err(),
+        "create refuses a path that is already taken"
+    );
+    {
+        // The boot-failure path queues the run's record, as record_failure does.
+        let mut state = agents.state.lock().await;
+        state.to_removals("run-9");
+        state.commit(&agents.home, &agents.changed)?;
+    }
+    workspace::retry_removals(&agents).await?;
+    assert_eq!(
+        fs::read_to_string(record.path.join("keep.txt"))?,
+        "not ours\n",
+        "a failed create must not remove a directory it did not make"
+    );
+    assert!(
+        !git(&source, &["branch", "--list", "agent/unrelated-run-9"])?
             .trim()
             .is_empty(),
         "a failed create must not delete a branch it did not create"

@@ -226,6 +226,7 @@ fn record(home: &Path, id: &str) -> WorkspaceRecord {
         base_branch: Some("main".into()),
         source_root: home.join("source"),
         reused: false,
+        created: true,
     }
 }
 
