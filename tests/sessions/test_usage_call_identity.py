@@ -572,21 +572,22 @@ def _claude_line_at(message_id: str, input_tokens: int, output_tokens: int, time
 
 
 @pytest.mark.integration
-def test_fix_keeps_expired_unswept_rows(
+def test_fix_replaces_expired_legacy_row_with_keyed_event(
     db: HubDatabase,
     session_manager: SessionManager,
     retention_cutoff: Callable[[datetime], None],
     tmp_path: Path,
 ) -> None:
-    # Retention has not swept this row, and the transcript no longer produces its key. The
-    # expired replacement is not stored, so inserting it could double usage the archive holds.
+    # The transcript now produces the expired event under its keyed identity, and the legacy row
+    # holds the same usage. Nothing archives the key, so the legacy row is stale and --fix
+    # replaces it with the keyed event rather than keeping both.
     store = TokenEventStore(db)
     transcript = tmp_path / "claude.jsonl"
     transcript.write_text(
         _jsonl([_claude_line_at("msg-replaced", 100, 20, EXPIRED_TS)]), encoding="utf-8"
     )
     session = _register(
-        session_manager, external_id="expired-unswept", source="claude", transcript_path=transcript
+        session_manager, external_id="expired-legacy", source="claude", transcript_path=transcript
     )
     store.record(
         _stored(
@@ -600,8 +601,187 @@ def test_fix_keeps_expired_unswept_rows(
     )
     retention_cutoff(AUDIT_CUTOFF)
 
+    assert tokens_cli._audit_session(db, session.id, fix=False).stale_rows == 1
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    assert [r["message_id"] for r in store.list_session_events(session.id)] == ["msg-replaced"]
+    totals = store.get_session_totals(session.id)
+    assert (totals["input_tokens"], totals["output_tokens"]) == (100, 20)
+    settled = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (settled.stale_rows, settled.missing_rows, settled.usage_mismatch) == (0, 0, False)
+
+
+@pytest.mark.integration
+def test_fix_replaces_expired_unkeyed_row_with_keyed_event(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # A NULL message_id matches no transcript key, so it is drift even when expired. --fix
+    # replaces it with the keyed event for the same usage.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        _jsonl([_claude_line_at("msg-replaced", 100, 20, EXPIRED_TS)]), encoding="utf-8"
+    )
+    session = _register(
+        session_manager, external_id="expired-unkeyed", source="claude", transcript_path=transcript
+    )
+    store.record(
+        _stored(
+            session.id,
+            source="claude",
+            message_id=None,
+            input_tokens=100,
+            output_tokens=20,
+            event_at=EXPIRED,
+        )
+    )
+    retention_cutoff(AUDIT_CUTOFF)
+
+    assert tokens_cli._audit_session(db, session.id, fix=False).stale_rows == 1
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    assert [r["message_id"] for r in store.list_session_events(session.id)] == ["msg-replaced"]
+    totals = store.get_session_totals(session.id)
+    assert (totals["input_tokens"], totals["output_tokens"]) == (100, 20)
+    settled = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (settled.stale_rows, settled.missing_rows, settled.usage_mismatch) == (0, 0, False)
+
+
+@pytest.mark.integration
+def test_fix_replaces_expired_codex_index_rows_with_cumulative_keys(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # Index-keyed rows from before cumulative dedupe count the repeated total twice. The two
+    # cumulative keys replace all three rows, and the totals match the deduplicated rollout.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "codex.jsonl"
+    transcript.write_text(_jsonl(_cumulative_rollout()), encoding="utf-8")
+    session = _register(
+        session_manager, external_id="expired-codex", source="codex", transcript_path=transcript
+    )
+    legacy_rows = [(60, 10, 40), (30, 5, 20), (30, 5, 20)]
+    for index, (input_tokens, output_tokens, cache_read) in enumerate(legacy_rows):
+        store.record(
+            _stored(
+                session.id,
+                source="codex",
+                message_id=f"{session.id}:codex:{index}",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read=cache_read,
+                event_at=EXPIRED,
+            )
+        )
+    retention_cutoff(datetime(2026, 11, 1, tzinfo=UTC))
+
+    assert tokens_cli._audit_session(db, session.id, fix=False).stale_rows == 3
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    assert sorted(r["message_id"] for r in store.list_session_events(session.id)) == [
+        f"{session.id}:codex:110:100:40:10",
+        f"{session.id}:codex:165:150:60:15",
+    ]
+    totals = store.get_session_totals(session.id)
+    assert (totals["input_tokens"], totals["output_tokens"], totals["cache_read_tokens"]) == (
+        90,
+        15,
+        60,
+    )
+    settled = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (settled.stale_rows, settled.missing_rows, settled.usage_mismatch) == (0, 0, False)
+
+
+@pytest.mark.integration
+def test_fix_keeps_expired_legacy_row_when_unkeyed_archive_exists(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # An unkeyed ('') archive row sums sweeps whose keys are unknown, so the expired legacy row
+    # may already be counted there. The row is kept and reported stale, not deleted, and the
+    # transcript replacement is not re-inserted because its key cannot be proven unarchived.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        _jsonl([_claude_line_at("msg-replaced", 100, 20, EXPIRED_TS)]), encoding="utf-8"
+    )
+    session = _register(
+        session_manager,
+        external_id="expired-unkeyed-archive",
+        source="claude",
+        transcript_path=transcript,
+    )
+    store.record(
+        _stored(
+            session.id,
+            source="claude",
+            message_id="legacy-key",
+            input_tokens=100,
+            output_tokens=20,
+            event_at=EXPIRED,
+        )
+    )
+    db.execute(
+        "INSERT INTO token_event_retention_totals (session_id, message_key, input_tokens, "
+        "output_tokens, cache_creation_tokens, cache_read_tokens) VALUES (%s, '', 50, 5, 0, 0)",
+        (session.id,),
+    )
+    retention_cutoff(AUDIT_CUTOFF)
+
+    assert tokens_cli._audit_session(db, session.id, fix=False).stale_rows == 1
     assert tokens_cli._audit_session(db, session.id, fix=True).repaired
     assert [r["message_id"] for r in store.list_session_events(session.id)] == ["legacy-key"]
+    totals = store.get_session_totals(session.id)
+    assert (totals["input_tokens"], totals["output_tokens"]) == (150, 25)
+    settled = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (settled.stale_rows, settled.missing_rows, settled.usage_mismatch) == (1, 0, False)
+
+
+@pytest.mark.integration
+def test_fix_drops_expired_legacy_row_duplicating_an_archived_key(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # The transcript event's key is already archived, so its usage is counted there. The live
+    # legacy row duplicates that usage. --fix deletes it and does not re-insert the event.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        _jsonl([_claude_line_at("msg-replaced", 100, 20, EXPIRED_TS)]), encoding="utf-8"
+    )
+    session = _register(
+        session_manager,
+        external_id="expired-archived-duplicate",
+        source="claude",
+        transcript_path=transcript,
+    )
+    store.record(
+        _stored(
+            session.id,
+            source="claude",
+            message_id="legacy-key",
+            input_tokens=100,
+            output_tokens=20,
+            event_at=EXPIRED,
+        )
+    )
+    db.execute(
+        "INSERT INTO token_event_retention_totals (session_id, message_key, input_tokens, "
+        "output_tokens, cache_creation_tokens, cache_read_tokens) VALUES (%s, 'msg-replaced', "
+        "100, 20, 0, 0)",
+        (session.id,),
+    )
+    retention_cutoff(AUDIT_CUTOFF)
+
+    assert tokens_cli._audit_session(db, session.id, fix=False).stale_rows == 1
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    assert store.list_session_events(session.id) == []
     totals = store.get_session_totals(session.id)
     assert (totals["input_tokens"], totals["output_tokens"]) == (100, 20)
     settled = tokens_cli._audit_session(db, session.id, fix=False)

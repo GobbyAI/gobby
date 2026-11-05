@@ -203,21 +203,19 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
 
         # Retention archives events older than the cutoff into token_event_retention_totals
         # and deletes their rows. An expired event with no stored row was pruned, so it is
-        # re-inserted only when its key is unarchived. An expired stored row is live usage: it
-        # is repaired in place when its key matches, and otherwise kept.
+        # re-inserted only when its key is unarchived. A stored row whose key the transcript no
+        # longer produces is drift, expired or not, and --fix deletes it. An unkeyed ('') archive
+        # row may already count any expired row, so while one exists, expired drift is kept.
         store = TokenEventStore(db)
         cutoff = token_event_retention_cutoff()
         archived = store.archived_message_keys(session_id)
+        keep_expired = "" in archived
         derived_by_key = {
             event.message_id: event for event in derived if event.message_id is not None
         }
         stored_keys = {row["message_id"] for row in stored if row["message_id"] is not None}
         # A row with no message_id matches no transcript key, so it is drift that --fix replaces.
-        absent = [
-            row
-            for row in stored
-            if row["message_id"] not in derived_by_key and not _expired(row["event_at"], cutoff)
-        ]
+        absent = [row for row in stored if row["message_id"] not in derived_by_key]
         differing = [
             row
             for row in stored
@@ -238,7 +236,11 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
 
         repaired = False
         if fix and (stale_rows or missing or usage_mismatch):
-            doomed = [row["id"] for row in absent]
+            doomed = [
+                row["id"]
+                for row in absent
+                if not (keep_expired and _expired(row["event_at"], cutoff))
+            ]
             if doomed:
                 db.execute("DELETE FROM token_events WHERE id = ANY(%s)", (doomed,))
             store.repair_keyed_events(repairable)
