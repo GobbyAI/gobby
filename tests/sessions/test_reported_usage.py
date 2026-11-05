@@ -80,7 +80,7 @@ def _cost_state(start_ms: int, duration_ms: int, cost: float) -> str:
     return json.dumps(record)
 
 
-def _grok_turn(prompt_id: str, ticks: int, *, incomplete: bool = False) -> str:
+def _grok_turn(prompt_id: str, ticks: float, *, incomplete: bool = False) -> str:
     usage = {
         "inputTokens": 100,
         "outputTokens": 20,
@@ -142,6 +142,88 @@ def _xmin(db: HubDatabase, session_id: str, run_key: str) -> str:
     )
     assert row is not None
     return str(row["xmin"])
+
+
+_BAD_NUMBERS = [float("nan"), float("inf"), -1.0]
+_BAD_IDS = ["nan", "inf", "negative"]
+
+
+@pytest.mark.parametrize("bad", _BAD_NUMBERS, ids=_BAD_IDS)
+def test_claude_rejects_non_finite_or_negative_cost(bad: float) -> None:
+    good = _cost_state(START_MS, 60_000, 0.25)
+    rejected = _cost_state(START_MS + 3_600_000, 60_000, bad)
+
+    runs = claude_cost_runs([good, rejected])
+    assert [run.run_key for run in runs] == [f"claude:{START_MS}"]
+    assert runs[0].cost_amount == Decimal("0.25")
+
+
+def test_claude_rejects_out_of_range_start_time() -> None:
+    good = _cost_state(START_MS, 60_000, 0.25)
+    out_of_range = json.dumps(
+        {"type": "cost-state", "startTime": 1e300, "totalCostUSD": 0.25, "totalDuration": 60_000}
+    )
+    runs = claude_cost_runs([good, out_of_range])
+    assert [run.run_key for run in runs] == [f"claude:{START_MS}"]
+
+
+def test_claude_bounds_api_duration_to_bigint() -> None:
+    record = json.dumps(
+        {
+            "type": "cost-state",
+            "startTime": START_MS,
+            "totalCostUSD": 0.25,
+            "totalDuration": 60_000,
+            "totalAPIDuration": 1e19,
+        }
+    )
+    [run] = claude_cost_runs([record])
+    assert run.api_duration_ms is None
+    assert run.wall_duration_ms == 60_000
+
+
+def test_claude_rejects_non_finite_start_time() -> None:
+    record = json.dumps({"type": "cost-state", "startTime": float("nan"), "totalCostUSD": 0.25})
+    assert claude_cost_runs([record]) == []
+
+
+def test_claude_ignores_non_finite_duration() -> None:
+    record = json.dumps(
+        {
+            "type": "cost-state",
+            "startTime": START_MS,
+            "totalCostUSD": 0.25,
+            "totalDuration": float("nan"),
+        }
+    )
+    [run] = claude_cost_runs([record])
+    assert run.cost_amount == Decimal("0.25")
+    assert run.wall_duration_ms is None
+    assert run.observed_at == run.started_at
+
+
+@pytest.mark.parametrize("bad", _BAD_NUMBERS, ids=_BAD_IDS)
+def test_grok_treats_non_finite_or_negative_ticks_as_no_cost(bad: float) -> None:
+    parser = GrokTranscriptParser(session_id="grok-reported")
+    message = parser.parse_line(_grok_turn("prompt-bad", bad), 0)
+    assert isinstance(message, ParsedMessage)
+
+    [run] = grok_turn_runs([message])
+    assert run.cost_unit is None
+    assert run.cost_amount is None
+
+
+@pytest.mark.parametrize("bad", _BAD_NUMBERS, ids=_BAD_IDS)
+def test_droid_rejects_non_finite_or_negative_credits(tmp_path: Path, bad: float) -> None:
+    transcript = tmp_path / "droid-session.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    _write_sidecar(
+        tmp_path / "droid-session.settings.json",
+        credits=bad,
+        active_ms=4500,
+        mtime=START + timedelta(minutes=30),
+    )
+    assert droid_sidecar_run(transcript, START) is None
 
 
 def test_claude_cost_state_runs_are_per_start_time() -> None:

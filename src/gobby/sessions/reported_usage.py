@@ -9,6 +9,7 @@ update. Droid writes a cumulative sidecar beside its transcript. Each reading be
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -26,6 +27,7 @@ DROID_RUN_KEY = "droid:session"
 _COST_STATE = "cost-state"
 _GROK_TICKS_PER_USD = Decimal(10) ** 10
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MAX_BIGINT = 2**63 - 1  # api_duration_ms and wall_duration_ms are bigint columns
 
 
 @dataclass(frozen=True)
@@ -61,11 +63,15 @@ def claude_cost_runs(lines: Iterable[str]) -> list[ReportedRun]:
         if not isinstance(record, dict) or record.get("type") != _COST_STATE:
             continue
         start_ms = _number(record.get("startTime"))
-        cost = _number(record.get("totalCostUSD"))
+        cost = _cost(record.get("totalCostUSD"))
         if start_ms is None or cost is None:
             continue
         start = int(start_ms)
-        run = _claude_run(record, start, cost)
+        try:
+            run = _claude_run(record, start, cost)
+        except OverflowError:
+            # A timestamp beyond the datetime range is not a reading; skip it, keep the pass.
+            continue
         current = latest.get(start)
         if current is None or run.observed_at > current.observed_at:
             latest[start] = run
@@ -102,7 +108,7 @@ def grok_turn_runs(records: Iterable[object]) -> list[ReportedRun]:
         usage = update.get("usage") if update is not None else None
         if not isinstance(usage, dict):
             continue
-        ticks = _number(usage.get("costUsdTicks"))
+        ticks = _cost(usage.get("costUsdTicks"))
         amount = None if ticks is None else Decimal(str(ticks)) / _GROK_TICKS_PER_USD
         model_usage = usage.get("modelUsage")
         runs.append(
@@ -137,7 +143,7 @@ def droid_sidecar_run(transcript_path: str | Path, started_at: datetime) -> Repo
     if not isinstance(data, dict):
         return None
     usage = data.get("tokenUsage")
-    credits = _number(usage.get("factoryCredits")) if isinstance(usage, dict) else None
+    credits = _cost(usage.get("factoryCredits")) if isinstance(usage, dict) else None
     if credits is None:
         return None
     return ReportedRun(
@@ -175,13 +181,22 @@ def collect_runs(
 
 
 def _number(value: object) -> int | float | None:
+    """A finite real number, or None. JSON admits NaN and Infinity, which are not readings."""
     if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
 
 
+def _cost(value: object) -> int | float | None:
+    """A finite, non-negative cost, or None."""
+    number = _number(value)
+    return None if number is None or number < 0 else number
+
+
 def _duration_ms(value: object) -> int | None:
     number = _number(value)
-    if number is None or number < 0:
+    if number is None or number < 0 or number > _MAX_BIGINT:
         return None
     return int(number)
