@@ -75,7 +75,7 @@ def mock_runner() -> MagicMock:
 def agent_body() -> AgentDefinitionBody:
     return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-        name="default",
+        name="seat",
         provider="claude",
         model="claude-sonnet-5",
     )
@@ -90,7 +90,7 @@ def isolation_context() -> IsolationContext:
 def build_agent_body() -> Callable[..., AgentDefinitionBody]:
     def _build_agent_body(**overrides: object) -> AgentDefinitionBody:
         defaults: dict[str, object] = {
-            "name": "default",
+            "name": "seat",
             "provider": "claude",
         }
         defaults.update(overrides)

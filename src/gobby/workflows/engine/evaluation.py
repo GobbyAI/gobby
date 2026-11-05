@@ -31,11 +31,7 @@ from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine._offload import inline_offload_scope, offload, offload_rule_loop
-from gobby.workflows.engine.block_batching import (
-    agent_context_key,
-    block_scope,
-    failure_pending_in_any_context,
-)
+from gobby.workflows.engine.block_batching import agent_context_key, block_scope
 from gobby.workflows.engine.blocked_tool_recovery import (
     block_reason_signature,
     clear_blocked_tool_recovery_state,
@@ -281,16 +277,16 @@ class EvaluationMixin:
             block_state["tool_block_pending"] = True
             self._check_catastrophic_failure(event, variables)
             return
-        # Snapshot before clearing: a parallel non-edit success in any context
+        # Snapshot before clearing: a parallel non-edit success in this agent context
         # should not clear edit state created by a tool failure in the same turn.
-        had_pending_failure = failure_pending_in_any_context(variables)
+        had_pending_failure = bool(block_state.get("tool_block_pending"))
         block_state["tool_block_pending"] = False
         clear_blocked_tool_recovery_state(block_state)
         block_state["consecutive_tool_blocks"] = 0
 
-        if variables.get("edit_write_pending"):
+        if block_state.get("edit_write_pending"):
             if _is_write_like_event_data(event.data) or not had_pending_failure:
-                _clear_edit_write_state(variables)
+                _clear_edit_write_state(block_state)
 
     async def _finalize_block_response(
         self,
@@ -812,7 +808,7 @@ class EvaluationMixin:
                         )
                         # Blocked edit/write never executed - nothing to recover
                         if _is_write_like_event_data(evaluation.event.data):
-                            _clear_edit_write_state(evaluation.variables)
+                            _clear_edit_write_state(evaluation.block_state)
 
             rule_latency = (time.perf_counter() - rule_start) * 1000
             rule_result: RuleResult = "block" if rule_blocked else "allow"

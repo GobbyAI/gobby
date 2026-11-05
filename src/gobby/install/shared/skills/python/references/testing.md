@@ -157,3 +157,5 @@ Match the repo's validation gates before closing work. If you changed tests, run
 any configured test-quality audit and
 `uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new`
 ratchet for those files.
+
+_Version: 1.0.0_

@@ -2,7 +2,7 @@
 
 Load before launching or performing an epic implementation review. Also load
 [evidence](evidence.md) before assessment and [outcomes](outcomes.md) before a
-verdict. Load standalone `proportionality`; preserve the installed epic-reviewer
+verdict. Load standalone `proportionality`; preserve the installed code-reviewer epic
 methodology.
 
 ## Discover and select
@@ -12,14 +12,14 @@ such as `#N`, numeric refs and dotted paths. Ask for a missing target. Ask for
 interactive or delegated mode unless the request already establishes it; preserve
 the choice in handoff context as `interactive` or `delegated`.
 
-Inspect `gobby-workflows:get_agent_definition(name="epic-reviewer")` and
+Inspect `gobby-workflows:get_agent_definition(name="code-reviewer")` and
 `get_pipeline(name="review")` before relying on installed availability or defaults.
 Templates describe bundled intent; installed rows and effective project overrides
 determine operation. Do not infer active rules from template YAML.
 
 ## Run
 
-- Interactive: use `gobby-agents:apply_persona(agent="epic-reviewer")`, load the
+- Interactive: use `gobby-agents:apply_persona(agent="code-reviewer")`, load the
   review methodology and perform the assessment in this session.
 - Delegated: use `gobby-workflows:run_pipeline(name="review", inputs={"task_id":
   "<epic-ref>", "mode": "spawned"})`. Report the execution ID and returned agent
@@ -34,7 +34,7 @@ and [agents](../agents/overview.md). A completed spawn step is not a review verd
 
 Read the full descendant tree and review in order: spec compliance, code quality,
 testing, proportionality. Missing required behavior blocks approval before quality
-assessment. Keep the review's evidence trail together; the epic reviewer reviews
+assessment. Keep the review's evidence trail together; the code reviewer reviews
 alone rather than spawning additional reviewers.
 
 ## Holistic epic review
@@ -70,6 +70,6 @@ If the pipeline is absent/disabled or spawn fails, inspect its returned error an
 installed definition, then use the pipeline/agent recovery guidance. Do not retry
 by changing review state or inventing a successful verdict.
 
-_Version: 1.1.0_
+_Version: 2.0.0_
 
-_Last verified: 2026-11-03_
+_Last verified: 2026-11-04_

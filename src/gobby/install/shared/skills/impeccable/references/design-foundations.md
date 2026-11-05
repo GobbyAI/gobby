@@ -131,3 +131,5 @@ Avoid defaulting to light mode "to be safe" either. The point is to choose, not 
 </color_rules>
 
 When layout, visual detail, motion, interaction, responsive behavior, UX writing, implementation, or the AI-slop check is in scope, call `get_skill_file(name="impeccable", path="references/design-execution.md")`.
+
+_Version: 1.0.0_

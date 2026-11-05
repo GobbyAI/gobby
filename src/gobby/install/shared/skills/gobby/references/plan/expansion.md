@@ -22,4 +22,6 @@ MCP is the agent surface. Task-expansion CLI commands are operator-only.
 
 See [Task expansion](../../../../../../../../docs/guides/task-expansion.md#expansion-runs).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

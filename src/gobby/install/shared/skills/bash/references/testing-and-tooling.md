@@ -84,3 +84,5 @@ features. Add the operating systems or container images that differ in core
 utilities, PATH layout, filesystem behavior, or signal handling.
 
 Document any environment gap with the exact untested boundary and reason.
+
+_Version: 1.0.0_

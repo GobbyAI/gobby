@@ -47,3 +47,5 @@
   mailers still use expected names.
 - Public gem APIs, CLI flags, config keys, and extension points remain stable or
   have migration coverage.
+
+_Version: 1.0.0_

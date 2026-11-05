@@ -26,4 +26,6 @@ skill exists, passed checks, or is active.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#skill-hubs).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

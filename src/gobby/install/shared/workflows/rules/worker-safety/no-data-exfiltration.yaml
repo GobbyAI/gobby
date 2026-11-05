@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [worker-safety, enforcement, gobby]
 
 # Closes the exfiltration half of the prompt-injection taint path (gobby-#17671):

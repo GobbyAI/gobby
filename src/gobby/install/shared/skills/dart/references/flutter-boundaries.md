@@ -35,3 +35,5 @@ localization, accessibility, or platform/plugin integration.
 - Wrap plugin calls in a boundary that can be faked in tests.
 - Treat permissions, lifecycle, app backgrounding, connectivity, file access, and
   platform channel payloads as fallible.
+
+_Version: 1.0.0_

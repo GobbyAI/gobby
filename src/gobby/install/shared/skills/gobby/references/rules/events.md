@@ -30,4 +30,6 @@ to raw `stop` to evade its semantic boundary.
 Guides: [Events](../../../../../../../../docs/guides/rules.md#events) and
 [semantic boundaries](../../../../../../../../docs/guides/workflow-rules.md#author-against-semantic-turn-events).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -24,4 +24,6 @@ selects a standalone skill when names collide.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#complete-loading-and-levels).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

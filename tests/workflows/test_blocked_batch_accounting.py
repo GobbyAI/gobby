@@ -252,11 +252,11 @@ class TestAgentContextScoping:
         assert BLOCKED_REASON in response.reason
 
     @pytest.mark.asyncio
-    async def test_turn_start_clears_subagent_scopes(self, db: HubDatabase) -> None:
+    async def test_turn_start_keeps_subagent_scopes(self, db: HubDatabase) -> None:
+        """A parent turn start clears only the main context; a live subagent keeps its scope."""
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {
-            BLOCK_SCOPES_VARIABLE: {"agent-a": {**_blocked_state(), "consecutive_tool_blocks": 2}},
-        }
+        subagent_state = {**_blocked_state(), "consecutive_tool_blocks": 2}
+        variables: dict[str, Any] = {BLOCK_SCOPES_VARIABLE: {"agent-a": subagent_state}}
 
         await engine.evaluate(
             _make_event(HookEventType.BEFORE_AGENT, data={"prompt": "next"}),
@@ -264,7 +264,7 @@ class TestAgentContextScoping:
             variables,
         )
 
-        assert variables[BLOCK_SCOPES_VARIABLE] == {}
+        assert variables[BLOCK_SCOPES_VARIABLE] == {"agent-a": subagent_state}
 
 
 class TestBlockReasonScoping:

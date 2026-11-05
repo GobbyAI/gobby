@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -26,7 +25,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
-from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError, TaskNotFoundError
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
@@ -39,9 +38,12 @@ logger = logging.getLogger(__name__)
 TEARDOWN_KEY = "teardown"
 # The closing manager receives its close response before any seat ends.
 TEARDOWN_GRACE = timedelta(seconds=30)
-FINDING_LABEL = "team-teardown"
 # The refusal code for a seat whose run cannot be ended; teardown reports it and keeps the tree.
 SEAT_NOT_ENDED = "seat_not_ended"
+# Last (code, reason) logged per tree this process. A retained tree is retried every pass, so a
+# refusal logs at WARNING once and again only when its code or reason changes; later passes log at
+# DEBUG. In-process memory only: nothing here files a task or writes database state.
+_last_refusals: dict[tuple[str, str | None], tuple[str, str]] = {}
 
 
 class TeamSeatNotEndedError(RuntimeError):
@@ -64,7 +66,7 @@ class _DueTeam:
 
 @dataclass(frozen=True)
 class _DueLeaf:
-    team: _DueTeam  # the epic team whose branch the leaf's sub-tree was cut from
+    team: _DueTeam  # the team of the leaf's parent task, whose branch the sub-tree was cut from
     binding: TeamBinding  # the sub-tree, bound as a tree so the team's deleter removes it
 
 
@@ -114,8 +116,8 @@ def _due_runbook_seats(db: HubDatabase, cutoff: datetime) -> list[_DueRunbook]:
     """Task-bound runbooks without team admission still own the seats they launched.
 
     The saved definition and inputs are authoritative, including after a runbook finishes.
-    Support has no task input. Restrict discovery to local executions with unfinished seats;
-    admitted teams retain their existing tree cleanup and refusal handling.
+    Executions without a task input are not discovered. Restrict discovery to local executions
+    with unfinished seats; admitted teams retain their existing tree cleanup and refusal handling.
     """
     rows = db.fetchall(
         """
@@ -266,11 +268,11 @@ def _with_members(db: HubDatabase, bindings: list[TeamBinding]) -> list[_DueTeam
 
 
 def _due_leaves(db: HubDatabase, cutoff: datetime) -> list[_DueLeaf]:
-    """Sub-trees of epic leaves that closed before ``cutoff``, each paired with its epic's team.
+    """Sub-trees of leaves that closed before ``cutoff``, each paired with its parent task's team.
 
     A sub-tree is cut from its team's branch, so an admission on this machine names that branch,
     and the team's task is an ancestor of the leaf at any depth. The team may still be open: a
-    leaf can close while its epic works on.
+    leaf can close while its parent task works on.
     """
     rows = db.fetchall(
         """
@@ -355,8 +357,7 @@ async def _tear_down(
     )
     ended, refusal = await _end_seats(db, terminate, eligible, team.binding.task_id)
     if refusal is not None:
-        label = f"team-{team.binding.team_id}"
-        outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal, label)
+        outcome = _refuse(team.binding, refusal)
         await asyncio.to_thread(_record, db, team.binding, outcome)
         return sum(ended)
     if not all(ended):
@@ -380,13 +381,7 @@ async def _tear_down(
     result = await _delete_tree(db, team.binding, delete)
     if result is None or result.abandoned:
         return len(ended)  # a shutdown or another cleanup interrupted it; the next pass retries
-    outcome = (
-        {"outcome": "cleaned"}
-        if result.success
-        else await asyncio.to_thread(
-            _refuse, db, team.binding, result, f"team-{team.binding.team_id}"
-        )
-    )
+    outcome = {"outcome": "cleaned"} if result.success else _refuse(team.binding, result)
     await asyncio.to_thread(_record, db, team.binding, outcome)
     return len(ended) + 1
 
@@ -396,8 +391,8 @@ async def _tear_down_leaf(
 ) -> int:
     """End the seats a merged leaf dispatched, then delete its sub-tree and branch.
 
-    The epic is still open, so no teardown outcome goes on its admission. A retained
-    sub-tree stays due, and its finding is found again on the next pass, not filed twice.
+    The parent task is still open, so no teardown outcome goes on its admission. A retained
+    sub-tree stays due and is retried on the next pass, which logs its refusal again.
     """
     seats = await asyncio.to_thread(_team_seats, db, leaf.team)
     dispatched = await asyncio.to_thread(
@@ -405,9 +400,8 @@ async def _tear_down_leaf(
     )
     eligible = await asyncio.to_thread(_eligible_seats, db, dispatched, leaf.binding.task_id)
     ended, refusal = await _end_seats(db, terminate, eligible, leaf.binding.task_id)
-    label = f"leaf-{leaf.binding.worktree_id}"
     if refusal is not None:
-        await asyncio.to_thread(_refuse, db, leaf.binding, refusal, label)
+        _refuse(leaf.binding, refusal)
         return sum(ended)
     if not all(ended):
         return sum(ended)
@@ -419,7 +413,7 @@ async def _tear_down_leaf(
     if result is None or result.abandoned:
         return len(ended)
     if not result.success:
-        await asyncio.to_thread(_refuse, db, leaf.binding, result, label)
+        _refuse(leaf.binding, result)
         return len(ended)
     return len(ended) + 1
 
@@ -476,6 +470,9 @@ async def _delete_tree(
     result: WorktreeDeletionResult | None = await delete(binding)
     if result is not None and result.error_code == "worktree_not_eligible":
         return await asyncio.to_thread(_ineligible, db, binding)
+    if result is not None and result.success:
+        # The tree is gone, so nothing can retry its refusal; release the memory of it.
+        _last_refusals.pop((binding.team_id, binding.worktree_id), None)
     return result
 
 
@@ -483,7 +480,7 @@ def _team_seats(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
     """Every run the team's runbooks launched, ended or not.
 
     An ended seat still anchors its resumed run and the seats it dispatched. Resumes
-    may be parented to the epic manager even when the original seat belongs to a pod.
+    may be parented to the parent task's manager even when the original seat belongs to a pod.
     """
     executions = LocalPipelineExecutionManager(db, team.binding.project_id)
     runs = LocalAgentRunManager(db)
@@ -641,86 +638,59 @@ def _ineligible(db: HubDatabase, binding: TeamBinding) -> WorktreeDeletionResult
 
 
 def _refuse_runbook(db: HubDatabase, runbook: _DueRunbook, result: WorktreeDeletionResult) -> None:
-    """Persist a terminal refusal on the runbook and escalate its seats to Triage once."""
+    """Persist a terminal refusal on the runbook and log it; no task is filed."""
     executions = LocalPipelineExecutionManager(db, runbook.project_id)
     steps = executions.get_steps_for_execution(runbook.execution_id)
     if not steps:
         raise RuntimeError(f"Runbook {runbook.execution_id} launched seats without a recorded step")
     code = result.error_code or SEAT_NOT_ENDED
-    label = f"runbook-{runbook.execution_id}"
-    tasks = LocalTaskManager(db)
-    found = tasks.list_tasks(project_id=runbook.project_id, label=label, closed=False, limit=1)
-    seats = "\n".join(
-        f"Run {run.id}; session {run.child_session_id}"
-        for run in runbook.seats
-        if run.status in ACTIVE_AGENT_RUN_STATUSES
+    reason = result.error or result.message or code
+    run_ids = [run.id for run in runbook.seats if run.status in ACTIVE_AGENT_RUN_STATUSES]
+    logger.warning(
+        "Runbook %s seat teardown refused (%s): %s",
+        runbook.execution_id,
+        code,
+        reason,
+        extra={
+            "runbook_id": runbook.execution_id,
+            "task_id": runbook.task_id,
+            "code": code,
+            "reason": reason,
+            "run_ids": run_ids,
+        },
     )
-    finding = (
-        found[0]
-        if found
-        else tasks.create_task(
-            runbook.project_id,
-            f"Runbook seat teardown refused: {runbook.execution_id}",
-            description=(
-                f"Task {runbook.task_id} closed, but runbook {runbook.execution_id} could not "
-                f"end its seats ({code}): {result.error or result.message}.\n\n{seats}\n\n"
-                "Automatic teardown is stopped for this runbook. Resolve the refusal and end "
-                "these runs, preserving their handoffs, or record why a seat must remain."
-            ),
-            labels=[FINDING_LABEL, label],
-            validation_criteria=(
-                "The listed runs have ended with handoffs, or this task records why they remain."
-            ),
-        )
-    )
-    with contextlib.suppress(TaskAlreadyEscalatedError):
-        tasks.escalate_task(finding.id, f"Runbook {runbook.execution_id} teardown refused: {code}")
     # The first launch/guard step is already complete before any seat can close the task.
     # Merge into its durable output without adding a step absent from the saved definition.
-    merge_step_output(
-        executions,
-        steps[0],
-        teardown={"outcome": "refused", "code": code, "finding": finding.id},
-    )
+    merge_step_output(executions, steps[0], teardown={"outcome": "refused", "code": code})
 
 
-def _refuse(
-    db: HubDatabase, binding: TeamBinding, result: WorktreeDeletionResult, label: str
-) -> dict[str, Any]:
-    """File, or find again after a restart, the Triage finding for a refused deletion.
-
-    ``label`` names the tree's finding: a team tree's is its team's, and each retained leaf
-    sub-tree of an epic keeps its own, so one leaf's finding never answers for another.
-    """
+def _refuse(binding: TeamBinding, result: WorktreeDeletionResult) -> dict[str, Any]:
+    """Log a refused tree deletion and return its outcome; the tree stays and no task is filed."""
     code = result.error_code or (
         "uncommitted_changes" if result.uncommitted_changes else "deletion_refused"
     )
-    tasks = LocalTaskManager(db)
-    found = tasks.list_tasks(project_id=binding.project_id, label=label, closed=False, limit=1)
-    finding = (
-        found[0]
-        if found
-        else tasks.create_task(
-            binding.project_id,
-            f"Team teardown refused: {binding.branch}",
-            description=(
-                f"Task {binding.task_id} closed and its team's teardown was refused ({code}): "
-                f"{result.error or result.message}.\n\n"
-                f"Tree: {binding.worktree_path}\nBranch: {binding.branch}\n"
-                f"Base: {binding.base_branch}\n\n"
-                "The tree is kept. Resolve the refusal, then delete it with "
-                f"merged_into={binding.base_branch}, or record why it stays."
-            ),
-            labels=[FINDING_LABEL, label],
-            validation_criteria=(
-                f"The tree at {binding.worktree_path} is deleted with "
-                f"merged_into={binding.base_branch}, or this task records why it stays."
-            ),
-        )
+    reason = result.error or result.message or code
+    key = (binding.team_id, binding.worktree_id)
+    repeated = _last_refusals.get(key) == (code, reason)
+    _last_refusals[key] = (code, reason)
+    logger.log(
+        logging.DEBUG if repeated else logging.WARNING,
+        "Team %s teardown refused for tree %s (%s): %s",
+        binding.team_id,
+        binding.worktree_path,
+        code,
+        reason,
+        extra={
+            "team_id": binding.team_id,
+            "task_id": binding.task_id,
+            "worktree_id": binding.worktree_id,
+            "worktree_path": binding.worktree_path,
+            "branch": binding.branch,
+            "code": code,
+            "reason": reason,
+        },
     )
-    with contextlib.suppress(TaskAlreadyEscalatedError):
-        tasks.escalate_task(finding.id, f"Team {binding.team_id} teardown refused: {code}")
-    return {"outcome": "refused", "code": code, "finding": finding.id}
+    return {"outcome": "refused", "code": code}
 
 
 def _record(db: HubDatabase, binding: TeamBinding, outcome: dict[str, Any]) -> None:

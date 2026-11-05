@@ -30,3 +30,5 @@ Paths below are relative to the `scripts_dir` returned by
 Use `get_skill_file` to inspect a released script when diagnosing its behavior.
 Changes to enforcement belong in Gobby's rules engine. Changes to released
 script bytes belong in the repository-only re-vendor workflow.
+
+_Version: 1.0.0_

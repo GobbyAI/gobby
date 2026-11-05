@@ -26,3 +26,5 @@ authority to send messages or close issues.
 
 See [webhook operation](../../../../../../../../docs/guides/webhooks-and-plugins.md)
 and [transport/model boundary](../../../../../../../../docs/guides/webhook-action-schema.md).
+
+_Version: 1.0.0_

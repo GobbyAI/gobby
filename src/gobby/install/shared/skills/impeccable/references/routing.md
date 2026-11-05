@@ -37,3 +37,5 @@ node <scripts_dir>/detect.mjs --json <targets>
 
 Fold verified findings into the recommendations. Detector failure never blocks
 the menu. The table in `SKILL.md` remains the canonical command inventory.
+
+_Version: 1.0.0_

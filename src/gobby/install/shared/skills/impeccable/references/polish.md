@@ -97,3 +97,5 @@ Walk the complete path again with mouse, keyboard, and touch where applicable. C
 Run the bundled detector once (`node <scripts_dir>/detect.mjs --json <target>`) when available; a manual anti-pattern scan replaces it only when no detector is available. Never add another detector pass. Then run any other relevant QA commands. Fix real defects and document only narrow intentional exceptions. A clean scan does not replace visual judgment.
 
 Finish with a source diff: remove accidental churn, orphaned code, redundant values, and temporary artifacts. Ship only when the feature is functionally complete and consistently finished across the path.
+
+_Version: 1.0.0_

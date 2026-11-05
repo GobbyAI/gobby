@@ -10,6 +10,7 @@ from gobby.agents.team_admission_records import TeamAdmissionRefused
 from gobby.agents.team_lifecycle import admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.spawn_agent._launch_settings import load_model_defaults
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -98,6 +99,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 tab_title=tab_title,
                 task=task,
                 seat_models=seat_models,
+                model_defaults_for=lambda project_id: load_model_defaults(ctx.db, project_id),
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}

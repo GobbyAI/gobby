@@ -28,3 +28,5 @@ activation policy and failure metadata. A stale revision requires a fresh read
 before a newly composed write. See
 [sources](../../../../../../../../docs/guides/configuration.md#configuration-sources) and
 [runtime overrides](../../../../../../../../docs/guides/configuration.md#runtime-overrides).
+
+_Version: 1.0.0_

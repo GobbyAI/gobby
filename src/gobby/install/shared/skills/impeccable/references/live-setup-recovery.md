@@ -46,3 +46,5 @@ or alter Gobby daemon state.
 ## First-time setup
 
 Only when `live.mjs` reports `config_missing` / `config_invalid`, or `configDrift` needs explaining, or the config lacks `cspChecked`: follow `references/live-setup.md`, loaded through `get_skill_file` as described above. It owns the config schema, the per-framework `files` table, injection adapters, drift healing, and the CSP detection and consent flow.
+
+_Version: 1.0.0_

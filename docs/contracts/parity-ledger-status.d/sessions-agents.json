@@ -187,10 +187,6 @@
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/agents.py::export_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees."
   },
-  "HTTP GET /api/agents/launch-defaults": {
-    "status": "proxied",
-    "note": "Python `src/gobby/servers/routes/agent_spawn.py::get_launch_defaults`; Rust blocker: implement native agent launch/defaults/prompt-preview HTTP handlers and admission services. Owner: #21564 Attention, agents, dispatch, and worktrees."
-  },
   "HTTP GET /api/agents/running": {
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/agents.py::list_running_agents`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees."

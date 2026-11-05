@@ -34,3 +34,5 @@ lifecycle, and boundary failure handling.
   and plugin failures at the edge.
 - Keep user-facing errors safe and logs useful without exposing secrets.
 - Test failure states for critical user flows, not just successful async paths.
+
+_Version: 1.0.0_

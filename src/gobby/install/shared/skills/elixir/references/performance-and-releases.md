@@ -33,3 +33,5 @@
 - Do not start unsupervised long-lived processes during application boot.
 - Keep telemetry and logs stable enough for dashboards and alerts that depend on
   event names or metadata.
+
+_Version: 1.0.0_

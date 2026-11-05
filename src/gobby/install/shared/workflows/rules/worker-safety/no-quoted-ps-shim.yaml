@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [worker-safety, enforcement, default, gobby]
 
 # Refuses a quoted or non-canonical $GOBBY_PS_SHIM, the pinned ps shim (#25368). The engine

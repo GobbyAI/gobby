@@ -35,13 +35,12 @@ from gobby.workflows.definitions import (
 )
 from gobby.workflows.pipeline_loader import detect_override_conflict
 from gobby.workflows.rule_authority import refuse_protected_rule_import
-from gobby.workflows.sync_rules import sync_rule_file
+from gobby.workflows.sync_rules import PROJECT_IMPORT_TAG, sync_rule_file
 
 logger = logging.getLogger(__name__)
 
 _KIND_TABLES = ("agent", "rule", "variable", "pipeline")
 _KIND_SUBDIRS = ("rules", "agents", "pipelines", "variables")
-_PROJECT_IMPORT_TAG = "project-workflow-import"
 _KIND_MANAGERS: dict[
     str,
     type[AgentDefinitionManager]
@@ -232,8 +231,8 @@ def _mark_project_import(db: Any, kind: str, name: str, project_id: str | None) 
     if row is None or row.project_id != project_id or row.source != "installed":
         return
     tags = row.tags or []
-    if "gobby" not in tags and _PROJECT_IMPORT_TAG not in tags:
-        manager.update_from_sync(row.id, tags=[*tags, _PROJECT_IMPORT_TAG])
+    if "gobby" not in tags and PROJECT_IMPORT_TAG not in tags:
+        manager.update_from_sync(row.id, tags=[*tags, PROJECT_IMPORT_TAG])
 
 
 def sync_imported_workflow_file(
@@ -252,11 +251,16 @@ def sync_imported_workflow_file(
         for name, rule_data in data["rules"].items():
             if isinstance(name, str) and isinstance(rule_data, dict):
                 _check_import_override(db, "rule", name, {**data, **rule_data})
+        names = [name for name in data["rules"] if isinstance(name, str)]
+        if on_disk is not None:
+            # Mark the rows this file already owns before the sync, so this pass refreshes
+            # a row that lost its sync tag instead of waiting for the next reload.
+            for name in names:
+                _mark_project_import(db, "rule", name, project_id)
         result = sync_rule_file(db, rule_file=path, project_id=project_id)
         if on_disk is not None:
-            for name in data["rules"]:
-                if isinstance(name, str):
-                    _mark_project_import(db, "rule", name, project_id)
+            for name in names:
+                _mark_project_import(db, "rule", name, project_id)
         if result["errors"]:
             raise ValueError("; ".join(result["errors"]))
         if on_disk is not None:
@@ -355,7 +359,7 @@ def sync_imported_workflows(
                         # Pipeline DB writers use custom source; installed also
                         # identifies older file imports (including crew-*).
                         # Other kinds share installed source with DB-only writers.
-                        and (kind == "pipeline" or _PROJECT_IMPORT_TAG in (row.tags or []))
+                        and (kind == "pipeline" or PROJECT_IMPORT_TAG in (row.tags or []))
                         and (kind, row.name) not in on_disk
                     ):
                         manager.delete(row.id)

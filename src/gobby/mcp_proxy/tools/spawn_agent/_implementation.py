@@ -51,6 +51,8 @@ from ._failure_cleanup import (
 from ._isolation_prepare import prepare_spawn_isolation, requested_base_branch
 from ._launch_settings import (
     LaunchRefused,
+    agent_provider_for_spawn,
+    load_model_defaults,
     resolve_launch_model,
     resume_launch_defaults,
     standing_seat_suffix,
@@ -257,11 +259,11 @@ async def spawn_agent_impl(
         caller_session_id=caller_session_id,
         parent_session_id=parent_session_id,
     )
-    agent_provider = agent_body.provider if agent_body else None
     try:
+        model_defaults = await asyncio.to_thread(load_model_defaults, db, target_project_id)
         effective_provider = resolve_spawn_provider(
             explicit_provider=explicit_provider,
-            agent_provider=agent_provider,
+            agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
             default_provider=default_provider,
         )
     except ValueError as e:
@@ -284,6 +286,7 @@ async def spawn_agent_impl(
             agent_body=agent_body,
             reasoning_effort=reasoning_effort,
             reasoning_required=reasoning_required,
+            model_defaults=model_defaults,
         )
     except LaunchRefused as exc:
         return exc.response

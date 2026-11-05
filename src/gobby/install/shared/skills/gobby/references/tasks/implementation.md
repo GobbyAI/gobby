@@ -86,4 +86,6 @@ prior evidence stale; committing does not.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [Tests-first Development](../../../../../../../../docs/guides/tdd-enforcement.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-27_

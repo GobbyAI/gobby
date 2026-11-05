@@ -72,7 +72,7 @@ authenticated read-modify-write procedure in
 {
   "responder": {
     "enabled": true,
-    "agent": "comms-agent"
+    "agent": "responder-agent"
   }
 }
 ```
@@ -175,7 +175,7 @@ Preconfigure one owner:
 
 ```json
 {
-  "responder": {"enabled": true, "agent": "comms-agent"},
+  "responder": {"enabled": true, "agent": "responder-agent"},
   "allow_from": ["123456789"]
 }
 ```
@@ -184,7 +184,7 @@ Allow several trusted users:
 
 ```json
 {
-  "responder": {"enabled": true, "agent": "comms-agent"},
+  "responder": {"enabled": true, "agent": "responder-agent"},
   "allow_from": ["123456789", "987654321"]
 }
 ```
@@ -193,7 +193,7 @@ Allow every DM sender:
 
 ```json
 {
-  "responder": {"enabled": true, "agent": "comms-agent"},
+  "responder": {"enabled": true, "agent": "responder-agent"},
   "allow_from": ["*"]
 }
 ```
@@ -218,7 +218,7 @@ fails closed unless exactly one enabled Telegram channel binds that project.
 the project for chat turns. An authorized `set_channel_project` changes only
 the chat project; it preserves the seat operator-DM binding. MCP channel
 creation, removal and project switching require `communications_admin: true`;
-the bundled `comms-agent` definition grants it. Both grants default to false
+the responder definition's grant supplies it. Both grants default to false
 and are read from installed definitions, not caller-supplied session variables.
 
 A live agent can attach a conversation only when its project matches the
@@ -265,7 +265,7 @@ their channel defaults.
 
 ```json
 {
-  "responder": {"enabled": true, "agent": "comms-agent"},
+  "responder": {"enabled": true, "agent": "responder-agent"},
   "allow_from": ["123456789"],
   "group_policy": "allowlist",
   "require_mention": true,
@@ -288,7 +288,7 @@ in any other group it joins; omit that entry to accept only the named groups:
 {
   "responder": {
     "enabled": true,
-    "agent": "comms-agent",
+    "agent": "responder-agent",
     "provider": "codex",
     "model": "<model-id>"
   },
@@ -314,7 +314,7 @@ in any other group it joins; omit that entry to accept only the named groups:
 
 ```json
 {
-  "responder": {"enabled": true, "agent": "comms-agent"},
+  "responder": {"enabled": true, "agent": "responder-agent"},
   "group_policy": "open",
   "require_mention": true,
   "groups": {
@@ -374,7 +374,7 @@ CHANNEL_JSON="$(
 CHANNEL_ID="$(jq -r '.id' <<<"$CHANNEL_JSON")"
 CURRENT_CONFIG="$(jq -c '.config_json' <<<"$CHANNEL_JSON")"
 UPDATED_CONFIG="$(
-  jq -c '.responder = ((.responder // {}) + {"enabled": true, "agent": "comms-agent"})' \
+  jq -c '.responder = ((.responder // {}) + {"enabled": true, "agent": "responder-agent"})' \
     <<<"$CURRENT_CONFIG"
 )"
 
@@ -415,8 +415,9 @@ rotates it.
 
 Telegram uses the shared communications responder:
 
-- `responder.agent` must name the selected agent definition. The examples choose
-  the bundled `comms-agent`; replace it with your own enabled definition as needed.
+- `responder.agent` must name an enabled agent definition that carries the
+  responder grant. The examples use the placeholder `responder-agent`; replace it
+  with your own enabled definition as needed.
   Missing, blank, or non-string values return configuration guidance without
   starting a chat turn. Chat mode defaults to normal. Inspect the selected
   definition and applicable rules when checking enforcement.
@@ -436,7 +437,7 @@ Example responder configuration:
 {
   "responder": {
     "enabled": true,
-    "agent": "comms-agent",
+    "agent": "responder-agent",
     "provider": "codex",
     "model": "<model-id>",
     "tts_enabled": false

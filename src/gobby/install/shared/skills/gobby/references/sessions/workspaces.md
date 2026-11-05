@@ -57,4 +57,6 @@ takes exactly one of `--right`, `--left`, `--above`, `--below`; `panes move` tak
 
 Guide: [Internal registries](../../../../../../../../docs/guides/mcp-tools.md#internal-registries).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-17_

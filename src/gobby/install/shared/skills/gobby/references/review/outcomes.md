@@ -58,3 +58,5 @@ preserve retryability. Inspect durable run evidence before relaunching; a valid
 submission can survive reviewer failure/timeout. CLI digest and HTTP run readers
 are operator diagnostics, documented in the
 [HTTP guide](../../../../../../../../docs/guides/http-endpoints.md#feedback-review).
+
+_Version: 1.0.0_

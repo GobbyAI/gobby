@@ -2110,21 +2110,18 @@ class TestBeforeToolBlockTracking:
         assert variables["tool_block_pending"] is True
 
     @pytest.mark.asyncio
-    async def test_success_keeps_edit_state_while_another_context_failed(
+    async def test_success_keeps_edit_state_while_this_context_failed(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """A parallel success elsewhere never clears edit state a subagent's failure left."""
+        """A non-edit success keeps edit state while its own context has a failure pending."""
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {
-            "edit_write_pending": True,
-            "_last_blocked_scopes": {"a1": {"tool_block_pending": True}},
-        }
+        variables: dict[str, Any] = {"edit_write_pending": True, "tool_block_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is True
-        assert variables["_last_blocked_scopes"]["a1"]["tool_block_pending"] is True
+        assert variables["tool_block_pending"] is False
 
     @pytest.mark.parametrize(
         "payload,expected_pending",
@@ -2854,6 +2851,39 @@ class TestEditWritePending:
         stop_event = _make_event(HookEventType.STOP)
         response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_subagent_edit_blocked_by_rule_clears_only_its_own_pending(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A rule-blocked subagent Edit clears that subagent's pending state, not the parent's."""
+        _insert_rule(
+            manager,
+            "block-edit-rule",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                tools=["Edit"],
+                effects=[RuleEffect(type="block", reason="No task claimed")],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        # The parent's own Edit is still in flight.
+        variables: dict[str, Any] = {"edit_write_pending": True}
+
+        edit_event = _make_event(
+            HookEventType.BEFORE_TOOL, data={"tool_name": "Edit", "agent_id": "a1"}
+        )
+        response = await engine.evaluate(edit_event, session_id=SESSION_ID, variables=variables)
+        assert response.decision == "block"
+
+        assert variables["_last_blocked_scopes"]["a1"]["edit_write_pending"] is False
+        assert variables["edit_write_pending"] is True
+
+        stop_event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
+        assert response.decision == "block"
+        assert "edit-write-recovery" in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_by_non_edit_success(

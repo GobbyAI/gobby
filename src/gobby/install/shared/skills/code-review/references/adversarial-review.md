@@ -101,3 +101,5 @@ Do not treat the previous Claude response as proof that code changes happened; v
 If the previous turn did make code changes, check for second-order failures, empty-state behavior, retries, stale state, rollback risk, and design tradeoffs before you finalize.
 </dig_deeper_nudge>
 ```
+
+_Version: 1.0.0_

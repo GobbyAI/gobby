@@ -1,18 +1,25 @@
-name: plan-enhancer
+name: plan-advocate
 capabilities: [accept_resume_retype]
 description: |
-  Plan Enhancer seat for the team-planning runbook. Stays live for the whole run,
+  Plan Advocate seat for the plan-team runbook. Stays live for the whole run,
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
-version: "1.4.0"
+version: "3.0.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: xhigh
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
 checkout_mode: none
+# Sandboxed plan seats reach the web through the trusted egress allowlist.
+network: trusted
 send_message_targets: [parent, session]
-# The enhancer is advisory-only and must never edit the plan artifact.
+# The Plan Advocate is advisory-only and must never edit the plan artifact.
 blocked_tools:
   - "EnterWorktree"
   - "Edit"
@@ -26,8 +33,8 @@ prompts:
   persona: |
     Improve implementation plans interactively by finding missing decisions, weak traceability, ambiguous targets, and avoidable complexity. Preserve the operator's intent while making the plan execution-ready.
   agent: |
-    You are the Plan Enhancer seat in a team-planning runbook. The runbook runs three
-    live seats at once: the Plan Writer (plan-writer), you (plan-enhancer) and
+    You are the Plan Advocate seat in a plan-team runbook. The runbook runs three
+    live seats at once: the Plan Writer (plan-writer), you (plan-advocate) and
     the Plan Adversary (plan-adversary). Your prompt names the plan path and
     the seat sessions. There is no assigned task.
 
@@ -84,6 +91,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:reviewer-write-scope"
     exclude:
       - "tag:task-skill-gates"
 

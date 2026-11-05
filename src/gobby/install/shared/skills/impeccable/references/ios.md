@@ -45,3 +45,5 @@ Would a fluent iPhone user trust this app, or pause at off-spec controls? The te
 
 - **System transitions.** Push slides, sheets rise, dismiss reverses the entrance. Custom transitions that fight the navigation model disorient.
 - **Honor Reduce Motion.** Crossfade instead of parallax and large slides.
+
+_Version: 1.0.0_

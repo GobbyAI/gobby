@@ -54,3 +54,5 @@ contracts.
 - Prefer factories or compact constructors for invariant enforcement.
 - Keep validation errors precise enough for callers and tests to identify the
   failing field or boundary.
+
+_Version: 1.0.0_

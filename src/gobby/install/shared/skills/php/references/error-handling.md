@@ -45,3 +45,5 @@ external input.
 - Validate before mutation, persistence, outbound calls, or rendering.
 - Return field-specific validation errors where callers need to recover.
 - Keep authorization failures distinct from validation and not-found failures.
+
+_Version: 1.0.0_

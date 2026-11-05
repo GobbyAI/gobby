@@ -46,3 +46,5 @@ load local schemas.
 - Explain why the commands cover the changed YAML owner and consumer.
 - Call out any validation that cannot run locally, and provide the closest
   deterministic substitute.
+
+_Version: 1.0.0_

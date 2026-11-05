@@ -88,3 +88,5 @@ For each semantic row include `id`, `implementation`, `notes`, and `qa_status`. 
 End with `execution_order`, `blockers`, and `assumptions` sections. Keep blockers global and minimal. Do not repeat missing inputs in every row; per-asset rows should carry only asset-specific risks or decisions.
 
 Do not modify implementation code. Do not edit the approved mock. Do not produce final page copy. The parent craft agent owns implementation and final mock fidelity.
+
+_Version: 1.0.0_

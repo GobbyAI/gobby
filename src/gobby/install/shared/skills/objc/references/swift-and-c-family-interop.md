@@ -47,3 +47,5 @@
   platform version.
 - Add a small compile or behavior test in the client language for any changed
   cross-language contract.
+
+_Version: 1.0.0_

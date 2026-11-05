@@ -37,3 +37,5 @@ Optimize from evidence. JavaScript performance depends on runtime, data shape, b
 - Use iterative transforms for very deep or large inputs.
 - Keep caches bounded or tied to lifecycle owners.
 - Document cache invalidation rules when stale data would be user-visible.
+
+_Version: 1.0.0_

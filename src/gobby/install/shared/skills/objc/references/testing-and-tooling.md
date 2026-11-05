@@ -47,3 +47,5 @@
   covers.
 - Report any unavailable simulator/device/SDK validation as a specific remaining
   gap; preserve a local compile or contract test where possible.
+
+_Version: 1.0.0_

@@ -19,3 +19,5 @@ If a key is absent, inspect its owning capability and installed version instead
 of inventing a setter or writing a storage row. HTTP `GET /api/config/schema`
 is the corresponding operator/client route. See
 [runtime configuration](../../../../../../../../docs/guides/configuration.md#runtime-configuration).
+
+_Version: 1.0.0_

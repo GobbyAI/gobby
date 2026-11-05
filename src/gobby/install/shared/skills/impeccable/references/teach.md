@@ -71,3 +71,5 @@ Write this section to `.impeccable.md` in the project root. If the file already 
 Then ask the user whether they'd also like the Design Context appended to the project instructions file (e.g. `CLAUDE.md` or `AGENTS.md`, whichever the project uses). If yes, append or update the section there as well.
 
 Confirm completion and summarize the key design principles that will now guide all future work.
+
+_Version: 1.0.0_
