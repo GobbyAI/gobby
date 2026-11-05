@@ -5,7 +5,12 @@ The machine-readable contract lives at `tests/contracts/gcode.contract.json`.
 
 ## Version
 
-`contract_version`: 12
+`contract_version`: 13
+
+Version 13 replaces `vector cleanup-orphans` with the read-only dry run
+`vector reconcile`. It scrolls Qdrant, reads PostgreSQL read-only, takes no
+project lock, and deletes nothing. Its JSON reports orphan and missing classes
+with an `inventory_digest`. Deletion has no command in this contract version.
 
 Version 12 retires the Ask command while retaining deterministic `evidence`.
 

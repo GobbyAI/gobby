@@ -248,7 +248,8 @@ fn parse_projection_lifecycle_commands() {
         }
     ));
 
-    let cli = Cli::try_parse_from(["gcode", "vector", "reconcile"]).expect("vector reconcile parses");
+    let cli =
+        Cli::try_parse_from(["gcode", "vector", "reconcile"]).expect("vector reconcile parses");
     assert!(matches!(
         cli.command,
         Command::Vector {

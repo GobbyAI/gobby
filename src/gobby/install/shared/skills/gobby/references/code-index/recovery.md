@@ -46,6 +46,14 @@ restart so maintenance and sync workers can start. Do not substitute `gcode
 repair`, invalidate source facts, or treat database errors as empty search.
 See [BM25 recovery](../../../../../../../../docs/guides/code-index.md#postgresql-bm25-recovery).
 
+Code-symbol vector drift: `gcode vector reconcile` is a dry run. It scrolls the
+project's Qdrant collection, reads PostgreSQL read-only, and prints orphan and
+missing classes with an `inventory_digest`. It deletes nothing and takes no
+project lock; a missing collection counts as empty. Absence from `code_symbols`
+is the only deletion authority; orphan classes are evidence. Deleting orphan
+vectors needs the reviewed apply procedure. Never delete vectors from a dry-run
+inventory by hand.
+
 Operator-only cleanup: `invalidate` removes the selected project's index and
 prompts unless `--force`; `prune` without `--project` requests global daemon
 maintenance. Explicit `--project` scopes pruning; `--retention-days` is at least
@@ -73,6 +81,6 @@ targeted. Retry the blocked raw command rather than repeating the failing call.
 
 Guide: [Recovery and maintenance](../../../../../../../../docs/guides/gcode-user-guide.md#project-management).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
 
-_Last verified: 2026-09-14_
+_Last verified: 2026-11-05_

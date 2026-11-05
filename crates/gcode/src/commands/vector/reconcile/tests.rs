@@ -11,7 +11,11 @@ fn inventory_digest_is_order_independent_and_content_sensitive() {
     let digest = inventory_digest(&orphans, &synced);
 
     assert!(digest.starts_with("sha256:"), "digest prefix: {digest}");
-    assert_eq!(digest.len(), "sha256:".len() + 64, "digest is a SHA-256 hex");
+    assert_eq!(
+        digest.len(),
+        "sha256:".len() + 64,
+        "digest is a SHA-256 hex"
+    );
     assert_eq!(
         digest,
         inventory_digest(

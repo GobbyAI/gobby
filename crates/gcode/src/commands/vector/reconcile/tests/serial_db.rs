@@ -1,4 +1,6 @@
-use super::super::{Inventory, MissingClass, MissingGroup, OrphanClass, inventory, inventory_digest};
+use super::super::{
+    Inventory, MissingClass, MissingGroup, OrphanClass, inventory, inventory_digest,
+};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope, QdrantConfig};
 use crate::db;
 use crate::models::{CODE_INDEX_UUID_NAMESPACE, Symbol};
@@ -51,7 +53,12 @@ impl Fixture {
     }
 
     /// Insert a version row and return its `code_indexed_files.id`.
-    fn version(&mut self, file_path: &str, content_hash: &str, synced: bool) -> anyhow::Result<String> {
+    fn version(
+        &mut self,
+        file_path: &str,
+        content_hash: &str,
+        synced: bool,
+    ) -> anyhow::Result<String> {
         let id = Uuid::new_v4().to_string();
         self.conn.execute(
             "INSERT INTO code_indexed_files (id,project_id,file_path,language,content_hash,symbol_count,byte_size,graph_synced,vectors_synced,indexed_at,last_referenced_at) VALUES ($1,$2,$3,'rust',$4,0,20,true,$5,NOW(),NOW())",
@@ -78,7 +85,14 @@ impl Fixture {
         kind: &str,
         byte_start: usize,
     ) -> anyhow::Result<String> {
-        let id = Symbol::make_id(&self.project_id, file_path, content_hash, name, kind, byte_start);
+        let id = Symbol::make_id(
+            &self.project_id,
+            file_path,
+            content_hash,
+            name,
+            kind,
+            byte_start,
+        );
         let byte_start = i32::try_from(byte_start)?;
         self.conn.execute(
             "INSERT INTO code_symbols (id,project_id,file_path,name,qualified_name,kind,language,byte_start,byte_end,line_start,line_end,file_content_hash,content_hash) VALUES ($1,$2,$3,$4,$4,$5,'rust',$6,$6,1,1,$7,'sym')",
@@ -140,7 +154,11 @@ impl Drop for Fixture {
             "code_indexed_projects",
             "projects",
         ] {
-            let column = if table == "projects" { "id" } else { "project_id" };
+            let column = if table == "projects" {
+                "id"
+            } else {
+                "project_id"
+            };
             let sql = format!("DELETE FROM {table} WHERE {column} = $1");
             let _ = self.conn.execute(sql.as_str(), &[&pid]);
         }
@@ -198,23 +216,49 @@ fn dry_run_classifies_only_ids_absent_from_postgres() -> anyhow::Result<()> {
         // A live ID with no file_path in its payload is still not an orphan.
         (live_without_payload, json!({})),
         (legacy_payload_id.clone(), json!({})),
-        (legacy_scheme_id.clone(), payload("src/gone.rs", "fn_a", "function", 10)),
-        (reparsed_id.clone(), payload(old_path, "fn_b", "function", 20)),
-        (unattributed_id.clone(), payload("src/none.rs", "x", "function", 1)),
+        (
+            legacy_scheme_id.clone(),
+            payload("src/gone.rs", "fn_a", "function", 10),
+        ),
+        (
+            reparsed_id.clone(),
+            payload(old_path, "fn_b", "function", 20),
+        ),
+        (
+            unattributed_id.clone(),
+            payload("src/none.rs", "x", "function", 1),
+        ),
     ])]);
     let report = inventory(&fixture.context(url))?;
     handle.join().expect("qdrant test server");
 
     assert_eq!(report.points_scanned, 6);
     assert_eq!(report.pg_symbols, 2);
-    assert_eq!(report.orphans[&OrphanClass::LegacyPayload], vec![legacy_payload_id.clone()]);
-    assert_eq!(report.orphans[&OrphanClass::LegacyIdScheme], vec![legacy_scheme_id.clone()]);
-    assert_eq!(report.orphans[&OrphanClass::ReparsedVersion], vec![reparsed_id.clone()]);
-    assert_eq!(report.orphans[&OrphanClass::Unattributed], vec![unattributed_id.clone()]);
+    assert_eq!(
+        report.orphans[&OrphanClass::LegacyPayload],
+        vec![legacy_payload_id.clone()]
+    );
+    assert_eq!(
+        report.orphans[&OrphanClass::LegacyIdScheme],
+        vec![legacy_scheme_id.clone()]
+    );
+    assert_eq!(
+        report.orphans[&OrphanClass::ReparsedVersion],
+        vec![reparsed_id.clone()]
+    );
+    assert_eq!(
+        report.orphans[&OrphanClass::Unattributed],
+        vec![unattributed_id.clone()]
+    );
     assert_eq!(
         report.inventory_digest,
         inventory_digest(
-            &[legacy_payload_id, legacy_scheme_id, reparsed_id, unattributed_id],
+            &[
+                legacy_payload_id,
+                legacy_scheme_id,
+                reparsed_id,
+                unattributed_id
+            ],
             &[],
         ),
     );
@@ -338,8 +382,14 @@ fn dry_run_mutates_nothing() -> anyhow::Result<()> {
             .all(|request| request.starts_with("POST ") && request.contains("/points/scroll")),
         "dry run may send only scroll requests: {requests:?}",
     );
-    assert!(fixture.vectors_synced(&version)?, "synced flag must stay true");
-    assert!(!fixture.vectors_synced(&pending)?, "pending flag must stay false");
+    assert!(
+        fixture.vectors_synced(&version)?,
+        "synced flag must stay true"
+    );
+    assert!(
+        !fixture.vectors_synced(&pending)?,
+        "pending flag must stay false"
+    );
     Ok(())
 }
 

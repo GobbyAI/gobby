@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   communities by id, label, or member path.
 - **Report section** — `gcode graph report` adds an `## Import communities`
   section.
+- **`gcode vector reconcile`** — a read-only dry-run inventory of code-symbol
+  vectors against PostgreSQL. It scrolls Qdrant point identities, reads
+  PostgreSQL with a read-only connection, and reports orphan vectors, synced
+  files missing vectors, and an inventory digest. It deletes nothing and takes
+  no project lock. Version: `1.9.105`.
 
 #### gobby-core
 
@@ -88,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discarded. Those reads also stop failing when the daemon URL cannot be
   resolved, and the stale grant entry for the route is removed from the daemon.
   Version: `1.9.104`.
+- **`gcode vector cleanup-orphans`** — removed (breaking for anything scripting
+  it). Use `gcode vector reconcile` to inventory orphan code-symbol vectors; it
+  deletes nothing. Version: `1.9.105`.
 
 ### Changed
 

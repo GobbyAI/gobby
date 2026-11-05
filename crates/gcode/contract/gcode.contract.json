@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 12,
+  "contract_version": 13,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -2228,9 +2228,9 @@
       ]
     },
     {
-      "name": "vector cleanup-orphans",
-      "summary": "Remove Qdrant code-symbol vectors for files missing from PostgreSQL.",
-      "daemon_consumed": true,
+      "name": "vector reconcile",
+      "summary": "Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing.",
+      "daemon_consumed": false,
       "positionals": [],
       "flags": [
         {
@@ -2247,14 +2247,14 @@
       ],
       "json_output_keys": [
         "project_id",
-        "projection",
-        "action",
         "collection",
-        "status",
-        "vector_files_scanned",
-        "orphan_files_deleted",
-        "vectors_deleted",
-        "summary"
+        "mode",
+        "success",
+        "points_scanned",
+        "pg_symbols",
+        "orphans",
+        "missing",
+        "inventory_digest"
       ]
     },
     {
