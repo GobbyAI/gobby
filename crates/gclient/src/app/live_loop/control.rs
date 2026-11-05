@@ -516,8 +516,9 @@ pub(super) fn apply_outage_grant(
             }
         }
     }
-    // A grant answers keys typed to the focused pane. A pane that lost focus
-    // has let go since, and a late answer must not give it control back.
+    // A grant answers keys typed to the focused pane, and only those keys give
+    // the pane control. A late answer for a pane that lost focus, or that has
+    // no keys waiting, must not give it control back.
     let focused = workspace.focus == Some(pane_id);
     let Some(pane) = workspace.panes.get_mut(&pane_id) else {
         return;
@@ -527,14 +528,20 @@ pub(super) fn apply_outage_grant(
         return;
     }
     match grant {
-        Ok(GrantOutcome::Granted) if focused => {
+        Ok(GrantOutcome::Granted) if focused && !pane.pending_input.is_empty() => {
             pane.restore_host_control();
             let pending = pane.take_pending_input();
             flush_pending_input(workspace, chrome, jobs, pane_id, pending);
         }
-        // The pane let go before this answer arrived, so its keys are dropped
-        // rather than typed into a pane that no longer has focus.
-        Ok(GrantOutcome::Granted) => pane.clear_pending_input(),
+        // Nothing here asks for control: the pane let go, or no keys wait on
+        // this answer. The host grant it names is still real, so the pane
+        // records it without taking the lease. A later peer ask revokes it, and
+        // a keypress asks the daemon as usual. Keys that outlived focus are
+        // dropped rather than typed into a pane that lost it.
+        Ok(GrantOutcome::Granted) => {
+            pane.apply_host_grant(Some(true));
+            pane.clear_pending_input();
+        }
         // A peer holds the host's grant. The key is dropped visibly, and the
         // pane keeps its daemon control: nothing here displaces the peer
         // (#25653).
@@ -542,10 +549,9 @@ pub(super) fn apply_outage_grant(
             pane.clear_pending_input();
             chrome.notify(Toast::warning(HELD_BY_PEER));
         }
-        // A pane that holds control and the host grant keeps both. The host's
-        // answer to this redundant ask does not revoke that grant, and a
-        // downgrade to Observe here would leave the daemon lease with no
-        // release to follow (ruling b59e4ce9).
+        // A pane that holds control and the host grant keeps both. A refusal or
+        // failure of this repeated ask must not downgrade it: the downgrade would
+        // leave the daemon lease with no release to follow.
         Ok(GrantOutcome::Refused(_)) | Err(_) if pane.is_held() && pane.direct_input() => {}
         Ok(GrantOutcome::Refused(_)) => {
             pane.apply_host_grant(Some(false));
