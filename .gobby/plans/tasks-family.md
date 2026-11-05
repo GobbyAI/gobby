@@ -972,7 +972,7 @@ Relationships of a `Session` to a task port the Python predicates exactly:
 
 Scope checks port `src/gobby/tasks/lifecycle_access.py::task_scope_refusal`
 (`task_types`, `categories`, `own_claim_only`, `assigned_only`). Close-only
-declarations (`task_close_scope`, `task_close_reasons`, `close_without_work`,
+declarations (`task_close_scope`, `task_close_reasons`,
 `direct_integration_commit`, `task_attestation_writes`,
 `task_attestation_scope`) are read by 3.7 and 3.10, not by this table. A
 supplied session reference that does not resolve is refused as validation;
