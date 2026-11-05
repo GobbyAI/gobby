@@ -46,9 +46,9 @@ async def _refusing_dispatcher(
     return {"success": False, "result": {"error": "synthetic refusal"}}
 
 
-def _insert_refusal_rule(db: HubDatabase, name: str, effect: RuleEffect) -> None:
+def _insert_refusal_rule(db: HubDatabase, name: str, effect: RuleEffect) -> str:
     body = RuleDefinitionBody(event=RuleTriggerEvent.BEFORE_TOOL, effects=[effect])
-    RuleDefinitionManager(db).create(
+    row = RuleDefinitionManager(db).create(
         name=name,
         definition_json=body.model_dump(),
         priority=100,
@@ -56,6 +56,7 @@ def _insert_refusal_rule(db: HubDatabase, name: str, effect: RuleEffect) -> None
         sources=None,
         tags=["default"],
     )
+    return row.id
 
 
 REFUSALS = {
@@ -89,6 +90,29 @@ async def test_refused_edit_after_a_success_does_not_hold_stop(
     _insert_refusal_rule(temp_db, rule_name, effect)
     refused = await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
     assert refused.decision == "block"
+
+    stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
+    assert "edit-write-recovery" not in (stop.reason or "")
+
+
+@pytest.mark.parametrize("refusal", sorted(REFUSALS))
+async def test_refused_sibling_then_a_later_success_leaves_no_pending_mark(
+    temp_db: HubDatabase, refusal: str
+) -> None:
+    engine = RuleEngine(temp_db, mcp_dispatcher=_refusing_dispatcher)
+    variables: dict[str, Any] = {}
+    rule_name, effect = REFUSALS[refusal]
+    rule_id = _insert_refusal_rule(temp_db, rule_name, effect)
+
+    refused = await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+    assert refused.decision == "block"
+    assert variables.get("edit_write_pending") is not True
+
+    RuleDefinitionManager(temp_db).toggle_enabled(rule_id)
+    allowed = await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+    assert allowed.decision != "block"
+    await engine.evaluate(_event(HookEventType.AFTER_TOOL, EDIT), SESSION_ID, variables)
+    assert variables.get("edit_write_pending") is False
 
     stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
     assert "edit-write-recovery" not in (stop.reason or "")
