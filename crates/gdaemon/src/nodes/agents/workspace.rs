@@ -232,7 +232,10 @@ async fn create(record: &WorkspaceRecord) -> Result<()> {
 
 async fn remove_worktree(record: &WorkspaceRecord) -> Result<()> {
     let path = path_str(&record.path)?;
-    if record.path.exists()
+    // The branch is this record's only when its worktree is on disk to remove. A create that
+    // refused a branch which already existed leaves no worktree, so that branch stays.
+    let owned = record.path.exists();
+    if owned
         && let Err(error) = git_output(
             &record.source_root,
             &["worktree", "remove", "--force", path],
@@ -246,6 +249,9 @@ async fn remove_worktree(record: &WorkspaceRecord) -> Result<()> {
         fs::remove_dir_all(&record.path).with_context(|| format!("remove worktree {path}"))?;
     }
     git_output(&record.source_root, &["worktree", "prune"]).await?;
+    if !owned {
+        return Ok(());
+    }
     let branch_ref = format!("refs/heads/{}", record.branch_name);
     if git_succeeds(
         &record.source_root,

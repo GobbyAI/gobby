@@ -174,6 +174,18 @@ impl AgentState {
         Some(workspace)
     }
 
+    /// Forgets an acknowledged exit's run. Its workspace stays on disk: only its completion
+    /// owner's `delete_worktree` retires it.
+    pub fn acknowledge_exit(&mut self, run_id: &str) {
+        if self
+            .runs
+            .get(run_id)
+            .is_some_and(|run| run.phase == RunPhase::Exited)
+        {
+            self.runs.remove(run_id);
+        }
+    }
+
     /// Why a run that ended on its own is recorded: `cancelled` when a cancel record exists.
     pub fn exit_reason(&self, run_id: &str) -> ExitReason {
         if self.cancelled.contains_key(run_id) {
@@ -219,10 +231,9 @@ impl AgentState {
                         sandbox: None,
                     }
                 }
-                // Nothing launched: the preparation record still queues the path for removal,
-                // and the exit names no workspace.
+                // Nothing launched: the tree stays on disk for its completion owner, and the
+                // exit names no workspace.
                 None => {
-                    self.to_removals(&run_id);
                     self.runs.remove(&run_id);
                     ReportExit {
                         run_id,

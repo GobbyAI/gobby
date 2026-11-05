@@ -511,9 +511,9 @@ async fn restart_fails_unlaunched_runs() -> Result<()> {
         let state = agents.state.lock().await;
         assert_eq!(state.live_and_accepted(), 1);
         assert!(state.runs.contains_key("launched"));
-        assert_eq!(state.removals.len(), 2);
-        assert!(state.removals.contains_key("preparing"));
+        assert_eq!(state.removals.len(), 1);
         assert!(state.removals.contains_key("existing-removal"));
+        assert!(!state.removals.contains_key("preparing"));
         assert!(!state.removals.contains_key("reused"));
         assert_eq!(state.exits.len(), 4);
         assert_eq!(state.exits[0].exit.run_id, "previous");
@@ -1011,28 +1011,120 @@ async fn restart_at_each_boundary_cleans_up() -> Result<()> {
             state.commit(&agents.home, &agents.changed)?;
         }
 
-        // Restart: recovery moves preparing runs to removals, then startup retries them.
+        // Restart settles preparing runs without queuing their trees; only a queued removal runs.
         let agents = NodeAgents::open(&home)?;
         workspace::retry_removals(&agents).await?;
         assert!(
             agents.state.lock().await.removals.is_empty(),
-            "{boundary:?}: the record is deleted"
+            "{boundary:?}: nothing stays queued"
         );
         assert!(
             persisted_state(&home)?.removals.is_empty(),
-            "{boundary:?}: the deletion is persisted"
+            "{boundary:?}: the empty queue is persisted"
         );
-        assert!(
-            !record.path.exists(),
-            "{boundary:?}: the worktree is removed"
+        let created = boundary != Boundary::AfterRecord;
+        let kept = created && boundary != Boundary::DuringRemoval;
+        assert_eq!(
+            record.path.exists(),
+            kept,
+            "{boundary:?}: the worktree stays unless its removal was queued"
         );
-        assert!(
-            git(&source, &["branch", "--list", record.branch_name.as_str()])?
-                .trim()
-                .is_empty(),
-            "{boundary:?}: the branch is removed"
+        let branch = git(&source, &["branch", "--list", record.branch_name.as_str()])?;
+        assert_eq!(
+            !branch.trim().is_empty(),
+            kept,
+            "{boundary:?}: the branch stays with its worktree"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn acknowledged_exit_keeps_run_created_worktree() -> Result<()> {
+    for dirty in [false, true] {
+        let root = tempfile::tempdir()?;
+        let source = source_repo(root.path())?;
+        let home = canonical_home(root.path())?;
+        let claude_json = root.path().join("claude.json");
+        let hooks_dir = home.join("hooks");
+        let env = repair_env(&home, &hooks_dir, &claude_json);
+        let record = workspace::plan_workspace(
+            "run-7",
+            PROJECT_ID,
+            &source,
+            &worktree_spawn("agent/exit"),
+            &home,
+        )?
+        .expect("worktree mode plans a record");
+        let agents = NodeAgents::open(&home)?;
+        accept_run(&agents, "run-7").await?;
+        workspace::prepare(&agents, "run-7", &record, "codex", &env, &never).await?;
+        if dirty {
+            fs::write(record.path.join("uncommitted.txt"), "work")?;
+        }
+        {
+            let mut state = agents.state.lock().await;
+            state.runs.get_mut("run-7").expect("run is accepted").phase = RunPhase::Exited;
+            state.acknowledge_exit("run-7");
+            state.commit(&agents.home, &agents.changed)?;
+        }
+        workspace::retry_removals(&agents).await?;
+        assert!(
+            agents.state.lock().await.removals.is_empty(),
+            "dirty={dirty}: an acknowledged exit queues nothing"
+        );
+        assert!(
+            record.path.exists(),
+            "dirty={dirty}: an acknowledged exit keeps its worktree"
+        );
+        assert!(
+            !git(&source, &["branch", "--list", "agent/exit-run-7"])?
+                .trim()
+                .is_empty(),
+            "dirty={dirty}: an acknowledged exit keeps its branch"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_create_keeps_preexisting_branch() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+    git(&source, &["branch", "agent/collide-run-8"])?;
+    let record = workspace::plan_workspace(
+        "run-8",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/collide-run-8"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-8").await?;
+    assert!(
+        workspace::prepare(&agents, "run-8", &record, "codex", &env, &never)
+            .await
+            .is_err(),
+        "create refuses a branch that already exists"
+    );
+    {
+        // The boot-failure path queues the run's record, as record_failure does.
+        let mut state = agents.state.lock().await;
+        state.to_removals("run-8");
+        state.commit(&agents.home, &agents.changed)?;
+    }
+    workspace::retry_removals(&agents).await?;
+    assert!(
+        !git(&source, &["branch", "--list", "agent/collide-run-8"])?
+            .trim()
+            .is_empty(),
+        "a failed create must not delete a branch it did not create"
+    );
     Ok(())
 }
 
