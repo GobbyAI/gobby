@@ -112,16 +112,18 @@ team. Report through the configured report target and use durable waits.
 
 The Orchestrator launches `plan-team` with `task`, `workspace`, `project_path`,
 `seats` and `report_to=<Triage ref>`. The Plan Writer opens the `Plan Team - #<task>`
-tab, the Plan Adversary and Plan Advocate split beside it, and `seat_pane` adds
-seats to an existing pane.
+tab, the Plan Adversary and Plan Advocate split beside it, the `plan-team-lead` splits
+last, and `seat_pane` adds seats to an existing pane.
 When `task` has no open planning child, the runbook creates one under it, and the
 Plan Writer claims that child before writing `.gobby/plans/task-<seq>.md`. Each seat's
-prompt names the task, the plan path and its teammates' session refs. Once the seats
-launch, the runbook also sends the Plan Writer the Adversary and Advocate refs.
-The Writer's advocate edits, unresolved disagreements and stamped plan reach
-the Orchestrator through Triage's digest.
+prompt names the task, the plan path and its teammates' session refs, and the lead's
+launch prompt names every team seat, launched or already live. The runbook then sends each
+team seat its lead's session ref and its teammates' refs, so the seats report to the lead;
+a live lead gets the team's refs in a message. A partial rerun reconnects the whole roster.
+Until that connect message, the seats report to `report_to`. The lead relays the exchange and delivers the reviewed plan,
+its stamped plan and open objections to `report_to`, which Triage digests.
 
-The operator can launch the three-seat `plan-team` runbook directly:
+The operator can launch the four-seat `plan-team` runbook directly:
 `gobby pipelines run plan-team -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
 
 _Last verified: 2026-10-23_

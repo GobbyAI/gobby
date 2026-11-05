@@ -19,7 +19,7 @@ from typing import Any
 from gobby.agents.model_defaults import ModelDefaults
 from gobby.agents.team_communications import recipient_admits
 from gobby.agents.team_lifecycle import seat_team
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
@@ -104,7 +104,10 @@ def check_runbook_seats(
 
     ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each requested
     seat whose agent already has an active run on this machine with a live session in this
-    project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
+    project. ``live`` maps every catalogue seat with such a run, requested or not, to that session,
+    so a partial run reports its whole roster; with a ``task``, only runs that a pipeline
+    execution launched for that same task count, so another task's seats are never mapped. With
+    ``team_id``, ``live`` covers
     every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
     reviewer's request still reports its team's live Dev Team Lead; only runs admitted to that team
     count. With ``parent_team_id``, or a ``team_id`` admitted under a parent team, seats whose
@@ -236,7 +239,13 @@ def _admit(
     if team_id is not None:
         live = _live_seats(stores, session, catalogue, team_id=team_id)
     elif skip_live_seats:
-        live = _live_seats(stores, session, seats, team_id=None)
+        live = _live_seats(
+            stores,
+            session,
+            catalogue,
+            team_id=None,
+            task=_launch_task(stores.tasks, execution, project_id),
+        )
     else:
         live = {}
     tab_task = task
@@ -305,8 +314,12 @@ def _live_seats(
     seats: Sequence[CatalogueSeat],
     *,
     team_id: str | None,
+    task: str | None = None,
 ) -> dict[str, str]:
-    """Map each seat whose agent runs here with a live session in the project to that session."""
+    """Map each seat whose agent runs here with a live session in the project to that session.
+
+    With ``task`` (a resolved task id), only runs launched by a pipeline execution for that task count.
+    """
     runs = stores.runs.list_active_for_machine(caller.machine_id, limit=READ_BOUND + 1)
     _refuse_truncated(runs, "active agent run")
     live: dict[str, str] = {}
@@ -324,9 +337,31 @@ def _live_seats(
                     team = seat_team(stores.sessions.db, child.id)
                     if team is None or team.team_id != team_id:
                         continue
+                if task is not None and _run_task(stores, caller.project_id, run) != task:
+                    continue
                 live[seat.name] = child.id
                 break
     return live
+
+
+def _run_task(stores: RunbookSeatStores, project_id: str, run: AgentRun) -> str | None:
+    """The task of the pipeline execution that launched ``run``; None when it launched for none."""
+    launcher = stores.sessions.get(run.parent_session_id)
+    if (
+        launcher is None
+        or launcher.source != "pipeline"
+        or not launcher.external_id.startswith(PIPELINE_CHILD_PREFIX)
+    ):
+        return None
+    execution = stores.executions(project_id).get_execution(
+        launcher.external_id.removeprefix(PIPELINE_CHILD_PREFIX)
+    )
+    if execution is None:
+        return None
+    try:
+        return _launch_task(stores.tasks, execution, project_id)
+    except RunbookSeatRefusal:
+        return None
 
 
 def _runbook_tab_title(
