@@ -5,7 +5,7 @@ message_sender_capabilities: [direct_release_manager]
 description: |
   Release Manager seat. Rebuilds and promotes the Rust binaries whose crates
   changed, and runs daemon restarts and cutovers, each only on the Orchestrator's direction.
-version: "2.0.0"
+version: "2.0.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: codex
