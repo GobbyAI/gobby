@@ -637,7 +637,7 @@ async def prepare_sandbox_launch(
         await asyncio.to_thread(shutil.copyfile, prompt_file, run_prompt)
         await asyncio.to_thread(run_prompt.chmod, 0o600)
         run_environment["GOBBY_PROMPT_FILE"] = str(run_prompt)
-    superseded_writes = previous_run_write_paths(env)
+    superseded_writes = previous_run_write_paths(env, base=Path(workspace_path))
     retained_writes = [
         path
         for path in config.extra_write_paths

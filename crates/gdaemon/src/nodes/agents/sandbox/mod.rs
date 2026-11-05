@@ -123,7 +123,7 @@ pub(super) fn compile_policy(
         caches::agent_cargo_target_dir(inputs),
     );
     let spawned = caches::spawn_grants(config, &project, &mut env, inputs);
-    let superseded = caches::superseded_write_paths(&env, &inputs.home);
+    let superseded = caches::superseded_write_paths(&env, inputs);
     let spawned = caches::retain_unsuperseded(spawned, &superseded, inputs);
     let layout = caches::run_layout(inputs, &env)?;
     if inputs.prewarm_pre_commit_store {

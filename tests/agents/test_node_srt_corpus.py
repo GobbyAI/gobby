@@ -417,7 +417,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     assert spawned is not None
     # The production launch drops grants the run's own roots supersede (srt_runtime's
     # previous_run_write_paths step), so the oracle drops them before adding run grants.
-    superseded_writes = previous_run_write_paths(env)
+    superseded_writes = previous_run_write_paths(env, base=workspace)
     spawned = spawned.model_copy(
         update={
             "extra_write_paths": [

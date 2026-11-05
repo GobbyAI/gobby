@@ -119,9 +119,27 @@ def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
     gobby_home = tmp_path / "gobby-home"
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
 
-    superseded = previous_run_write_paths({})
+    superseded = previous_run_write_paths({}, base=tmp_path)
 
     assert str((gobby_home / "hooks" / "inbox").resolve()) not in superseded
+
+
+def test_previous_run_write_paths_anchors_relative_cargo_home_at_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # A relative CARGO_HOME names a path under the seat's workspace, whatever the daemon's
+    # working directory is, so the superseded entry uses the workspace anchor the grants use.
+    daemon_cwd = tmp_path / "daemon-cwd"
+    daemon_cwd.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(daemon_cwd)
+
+    superseded = previous_run_write_paths({"CARGO_HOME": "relative-cargo-cache"}, base=workspace)
+
+    assert str((workspace / "relative-cargo-cache").resolve()) in superseded
+    assert str((daemon_cwd / "relative-cargo-cache").resolve()) not in superseded
 
 
 @pytest.mark.parametrize("provider", ["grok", "claude", "codex", "agy", "droid", None])

@@ -315,10 +315,11 @@ pub(super) fn spawn_grants(
 
 /// `previous_run_write_paths`: the canonical cache and Cargo paths the spawn env names. The
 /// run's own roots supersede them, and unsandboxed builds execute from the shared Cargo home
-/// and target, so a sandboxed run keeps no write grant on any of them.
+/// and target, so a sandboxed run keeps no write grant on any of them. A relative value is
+/// anchored at the workspace, the same base the grants are canonicalized with.
 pub(super) fn superseded_write_paths(
     env: &BTreeMap<String, String>,
-    home: &Path,
+    inputs: &PolicyInputs,
 ) -> BTreeSet<String> {
     let raws: Vec<&str> = RUN_CACHE_ENV_VARS
         .iter()
@@ -326,7 +327,9 @@ pub(super) fn superseded_write_paths(
         .chain([CARGO_HOME, CARGO_TARGET_DIR])
         .filter_map(|name| non_empty(env, name))
         .collect();
-    canonical_paths(raws, None, home).into_iter().collect()
+    canonical_paths(raws, Some(inputs.workspace.as_path()), &inputs.home)
+        .into_iter()
+        .collect()
 }
 
 /// `srt_runtime`'s retained-writes step: drop each spawn write grant that the run supersedes,

@@ -1801,6 +1801,35 @@ fn srt_run_refuses_shared_cargo_grants() -> Result<()> {
 }
 
 #[test]
+fn srt_run_refuses_relative_cargo_grants() -> Result<()> {
+    // A relative CARGO_HOME names a path under the seat's working directory. The superseded
+    // set must anchor it where the grants are anchored, so the run keeps no grant on it.
+    let corpus = srt_corpus()?;
+    let root = tempfile::tempdir()?;
+    let mut inputs = srt_case_inputs(&corpus, "claude-srt-empty")?;
+    inputs["env"]["CARGO_HOME"] = Value::String("relative-cargo-cache".into());
+    let tree = SrtTree::new(&root.path().join("relative-cargo"))?;
+    tree.materialize(&inputs)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let grants = &policy.sandbox.extra_write_paths;
+    let relative_home = tree.path("workspace").join("relative-cargo-cache");
+    let workspace = tree.path("workspace");
+    assert!(
+        !grants.iter().any(|grant| {
+            let grant = Path::new(grant);
+            let anchored = if grant.is_absolute() {
+                grant.to_path_buf()
+            } else {
+                workspace.join(grant)
+            };
+            anchored == relative_home
+        }),
+        "the relative Cargo home is writable: {relative_home:?} in {grants:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn srt_agent_workspace_grants_match_python_corpus() -> Result<()> {
     // #25148: a spawned seat writes its own `<definition>/session-<seq>/` folder and
     // its team's `epics/epic-<seq>/` folder under the project's workspace anchor,
