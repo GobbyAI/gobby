@@ -17,6 +17,7 @@ from gobby.storage.token_events import TokenEventStore
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
     from gobby.hooks.hook_manager import HookManager
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.sessions.processor_lifecycle import SessionFlushResult, TurnCompletion
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
@@ -47,9 +48,11 @@ class ProcessorHost(Protocol):
     poll_interval: float
     websocket_server: WebSocketServer | None
     communications_manager: CommunicationsManager | None
+    provider_capacity_service: ProviderCapacityService | None
     session_manager: SessionManager | None
     _hook_manager: HookManager | None
     _run_db: Callable[..., Awaitable[Any]]
+    _quota_caught_up: set[str]
     _active_sessions: dict[str, str]
     _processing_locks: WeakValueDictionary[str, asyncio.Lock]
     _parsers: dict[str, TranscriptParser]

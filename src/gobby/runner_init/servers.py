@@ -378,6 +378,7 @@ def init_servers(runner: GobbyRunner) -> None:
         if runner.message_processor:
             runner.message_processor.websocket_server = runner.websocket_server
             runner.message_processor.session_manager = runner.session_manager
+            runner.message_processor.provider_capacity_service = provider_capacity_service
 
         from gobby.runner_broadcasting import (
             setup_agent_event_broadcasting,

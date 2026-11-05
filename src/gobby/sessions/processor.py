@@ -16,6 +16,7 @@ from weakref import WeakValueDictionary
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
     from gobby.hooks.hook_manager import HookManager
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
 
@@ -67,6 +68,10 @@ class SessionMessageProcessor(
         self._hook_manager: Any | None = hook_manager
         self._run_db = run_db or asyncio.to_thread
         self.communications_manager = communications_manager
+        # Shared quota sink; attached by server init and the rebuild activation.
+        self.provider_capacity_service: ProviderCapacityService | None = None
+        # Sessions whose last cursor-advancing pass ended at the transcript end (plan 4.3).
+        self._quota_caught_up: set[str] = set()
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}

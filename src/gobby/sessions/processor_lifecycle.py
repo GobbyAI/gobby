@@ -301,6 +301,7 @@ class ProcessorLifecycleMixin:
         self._mirror_eligible_ids.pop(session_id, None)
         self._mirror_eligible_lines.pop(session_id, None)
         self._pending_turn_completions.pop(session_id, None)
+        self._quota_caught_up.discard(session_id)
         if was_registered:
             logger.debug("Unregistered session %s", session_id)
 
