@@ -297,13 +297,14 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
 ## Constraints
 `kind: framing`
 
-- Leaves 2.1 and 2.2 are heavy measurement work. The Orchestrator launches
-  them in a Dev Team in epic mode for #22948, the only mode that grants the
-  epic folder. That launch waits on Josh's freeze: no new teams until #25765
-  and #25653 are proven live. The fleet's load hold in `project_policy` applies,
-  and no timed run happens during `project_policy.quiet_hours`. Decision 3's
-  comparative protocol replaces any quiet-load preflight.
-- Both leaves use only the fresh root named in Decision 15, with its own
+- The Orchestrator launches all three leaves in a Dev Team in epic mode for
+  #22948, the only mode that grants the epic folder. That launch waits on Josh's
+  freeze: no new teams until #25765 and #25653 are proven live.
+- Leaves 2.1 and 2.2 are heavy measurement work. The fleet's load hold in
+  `project_policy` applies, and no timed run happens during
+  `project_policy.quiet_hours`. Decision 3's comparative protocol replaces any
+  quiet-load preflight.
+- Leaves 2.1 and 2.2 use only the fresh root named in Decision 15, with its own
   compose services and Gobby home. They never touch the live daemon, the live
   database, or port 60891, and they never write under the September root. The
   root named in the frozen 1.1 text, under `/Users/josh/Projects/`, was never
@@ -683,6 +684,12 @@ Targets:
 - `docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py`
 
 **Research context:**
+- Runtime root, written `<root>` below:
+  `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11/`.
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants the
+  epic folder to the seats of a live epic-mode team, so this leaf runs in one.
+  This leaf never touches the live daemon, the live database or port 60891, and
+  never writes under the September root.
 - Why the earlier attempts stopped:
   `docs/evidence/gcode-graphify-rerun-2026-10/report.md`, section 7. Docker
   denial on `docker image inspect` under SRT; write-once `receipts/gcode.json`
@@ -736,7 +743,7 @@ Targets:
    September scripts and results stay unchanged. Every isolation, corpus,
    service-boundary, containment and receipt check stays. The copies may
    change only:
-   - the runtime root (Decision 15), the owner task to `#22948`, the compose
+   - the runtime root to `<root>`, the owner task to `#22948`, the compose
      project to `gcode-graphify-rerun-2026-11` (containers, volumes and network
      derive from it), the database name and account email, and the tool,
      source and contract pins. Graphify is unpinned: the PyPI `graphifyy`
@@ -786,7 +793,9 @@ Targets:
    and Triage, each exact invocation and the SHA-256 of
    `<root>/scripts/launch_services.py`. It reads that copy, then runs it from the
    main checkout with `/Users/josh/Projects/gobby/.venv/bin/python`. No seat
-   calls Docker.
+   calls Docker. Josh's D1 button, "#22948 D1 Graphify comparison: Run it", is
+   the operator's go for the registrations in `provision`, in the isolated hub
+   only.
    - `provision --owner-session <session>`: writes
      `isolation/external-state.before.json`; runs the existing `check`, `start`
      and `observe`, which write the compose and service receipts; builds
@@ -867,6 +876,17 @@ Targets:
 - `docs/evidence/gcode-graphify-rerun-2026-11/results/C8-scores.json`
 
 **Research context:**
+- Runtime root, written `<root>` below:
+  `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11/`.
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants the
+  epic folder to the seats of a live epic-mode team, so this leaf runs in one. It
+  holds `ownership.json`, `config/project-manifest.json` and the results.
+- Run constraints: this leaf never touches the live daemon, the live database or
+  port 60891, and never writes under the September root. The fleet's load hold in
+  `project_policy` applies, and no timed run happens during
+  `project_policy.quiet_hours`. A daemon hold pauses the leaf between pairs and
+  never voids a pair already recorded, because the isolated services do not depend
+  on the live daemon.
 - Prior run: `docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md` (C0-C9
   table at lines 62-75, C1-C6 measurements at lines 80-94, frozen identities at
   lines 42-48). Runners and results sit in
@@ -882,7 +902,8 @@ Targets:
   <state> --no-label`, with `GRAPHIFY_OUT` and `GRAPHIFY_NATIVE_CONCURRENCY`. Current
   `gcode index --help` still lists `--full`, `--sync-projections` and `--project`.
   `run_index_cases.py::run_cases` uses `casebook.py::initialize_gcode_project`, which
-  this leaf removes (Decision 13): 2.1 registered the projects.
+  this leaf removes, because `roles/seat-spawn-policy.yaml::seat-no-project-create`
+  blocks `gobby init` for seats: 2.1 registered the projects.
 - Protocol: `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md`. C2 to C6 (lines
   365-562) are separate one-step lineages, not one serial state: C2 copies the
   sealed C1 state, C3 runs on an independent state built from the baseline, and C4
@@ -1074,6 +1095,9 @@ Targets:
 - `docs/guides/llm-features.md`
 
 **Research context:**
+- Execution context: the output directory in step 2 sits in the epic folder.
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants that folder only to the
+  seats of a live epic-mode team, so this leaf's developer and reviewer run in the #22948 epic-mode team.
 - Package: `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`. Its
   temporary directory no longer exists, so this run needs new output paths. The scripts are
   tracked: `scripts/community_label_study.py`, SHA-256
@@ -1092,9 +1116,10 @@ Targets:
   `key.json` and `run.json`.
 - C1: `.gobby/plans/community-label-decisions.md`, D4 (lines 109-118 and 238-244). Corpus
   `/Users/josh/Projects/wiki-bakeoff-code-2026-09/corpora/gcode/C1`, project id
-  `c8e071af-e1f7-434f-b3c0-f31a1b1299c9`, name `gcode-bakeoff-C1`. The Orchestrator re-registers and
-  re-indexes that existing id, never a fresh init. After this leaf lands it soft-deletes the
-  registration with `gobby projects delete`; the folder and marker stay.
+  `c8e071af-e1f7-434f-b3c0-f31a1b1299c9`, name `gcode-bakeoff-C1`. Josh's D2 button, "#22948 D2 label
+  study: A, run the no-decisions study now (Recommended)", is the explicit go D4 requires. The
+  Orchestrator re-registers and re-indexes that existing id, never a fresh init. After this leaf lands
+  it soft-deletes the registration with `gobby projects delete`; the folder and marker stay.
 - Ship rules (same plan, lines 973-987): rule 1, G regresses on at most 1 of 30, and the gate ships
   `off`; rule 2, enforce if J passes its bars; rule 3, deterministic names ship with
   `code_index.community_label.enabled: false` and every decision consumer `off`. "A `--no-decisions`
