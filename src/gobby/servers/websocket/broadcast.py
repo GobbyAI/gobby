@@ -187,7 +187,11 @@ class BroadcastMixin:
         return True
 
     async def broadcast(
-        self, message: dict[str, Any], *, frames: Sequence[dict[str, Any]] = ()
+        self,
+        message: dict[str, Any],
+        *,
+        frames: Sequence[dict[str, Any]] = (),
+        source_bytes: int | None = None,
     ) -> None:
         """
         Broadcast message to all connected clients.
@@ -199,11 +203,13 @@ class BroadcastMixin:
                 the payload; with ``frames`` pass only the fields subscriptions read.
             frames: Wire frames each selected recipient receives in order instead of
                 ``message``, so a fragmented message never repeats its rows in the filter
+            source_bytes: Size of the payload ``frames`` are encoded from, required with
+                ``frames``. The native publisher reserves it until the frames are queued.
         """
         if self.native_publisher is not None:
             # Native mode: gdaemon's broker owns fanout and subscription filtering.
             try:
-                await self.native_publisher.publish(message, frames)
+                await self.native_publisher.publish(message, frames, source_bytes=source_bytes)
             except (TypeError, ValueError) as exc:
                 logger.warning("Broadcast payload is not JSON serializable: %s", exc)
             return
@@ -481,7 +487,7 @@ class BroadcastMixin:
             if key not in ("workspace", "tabs", "panes")
         }
         if len(raw) <= TERMINAL_LIST_MAX_ENCODED_BYTES:
-            await self.broadcast(route, frames=[message])
+            await self.broadcast(route, frames=[message], source_bytes=len(raw))
         elif len(raw) <= TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
             workspace_id = message["workspace_id"]
             frames = await fragment_event_async(
@@ -491,7 +497,9 @@ class BroadcastMixin:
                 message_seq=message["seq"],
                 complete_json=raw,
             )
-            await self.broadcast(route, frames=frames)
+            # The frames already hold their base64 payloads, so those are the bytes waiting here.
+            payload_bytes = sum(len(frame["payload"]) for frame in frames)
+            await self.broadcast(route, frames=frames, source_bytes=payload_bytes)
         else:
             # No client can reassemble these rows. Raising here would stop every
             # lifecycle publication, so the event goes out without them and the
@@ -502,9 +510,10 @@ class BroadcastMixin:
                 message["workspace_id"],
                 len(raw),
             )
-            await self.broadcast(
-                route, frames=[{**message, "workspace": None, "tabs": [], "panes": []}]
-            )
+            # The frame is the event without its rows, so its own size is charged, not raw's.
+            stripped = {**message, "workspace": None, "tabs": [], "panes": []}
+            stripped_bytes = len(await canonical_json_async(stripped))
+            await self.broadcast(route, frames=[stripped], source_bytes=stripped_bytes)
 
     async def broadcast_autonomous_event(
         self,

@@ -25,8 +25,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Decision 14 admission budgets, counting queued plus in-flight operations. The byte budget
-# also bounds the body of any one request.
+# Decision 14 admission budgets. The count budgets cover queued and in-flight operations, plus
+# one place for each call still preparing. The byte budget covers queued and in-flight encoded
+# bytes, plus the source bytes of calls still preparing. It also bounds the body of any one request.
 MAX_RETAINED_BYTES = 128 * 1024 * 1024
 MAX_RETAINED_OPS = 65_536
 MAX_WAITING_FUTURES = 65_536
@@ -104,6 +105,9 @@ class NativePublisher:
         # Calls still waiting for their turn or encoding, keyed by their turn. A call leaves once
         # it enqueues, so queued ops are not counted twice and stop can cancel only these.
         self._preparing: dict[asyncio.Future[None], asyncio.Task[None]] = {}
+        # Source bytes each preparing call reserved at admission, released at its exchange.
+        self._reserved: dict[asyncio.Future[None], int] = {}
+        self._reserved_bytes = 0
 
     @property
     def front_door_secret(self) -> str:
@@ -170,29 +174,53 @@ class NativePublisher:
         return generation
 
     def publish(
-        self, message: dict[str, Any], frames: Sequence[dict[str, Any]] = ()
+        self,
+        message: dict[str, Any],
+        frames: Sequence[dict[str, Any]] = (),
+        *,
+        source_bytes: int | None = None,
     ) -> asyncio.Future[None]:
+        """Queue a publish of the frames, or of the message when there are none.
+
+        ``source_bytes`` is the size of the payload the frames are encoded from. It is reserved
+        from admission until the call's exchange, so pending payloads count against
+        MAX_RETAINED_BYTES. Without frames the message is its own payload, and its filter JSON
+        gives its size.
+        """
         # Frames are encoded exactly as BroadcastMixin.broadcast encodes them. The filter
         # repeats in every op this call splits into, so callers pass routing fields only.
         # Every op is encoded before any is queued, so a frame that fails to encode queues none.
-        return self._sequence(_publish_ops(json_dumps(message), frames or (message,)))
+        filter_json = json_dumps(message)
+        if source_bytes is None:
+            if frames:
+                raise TypeError("publish with frames needs source_bytes, their encoding source")
+            source_bytes = len(filter_json)
+        return self._sequence(_publish_ops(filter_json, frames or (message,)), source_bytes)
 
     def subscribe(self, leg: int, events: Iterable[str]) -> asyncio.Future[None]:
         encoded = json_dumps({"op": "subscribe", "leg": leg, "events": list(events)}).encode()
-        return self._sequence(_ready([encoded]))
+        return self._sequence(_ready([encoded]), len(encoded))
 
-    def _sequence(self, ops: Coroutine[Any, Any, list[bytes]]) -> asyncio.Future[None]:
+    def _sequence(
+        self, ops: Coroutine[Any, Any, list[bytes]], source_bytes: int
+    ) -> asyncio.Future[None]:
         """Take this call's place in the queue order now, and queue its ops when they are ready.
 
         Encoding yields to the loop, so a later call can finish encoding first. Each call
         still enqueues after every call made before it, even when an earlier call is cancelled.
+        Admission reserves the call's source bytes until its exchange.
         """
         generation = self._generation
-        # A call that is waiting to enqueue holds a task, a turn and its ops, so it counts
-        # against the caps that queued ops count against. Over the caps, it fails the
-        # generation before any of that is built.
+        # A call that is waiting to enqueue holds a task, a turn, its ops and its source payload.
+        # From admission it counts as one place against the count caps and its source bytes
+        # count against the byte cap. Over the caps, it fails the generation before any of that
+        # is built.
         waiting = len(self._preparing) + self._retained_ops + 1
-        if waiting > MAX_RETAINED_OPS or waiting > MAX_WAITING_FUTURES:
+        if (
+            waiting > MAX_RETAINED_OPS
+            or waiting > MAX_WAITING_FUTURES
+            or self._retained_bytes + self._reserved_bytes + source_bytes > MAX_RETAINED_BYTES
+        ):
             ops.close()
             logger.warning("Native WS publish budget exceeded; failing generation %s", generation)
             self.fail_generation(generation)
@@ -202,6 +230,8 @@ class NativePublisher:
         previous = self._turn
         turn: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._turn = turn
+        self._reserved[turn] = source_bytes
+        self._reserved_bytes += source_bytes
         task = asyncio.ensure_future(self._queue_turn(previous, turn, generation, ops))
         self._preparing[turn] = task
         # A task cancelled before it starts never runs _queue_turn, so this callback ends the call.
@@ -219,7 +249,8 @@ class NativePublisher:
             # Shielded: cancelling this call must not cancel the turn it is waiting for.
             if previous is not None:
                 await asyncio.shield(previous)
-            futures = [self._enqueue(op, generation) for op in await ops]
+            # The exchange: the caps are checked and the ops queued in one synchronous step.
+            futures = self._enqueue(turn, generation, await ops)
         finally:
             self._unprepare(turn, previous, ops)
         await _settle_all(futures)
@@ -236,6 +267,9 @@ class NativePublisher:
         ahead of an earlier one that is still waiting.
         """
         self._preparing.pop(turn, None)
+        # Source bytes end at the exchange; the encoded ops hold their bytes from there. Pops once,
+        # because this runs both at the end of _queue_turn and from the task's done callback.
+        self._reserved_bytes -= self._reserved.pop(turn, 0)
         # Closes the ops of a call that never started; a finished coroutine is unaffected.
         ops.close()
         if previous is None or previous.done():
@@ -286,31 +320,46 @@ class NativePublisher:
             await asyncio.sleep(TOKEN_POLL_INTERVAL)
         return token
 
-    def _enqueue(self, encoded: bytes, generation: str | None) -> asyncio.Future[None]:
-        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    def _enqueue(
+        self, turn: asyncio.Future[None], generation: str | None, encoded: list[bytes]
+    ) -> list[asyncio.Future[None]]:
+        """Queue one call's encoded ops if the caps still hold with them, and return their futures.
+
+        The check and the queueing are one synchronous step. Each other call still preparing
+        counts as one place and keeps its source bytes reserved. Over the caps, the generation
+        fails and none of this call's ops is queued.
+        """
         # An op belongs to the generation that was current when its call was made. If that
-        # generation has ended since, the op is dropped, as queued ops of an ended one are.
+        # generation has ended since, the call's ops are dropped, as queued ops of an ended one are.
         if generation is None or generation != self._generation:
-            future.set_result(None)
-            return future
-        # Each operation holds exactly one waiting future, so the op count is the future count.
+            return []
+        others = len(self._preparing) - 1
+        count = others + self._retained_ops + len(encoded)
+        reserved_by_others = self._reserved_bytes - self._reserved.get(turn, 0)
+        size = sum(len(op) for op in encoded)
+        # One op alone, in a request with its wrapper, must fit the byte budget.
+        largest = max((len(op) for op in encoded), default=0) + len(_request_body(generation, []))
         if (
-            self._retained_bytes + len(encoded) > MAX_RETAINED_BYTES
-            or len(_request_body(generation, [])) + len(encoded) > MAX_RETAINED_BYTES
-            or self._retained_ops + 1 > MAX_RETAINED_OPS
-            or self._retained_ops + 1 > MAX_WAITING_FUTURES
+            count > MAX_RETAINED_OPS
+            or count > MAX_WAITING_FUTURES
+            or self._retained_bytes + reserved_by_others + size > MAX_RETAINED_BYTES
+            or largest > MAX_RETAINED_BYTES
         ):
-            future.set_result(None)
             logger.warning("Native WS publish budget exceeded; failing generation %s", generation)
             self.fail_generation(generation)
-            return future
-        self._queue.append(_Op(generation, encoded, future))
-        self._retained_bytes += len(encoded)
-        self._retained_ops += 1
+            return []
+        loop = asyncio.get_running_loop()
+        futures: list[asyncio.Future[None]] = []
+        for op in encoded:
+            future: asyncio.Future[None] = loop.create_future()
+            self._queue.append(_Op(generation, op, future))
+            futures.append(future)
+        self._retained_bytes += size
+        self._retained_ops += len(encoded)
         if self._sender is None or self._sender.done():
             self._sender = asyncio.create_task(self._send_loop())
         self._wake.set()
-        return future
+        return futures
 
     async def _send_loop(self) -> None:
         while True:

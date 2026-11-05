@@ -234,9 +234,17 @@ When a publisher is attached:
   `None`.
 - A frame that fails to encode fails its call with the encoding error. No operation of
   that call is queued.
-- Calls waiting for their place or encoding, plus queued operations, count against both
-  `MAX_RETAINED_OPS` and `MAX_WAITING_FUTURES`. A call over either cap fails the
-  generation before it encodes, and its future resolves to `None`.
+- Calls waiting for their place or encoding count as one place each against
+  `MAX_RETAINED_OPS` and `MAX_WAITING_FUTURES`, together with queued operations. A call
+  whose encoded operations would exceed either cap fails the generation at its exchange
+  and queues none of them, and its future resolves to `None`.
+- A `publish` with frames declares `source_bytes`, the size of the payload its frames
+  encode from. Admission reserves those bytes against `MAX_RETAINED_BYTES` together with
+  the queued encoded bytes, so a call that would exceed the byte cap fails the generation
+  before it encodes. The reservation ends at the call's exchange, where its encoded bytes
+  are checked against the cap together with the queued bytes and the reservations of
+  calls still waiting, and then counted until settle. A call without frames charges its
+  message's filter JSON, which is its own payload.
 - `stop()` cancels calls still waiting for their place or encoding, so awaiting their
   futures raises `CancelledError`. Calls whose operations are queued settle to `None`.
   `BroadcastMixin.broadcast` catches only `TypeError` and `ValueError`, so a broadcast

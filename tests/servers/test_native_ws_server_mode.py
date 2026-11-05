@@ -53,9 +53,9 @@ async def test_native_broadcast_hands_frames_to_publisher_without_clients(
     local_client = AsyncMock()
     server.clients[local_client] = {"subscriptions": set()}
 
-    await server.broadcast(message, frames=frames)
+    await server.broadcast(message, frames=frames, source_bytes=64)
 
-    publisher.publish.assert_awaited_once_with(message, frames)
+    publisher.publish.assert_awaited_once_with(message, frames, source_bytes=64)
     # gdaemon's broker owns fanout: the local client is neither written nor dropped.
     local_client.send.assert_not_awaited()
     assert local_client in server.clients

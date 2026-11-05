@@ -117,7 +117,12 @@ async def test_publish_requests_stay_within_a_deadline_sized_batch(supervisor_to
     frame = {"type": "terminal_output", "data": "x" * (1 << 20)}
     try:
         await publisher.start()
-        pending = [publisher.publish({"type": "terminal_output"}, [frame]) for _ in range(4)]
+        pending = [
+            publisher.publish(
+                {"type": "terminal_output"}, [frame], source_bytes=_source_bytes([frame])
+            )
+            for _ in range(4)
+        ]
         await asyncio.wait_for(asyncio.gather(*pending), 5.0)
     finally:
         await publisher.stop()
@@ -132,7 +137,12 @@ async def test_large_publish_splits_into_bounded_ops_in_frame_order(supervisor_t
     publisher = _publisher(daemon)
     try:
         await publisher.start()
-        await asyncio.wait_for(publisher.publish({"type": "terminal_output"}, frames), 5.0)
+        await asyncio.wait_for(
+            publisher.publish(
+                {"type": "terminal_output"}, frames, source_bytes=_source_bytes(frames)
+            ),
+            5.0,
+        )
     finally:
         await publisher.stop()
     delivered = [json.loads(payload)["seq"] for op in daemon.ops(GEN1) for payload in op["frames"]]
@@ -152,7 +162,12 @@ async def test_publish_frame_larger_than_the_op_cap_goes_alone(supervisor_token:
     publisher = _publisher(daemon)
     try:
         await publisher.start()
-        await asyncio.wait_for(publisher.publish({"type": "terminal_output"}, frames), 5.0)
+        await asyncio.wait_for(
+            publisher.publish(
+                {"type": "terminal_output"}, frames, source_bytes=_source_bytes(frames)
+            ),
+            5.0,
+        )
     finally:
         await publisher.stop()
     delivered = [json.loads(payload)["seq"] for op in daemon.ops(GEN1) for payload in op["frames"]]
@@ -373,7 +388,7 @@ async def test_publish_preparation_peak_stays_within_queued_bytes_and_op_transie
         try:
             base, _ = tracemalloc.get_traced_memory()
             tracemalloc.reset_peak()
-            settled = publisher.publish(route, frames)
+            settled = publisher.publish(route, frames, source_bytes=_source_bytes(frames))
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
@@ -556,6 +571,11 @@ def _publish_op(
     return {"op": "publish", "filter": json.loads(json_dumps(message)), "frames": payloads}
 
 
+def _source_bytes(frames: list[dict[str, Any]]) -> int:
+    """The bytes the frames encode from, which the caller passes as their source size."""
+    return len(json_dumps(frames))
+
+
 def _adapter(publisher: NativePublisher, socket: _Socket, leg: int = 7) -> NativeBridgeAdapter:
     return NativeBridgeAdapter(
         cast(WebSocket, socket),
@@ -597,7 +617,7 @@ async def test_publisher_binds_and_publishes_encoded_frames(
         sent_first = publisher.publish(first)
         await _until(daemon.received.is_set)
         later = [
-            publisher.publish(second, frames=fragments),
+            publisher.publish(second, frames=fragments, source_bytes=_source_bytes(fragments)),
             publisher.subscribe(7, events),
             publisher.publish(first),
         ]
@@ -1134,7 +1154,12 @@ async def test_frame_that_fails_to_encode_queues_no_op(supervisor_token: str) ->
     await publisher.start()
     try:
         # The first frame encodes; the second cannot. Neither op may be queued.
-        bad = publisher.publish({"type": "burst"}, [{"seq": 1}, {"seq": 2, "data": object()}])
+        # Only the first frame has a size to charge; the second cannot be encoded at all.
+        bad = publisher.publish(
+            {"type": "burst"},
+            [{"seq": 1}, {"seq": 2, "data": object()}],
+            source_bytes=_source_bytes([{"seq": 1}]),
+        )
         with pytest.raises(TypeError):
             await asyncio.wait_for(bad, 1.0)
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
@@ -1240,6 +1265,8 @@ async def test_large_publish_keeps_its_place_before_later_calls(supervisor_token
         big = publisher.publish(
             {"type": "big"},
             [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+            # Each "é" is two bytes of UTF-8 source.
+            source_bytes=4 * ws_protocol.CANONICAL_PIECE_CHARS,
         )
         subscribed = publisher.subscribe(7, ["terminal.output"])
         small = publisher.publish({"type": "small"})
@@ -1275,6 +1302,8 @@ async def test_cancelled_waiter_keeps_later_calls_behind_its_predecessor(
         big = publisher.publish(
             {"type": "big"},
             [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+            # Each "é" is two bytes of UTF-8 source.
+            source_bytes=4 * ws_protocol.CANONICAL_PIECE_CHARS,
         )
         waiter = publisher.publish({"type": "waiter"})
         # One loop turn lets big start encoding and the waiter block on big's place.
@@ -1300,6 +1329,8 @@ async def test_call_cancelled_before_it_starts_leaves_no_op_coroutine(
         big = publisher.publish(
             {"type": "big"},
             [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+            # Each "é" is two bytes of UTF-8 source.
+            source_bytes=4 * ws_protocol.CANONICAL_PIECE_CHARS,
         )
         cancelled = publisher.publish({"type": "cancelled"})
         cancelled.cancel()
@@ -1337,6 +1368,138 @@ async def test_preparations_over_the_waiting_cap_fail_the_generation(
         await asyncio.wait_for(asyncio.gather(*held), 2.0)
         assert daemon.ops(GEN1) == []
         assert publisher.retained_ops == 0
+    finally:
+        await publisher.stop()
+
+
+async def test_cap_holds_while_a_call_expands_into_queued_ops(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One op per frame, and room for three places: the expanding call and two waiting behind it.
+    monkeypatch.setattr(native_publish, "PUBLISH_CHUNK", 1)
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_OPS", 3)
+    monkeypatch.setattr(native_publish, "MAX_WAITING_FUTURES", 3)
+    gate = _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    places: list[int] = []
+
+    async def watch() -> None:
+        while True:
+            places.append(len(publisher._preparing) + publisher.retained_ops)
+            await asyncio.sleep(0)
+
+    watcher = asyncio.create_task(watch())
+    try:
+        frames = [{"n": n} for n in range(3)]
+        expanding = publisher.publish({"type": "burst"}, frames, source_bytes=_source_bytes(frames))
+        waiting = [publisher.publish({"type": "waiter", "n": n}) for n in range(2)]
+        await _turns()
+        gate.set()
+        assert await asyncio.wait_for(asyncio.gather(expanding, *waiting), 2.0) == [None] * 3
+        assert publisher.generation != GEN1
+        # The expanding call's three ops would join the two calls still waiting behind it, so
+        # the call is refused before any op is queued.
+        assert daemon.requests == []
+        assert publisher.retained_ops == 0
+        assert max(places) <= 3
+    finally:
+        watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher
+        await publisher.stop()
+
+
+async def test_source_bytes_hit_the_byte_cap_before_the_count_cap(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    gate = _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        frames = [{"data": "a" * 4_000}]
+        held = publisher.publish({"type": "large"}, frames, source_bytes=6_000)
+        # Two 6,000-byte sources exceed the 10,000-byte cap with two places in use. The count
+        # caps are far above two, so the refusal comes from the byte cap at admission.
+        refused = publisher.publish({"type": "large"}, frames, source_bytes=6_000)
+        assert refused.done() and refused.result() is None
+        assert publisher.generation != GEN1
+        gate.set()
+        await asyncio.wait_for(held, 2.0)
+        assert daemon.requests == []
+    finally:
+        await publisher.stop()
+
+
+async def test_exchange_refuses_encoded_bytes_that_exceed_the_queued_bytes(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        # Holding the POST keeps the first op's bytes queued.
+        gate = asyncio.Event()
+        daemon.gate = gate
+        first = publisher.publish({"type": "first"}, [{"data": "a" * 6_000}], source_bytes=10)
+        await _until(daemon.received.is_set)
+        # The declared source is small, so admission passes. The encoded op does not fit beside
+        # the queued first op, so the exchange refuses it.
+        over = publisher.publish({"type": "over"}, [{"data": "b" * 6_000}], source_bytes=10)
+        await asyncio.wait_for(over, 1.0)
+        assert publisher.generation != GEN1
+        await asyncio.wait_for(first, 1.0)
+        assert len(daemon.requests) == 1
+        assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
+    finally:
+        gate.set()
+        await publisher.stop()
+
+
+async def test_exchange_counts_the_source_bytes_of_calls_still_waiting(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        # The first call encodes to about 4,600 bytes from a 3,000-byte source. The second waits
+        # behind it with a 6,000-byte source reserved, so 4,600 encoded bytes do not fit beside it.
+        first = publisher.publish({"type": "first"}, [{"data": "a" * 4_500}], source_bytes=3_000)
+        second = publisher.publish({"type": "second"}, [{"data": "b"}], source_bytes=6_000)
+        await asyncio.wait_for(asyncio.gather(first, second), 2.0)
+        assert publisher.generation != GEN1
+        assert daemon.requests == []
+    finally:
+        await publisher.stop()
+
+
+async def test_reserved_source_bytes_return_at_the_exchange_or_on_cancel(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        sent = publisher.publish({"type": "sent"}, [{"data": "a"}], source_bytes=6_000)
+        await asyncio.wait_for(sent, 1.0)
+        # The 6,000 bytes went back at the exchange, so a 9,000-byte source is admitted.
+        nxt = publisher.publish({"type": "next"}, [{"data": "b"}], source_bytes=9_000)
+        await asyncio.wait_for(nxt, 1.0)
+        cancelled = publisher.publish({"type": "cancelled"}, [{"data": "c"}], source_bytes=6_000)
+        cancelled.cancel()
+        await _turns()
+        # A cancelled call returns its reservation too.
+        after = publisher.publish({"type": "after"}, [{"data": "d"}], source_bytes=9_000)
+        await asyncio.wait_for(after, 1.0)
+        assert publisher.generation == GEN1
+        assert [op["filter"]["type"] for op in daemon.ops(GEN1)] == ["sent", "next", "after"]
     finally:
         await publisher.stop()
 
