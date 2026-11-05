@@ -2,7 +2,7 @@
 //!
 //! A direct pane whose frame source dies can reconnect straight to the host:
 //! `Hello` authenticates with the local token file, a user `AttachTerminal`
-//! needs no daemon reservation, and the host keeps the pane's `input_grant`
+//! needs no daemon reservation, and the host keeps the pane's attachment
 //! across the exec — the only recovery that survives the daemon being away
 //! for the whole upgrade window.
 //!
@@ -53,7 +53,7 @@ pub(in crate::app) struct HostRecovery {
 
 pub(in crate::app) enum HostRecoveryOutcome {
     /// The host answered on the same epoch and the stream is back. The
-    /// attachment id, lease and grant were never given up.
+    /// attachment id and lease were never given up.
     Restored(UnixSocketFrameSource),
     /// The pane was closed or replaced.
     /// Nothing is sent to the host.
@@ -163,8 +163,8 @@ impl Workspace<LiveDaemon> {
     /// Start a host-local reconnect for a direct pane whose frame source just
     /// died, or `None` when this pane has no direct locator to use.
     ///
-    /// Nothing is given up first: the pane keeps its attachment, lease and
-    /// control state so the carried grant still types once the stream is back.
+    /// Nothing is given up first: the pane keeps its attachment and lease so
+    /// its keys still type once the stream is back.
     pub(in crate::app) fn begin_host_recovery(
         &mut self,
         pane_id: PaneId,
@@ -288,7 +288,7 @@ impl Workspace<LiveDaemon> {
             HostRecoveryOutcome::Restored(source) if live => {
                 let pane = self.panes.get_mut(&pane_id).expect("pane exists");
                 // The restored stream carries input straight to the host, so
-                // there is no grant to re-ask for.
+                // nothing needs asking first.
                 pane.install_frame_source(PaneFrameSource::Direct(source));
                 pane.live = true;
                 pane.fallback_in_flight = false;

@@ -613,8 +613,8 @@ class FrameClient:
     async def declare_terminal_theme(self, attachment_id: str, theme: object) -> None:
         """Declare ``theme`` as daemon attachment ``attachment_id``'s colours.
 
-        Binding first lets the host check the declaration against the pane's
-        input grant, so a relayed theme applies only for the grant holder.
+        Binding first names the stream on its attachment, so the host applies
+        the declaration to the pane.
         """
         theme_frame = encode_frame({"type": "set_terminal_theme", "theme": theme})
         self._writer.write(

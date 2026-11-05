@@ -78,13 +78,13 @@ pub fn short_terminal_id(terminal_id: &str) -> &str {
     }
 }
 
-/// What the input queue will hold while a grant is in flight. A round trip to
+/// What the input queue will hold while the attachment is coming up. A round trip to
 /// a healthy daemon costs a few keys; this is sized for a slow one plus a
 /// pasted file, and it exists so a daemon that never answers cannot grow the
 /// queue without bound.
 const MAX_PENDING_INPUT_BYTES: usize = 256 * 1024;
 
-/// One keystroke or paste waiting for an input grant. Keys and pastes travel
+/// One keystroke or paste waiting for its attachment. Keys and pastes travel
 /// as different messages to the terminal host, and a paste that overtook the
 /// keys typed before it would reorder what the person wrote, so the queue
 /// holds both in one line.

@@ -9,9 +9,8 @@
 //! last declaration differs from the chrome's theme gets it.
 //!
 //! The declaration also binds the stream to its daemon attachment. The host
-//! applies a declaration only from the input-grant holder's bound stream (or
-//! to an ungranted pane), and gclient otherwise binds on the first keystroke,
-//! which would leave a controlled pane on the old colours until someone typed.
+//! applies each declaration as it arrives, so the newest one wins, and a bind
+//! re-applies the newest declaration among the pane's streams.
 
 use gobby_terminal::protocol::ClientMessage;
 use gobby_terminal::raw_input::HostColorQueryArm;
@@ -131,8 +130,8 @@ impl<D: Daemon> Workspace<D> {
     /// A proxied pane has no stream of its own, so its relay is returned for
     /// the live loop to send as a job, and a slow daemon never holds up the
     /// tick. The daemon relays the declaration on the host stream it holds for
-    /// the pane's attachment; the host's input grant still decides whether it
-    /// applies.
+    /// the pane's attachment; the host applies the newest declaration among
+    /// the pane's streams.
     pub(crate) fn sync_terminal_themes(
         &mut self,
         theme: &ThemeDeclaration,

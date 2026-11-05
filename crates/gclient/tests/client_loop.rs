@@ -102,7 +102,7 @@ fn workspace_ops(mock: &MockDaemon, op: &str) -> Vec<Value> {
 }
 
 /// How long a mock-visible signal may take to appear. Generous on purpose: the
-/// control grant is answered beside the loop now, so a step can cost several
+/// focus report is answered beside the loop now, so a step can cost several
 /// scheduler hops and round trips, and eighty of these tests share the machine.
 /// It bounds liveness only — every assertion is on content, not on this budget.
 const WAIT_BUDGET: Duration = Duration::from_secs(10);
@@ -2563,8 +2563,7 @@ async fn direct_pane_keys_reach_the_host_not_the_daemon() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        // Startup focus takes the lease, and the mock's grant carries the
-        // host's input grant with it.
+        // Startup focus reports the pane focused before any key is typed.
         wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;

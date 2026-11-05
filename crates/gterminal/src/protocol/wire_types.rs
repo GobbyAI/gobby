@@ -256,8 +256,8 @@ pub enum ClientMessage {
     SetScrollOffset {
         rows_from_live_edge: u32,
     },
-    /// Names a daemon attachment for theme relay. This never grants input;
-    /// only a trusted control grant to the host-owned stream can do that.
+    /// Names a daemon attachment for theme relay and input activity. Input is
+    /// never gated on it.
     BindAttachment {
         attachment_id: String,
     },
