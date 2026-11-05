@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.config.values import ConfigRuntimeReader
+from gobby.hooks._normalization_apply_rewrite import applies_rewritten_input
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -270,7 +271,12 @@ class RuleEngine(
                         and "project_path" not in event.data
                     ):
                         event.data["project_path"] = project_path
-                    await offload(normalize_tool_fields, event.data)
+                    # The rule pass re-derives shell metadata; keep the provider's rewrite flag.
+                    await offload(
+                        normalize_tool_fields,
+                        event.data,
+                        can_rewrite_input=applies_rewritten_input(event.source),
+                    )
 
                 raw_event_value = _event_value(event.event_type)
                 resolved_rule_events = _resolve_rule_events(event.event_type, source=event.source)

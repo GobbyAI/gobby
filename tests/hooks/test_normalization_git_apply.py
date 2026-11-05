@@ -17,7 +17,7 @@ def invocation(command: str, cwd: Path) -> dict[str, Any]:
         "tool_input": {"command": command, "cwd": str(cwd)},
         "project_path": str(cwd),
     }
-    _set_canonical_tool_metadata(data)
+    _set_canonical_tool_metadata(data, can_rewrite_input=True)
     return data
 
 

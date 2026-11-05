@@ -9,6 +9,11 @@ Anything this module cannot prove stays an unknown-scope write.
 from pathlib import Path
 
 from gobby.hooks import checkout_reads
+from gobby.hooks._normalization_apply_rewrite import (
+    VALIDATED_APPLY_TEXT,
+    apply_rewrite_scope,
+    read_validated_patch,
+)
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import (
     _contains_unexpanded_shell_reference,
@@ -84,7 +89,6 @@ _TARGET_PRESERVING = frozenset(
         "-q",
     }
 )
-_MAX_PATCH_BYTES = 16 * 1024 * 1024
 _NAMED_LINES = ("rename from ", "rename to ", "copy from ", "copy to ")
 
 
@@ -178,56 +182,73 @@ def classify_git_apply(
         return unknown_write
     if "--cached" in flags:
         # Like git add/restore --staged: require a task, without claiming file edits.
-        return _ShellSegmentMetadata("execute", repo_mutation=True)
-    return _literal_patch_write(flags, operands, git_cwd, root) or unknown_write
+        # A validated literal patch is rewritten to the bytes checked here; otherwise the
+        # index-only classification stands as before.
+        text = _validated_patch_text(operands, arguments, git_cwd)
+        if text is None:
+            return _ShellSegmentMetadata("execute", repo_mutation=True)
+        return _ShellSegmentMetadata(
+            "execute", repo_mutation=True, extra={VALIDATED_APPLY_TEXT: text}
+        )
+    return _literal_patch_write(flags, operands, arguments, git_cwd, root) or unknown_write
+
+
+def _validated_patch_text(
+    operands: list[str], arguments: list[str], git_cwd: str | None
+) -> str | None:
+    """The validated bytes of the single literal patch operand, or None unread.
+
+    The file is read only inside a command the Bash normalizer proved to be exactly one
+    literal `git apply`, so the bytes the rewrite embeds are the bytes classified here.
+    """
+    if (
+        not apply_rewrite_scope.get()
+        or len(operands) != 1
+        or arguments[-1:] != operands
+        or not git_cwd
+        or not Path(git_cwd).is_absolute()
+        or operands[0] == "-"
+        or operands[0].startswith("~")
+        or not _is_literal(operands[0])
+    ):
+        return None
+    return read_validated_patch(Path(_rebase_shell_path(operands[0], git_cwd)))
 
 
 def _literal_patch_write(
-    flags: set[str], operands: list[str], git_cwd: str | None, root: Path | None
+    flags: set[str],
+    operands: list[str],
+    arguments: list[str],
+    git_cwd: str | None,
+    root: Path | None,
 ) -> _ShellSegmentMetadata | None:
-    if (
-        root is None
-        or not git_cwd
-        or not Path(git_cwd).is_absolute()
-        or checkout_reads.node_origin()
-        or not flags <= _TARGET_PRESERVING
-        or not operands
-        or any(
-            operand == "-" or operand.startswith("~") or not _is_literal(operand)
-            for operand in operands
-        )
-    ):
+    if root is None or git_cwd is None or checkout_reads.node_origin():
         return None
-    patches = [Path(_rebase_shell_path(operand, git_cwd)) for operand in operands]
-    targets: set[str] = set()
-    for patch in patches:
-        named = _patch_targets(patch)
-        if named is None:
-            return None
-        targets |= named
+    if not flags <= _TARGET_PRESERVING:
+        return None
+    text = _validated_patch_text(operands, arguments, git_cwd)
+    if text is None:
+        return None
+    targets = _patch_targets_from_text(text)
     if not targets:
         return None
+    patch = Path(_rebase_shell_path(operands[0], git_cwd))
     # Git resolves patch paths from the checkout root, even when run in a subdirectory.
     return _ShellSegmentMetadata(
         "write",
         paths=tuple(str(root / target) for target in sorted(targets)),
         repo_mutation=True,
-        navigation_paths=tuple(str(patch) for patch in patches),
+        navigation_paths=(str(patch),),
+        extra={VALIDATED_APPLY_TEXT: text},
     )
 
 
-def _patch_targets(patch: Path) -> set[str] | None:
-    """Every path the patch can write, or None when any header is unprovable.
+def _patch_targets_from_text(text: str) -> set[str] | None:
+    """Every path the patch text can write, or None when any header is unprovable.
 
     Every `---`/`+++`, rename and copy line counts, even one inside hunk text, so
     a match can only add a path or fail closed.
     """
-    try:
-        if not patch.is_file() or patch.stat().st_size > _MAX_PATCH_BYTES:
-            return None
-        text = patch.read_text(encoding="utf-8", errors="surrogateescape")
-    except OSError:
-        return None
     targets: set[str] = set()
     header: str | None = None
     named = True

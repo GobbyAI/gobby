@@ -1,0 +1,16 @@
+version: "1.0.0"
+tags: [worker-safety, enforcement, gobby]
+
+rules:
+  run-validated-git-apply:
+    description: "Run a literal git apply on the exact patch bytes the hook validated, so the patch file cannot change between the scope check and the apply."
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 50
+    when: "event.data.get('_validated_apply_command') is not None"
+    effects:
+      - type: rewrite_input
+        tools: [Bash]
+        input_updates:
+          command: "{{ event.data['_validated_apply_command'] }}"

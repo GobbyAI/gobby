@@ -1,7 +1,15 @@
 """Top-level tool-field normalization orchestration."""
 
+from pathlib import Path
 from typing import Any
 
+from gobby.hooks._normalization_apply_rewrite import (
+    APPLY_REWRITE_KEY,
+    VALIDATED_APPLY_TEXT,
+    apply_rewrite_scope,
+    build_apply_rewrite,
+    simple_apply_words,
+)
 from gobby.hooks._normalization_canonical import _normalize_shell_tool_metadata
 from gobby.hooks._normalization_mcp import normalize_mcp_fields
 from gobby.hooks._normalization_metadata import _build_canonical_tool_metadata
@@ -45,11 +53,44 @@ _TOOL_INPUT_FIELD_ALIASES = (
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 
 
-def _set_canonical_tool_metadata(data: dict[str, Any], *, shell_metadata: bool = True) -> None:
+def _shell_metadata(command: str, base_cwd: Path | None, *, scoped: bool) -> dict[str, Any]:
+    token = apply_rewrite_scope.set(scoped)
+    try:
+        return _normalize_shell_tool_metadata(command, base_cwd=base_cwd)
+    finally:
+        apply_rewrite_scope.reset(token)
+
+
+def _bash_shell_metadata(
+    data: dict[str, Any], command: str, *, can_rewrite_input: bool
+) -> dict[str, Any]:
+    """Normalize a Bash command and attach the validated rewrite of a literal git apply.
+
+    The rewrite is built only for a provider that applies rewritten input and a command
+    that is exactly one literal `git apply`. A form the rewrite cannot embed is
+    normalized again without reading the patch, so it stays an unknown-scope write.
+    """
+    base_cwd = current_tool_cwd(data)
+    words = simple_apply_words(command) if can_rewrite_input else None
+    metadata = _shell_metadata(command, base_cwd, scoped=words is not None)
+    validated = metadata.pop(VALIDATED_APPLY_TEXT, None)
+    if validated is None:
+        return metadata
+    rewrite = build_apply_rewrite(words, validated) if words is not None else None
+    if rewrite is None:
+        return _shell_metadata(command, base_cwd, scoped=False)
+    data[APPLY_REWRITE_KEY] = rewrite
+    return metadata
+
+
+def _set_canonical_tool_metadata(
+    data: dict[str, Any], *, shell_metadata: bool = True, can_rewrite_input: bool = False
+) -> None:
     """Annotate events with canonical read/search/write semantics across CLIs.
 
     ``shell_metadata=False`` skips Bash command analysis, which can run Git.
     """
+    data.pop(APPLY_REWRITE_KEY, None)
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")
 
@@ -75,7 +116,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any], *, shell_metadata: bool =
     elif tool_name == "Bash" and shell_metadata:
         command = _get_command_text(tool_input)
         if command:
-            metadata = _normalize_shell_tool_metadata(command, base_cwd=current_tool_cwd(data))
+            metadata = _bash_shell_metadata(data, command, can_rewrite_input=can_rewrite_input)
     elif "mcp_server" in data and "mcp_tool" in data:
         metadata = _build_canonical_tool_metadata("mcp")
 
@@ -159,7 +200,9 @@ def provider_native_input_updates(
     return native
 
 
-def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
+def normalize_tool_fields(
+    data: dict[str, Any], *, can_rewrite_input: bool = False
+) -> dict[str, Any]:
     """Normalize tool-related fields in hook event data.
 
     Three-phase normalization:
@@ -178,11 +221,13 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     Args:
         data: Event data dict (mutated in place).
+        can_rewrite_input: True only when the provider runs the rewritten input a rule
+            returns. Other providers never get a literal ``git apply`` rewrite.
 
     Returns:
         The same *data* dict, enriched with normalized fields.
     """
-    return _normalize_tool_fields(data, shell_metadata=True)
+    return _normalize_tool_fields(data, shell_metadata=True, can_rewrite_input=can_rewrite_input)
 
 
 def normalize_tool_display_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -195,7 +240,9 @@ def normalize_tool_display_fields(data: dict[str, Any]) -> dict[str, Any]:
     return _normalize_tool_fields(data, shell_metadata=False)
 
 
-def _normalize_tool_fields(data: dict[str, Any], *, shell_metadata: bool) -> dict[str, Any]:
+def _normalize_tool_fields(
+    data: dict[str, Any], *, shell_metadata: bool, can_rewrite_input: bool = False
+) -> dict[str, Any]:
     # Phase 1: field alias normalization
 
     # A marker survives only on a repeat pass over input it already replaced;
@@ -289,7 +336,9 @@ def _normalize_tool_fields(data: dict[str, Any], *, shell_metadata: bool) -> dic
         data["command"] = tool_input["command"]
 
     # Phase 2.5: infer canonical read/search/write semantics
-    _set_canonical_tool_metadata(data, shell_metadata=shell_metadata)
+    _set_canonical_tool_metadata(
+        data, shell_metadata=shell_metadata, can_rewrite_input=can_rewrite_input
+    )
 
     # Phase 3: normalize machine-readable outcomes only for tool-shaped data.
     # Adapters also use this helper for session and turn events, where adding an
