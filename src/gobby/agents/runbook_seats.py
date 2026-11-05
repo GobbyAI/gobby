@@ -104,9 +104,10 @@ def check_runbook_seats(
 
     ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each requested
     seat whose agent already has an active run on this machine with a live session in this
-    project. ``live`` maps every catalogue seat with such a run, requested or not, to that session,
-    so a partial run reports its whole roster; with a ``task``, only runs that a pipeline
-    execution launched for that same task count, so another task's seats are never mapped. With
+    project. ``live`` maps each such seat to its session. With a ``task``, that covers every
+    catalogue seat launched for that same task, requested or not, so a partial run reports its
+    whole roster and another task's seats are never mapped. Without a task, only requested seats
+    are mapped. When several runs match a seat, the most recently created one is mapped. With
     ``team_id``, ``live`` covers
     every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
     reviewer's request still reports its team's live Dev Team Lead; only runs admitted to that team
@@ -239,12 +240,13 @@ def _admit(
     if team_id is not None:
         live = _live_seats(stores, session, catalogue, team_id=team_id)
     elif skip_live_seats:
+        task_ref = _launch_task(stores.tasks, execution, project_id)
         live = _live_seats(
             stores,
             session,
-            catalogue,
+            catalogue if task_ref is not None else seats,
             team_id=None,
-            task=_launch_task(stores.tasks, execution, project_id),
+            task=task_ref,
         )
     else:
         live = {}
@@ -319,12 +321,14 @@ def _live_seats(
     """Map each seat whose agent runs here with a live session in the project to that session.
 
     With ``task`` (a resolved task id), only runs launched by a pipeline execution for that task count.
+    When several runs match a seat, the most recently created one is mapped.
     """
     runs = stores.runs.list_active_for_machine(caller.machine_id, limit=READ_BOUND + 1)
     _refuse_truncated(runs, "active agent run")
+    newest_first = sorted(runs, key=lambda run: (run.created_at, run.id), reverse=True)
     live: dict[str, str] = {}
     for seat in seats:
-        for run in runs:
+        for run in newest_first:
             if run.agent_name != seat.agent or not run.child_session_id:
                 continue
             child = stores.sessions.get(run.child_session_id)
