@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._readonly_query import SQL_FROM_TEXT_FUNCTIONS
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("query_readonly_gdaemon")]
 
@@ -352,3 +353,175 @@ async def test_validation_argv_is_withheld_from_the_query_role(
     assert control["success"] is True
     assert denied["success"] is False
     assert "permission denied" in denied["error"]
+
+
+# Query 1 of the reporter procedure, verbatim. EXISTS and NOT EXISTS share names with pdb
+# functions, so the name gate must leave them alone.
+QUERY_ONE_SQL = """\
+WITH in_flight AS (
+  SELECT t.id, t.seq_num, t.title, t.claimed_by_session_id
+  FROM tasks t
+  WHERE t.project_id = %s AND t.closed_at IS NULL
+    AND t.path_cache ~ %s AND t.seq_num > %s
+    AND (
+      t.claimed_by_session_id IS NOT NULL
+      OR EXISTS (
+        SELECT 1 FROM task_comments c
+        WHERE c.task_id = t.id AND c.author_type = 'task_attestation'
+      )
+    )
+),
+active AS (
+  SELECT c.task_id, c.created_at, c.body::jsonb AS evidence
+  FROM task_comments c
+  JOIN in_flight f ON f.id = c.task_id
+  WHERE c.author_type = 'task_attestation'
+    AND NOT EXISTS (
+      SELECT 1 FROM task_comments correction
+      WHERE correction.task_id = c.task_id
+        AND correction.author_type = 'task_attestation'
+        AND correction.body::jsonb ->> 'supersedes_id' = c.body::jsonb ->> 'id'
+    )
+),
+latest AS (
+  SELECT DISTINCT ON (task_id) task_id, created_at, evidence
+  FROM active
+  ORDER BY task_id, (evidence ->> 'sequence')::bigint DESC
+),
+claims AS (
+  SELECT ci.task_id, min(ci.claimed_at) AS first_claimed_at
+  FROM task_claim_intervals ci
+  JOIN in_flight f ON f.id = ci.task_id
+  GROUP BY ci.task_id
+)
+SELECT f.seq_num, f.title, f.claimed_by_session_id,
+       l.evidence ->> 'kind' AS evidence_kind,
+       l.evidence ->> 'result' AS evidence_result,
+       l.evidence ->> 'summary' AS evidence_summary,
+       l.evidence -> 'reference' AS evidence_reference,
+       l.created_at AS evidence_recorded_at,
+       cl.first_claimed_at, count(*) OVER () AS total
+FROM in_flight f
+LEFT JOIN latest l ON l.task_id = f.id
+LEFT JOIN claims cl ON cl.task_id = f.id
+ORDER BY f.seq_num
+"""
+
+QUERY_ONE_ROOT = "9001"
+
+
+def _seed_attested_task(temp_db: HubDatabase, project_id: str, title: str) -> str:
+    """Create an open task under QUERY_ONE_ROOT with one implementation attestation."""
+    task_id = (
+        LocalTaskManager(temp_db)
+        .create_task(project_id, title, validation_criteria="Rows return.")
+        .id
+    )
+    temp_db.execute(
+        "UPDATE tasks SET path_cache = %s WHERE id = %s", (f"{QUERY_ONE_ROOT}.1", task_id)
+    )
+    temp_db.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, 'developer', 'task_attestation', %s)",
+        (
+            str(uuid.uuid4()),
+            task_id,
+            json.dumps(
+                {
+                    "id": str(uuid.uuid4()),
+                    "kind": "implementation",
+                    "result": "approved",
+                    "summary": "Fixture evidence.",
+                    "sequence": 1,
+                    "reference": {"scheme": "git", "value": "a" * 40},
+                }
+            ),
+        ),
+    )
+    return task_id
+
+
+async def test_query_one_runs_verbatim_and_returns_the_attested_task(
+    registry: InternalToolRegistry, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """Query 1 runs unchanged through query_readonly and returns the in-flight task row."""
+    _seed_attested_task(temp_db, sample_project["id"], "Query one fixture")
+    result = await _run(
+        registry,
+        sql=QUERY_ONE_SQL,
+        params=[sample_project["id"], rf"^({QUERY_ONE_ROOT})\.", 0],
+    )
+
+    assert result["success"] is True, result.get("error")
+    assert [row["title"] for row in result["rows"]] == ["Query one fixture"]
+    assert result["rows"][0]["evidence_kind"] == "implementation"
+
+
+# Keyword and alias names. None is a call of a function, so none may be refused by name.
+KEYWORD_AND_ALIAS_SHAPES = {
+    "exists": "SELECT 1 AS v WHERE EXISTS (SELECT 1)",
+    "not_exists": "SELECT 1 AS v WHERE NOT EXISTS (SELECT 1 WHERE false)",
+    "all": "SELECT 1 AS v WHERE 1 = ALL (SELECT 1)",
+    "score_alias": "SELECT 1 AS score",
+    "term_alias": "SELECT 1 AS term",
+    "score_and_term_aliases": "SELECT 2 AS score, 3 AS term",
+}
+
+
+@pytest.mark.parametrize("name", sorted(KEYWORD_AND_ALIAS_SHAPES))
+async def test_keyword_and_alias_names_pass_the_name_gate(
+    registry: InternalToolRegistry, name: str
+) -> None:
+    """A keyword or a non-call alias that shares a spelling with a pdb function runs."""
+    result = await _run(registry, sql=KEYWORD_AND_ALIAS_SHAPES[name])
+
+    assert result["success"] is True, result.get("error")
+    assert len(result["rows"]) == 1
+
+
+@pytest.fixture
+def run_text_schema(temp_db: HubDatabase) -> Iterator[str]:
+    """A plpgsql function outside pg_catalog that EXECUTEs its text, granted to the query role."""
+    schema = f"fn_{uuid.uuid4().hex[:12]}"
+    with temp_db.transaction() as conn:
+        conn.execute(f"CREATE SCHEMA {schema}")
+        conn.execute(
+            f"CREATE FUNCTION {schema}.run_text(sql text) RETURNS text LANGUAGE plpgsql AS "
+            "$$ BEGIN EXECUTE sql; RETURN 'ran'; END $$"
+        )
+        conn.execute(f"GRANT USAGE ON SCHEMA {schema} TO gobby_query_readonly")
+        conn.execute(f"GRANT EXECUTE ON FUNCTION {schema}.run_text(text) TO gobby_query_readonly")
+    try:
+        yield schema
+    finally:
+        with temp_db.transaction() as conn:
+            conn.execute(f"DROP SCHEMA {schema} CASCADE")
+
+
+# Call forms of functions outside pg_catalog. Each must be refused before Postgres runs it.
+CALL_FORMS = {
+    "unqualified": "SELECT run_text('SELECT 1')::text AS v",
+    "schema_qualified_space_before_paren": "SELECT {schema}.run_text ('SELECT 1')::text AS v",
+    "schema_qualified_newline_before_paren": "SELECT {schema}.run_text\n('SELECT 1')::text AS v",
+    "uppercase": "SELECT {schema}.RUN_TEXT('SELECT 1')::text AS v",
+    "quoted_function": "SELECT {schema}.\"run_text\"('SELECT 1')::text AS v",
+    "quoted_schema_and_function": 'SELECT "{schema}"."run_text"(\'SELECT 1\')::text AS v',
+    "comment_before_paren": "SELECT {schema}.run_text /*x*/ ('SELECT 1')::text AS v",
+    "unicode_escape": "SELECT U&\"run\\005ftext\"('SELECT 1')::text AS v",
+    "extension_unqualified": "SELECT score(1)::text AS v",
+    "extension_schema_qualified": "SELECT pdb.score(1)::text AS v",
+    "extension_quoted_keyword_name": 'SELECT "all"(1)::text AS v',
+    "extension_quoted_exists": 'SELECT "exists"(1)::text AS v',
+    "extension_quoted_schema_and_name": 'SELECT "pdb"."all"(1)::text AS v',
+}
+
+
+@pytest.mark.parametrize("form", sorted(CALL_FORMS))
+async def test_call_of_a_function_outside_pg_catalog_is_refused_in_every_form(
+    registry: InternalToolRegistry, run_text_schema: str, form: str
+) -> None:
+    """Every call form of a non-pg_catalog function is refused by the name gate."""
+    result = await _run(registry, sql=CALL_FORMS[form].format(schema=run_text_schema))
+
+    assert result["success"] is False
+    assert result["error_code"] == "query_refused"

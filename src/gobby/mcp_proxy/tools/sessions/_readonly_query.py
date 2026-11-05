@@ -12,7 +12,7 @@ explicitly excluded columns (connection URLs and args included), and it has no
 membership. The denied-name check is a second layer. ``SQL_FROM_TEXT_FUNCTIONS`` lists
 every built-in that runs SQL held in text. ``set_config`` is one: PUBLIC can execute it,
 and ``set_config('role', 'none')`` in the same statement would reset the role to the
-daemon runtime. A statement that names one of them is refused, and so is one that names
+daemon runtime. A statement that names one of them is refused, and so is one that calls
 any function outside pg_catalog, since a public plpgsql function can EXECUTE text. A
 statement cannot call a function named only by concatenation, the text-to-SQL entry
 points (``*_to_xml``, dblink) are refused, and ``SET ROLE`` cannot start a SELECT or
@@ -32,7 +32,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import psycopg
 
@@ -113,25 +113,42 @@ _CATALOG_SQL = (
     "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
     "AND column_name ILIKE ANY(%s::text[])"
 )
-# Functions outside pg_catalog. A public plpgsql function can EXECUTE text, so the name gate
-# refuses any statement that names one.
+# Functions outside pg_catalog. A public plpgsql function can EXECUTE text, so the function gate
+# refuses any statement that calls one.
 _FUNCTION_SQL = (
     "SELECT DISTINCT p.proname AS name FROM pg_proc p "
     "JOIN pg_namespace n ON n.oid = p.pronamespace "
     "WHERE n.nspname <> 'pg_catalog'"
 )
 _NAME = re.compile(r"[a-z_][a-z0-9_$]*")
+# Reserved words (catcode R). A reserved word followed by "(" is grammar, never a function call.
+_KEYWORD_SQL = "SELECT word FROM pg_get_keywords() WHERE catcode = 'R'"
+# EXISTS is a column-name keyword (catcode C). Unqualified exists(...) never reaches function
+# lookup; it parses as the EXISTS sublink, so it counts as a keyword here too.
+_EXTRA_KEYWORDS = frozenset({"exists"})
+_TOKEN = re.compile(
+    r"(?P<space>\s+)"
+    r"|(?P<string>'(?:[^']|'')*')"
+    r'|(?P<quoted>"(?:[^"]|"")*")'
+    r"|(?P<word>[a-z_][a-z0-9_]*)"
+    r"|(?P<punct>.)",
+    re.DOTALL,
+)
+# A backslash (E'' strings), a dollar sign (dollar quotes and $n), or a comment can split a name
+# so the tokenizer never sees it whole. Those statements count every word, as the name gate did.
+_STRICT_MARKERS = ("\\", "$", "/*", "--")
 _UNICODE_ESCAPE = re.compile(r"\bu&", re.IGNORECASE)
 _STATEMENT_START = re.compile(r"(select|with)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class _Catalog:
-    """Credential names in this database, lowercased, read inside the query's transaction."""
+    """Names this database defines, lowercased, read inside the query's transaction."""
 
     columns: frozenset[str]
     tables: frozenset[str]
     functions: frozenset[str]
+    keywords: frozenset[str]
 
 
 def _single_statement(sql: str) -> str:
@@ -159,13 +176,59 @@ def _names(statement: str, params: Sequence[Any]) -> set[str]:
     return {name for text in texts for name in _NAME.findall(text.lower())}
 
 
-def _name_refusal(names: set[str], catalog: _Catalog) -> str | None:
+class _Token(NamedTuple):
+    kind: str
+    text: str
+    quoted: bool = False
+
+
+def _tokens(statement: str) -> list[_Token]:
+    """Split a lowercased statement into names, punctuation and string literals."""
+    tokens: list[_Token] = []
+    for match in _TOKEN.finditer(statement):
+        kind = match.lastgroup
+        text = match.group()
+        if kind == "space":
+            continue
+        if kind == "string":
+            tokens.append(_Token("other", text))
+        elif kind == "quoted":
+            tokens.append(_Token("name", text[1:-1].replace('""', '"'), quoted=True))
+        elif kind == "word":
+            tokens.append(_Token("name", text))
+        else:
+            tokens.append(_Token("punct", text))
+    return tokens
+
+
+def _references(statement: str, keywords: frozenset[str]) -> set[str]:
+    """Names PostgreSQL may resolve to a function: qualified, or called and not a keyword.
+
+    Bind values are not scanned. A bare name that is not called, such as an alias, never
+    reaches function lookup, so it is not a reference.
+    """
+    lowered = statement.lower()
+    if any(marker in lowered for marker in _STRICT_MARKERS):
+        return set(_NAME.findall(lowered))
+    tokens = _tokens(lowered)
+    references: set[str] = set()
+    for index, token in enumerate(tokens):
+        if token.kind != "name":
+            continue
+        qualified = index > 0 and tokens[index - 1] == _Token("punct", ".")
+        called = index + 1 < len(tokens) and tokens[index + 1] == _Token("punct", "(")
+        if qualified or (called and (token.quoted or token.text not in keywords)):
+            references.add(token.text)
+    return references
+
+
+def _name_refusal(names: set[str], references: set[str], catalog: _Catalog) -> str | None:
     if names & (catalog.columns | catalog.tables | DENIED_NAMES):
         return (
             "That names a credential table or column, or a catalog that holds one. "
             "Those are never readable through query_readonly."
         )
-    if names & catalog.functions:
+    if references & catalog.functions:
         return (
             "That calls a function outside pg_catalog, which can run SQL held in text. "
             "It is refused."
@@ -181,10 +244,12 @@ def _load_catalog(txn: Transaction) -> _Catalog:
     tables = {str(row["table_name"]).lower() for row in rows}
     columns = {str(row["column_name"]).lower() for row in rows}
     functions = {str(row["name"]).lower() for row in txn.execute(_FUNCTION_SQL).fetchall()}
+    keywords = {str(row["word"]).lower() for row in txn.execute(_KEYWORD_SQL).fetchall()}
     return _Catalog(
         columns=frozenset(columns),
         tables=frozenset(tables | CREDENTIAL_TABLES),
         functions=frozenset(functions),
+        keywords=frozenset(keywords | _EXTRA_KEYWORDS),
     )
 
 
@@ -200,7 +265,10 @@ def _run(db: HubDatabase, sql: str, params: list[Any], limit: int) -> dict[str, 
     with db.bounded_transaction(
         statement_timeout_ms=STATEMENT_TIMEOUT_MS, repeatable_read_read_only=True
     ) as txn:
-        refusal = _name_refusal(_names(statement, params), _load_catalog(txn))
+        catalog = _load_catalog(txn)
+        refusal = _name_refusal(
+            _names(statement, params), _references(statement, catalog.keywords), catalog
+        )
         if refusal is not None:
             return _refused(refusal)
         txn.execute(f"SET LOCAL ROLE {QUERY_ROLE}")
