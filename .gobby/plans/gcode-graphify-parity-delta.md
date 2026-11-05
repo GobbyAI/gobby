@@ -56,10 +56,14 @@ decided all three on 2026-11-05 (Decision 12):
 - The label gate has no quality evidence. #22604 closed without its study, so
   `docs/evidence/community-labels-2026-09/label-quality.md` does not exist and
   the ship decision is open (2.3).
-- Box has no live consumer evidence. Its OpenRouter attempt returned HTTP 400,
-  the capture script's Box request bypasses the registered
-  `gobby-decisions:evaluate` tool (2.4), and the wire note names no consumer per
-  decision shape (2.5).
+- Box has no live consumer evidence. Its 2026-10-26 OpenRouter attempt returned
+  HTTP 400 on a 64x64 image, under Box's 280 px minimum, and the Orchestrator's
+  2026-11-05 rerun on a 512x512 image returned 200. The capture script's Box
+  request bypasses the registered `gobby-decisions:evaluate` tool (2.4), and the
+  wire note names no consumer per decision shape (2.5). The service already
+  refuses an image outside 280 to 1568 px per side before dialing, but its error
+  names neither the image's size nor the bounds (2.6, which the Orchestrator
+  filed as #25788).
 
 **When the leaves close:**
 - A provisioning record shows a fresh isolated harness, the Orchestrator's
@@ -77,6 +81,8 @@ decided all three on 2026-11-05 (Decision 12):
 - A dated `clef:27b` capture on local Ollama records Box's round trip through that
   tool or its finding, and the wire note names a consumer and live-path test per
   shape (2.5).
+- A Box image outside 280 to 1568 px per side is refused before dialing with an
+  error naming its size and the bounds (2.6).
 
 ## Decision Record
 `kind: framing`
@@ -216,7 +222,12 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
       Flash) served locally by Ollama", with model `clef:27b`, and drop the
       OpenRouter dependency. Leaf 2.4 sends the capture's Box request through the
       registered `gobby-decisions:evaluate` tool, leaf 2.5 owns the evidence, and
-      the Orchestrator owns its capture step. LM Studio's `clef-flash` is not used. The V2
+      the Orchestrator owns its capture step. LM Studio's `clef-flash` is not used. On
+      2026-11-05 the Orchestrator reported that its OpenRouter Box rerun on a
+      512x512 red-square image returned 200 with edges 0.25/0.74/0.25/0.76,
+      that the 2026-10-26 HTTP 400 came from the 64x64 test image, and that
+      OpenRouter's catalog lists `cloudflare/clef`, `clef-flash` and
+      `clef-omni`. The local `clef:27b` capture stays as ruled. The V2
       checks gate enforcement, and this plan enables none: the
       `--no-decisions` branch ships every consumer `off`, so no leaf needs
       them, parity+ property 3 stays missing, and 2.2 records it so.
@@ -306,11 +317,17 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     included". #22604 closed without the study, so the line no longer holds
     the order it names. By the Orchestrator's 2026-11-05 ruling, it edits #24701
     at expansion to be blocked by the 2.3 task. Seats do not edit it.
+19. **#25788 (Box decisions reject images under 280 px per side before sending,
+    with a clear error) becomes leaf 2.6.** The Orchestrator filed it under
+    #22948 on 2026-11-05 and directed it into P2 with no edges. Leaf 2.6
+    carries its four validation criteria. At expansion the Orchestrator closes
+    #25788 as superseded by the 2.6 leaf, so the section has one implementation
+    owner and its coverage labels sit on an open leaf. Seats do not edit it.
 
 ## Constraints
 `kind: framing`
 
-- The Orchestrator launches all five leaves in a Dev Team in epic mode for
+- The Orchestrator launches all six leaves in a Dev Team in epic mode for
   #22948, the only mode that grants the epic folder. That launch waits on Josh's
   freeze: no new teams until #25765 and #25653 are proven live.
 - Leaves 2.1 and 2.2 are heavy measurement work. The fleet's load hold in
@@ -670,7 +687,7 @@ Consumers unchanged:
 **Goal**: parity+ claims rest on numbers measured on current gcode, and the
 label gate has its quality evidence and ship rule.
 
-**Granularity:** five leaves. Provisioning (2.1) and measurement (2.2) split
+**Granularity:** six leaves. Provisioning (2.1) and measurement (2.2) split
 at the boundary where all four October roots stopped, so provisioning closes
 with its own durable record and a relaunched seat resumes measurement from it.
 Each lists more than six files, and the count does not call for a further
@@ -681,7 +698,10 @@ the other two, so it has no edge to them. The Box route (2.4) and the Box
 capture (2.5) share no target with any of them, so they have no edge to them.
 The route is a script change with its own tests and closes on them. The capture
 waits on operator steps, and it depends on 2.4 because it runs the script from
-the main checkout after 2.4 lands. The two share no target.
+the main checkout after 2.4 lands. The two share no target. The Box refusal
+detail (2.6) is a product change in `src/gobby/ai/decisions.py` with its own
+tests, outside 2.4's script-only scope. It shares no target with any leaf, so it
+has no edge (Decision 19).
 
 ### 2.1 Provision the rerun harness and pass C0 [category: test]
 `kind: deliverable`
@@ -1301,9 +1321,13 @@ Targets:
 - Josh's D3 answer, 2026-11-05, verbatim: "On 22948, tell the orchestrator to load Clef (not
   Clef flash) with Ollama and use that". The Orchestrator scoped it: "capture the Box evidence on
   Clef (full, not Flash) served locally by Ollama", model `clef:27b` (18 GB), installed in local
-  Ollama and not loaded. OpenRouter is dropped: its Box attempt returned HTTP 400
-  (`docs/evidence/decisions/item-4-checklist-2026-10-26.md`, lines 104-109). LM Studio's
-  `clef-flash` is not used.
+  Ollama and not loaded. OpenRouter is dropped by that ruling. Its 2026-10-26 Box attempt
+  returned HTTP 400 (`docs/evidence/decisions/item-4-checklist-2026-10-26.md`, lines 104-109),
+  which the Orchestrator traced on 2026-11-05 to the 64x64 test image, under Box's 280 px
+  minimum. Its rerun on a 512x512 red-square image returned 200 with edges
+  0.25/0.74/0.25/0.76. OpenRouter's catalog lists `cloudflare/clef`, `clef-flash` and
+  `clef-omni`. The local `clef:27b` capture stays as ruled. LM Studio's `clef-flash` is not
+  used.
 - What is owed: `docs/evidence/decisions/item-4-checklist-2026-10-26.json` lists "Resolve the Box
   failure and obtain #24248's required real consumer round-trip evidence."
   `.gobby/plans/community-label-decisions.md` 3.5 specified a "Decision shape consumers" section
@@ -1377,6 +1401,75 @@ Targets:
 **Verification:** the committed capture section is byte-equal to `<dir>/clef-capture.md`, the image
 hash matches, a Pillow read of the committed image confirms the red pixel bounds, and the diff
 changes no configuration file.
+
+### 2.6 Name the image's size and the bounds when Box refuses its dimensions [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/ai/decisions.py::_check_images`
+- `tests/ai/test_decisions_service.py::*` — scope-reason: a new test pins the refusal detail for both formats and both bounds, the 512 by 512 pass and the cooldown, and `test_box_rejects_invalid_images_before_dialing` keeps its existing checks
+
+**Research context:**
+- #25788, filed by the Orchestrator under #22948 on 2026-11-05 and directed into P2 with no edges
+  (Decision 19). Its fix: "read the PNG/JPEG dimensions from the header and refuse an image
+  outside 280-1568 px per side with a typed invalid-input error naming the size and the bounds,
+  before dialing. Invalid input must not open the service cooldown." Its validation criteria:
+  "1. A Box request with a 64x64 image is refused before any HTTP call with an error naming the
+  image size and the 280-1568 px bounds. 2. A 512x512 image passes validation unchanged. 3. The
+  refusal does not open the service cooldown. 4. Focused tests in tests/ai pass against the
+  isolated test hub."
+- What already exists. #25788's description says the service does not check pixel dimensions.
+  The current checkout does check them, since `4e5b4ef809` (2026-10-24, #22604):
+  - `src/gobby/ai/decisions.py::_check_images` measures each image with `_image_dimensions`
+    (PNG IHDR or JPEG SOF). Outside 280 to 1568 px per side, or 78,400 to 2,458,624 px in all,
+    it raises `DecisionsUnavailable("invalid_request", "image dimensions exceed Box limits")`.
+  - `_check_request` calls it, and `DecisionService._request` runs `_check_request` before the
+    cooldown check and `_dial`. A refusal therefore sends nothing and opens no cooldown.
+  - `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing` pins
+    refusal of 279 and 1569 px PNG and JPEG images before dialing with `invalid_request`. It also
+    pins the inclusive 280 and 1568 px boundaries and that no refusal opened the cooldown, on
+    `systemone` and `openrouter-decisions`.
+- So criteria 2 and 3 already hold, and criterion 1 holds except for the error's content. The
+  detail names neither the size nor the bounds, and says "exceed" for an undersized image. This
+  leaf changes that detail only. It keeps the bounds, the area check and the order of checks.
+- Fixture sweep, for the Adversary gobby#19936: no fixture starts failing, because the guard
+  already exists and only its detail changes. The Box fixtures are
+  `tests/scripts/conftest.py::png` (280 by 280), `tests/mcp_proxy/tools/test_decisions_tools.py::_png`
+  (280 by 280), the 2.5 image (512 by 512), and the service test's
+  `tests/ai/test_decisions_service.py::_png` and `::_jpeg` at chosen sizes. A repository search
+  for "dimensions exceed" and "exceed Box" finds only `decisions.py` line 506, so no test or
+  document quotes the old detail.
+- Consumers: the `gobby-decisions:evaluate` tool returns the detail through
+  `src/gobby/mcp_proxy/tools/decisions.py::_failure` as `detail` and in `error`, with its shape
+  unchanged. `_check_request` is `_check_images`' only caller.
+- Test helpers already in the service test: `::_png(width, height)`, `::_jpeg(width, height)`,
+  `::_image`, `::_wire_config`, `::_must_not_dial`, `::_shape_responder`, `BOX_MODEL` and `STATE`.
+- `src/gobby/ai/decisions.py` is 805 lines, under the 850-line heuristic.
+
+**Implementation:**
+1. **Test first.** Add `test_box_dimension_refusal_names_size_and_bounds` to
+   `tests/ai/test_decisions_service.py`, parametrized on `systemone` and `openrouter-decisions`.
+   It builds one `DecisionService` with `failure_cooldown_seconds=60`.
+   - With `_must_not_dial`, a 64 by 64 PNG raises `invalid_request` with detail exactly
+     `image is 64x64 px; Box takes 280 to 1568 px per side`, and a 300 by 1569 JPEG gives
+     `image is 300x1569 px; Box takes 280 to 1568 px per side`. No request is sent.
+   - With `_shape_responder`, a 512 by 512 PNG Box request dials once and returns its answer,
+     which shows the refusals opened no cooldown.
+2. **Detail.** In `_check_images`, raise
+   `DecisionsUnavailable("invalid_request", f"image is {width}x{height} px; Box takes 280 to 1568
+   px per side")`. Keep the bounds and the area check unchanged.
+
+**Acceptance:**
+
+- 2.6.1 - A 64 by 64 PNG and a 300 by 1569 JPEG are refused with `invalid_request` before any HTTP call, each with a detail naming its size and the 280 to 1568 px bounds. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
+- 2.6.2 - After those refusals, a 512 by 512 PNG passes validation and dials once, so the refusals opened no cooldown. test: `tests/ai/test_decisions_service.py::test_box_dimension_refusal_names_size_and_bounds`.
+- 2.6.3 - The 279 and 1569 px refusals, the inclusive 280 and 1568 px boundaries and the no-cooldown check still pass on both wires. test: `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing`.
+
+**Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
+GOBBY_TEST_PROTECT=1 uv run pytest tests/ai/test_decisions_service.py
+tests/mcp_proxy/tools/test_decisions_tools.py -v`, then `uv run ruff check src/gobby/ai/decisions.py
+tests/ai/test_decisions_service.py`, `uv run ruff format --check` on the same paths, and
+`uv run mypy src/gobby/ai/decisions.py`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1484,6 +1577,17 @@ changes no configuration file.
   2.4 consistent with `get_decision_service`'s fingerprint contract, so no product
   factory parameter is needed. The Plan Advocate gobby#19939 converged on the same
   bytes with no further suggestions. No open decision or blocking finding remains.
+- 2026-11-05: After that consensus, the Orchestrator gobby#19309 directed a scope
+  change, relayed by the lead gobby#19945. The Adversary withdrew consensus on
+  `dc44dc4db4fa0482655e9afff4c1a482a23f7417` before deriving any M1.
+  - The Orchestrator's #25788 joins P2 as leaf 2.6 with no edges. Decision 19
+    records that #25788 is closed at expansion as superseded by the leaf.
+  - The source shows the dimension guard already exists, so 2.6 changes only the
+    refusal's detail to name the image's size and the bounds.
+  - The Orchestrator's OpenRouter Box rerun returned 200 on a 512x512 image. It
+    traced the 2026-10-26 HTTP 400 to the 64x64 test image, and the plan notes
+    OpenRouter's catalog listing of `cloudflare/clef`, `clef-flash` and
+    `clef-omni`. The local `clef:27b` capture stays as ruled.
 
 ## V2: Verification
 `kind: verification`
@@ -1504,3 +1608,5 @@ After the leaves pass:
    `GOBBY_TEST_PROTECT=1` against the isolated test hub. Confirm `wire-contracts.md`
    has the "Decision shape consumers" section and `systemone-live.md` the dated
    `clef:27b` capture, whose Box record names `consumer` `gobby-decisions:evaluate`.
+7. Rerun `tests/ai/test_decisions_service.py` under `GOBBY_TEST_PROTECT=1` against the
+   isolated test hub, and confirm #25788 is closed as superseded by the 2.6 leaf.
