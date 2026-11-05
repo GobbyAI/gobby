@@ -359,7 +359,13 @@ async fn start_child(
         .await;
     match committed {
         Ok(true) => Ok(host_terminal_id),
-        Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
+        Ok(false) => {
+            // A cancel that stops a retry sends nothing, but an earlier request whose reply was
+            // lost may have launched the child, so its tree is kept for its owner.
+            let mut failure = abort_cancelled(agents, &host_terminal_id).await;
+            failure.maybe_launched = sent.load(Ordering::SeqCst) > 0;
+            Err(failure)
+        }
         Err(error) => {
             // A refusal to the only request names a commit the host never made. A retry, or any
             // other failure, may have launched the child, so its tree is kept for its owner.

@@ -37,26 +37,36 @@ def hold_tree_removal(worktree_path: str | os.PathLike[str]) -> Iterator[bool]:
     try:
         yield True
     finally:
-        # Unlink while still locked, and only once the tree is gone. A waiter that opened the
-        # unlinked file sees the name move on in `_acquire` and locks the replacement instead.
-        if not os.path.lexists(tree):
-            with suppress(FileNotFoundError):
-                os.unlink(lock_path)
-        os.close(fd)
+        try:
+            # Unlink while still locked, and only once the tree is gone. A waiter that opened the
+            # unlinked file sees the name move on in `_acquire` and locks the replacement instead.
+            # The unlink is best effort: a lock file left behind is harmless, and a failure here
+            # must not fail a removal that already finished.
+            if not os.path.lexists(tree):
+                with suppress(OSError):
+                    os.unlink(lock_path)
+        finally:
+            os.close(fd)
 
 
 def _acquire(lock_path: str) -> int | None:
     """Return a descriptor holding the lock, or None when another remover holds it."""
     while True:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        locked = False
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            return None
-        if _names(fd, lock_path):
-            return fd
-        os.close(fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return None
+            locked = _names(fd, lock_path)
+            if locked:
+                return fd
+        finally:
+            # Every path that does not hand the descriptor to the caller closes it, including an
+            # unexpected error from the lock or the identity check.
+            if not locked:
+                os.close(fd)
 
 
 def _names(fd: int, lock_path: str) -> bool:

@@ -1364,6 +1364,58 @@ async fn lost_commit_reply_keeps_the_tree_a_refused_retry_cannot_erase() -> Resu
 }
 
 #[tokio::test]
+async fn lost_commit_reply_then_cancel_keeps_the_tree() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    // The first commit may have launched the child before its reply was lost. The cancel lands
+    // during the client's wait, so the retry is stopped before it sends anything.
+    fixture.launch.host.lose_next_commit_reply();
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    tokio::time::timeout(WAIT, async {
+        while !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "spawn_commit")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    let workspace = workspace_path(&fixture, &id)?;
+    let mut cancel = fixture.spawn_dispatch(fixture.cancel("cancel", &id, "TERM"));
+    fixture
+        .wait_state(|state| state.cancelled.contains_key(&id))
+        .await;
+    let exit = fixture.exit(ExitReason::Cancelled, true).await?;
+    ok(
+        &tokio::time::timeout(WAIT, &mut cancel.0).await??,
+        "cancel",
+        json!({"stopped": true}),
+    );
+    assert!(
+        exit.workspace.is_some(),
+        "an unknown commit outcome reports its tree even when a cancel stops the retry"
+    );
+    assert!(
+        workspace.exists(),
+        "a cancel never removes a tree a lost commit may have launched"
+    );
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id),
+        "an unknown commit outcome queues no removal"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn undelivered_acceptance_cancels_the_run() -> Result<()> {
     use futures_util::SinkExt;
     use tokio_tungstenite::tungstenite::Message;
