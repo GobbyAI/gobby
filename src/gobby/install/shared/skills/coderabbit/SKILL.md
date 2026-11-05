@@ -1,7 +1,7 @@
 ---
 name: coderabbit
 description: Use when processing CodeRabbit review comments, CodeRabbit CLI reports, or `$gobby coderabbit [findings]` requests.
-version: "1.0.0"
+version: "2.0.0"
 category: core
 triggers:
   - coderabbit
@@ -37,8 +37,8 @@ assistant's internal planning posture and does not satisfy this gate.
 
 Use `EnterPlanMode` when the runtime provides it. When no direct Plan Mode tool
 is exposed, use `gobby-sessions:send_keys(session_id, keys, literal=true)` to
-send the provider's native Gobby plan command. Only the Orchestrator and
-Assistant hold `send_keys`; any other seat without a direct Plan Mode tool reports
+send the provider's native Gobby plan command. Only the Orchestrator
+holds `send_keys`; any other seat without a direct Plan Mode tool reports
 the gap to Triage:
 
 - Codex: `$gobby plan\n`
