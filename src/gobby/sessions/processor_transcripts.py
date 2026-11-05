@@ -354,7 +354,13 @@ class ProcessorTranscriptMixin:
             ]
             # The ledger runs inside the parser rollback, ahead of the stats: a failure
             # here leaves the stats, the offsets, and the parser as they were before the pass.
-            await self._persist_ledger_batch(session_id, transcript_path, parser_source)
+            await self._persist_ledger_batch(
+                session_id,
+                transcript_path,
+                parser_source,
+                lines=new_lines,
+                records=parsed_records,
+            )
         except Exception:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)

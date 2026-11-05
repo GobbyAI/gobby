@@ -133,6 +133,11 @@ def test_audit_fix_replaces_unkeyed_row_with_keyed_event(runner: CliRunner) -> N
         patch.object(tokens_module, "resolve_session_id", return_value="sess-unkeyed"),
         patch.object(tokens_module, "SessionManager", return_value=manager),
         patch.object(tokens_module, "TokenEventStore", return_value=store),
+        patch.object(
+            tokens_module,
+            "ReportedUsageStore",
+            return_value=Mock(list_runs=Mock(return_value=[])),
+        ),
         patch.object(tokens_module, "_load_session_messages", return_value=[]),
         patch.object(tokens_module, "_messages_to_events", return_value=([event], None)),
     ):

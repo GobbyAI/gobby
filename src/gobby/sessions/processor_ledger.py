@@ -1,15 +1,18 @@
-"""Claude subagent usage in the live processor's parent ledger (plan 2.2)."""
+"""Ledger writes for one processor pass: subagent usage (plan 2.2) and reported runs (plan 2.3)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import psycopg
 
+from gobby.sessions.reported_usage import DROID_SOURCE, collect_runs
 from gobby.sessions.subagent_usage import SUBAGENT_SOURCE, read_subagent_events
 from gobby.sessions.transcript_paths import find_supplemental_transcripts_on_disk
+from gobby.storage.reported_usage import ReportedUsageStore
 
 if TYPE_CHECKING:
     from gobby.sessions.processor_types import ProcessorHost
@@ -23,14 +26,60 @@ class ProcessorLedgerMixin:
         session_id: str,
         transcript_path: str,
         source: str | None,
+        *,
+        lines: Sequence[str] = (),
+        records: Sequence[object] = (),
     ) -> None:
-        """Insert new subagent usage events under the parent session.
+        """Write the ledger rows this pass produces for the parent session.
 
-        Runs on every consuming pass, so an idle parent still picks up subagent appends.
-        Cursors advance only after the insert. A failed pass keeps the prior cursors, so
-        the next pass rereads the same lines and their message ids dedupe the rows.
+        ``lines`` and ``records`` are the pass's new transcript lines and parsed records,
+        empty on an idle pass. Runs on every consuming pass, so an idle parent still picks
+        up subagent appends and a refreshed Droid sidecar. The reported runs raise on a
+        database error, which keeps the pass's offset where it was; the subagent half
+        logs and retries, since its cursors advance only after a successful insert.
         """
-        if source != SUBAGENT_SOURCE or self.session_manager is None:
+        if source is None or self.session_manager is None:
+            return
+        await self._persist_reported_runs(session_id, transcript_path, source, lines, records)
+        if source == SUBAGENT_SOURCE:
+            await self._persist_subagent_usage(session_id, transcript_path)
+
+    async def _persist_reported_runs(
+        self: ProcessorHost,
+        session_id: str,
+        transcript_path: str,
+        source: str,
+        lines: Sequence[str],
+        records: Sequence[object],
+    ) -> None:
+        session_manager = self.session_manager
+        if session_manager is None:
+            return
+        session_started_at = None
+        if source == DROID_SOURCE:
+            session = await self._run_db(session_manager.get, session_id)
+            if session is None:
+                return
+            session_started_at = session.created_at
+        runs = await asyncio.to_thread(
+            collect_runs,
+            source,
+            lines=lines,
+            messages=records,
+            transcript_path=transcript_path,
+            session_started_at=session_started_at,
+        )
+        if runs:
+            await self._run_db(ReportedUsageStore(self.db).upsert_runs, session_id, runs)
+
+    async def _persist_subagent_usage(
+        self: ProcessorHost,
+        session_id: str,
+        transcript_path: str,
+    ) -> None:
+        """Insert new subagent usage events under the parent session."""
+        session_manager = self.session_manager
+        if session_manager is None:
             return
         # Most parents have no subagents: the directory check keeps idle polls off the database.
         if not self._subagent_cursors.get(session_id) and not await asyncio.to_thread(
@@ -38,7 +87,7 @@ class ProcessorLedgerMixin:
         ):
             return
         try:
-            session = await self._run_db(self.session_manager.get, session_id)
+            session = await self._run_db(session_manager.get, session_id)
             if session is None:
                 return
             project_id = getattr(session, "project_id", None)
@@ -59,7 +108,7 @@ class ProcessorLedgerMixin:
                 # parent's own messages, so the refresh carries only the lifetime totals.
                 totals = await self._run_db(store.get_session_totals, session_id)
                 await self._run_db(
-                    self.session_manager.update_usage,
+                    session_manager.update_usage,
                     session_id=session_id,
                     input_tokens=totals["input_tokens"],
                     output_tokens=totals["output_tokens"],

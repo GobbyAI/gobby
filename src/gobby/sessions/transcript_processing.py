@@ -27,6 +27,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.message_stats import compute_message_stats
+from gobby.sessions.reported_usage import collect_runs
 from gobby.sessions.subagent_usage import read_all_subagent_events
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
@@ -38,6 +39,7 @@ from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.reported_usage import ReportedUsageStore
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
@@ -312,11 +314,23 @@ class TranscriptProcessingMixin:
         # (model, usage, message_id). Other JSON transcripts use the same
         # line-oriented envelope contract as the other supported CLIs.
         # JSON strings may contain Unicode line separators; only physical LF ends a record.
-        parsed_records = parser.parse_lines(list(StringIO(raw)), start_index=0)
+        lines = list(StringIO(raw))
+        parsed_records = parser.parse_lines(lines, start_index=0)
         normalized = normalize_transcript_records(parsed_records, session.source)
         messages = [r for r in normalized if isinstance(r, ParsedMessage)]
         session_source = session.source if isinstance(session.source, str) else None
         stats_records = normalized if session_source == "agy" else messages
+
+        # Provider-reported run totals come from the whole transcript. A transcript with no
+        # message still carries them, so this runs before the early returns below.
+        runs = collect_runs(
+            session_source or "",
+            lines=lines,
+            messages=normalized,
+            transcript_path=transcript_path,
+            session_started_at=session.created_at,
+        )
+        ReportedUsageStore(self.db).upsert_runs(session_id, runs)
 
         if not stats_records:
             return []

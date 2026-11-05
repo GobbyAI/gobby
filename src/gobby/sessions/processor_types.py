@@ -172,8 +172,25 @@ class ProcessorHost(Protocol):
     ) -> MessageStats: ...
 
     async def _persist_ledger_batch(
-        self, session_id: str, transcript_path: str, source: str | None
+        self,
+        session_id: str,
+        transcript_path: str,
+        source: str | None,
+        *,
+        lines: Sequence[str] = (),
+        records: Sequence[object] = (),
     ) -> None: ...
+
+    async def _persist_reported_runs(
+        self,
+        session_id: str,
+        transcript_path: str,
+        source: str,
+        lines: Sequence[str],
+        records: Sequence[object],
+    ) -> None: ...
+
+    async def _persist_subagent_usage(self, session_id: str, transcript_path: str) -> None: ...
 
     async def _persist_usage_events(
         self,

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,10 +16,12 @@ import click
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
+from gobby.sessions.reported_usage import ReportedRun, collect_runs
 from gobby.sessions.subagent_usage import read_all_subagent_events
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.reported_usage import ReportedUsageStore
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
     TokenEvent,
@@ -147,6 +150,10 @@ class SessionAudit:
     missing_rows: int
     usage_mismatch: bool
     repaired: bool = False
+    stale_runs: int = 0
+    missing_runs: int = 0
+    run_count: int = 0
+    run_totals: dict[str, Decimal] = field(default_factory=dict)
 
     @property
     def missing(self) -> bool:
@@ -188,19 +195,54 @@ def _reinsertable(event: TokenEvent, archived: frozenset[str]) -> bool:
     return event.message_id is not None and event.message_id not in archived and "" not in archived
 
 
+def _run_missing(stored: ReportedRun | None, derived: ReportedRun) -> bool:
+    """A transcript run is missing when storage lacks it or holds an older reading."""
+    return stored is None or stored.observed_at < derived.observed_at
+
+
+def _transcript_runs(session: Any, messages: Sequence[Any]) -> list[ReportedRun] | None:
+    """The transcript's provider-reported runs, or None when the transcript cannot be read."""
+    try:
+        with open(session.transcript_path, encoding="utf-8") as handle:
+            return collect_runs(
+                session.source,
+                lines=handle,
+                messages=messages,
+                transcript_path=session.transcript_path,
+                session_started_at=session.created_at,
+            )
+    except OSError:
+        return None
+
+
+def _run_totals(runs: Sequence[ReportedRun]) -> dict[str, Decimal]:
+    totals: dict[str, Decimal] = {}
+    for run in runs:
+        if run.cost_unit is not None and run.cost_amount is not None:
+            totals[run.cost_unit] = totals.get(run.cost_unit, Decimal(0)) + run.cost_amount
+    return totals
+
+
+def _format_runs(audit: SessionAudit) -> str:
+    amounts = " ".join(f"{unit}={amount}" for unit, amount in sorted(audit.run_totals.items()))
+    return f"runs={audit.run_count}" + (f" {amounts}" if amounts else "")
+
+
 def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAudit:
     # With --fix, the shared retention lock spans the read and the writes, so a prune cannot
     # archive a row between them. Stored rows are read before the transcript: a line the
     # processor ingests in between is then absent from `stored`, so --fix never deletes it.
     with token_event_retention_transaction(db) if fix else nullcontext():
         stored = _read_stored_rows(db, session_id)
+        runs_store = ReportedUsageStore(db)
+        stored_runs = runs_store.list_runs(session_id)
         session_manager = SessionManager(db)
         session = session_manager.get(session_id)
         if session is None:
             raise click.ClickException(f"Session {session_id} not found")
-        derived, last_model = _messages_to_events(
-            session_id, session, _load_session_messages(session_id, session)
-        )
+        messages = _load_session_messages(session_id, session)
+        derived, last_model = _messages_to_events(session_id, session, messages)
+        derived_runs: list[ReportedRun] | None = None
         # Subagent calls carry agent-scoped ids, so they cannot collide with parent keys.
         if isinstance(session.transcript_path, str):
             subagent_events = read_all_subagent_events(
@@ -209,6 +251,7 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
                 session.transcript_path,
             )
             derived.extend(subagent_events)
+            derived_runs = _transcript_runs(session, messages)
 
         # Retention archives events older than the cutoff into token_event_retention_totals
         # and deletes their rows. An expired event with no stored row was pruned, so it is
@@ -242,9 +285,21 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
         # Lifetime totals include the retention archive, which the stored rows do not.
         usage_mismatch = store.get_session_totals(session_id) != _session_totals(session)
         stale_rows = len(absent) + len(differing)
+        # An unreadable transcript leaves the run totals unknown, so no run is missing or stale.
+        runs_now = derived_runs or []
+        stored_run_by_key = {run.run_key: run for run in stored_runs}
+        missing_runs: list[ReportedRun] = []
+        stale_run_keys: list[str] = []
+        if derived_runs is not None:
+            missing_runs = [
+                run for run in derived_runs if _run_missing(stored_run_by_key.get(run.run_key), run)
+            ]
+            derived_run_keys = {run.run_key for run in derived_runs}
+            stale_run_keys = [key for key in stored_run_by_key if key not in derived_run_keys]
+        run_drift = bool(missing_runs or stale_run_keys)
 
         repaired = False
-        if fix and (stale_rows or missing or usage_mismatch):
+        if fix and (stale_rows or missing or usage_mismatch or run_drift):
             doomed = [
                 row["id"]
                 for row in absent
@@ -253,6 +308,8 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
             if doomed:
                 db.execute("DELETE FROM token_events WHERE id = ANY(%s)", (doomed,))
             store.repair_keyed_events(repairable)
+            runs_store.delete_runs(session_id, stale_run_keys)
+            runs_store.upsert_runs(session_id, runs_now)
             repaired_totals = store.get_session_totals(session_id)
             session_manager.update_usage(
                 session_id=session_id,
@@ -273,6 +330,10 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
         missing_rows=len(missing),
         usage_mismatch=usage_mismatch,
         repaired=repaired,
+        stale_runs=len(stale_run_keys),
+        missing_runs=len(missing_runs),
+        run_count=len(runs_now),
+        run_totals=_run_totals(runs_now),
     )
 
 
@@ -325,19 +386,21 @@ def audit_tokens(
                 continue
 
             audited += 1
-            if audit.stale_rows:
+            if audit.stale_rows or audit.stale_runs:
                 stale_sessions += 1
-            if audit.missing:
+            if audit.missing or audit.missing_runs:
                 missing_sessions += 1
             if audit.repaired:
                 repaired_sessions += 1
-            if not audit.stale_rows and not audit.missing:
+            drift = audit.stale_rows or audit.missing or audit.stale_runs or audit.missing_runs
+            if not drift:
                 if not fix:
-                    click.echo(f"{session_id}: ok")
+                    click.echo(f"{session_id}: ok {_format_runs(audit)}")
                 continue
             click.echo(
                 f"{session_id}: stale={audit.stale_rows} missing={audit.missing_rows} "
-                f"usage_mismatch={audit.usage_mismatch}"
+                f"usage_mismatch={audit.usage_mismatch} stale_runs={audit.stale_runs} "
+                f"missing_runs={audit.missing_runs} {_format_runs(audit)}"
             )
             if audit.repaired:
                 click.echo("  repaired")
