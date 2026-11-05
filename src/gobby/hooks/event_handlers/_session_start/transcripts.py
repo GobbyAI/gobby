@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gobby.hooks.codex_seat import codex_thread_originator
 from gobby.hooks.events import HookEventType
 from gobby.sessions.machine_scope import (
     is_local_machine_owner,
@@ -13,6 +14,7 @@ from gobby.sessions.transcript_paths import (
     TranscriptPathStatus,
     classify_transcript_path,
     find_transcript_on_disk,
+    hook_transcript_is_bound,
     usable_transcript_path,
 )
 
@@ -64,22 +66,39 @@ def derive_transcript_path(
     if not is_local_machine_owner(owner_machine_id, local_machine_id):
         return None
     status, reported = classify_transcript_path(input_data.get("transcript_path"))
-    if status is TranscriptPathStatus.USABLE:
+    cwd = input_data.get("cwd")
+    cwd_text = str(cwd) if cwd else None
+    if (
+        status is TranscriptPathStatus.USABLE
+        and reported is not None
+        and _hook_payload_names_session(cli_source, reported, external_id, cwd_text)
+    ):
         return reported
     stored = usable_transcript_path(stored_path)
     if stored is not None:
         return stored
-    session_id = input_data.get("sessionId") or input_data.get("session_id") or external_id
-    cwd = input_data.get("cwd")
+    # The payload's sessionId is not trusted: the disk fallback keys on external_id only.
     return find_transcript_on_disk(
         cli_source,
         external_id,
         owner_machine_id=owner_machine_id,
         local_machine_id=local_machine_id,
         caller_context="hook",
-        cwd=str(cwd) if cwd else None,
-        session_id=str(session_id) if session_id else None,
+        cwd=cwd_text,
     )
+
+
+def _hook_payload_names_session(
+    cli_source: str, reported: str, external_id: str, cwd: str | None
+) -> bool:
+    """Whether a usable hook-reported transcript is this session's own, by trusted state.
+
+    A provider layout bound to ``external_id`` wins. Codex rollouts carry no path
+    layout, so their session_meta header must name this thread.
+    """
+    if hook_transcript_is_bound(cli_source, reported, external_id, cwd=cwd):
+        return True
+    return cli_source == "codex" and codex_thread_originator(reported, external_id) is not None
 
 
 def recheck_pending_transcript_path(

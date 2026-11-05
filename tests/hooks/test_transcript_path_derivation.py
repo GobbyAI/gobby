@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -46,7 +47,7 @@ class TestTranscriptPathDerivation:
         assert result is None
 
     def test_derive_grok_transcript_path_uses_encoded_cwd(
-        self, event_handlers: EventHandlers, tmp_path, monkeypatch
+        self, event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Grok updates.jsonl path should match the native session layout."""
         import gobby.hooks.event_handlers._session_start as session_mod
@@ -66,7 +67,7 @@ class TestTranscriptPathDerivation:
         result = event_handlers._derive_transcript_path(
             "grok",
             {"cwd": "/repo/my project", "sessionId": "grok-session"},
-            "external-id",
+            "grok-session",
             owner_machine_id=LOCAL_MACHINE_ID,
             local_machine_id=LOCAL_MACHINE_ID,
         )
@@ -74,9 +75,13 @@ class TestTranscriptPathDerivation:
         assert result == str(target)
 
     def test_derive_classifies_hook_path_usable_pending_invalid(
-        self, event_handlers: EventHandlers, tmp_path: Path
+        self, event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        usable = tmp_path / "usable.jsonl"
+        import gobby.hooks.event_handlers._session_start as session_mod
+
+        monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+        usable = tmp_path / ".claude" / "projects" / "-repo" / "ext-1.jsonl"
+        usable.parent.mkdir(parents=True)
         usable.write_text("{}\n", encoding="utf-8")
         pending = tmp_path / "pending.jsonl"
         unreadable_dir = tmp_path / "not-a-file"
@@ -84,7 +89,7 @@ class TestTranscriptPathDerivation:
 
         assert event_handlers._derive_transcript_path(
             "claude",
-            {"transcript_path": str(usable)},
+            {"cwd": "/repo", "transcript_path": str(usable)},
             "ext-1",
             owner_machine_id=LOCAL_MACHINE_ID,
             local_machine_id=LOCAL_MACHINE_ID,
@@ -289,3 +294,104 @@ def test_derive_claude_transcript_path_follows_cwd_relocation(
     )
 
     assert result == str(target)
+
+
+def test_hook_path_naming_another_session_is_not_adopted(
+    event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hook payload cannot hand this session another session's readable transcript."""
+    import gobby.hooks.event_handlers._session_start as session_mod
+
+    monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+    other = tmp_path / ".claude" / "projects" / "-repo" / "other-session.jsonl"
+    other.parent.mkdir(parents=True)
+    other.write_text("{}\n", encoding="utf-8")
+
+    result = event_handlers._derive_transcript_path(
+        "claude",
+        {"cwd": "/repo", "transcript_path": str(other)},
+        "ext-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
+
+    assert result is None
+
+
+def test_hook_path_for_this_session_is_adopted(
+    event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gobby.hooks.event_handlers._session_start as session_mod
+
+    monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+    own = tmp_path / ".claude" / "projects" / "-repo" / "ext-1.jsonl"
+    own.parent.mkdir(parents=True)
+    own.write_text("{}\n", encoding="utf-8")
+
+    result = event_handlers._derive_transcript_path(
+        "claude",
+        {"cwd": "/repo", "transcript_path": str(own)},
+        "ext-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
+
+    assert result == str(own)
+
+
+def test_grok_payload_session_id_cannot_name_another_session(
+    event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The payload sessionId is not trusted to choose the transcript directory."""
+    import gobby.hooks.event_handlers._session_start as session_mod
+
+    monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+    victim = tmp_path / ".grok" / "sessions" / "%2Frepo" / "victim" / "updates.jsonl"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("{}\n", encoding="utf-8")
+
+    result = event_handlers._derive_transcript_path(
+        "grok",
+        {"cwd": "/repo", "sessionId": "victim", "transcript_path": str(victim)},
+        "ext-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
+
+    assert result is None
+
+
+def test_codex_rollout_naming_this_thread_is_adopted(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    header = {"type": "session_meta", "payload": {"id": "thread-1", "originator": "codex_cli_rs"}}
+    rollout = tmp_path / "rollout-2026-11-05-thread-1.jsonl"
+    rollout.write_text(json.dumps(header) + "\n", encoding="utf-8")
+
+    result = event_handlers._derive_transcript_path(
+        "codex",
+        {"transcript_path": str(rollout)},
+        "thread-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
+
+    assert result == str(rollout)
+
+
+def test_codex_rollout_of_another_thread_is_not_adopted(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    header = {"type": "session_meta", "payload": {"id": "thread-2", "originator": "codex_cli_rs"}}
+    rollout = tmp_path / "rollout-2026-11-05-thread-2.jsonl"
+    rollout.write_text(json.dumps(header) + "\n", encoding="utf-8")
+
+    result = event_handlers._derive_transcript_path(
+        "codex",
+        {"transcript_path": str(rollout)},
+        "thread-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
+
+    assert result is None
