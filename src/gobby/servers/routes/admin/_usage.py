@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 def register_usage_routes(router: APIRouter, server: HTTPServer) -> None:
+    @router.get("/usage/ledger")
+    async def get_usage_ledger(
+        session_id: str | None = Query(None),
+        task_id: str | None = Query(None),
+        cursor: str | None = Query(None),
+        limit: int = Query(200),
+    ) -> dict[str, Any]:
+        """Stub: implemented in the green step."""
+        raise NotImplementedError("get_usage_ledger")
+
     @router.get("/usage")
     async def get_usage(
         hours: int = Query(0, ge=0, le=8760),

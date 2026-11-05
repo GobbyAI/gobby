@@ -353,6 +353,20 @@ def create_metrics_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @registry.tool(
+        name="get_usage_ledger",
+        read_only=True,
+        description="Stub: usage ledger page for one session or task (implemented in green).",
+    )
+    def get_usage_ledger(
+        session_id: str | None = None,
+        task_id: str | None = None,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Stub: implemented in the green step."""
+        raise NotImplementedError("get_usage_ledger")
+
     # --- Event-based metrics tools (require event_store) ---
 
     @registry.tool(
