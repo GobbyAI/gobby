@@ -24,6 +24,7 @@ use gobby_daemon::node_commands::{
 };
 use gobby_daemon::nodes::agents::{
     NodeAgents,
+    removal_lock::RemovalLock,
     repair::{self, RepairEnv},
     sandbox::{
         PolicyInputs, checkout_component, gcode_runtime_digest, resolve_srt_policy,
@@ -1194,6 +1195,100 @@ async fn failed_create_keeps_an_unrelated_directory() -> Result<()> {
             .is_empty(),
         "a failed create must not delete a branch it did not create"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn retry_removals_defers_to_a_held_removal_lock() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+    let record = workspace::plan_workspace(
+        "run-locked",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/locked"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-locked").await?;
+    workspace::prepare(&agents, "run-locked", &record, "codex", &env, &never).await?;
+    {
+        let mut state = agents.state.lock().await;
+        state.removals.insert(
+            "run-locked".into(),
+            WorkspaceRecord {
+                created: true,
+                ..record.clone()
+            },
+        );
+        state.commit(&agents.home, &agents.changed)?;
+    }
+    // The Python deletion path, or another removal, holds this tree's lock.
+    let held = RemovalLock::acquire(&record.path)?.expect("nothing holds the lock yet");
+    workspace::retry_removals(&agents).await?;
+    assert!(
+        agents
+            .state
+            .lock()
+            .await
+            .removals
+            .contains_key("run-locked"),
+        "a busy lock keeps the removal record for a later retry"
+    );
+    assert!(
+        record.path.exists(),
+        "a busy lock never touches the worktree"
+    );
+    drop(held);
+    workspace::retry_removals(&agents).await?;
+    assert!(
+        !agents
+            .state
+            .lock()
+            .await
+            .removals
+            .contains_key("run-locked"),
+        "the retry removes the tree once the lock is free"
+    );
+    assert!(!record.path.exists());
+    Ok(())
+}
+
+#[test]
+fn removal_lock_follows_the_tree_it_guards() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let real = root.path().join("real");
+    fs::create_dir_all(real.join("wt"))?;
+    std::os::unix::fs::symlink(&real, root.path().join("link"))?;
+
+    // Identity: a symlinked parent and its target name the same lock.
+    let held = RemovalLock::acquire(&root.path().join("link/wt"))?.context("first lock")?;
+    assert!(
+        RemovalLock::acquire(&real.join("wt"))?.is_none(),
+        "the canonical path sees the symlinked holder's lock"
+    );
+    // Cancellation: dropping a guard (a cancelled removal) releases the lock.
+    drop(held);
+    let again = RemovalLock::acquire(&real.join("wt"))?;
+    assert!(again.is_some(), "a dropped guard releases the lock");
+    drop(again);
+
+    // A missing tree: the lock is released and its file is removed, as nothing is left to guard.
+    let gone = real.join("gone");
+    let lock_file = real.join(".gone.removal.lock");
+    drop(RemovalLock::acquire(&gone)?.context("missing tree lock")?);
+    assert!(
+        !lock_file.exists(),
+        "a lock on a missing tree leaves no lock file behind"
+    );
+
+    // A missing parent has no tree to race for, so the lock is granted without a file.
+    assert!(RemovalLock::acquire(&root.path().join("nowhere/tree"))?.is_some());
     Ok(())
 }
 

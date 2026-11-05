@@ -22,6 +22,7 @@ from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
 from gobby.worktrees.git import worktree_registration_is_absent
 from gobby.worktrees.occupancy import refuse_occupied_worktree
+from gobby.worktrees.removal_lock import hold_tree_removal
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -120,15 +121,25 @@ async def delete_worktree_transaction(
                     error_code="worktree_not_eligible",
                 )
             return WorktreeDeletionResult(success=True, found=False)
-        return await _delete_worktree(
-            boundary,
-            request,
-            worktree,
-            worktree_storage,
-            resolve_git_manager,
-            task_manager,
-            context,
-        )
+        # A removal already running on this tree (gdaemon's, through the same lock) owns it, so
+        # the tree reads busy rather than dirty and git is never reached.
+        with hold_tree_removal(worktree.worktree_path) as held:
+            if not held:
+                return WorktreeDeletionResult(
+                    success=False,
+                    git_deleted=False,
+                    error="Worktree is being removed by another operation",
+                    error_code="worktree_removal_in_progress",
+                )
+            return await _delete_worktree(
+                boundary,
+                request,
+                worktree,
+                worktree_storage,
+                resolve_git_manager,
+                task_manager,
+                context,
+            )
     finally:
         if entered:
             await run_thread_to_completion(context.run, guard.__exit__, *sys.exc_info())

@@ -2,6 +2,7 @@
 
 use super::{
     NodeAgents,
+    removal_lock::RemovalLock,
     repair::{self, RepairEnv},
     state::{RunPhase, WorkspaceRecord},
 };
@@ -111,6 +112,14 @@ fn checkpoint(cancel: &(dyn Fn() -> bool + Sync), step: &str) -> Result<()> {
 
 /// Removes a workspace and its branch. A missing path or branch counts as removed.
 pub async fn remove(record: &WorkspaceRecord) -> Result<()> {
+    // Held for the whole removal, so a deletion of the same tree in Python reads it as busy and
+    // never as half-removed. A busy lock keeps the caller's record for a later retry.
+    let _lock = RemovalLock::acquire(&record.path)?.with_context(|| {
+        format!(
+            "removal of {} is already in progress",
+            record.path.display()
+        )
+    })?;
     match record.mode {
         WorkspaceMode::Worktree => remove_worktree(record).await,
         WorkspaceMode::Clone => {

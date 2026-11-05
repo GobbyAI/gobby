@@ -21,6 +21,7 @@ from gobby.worktrees.deletion import (
     delete_worktree_transaction,
 )
 from gobby.worktrees.executor import DestructiveBoundary
+from gobby.worktrees.removal_lock import hold_tree_removal
 
 pytestmark = pytest.mark.integration
 
@@ -309,4 +310,50 @@ def test_delete_racing_an_in_flight_removal_reads_busy_not_dirty(
     assert result.uncommitted_changes is False
     assert result.error_code == "worktree_removal_in_progress"
     assert git_calls == []
+    assert manager.get(workspace.id) is not None
+
+
+def test_delete_racing_a_held_tree_removal_reads_busy_not_dirty(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    """A delete racing a daemon removal that holds the tree's lock reads busy, never dirty."""
+    project_id = str(sample_project["id"])
+    manager = LocalWorktreeManager(temp_db)
+    tree = tmp_path / "held-removal"
+    tree.mkdir()
+    tracked = tree / "tracked.txt"
+    tracked.write_text("committed\n")
+    workspace = manager.create(project_id, "held-removal", str(tree))
+    git_calls: list[object] = []
+
+    def resolve_git(worktree: object) -> None:
+        git_calls.append(worktree)
+
+    def delete_from_another_context() -> WorktreeDeletionResult:
+        # A worker thread takes its own file descriptor on the tree's lock file.
+        return asyncio.run(
+            delete_worktree_transaction(
+                DestructiveBoundary(),
+                request=WorktreeDeletionRequest(workspace.id, DeletionSurface.MCP),
+                worktree_storage=manager,
+                resolve_git_manager=resolve_git,
+                task_manager=None,
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with hold_tree_removal(str(tree)) as held:
+            assert held is True
+            # The daemon's removal has already taken this tracked file from disk.
+            tracked.unlink()
+            result = executor.submit(delete_from_another_context).result(timeout=30)
+
+    assert result.success is False
+    assert result.git_deleted is False
+    assert result.uncommitted_changes is False
+    assert result.error_code == "worktree_removal_in_progress"
+    assert git_calls == []
+    assert tree.is_dir()
     assert manager.get(workspace.id) is not None

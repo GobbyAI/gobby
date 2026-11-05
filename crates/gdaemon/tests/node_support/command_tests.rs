@@ -1291,6 +1291,79 @@ async fn cancel_during_host_commit_keeps_the_launched_tree() -> Result<()> {
 /// 2.7.2: an acceptance the hub never receives starts no preparation. The run is cancelled
 /// and settles unlaunched, so a later spawn for it is refused.
 #[tokio::test]
+async fn launch_rollback_keeps_a_tree_another_remover_holds() -> Result<()> {
+    use gobby_daemon::nodes::agents::{removal_lock::RemovalLock, workspace};
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    fixture.launch.host.reject_next_commit();
+    fixture.launch.host.hold_next_reply("spawn_commit");
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    tokio::time::timeout(
+        WAIT,
+        fixture.launch.host.wait_for_held_reply("spawn_commit"),
+    )
+    .await?;
+    let tree = workspace_path(&fixture, &id)?;
+    // Another remover holds the tree while the refused commit's rollback runs.
+    let held = RemovalLock::acquire(&tree)?.context("the tree is not locked yet")?;
+    fixture.launch.host.release_held_reply("spawn_commit");
+    fixture.exit(ExitReason::LaunchFailed, false).await?;
+    assert!(
+        tree.exists(),
+        "a rollback that finds the tree locked keeps it"
+    );
+    assert!(
+        persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id),
+        "a busy rollback keeps the record queued for retry"
+    );
+    drop(held);
+    workspace::retry_removals(&fixture.launch.agents).await?;
+    assert!(!tree.exists(), "the retry removes the rolled-back tree");
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn lost_commit_reply_keeps_the_tree_a_refused_retry_cannot_erase() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    // The commit may have launched the child before its reply was lost.
+    fixture.launch.host.lose_next_commit_reply();
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    let exit = fixture.exit(ExitReason::LaunchFailed, true).await?;
+    let tree = workspace_path(&fixture, &id)?;
+    assert!(
+        exit.workspace.is_some(),
+        "an unknown commit outcome reports its tree for the completion owner"
+    );
+    assert!(
+        tree.exists(),
+        "an unknown commit outcome never removes the tree"
+    );
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id),
+        "an unknown commit outcome queues no removal"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn undelivered_acceptance_cancels_the_run() -> Result<()> {
     use futures_util::SinkExt;
     use tokio_tungstenite::tungstenite::Message;

@@ -11,6 +11,7 @@ mod lanes;
 pub mod launch;
 pub mod provider_command;
 pub mod provider_env;
+pub mod removal_lock;
 pub mod repair;
 pub mod reports;
 pub mod sandbox;

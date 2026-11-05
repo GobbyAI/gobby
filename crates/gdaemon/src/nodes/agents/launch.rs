@@ -14,14 +14,17 @@ use super::{
     workspace,
 };
 use crate::node_commands::{ExitReason, ReportExit, SpawnPayload};
-use gobby_terminals::control::{EventCursor, HostEventKind, SpawnRequest};
+use gobby_terminals::control::{ControlError, EventCursor, HostEventKind, SpawnRequest};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions, Permissions},
     io::{ErrorKind, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinHandle;
@@ -52,6 +55,8 @@ pub struct LaunchContext {
 pub struct LaunchFailure {
     pub reason: ExitReason,
     pub detail: String,
+    /// The host may have started the child, so its tree is kept for the completion owner.
+    pub maybe_launched: bool,
 }
 
 impl LaunchFailure {
@@ -59,6 +64,7 @@ impl LaunchFailure {
         Self {
             reason,
             detail: detail.into(),
+            maybe_launched: false,
         }
     }
 }
@@ -151,12 +157,15 @@ pub(super) async fn start_planned(
         // is recorded as launched, so the cancel's own turn stops it with the requested signal.
         Ok(false) => Err(cancelled_failure()),
         Err(error) => {
-            // The child is live but unrecorded, so it is killed rather than left unowned.
+            // The child is live but unrecorded, so it is killed rather than left unowned. The
+            // commit already launched it, so its tree is kept for its owner.
             let abort = abort_child(agents, &host_terminal_id).await;
-            Err(LaunchFailure::new(
+            let mut failure = LaunchFailure::new(
                 ExitReason::LaunchFailed,
                 format!("record launch: {error}{abort}"),
-            ))
+            );
+            failure.maybe_launched = true;
+            Err(failure)
         }
     }
 }
@@ -326,17 +335,21 @@ async fn start_child(
         ));
     }
     let (terminal_id, spawn_key) = (payload.terminal_id.clone(), run_id.to_owned());
+    // The host client retries a commit whose reply was lost, so count the requests sent.
+    let sent = Arc::new(AtomicUsize::new(0));
     let committed = agents
         .host
         .call(|client| {
             let agents = Arc::clone(agents);
             let (terminal_id, spawn_key) = (terminal_id.clone(), spawn_key.clone());
+            let sent = Arc::clone(&sent);
             Box::pin(async move {
                 // Read with the host client held, so a cancel committed while the launch waited
                 // for the host stops the commit before the host acts.
                 if agents.state.lock().await.cancelled.contains_key(&spawn_key) {
                     return Ok(false);
                 }
+                sent.fetch_add(1, Ordering::SeqCst);
                 client
                     .spawn_commit(&terminal_id, &spawn_key, Some(COMMIT_DEADLINE_MS))
                     .await
@@ -348,11 +361,17 @@ async fn start_child(
         Ok(true) => Ok(host_terminal_id),
         Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
         Err(error) => {
+            // A refusal to the only request names a commit the host never made. A retry, or any
+            // other failure, may have launched the child, so its tree is kept for its owner.
+            let refused =
+                sent.load(Ordering::SeqCst) == 1 && matches!(error, ControlError::Host { .. });
             let abort = abort_child(agents, &host_terminal_id).await;
-            Err(LaunchFailure::new(
+            let mut failure = LaunchFailure::new(
                 ExitReason::LaunchFailed,
                 format!("spawn commit: {error}{abort}"),
-            ))
+            );
+            failure.maybe_launched = !refused && sent.load(Ordering::SeqCst) > 0;
+            Err(failure)
         }
     }
 }
@@ -442,7 +461,11 @@ pub(super) async fn record_failure(
     if launched {
         return failure;
     }
-    let queued = {
+    // A commit whose outcome is unknown may have launched the child, so its tree is never queued
+    // for removal. The run settles as launched and its tree stays with the completion owner.
+    let queued = if failure.maybe_launched {
+        None
+    } else {
         let mut state = agents.state.lock().await;
         let mut next = state.clone();
         let queued = next.to_removals(run_id);
@@ -467,7 +490,14 @@ pub(super) async fn record_failure(
     };
     let mut state = agents.state.lock().await;
     let mut next = state.clone();
-    settle(&mut next, run_id, failure.reason, false, None, now_ms());
+    settle(
+        &mut next,
+        run_id,
+        failure.reason,
+        failure.maybe_launched,
+        None,
+        now_ms(),
+    );
     if removed {
         next.removals.remove(run_id);
     }
