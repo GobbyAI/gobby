@@ -488,6 +488,14 @@ class EvaluationMixin:
                 aggregate_blocks=aggregate_blocks,
                 block_effects_only=block_effects_only,
             )
+            # A refused file mutation never executes, so no post-tool outcome will settle
+            # its pending mark. Every block gate on a before-tool write lands here.
+            if (
+                block_gates
+                and evaluation.is_before_tool
+                and _is_write_like_event_data(evaluation.event.data)
+            ):
+                _clear_edit_write_state(evaluation.block_state)
         except asyncio.CancelledError:
             bridge.cancel()
             raise
@@ -806,9 +814,6 @@ class EvaluationMixin:
                         evaluation.block_state["_last_blocked_tool"] = _get_tool_identity(
                             evaluation.event.data
                         )
-                        # Blocked edit/write never executed - nothing to recover
-                        if _is_write_like_event_data(evaluation.event.data):
-                            _clear_edit_write_state(evaluation.block_state)
 
             rule_latency = (time.perf_counter() - rule_start) * 1000
             rule_result: RuleResult = "block" if rule_blocked else "allow"
