@@ -18,10 +18,10 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 490);
+    assert_eq!(identity.latest_asset.version, 491);
     assert_eq!(
         identity.latest_asset.filename,
-        "490_session_status_line.sql"
+        "491_drop_session_titles.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,

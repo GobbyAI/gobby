@@ -406,6 +406,27 @@ fn catalog_manifest_is_fresh_for_embedded_assets() -> anyhow::Result<()> {
 }
 
 #[test]
+fn migration_drops_stored_session_titles() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let stored_title_columns: i64 = client
+        .query_one(
+            "SELECT count(*) FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'sessions' \
+             AND column_name IN ('title', 'title_source')",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(stored_title_columns, 0);
+    Ok(())
+}
+
+#[test]
 fn migration_retires_ask_artifacts_and_index() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
