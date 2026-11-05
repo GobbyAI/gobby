@@ -24,6 +24,7 @@ from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.provider_capacity import ProviderCapacityStorage
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from tests.agents.test_lifecycle_monitor import _pane_text
 from tests.agents.test_lifecycle_monitor_watchdog_idle_recovery import (
     LOCAL_MACHINE_ID,
@@ -199,7 +200,7 @@ async def test_agy_refresh_drives_verified_windows_into_shared_sink(temp_db: Hub
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("gate", ["recent_session", "coordination_hold"])
+@pytest.mark.parametrize("gate", ["recent_session", "coordination_hold", "standing_lifetime"])
 async def test_quota_precedes_idle_eligibility(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -221,6 +222,12 @@ async def test_quota_precedes_idle_eligibility(
     )
     monitor.set_provider_capacity_service(_service(temp_db, sink))
     assert run.child_session_id is not None
+    if gate == "standing_lifetime":
+        # A standing seat is interactive with no idle TTL, so ordinary idle rules never apply.
+        standing = agent_run_manager.update_resume_metadata(
+            run.id, {"execution_mode": "interactive"}
+        )
+        assert standing is not None
     if gate == "coordination_hold":
         CoordinationWaitManager(temp_db).register(
             run.child_session_id, run.parent_session_id, coordination_key="hold"
@@ -504,6 +511,83 @@ async def test_pane_only_hint_never_fails_run(
     assert [edge.provider for edge in sink.hints()] == ["codex"]
     stored = agent_run_manager.get(run.id)
     assert stored is not None and stored.status == "running"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["claude", "grok", "droid", "agy", "qwen"])
+async def test_unrelated_source_exhaustion_never_fails_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    source: str,
+) -> None:
+    sink = _Sink()
+    monitor, run = _spawned(
+        temp_db, session_manager, sample_project, agent_run_manager, child_source="codex"
+    )
+    monitor.set_provider_capacity_service(_service(temp_db, sink))
+
+    # Another source's exhaustion text is not evidence against this codex run.
+    with _pane_text(monitor, [_BASE, _BASE + _FORMS[source]]):
+        await _observe_pass(monitor)
+        await _observe_pass(monitor)
+        assert await monitor.check_idle_agents() == 0
+
+    assert sink.hints() == []
+    stored = agent_run_manager.get(run.id)
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.terminal_reason is None
+
+
+@pytest.mark.asyncio
+async def test_startup_quota_loses_to_finished_task(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Startup work already finished",
+        validation_criteria="The run completes when its task closed before the quota error.",
+    )
+    transcript = tmp_path / "startup-finished-task.jsonl"
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id=str(uuid.uuid4()),
+        transcript_path=transcript,
+        session_age_seconds=1,
+        task_manager=tasks,
+        task_id=task.id,
+    )
+    assert run.started_at is not None
+    temp_db.execute(
+        "UPDATE terminals SET attempt_started_at = %s WHERE agent_run_id = %s",
+        (run.created_at, run.id),
+    )
+    tasks.close_task(task.id)
+    _write_codex_lifecycle_transcript(
+        transcript,
+        task_complete_error=_USAGE_ERROR,
+        event_timestamp=run.created_at + (run.started_at - run.created_at) / 2,
+    )
+
+    with _pane_text(monitor, _BASE):
+        first = await monitor.check_idle_agents()
+        second = await monitor.check_idle_agents()
+
+    stored = agent_run_manager.get(run.id)
+    assert stored is not None
+    assert (first, second) == (1, 0)
+    assert stored.status == "success"
+    assert stored.terminal_reason != "provider_quota_exhausted"
 
 
 @pytest.mark.asyncio
