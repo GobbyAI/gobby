@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -159,3 +159,47 @@ async def test_refusal_keeps_an_in_flight_siblings_mark(temp_db: HubDatabase, re
 
     stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
     assert "edit-write-recovery" not in (stop.reason or "")
+
+
+@pytest.mark.parametrize(
+    "gate_name", ["_check_agent_tool_enforcement", "_check_step_tool_enforcement"]
+)
+async def test_rewritten_write_denied_after_a_proxy_keeps_an_in_flight_siblings_mark(
+    temp_db: HubDatabase, gate_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write a proxy rewrites and enforcement then denies arms no mark, so it clears none."""
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+    assert variables.get("edit_write_pending") is True
+
+    async def rewrite(
+        self: RuleEngine, invocation: object, event: HookEvent, *, blocking_deadline: object
+    ) -> bool:
+        del self, invocation, blocking_deadline
+        event.data["tool_input"]["new_string"] = "rewritten"
+        return True
+
+    def deny_rewritten(
+        self: RuleEngine,
+        event: HookEvent,
+        session_id: str,
+        variables: dict[str, Any],
+        base_merge_write: bool = False,
+    ) -> HookResponse | None:
+        del self, session_id, variables, base_merge_write
+        if event.data["tool_input"].get("new_string") == "rewritten":
+            return HookResponse(decision="block", reason=f"{gate_name} denied rewritten input")
+        return None
+
+    monkeypatch.setattr(RuleEngine, "_run_proxy_hooks", rewrite)
+    monkeypatch.setattr(RuleEngine, gate_name, deny_rewritten)
+    proxy = RuleEffect(type="proxy_hook", handler="synthetic-proxy-handler")
+    _insert_refusal_rule(temp_db, "synthetic-proxy", proxy)
+
+    denied = await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+    assert denied.decision == "block"
+    assert variables.get("edit_write_pending") is True
+
+    await engine.evaluate(_event(HookEventType.AFTER_TOOL, EDIT), SESSION_ID, variables)
+    assert variables.get("edit_write_pending") is False

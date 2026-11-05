@@ -747,7 +747,7 @@ class RuleEngine(
                         )
                         await self._flush_pending_terminal_denial(session_id)
                         if agent_block is not None:
-                            if _is_write_like_event_data(event.data):
+                            if evaluation.armed_edit_write_mark:
                                 _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 agent_block,
@@ -765,7 +765,7 @@ class RuleEngine(
                         )
                         await self._flush_pending_terminal_denial(session_id)
                         if step_block is not None:
-                            if _is_write_like_event_data(event.data):
+                            if evaluation.armed_edit_write_mark:
                                 _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 step_block,
