@@ -374,6 +374,18 @@ class TokenEventStore:
             "cache_read_tokens": _coerce_int(_row_value(row, "cache_read_tokens"), default=0),
         }
 
+    def archived_message_keys(self, session_id: str) -> frozenset[str]:
+        """Message keys whose usage the retention archive holds for this session.
+
+        Unkeyed events archive under the empty key, which also covers archive rows written
+        before per-key archiving, so it is reported as a key of its own.
+        """
+        rows = self.db.fetchall(
+            "SELECT message_key FROM token_event_retention_totals WHERE session_id = %s",
+            (session_id,),
+        )
+        return frozenset(str(_row_value(row, "message_key")) for row in rows)
+
     def list_session_events(
         self,
         session_id: str,

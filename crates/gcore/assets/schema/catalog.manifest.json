@@ -4981,6 +4981,10 @@
       "definition": "bigint|int8|NO|0|NEVER"
     },
     {
+      "name": "token_event_retention_totals.message_key",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
       "name": "token_event_retention_totals.output_tokens",
       "definition": "bigint|int8|NO|0|NEVER"
     },
@@ -7384,7 +7388,7 @@
     },
     {
       "name": "token_event_retention_totals.token_event_retention_totals_pkey",
-      "definition": "PRIMARY KEY (session_id)"
+      "definition": "PRIMARY KEY (session_id, message_key)"
     },
     {
       "name": "token_event_retention_totals.token_event_retention_totals_session_id_fkey",
@@ -9444,7 +9448,7 @@
     },
     {
       "name": "token_event_retention_totals_pkey",
-      "definition": "CREATE UNIQUE INDEX token_event_retention_totals_pkey ON $schema.token_event_retention_totals USING btree (session_id)"
+      "definition": "CREATE UNIQUE INDEX token_event_retention_totals_pkey ON $schema.token_event_retention_totals USING btree (session_id, message_key)"
     },
     {
       "name": "token_events_pkey",

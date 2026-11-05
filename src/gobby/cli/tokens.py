@@ -181,6 +181,12 @@ def _expired(value: datetime | str | None, cutoff: datetime) -> bool:
     return canonicalize_event_timestamp(value) < cutoff
 
 
+def _reinsertable(event: TokenEvent, archived: frozenset[str]) -> bool:
+    # An expired event may already be counted under its own key or under the unkeyed key.
+    # Only an event with a key that neither key archives is safe to re-insert.
+    return event.message_id is not None and event.message_id not in archived and "" not in archived
+
+
 def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAudit:
     # With --fix, the shared retention lock spans the read and the writes, so a prune cannot
     # archive a row between them. Stored rows are read before the transcript: a line the
@@ -196,11 +202,12 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
         )
 
         # Retention archives events older than the cutoff into token_event_retention_totals
-        # and deletes their rows. An expired event that is not stored may already be archived,
-        # so it is never re-inserted. An expired stored row is live usage: it is repaired in
-        # place when its key matches, and otherwise kept, since no replacement is known to be
-        # unarchived.
+        # and deletes their rows. An expired event with no stored row was pruned, so it is
+        # re-inserted only when its key is unarchived. An expired stored row is live usage: it
+        # is repaired in place when its key matches, and otherwise kept.
+        store = TokenEventStore(db)
         cutoff = token_event_retention_cutoff()
+        archived = store.archived_message_keys(session_id)
         derived_by_key = {
             event.message_id: event for event in derived if event.message_id is not None
         }
@@ -217,25 +224,20 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
             if row["message_id"] in derived_by_key
             and _differs(row, derived_by_key[row["message_id"]])
         ]
-        missing = [
-            event
-            for event in derived
-            if event.message_id not in stored_keys and not _expired(event.event_at, cutoff)
-        ]
         repairable = [
             event
             for event in derived
-            if event.message_id in stored_keys or not _expired(event.event_at, cutoff)
+            if event.message_id in stored_keys
+            or not _expired(event.event_at, cutoff)
+            or _reinsertable(event, archived)
         ]
+        missing = [event for event in repairable if event.message_id not in stored_keys]
         # Lifetime totals include the retention archive, which the stored rows do not.
-        usage_mismatch = TokenEventStore(db).get_session_totals(session_id) != _session_totals(
-            session
-        )
+        usage_mismatch = store.get_session_totals(session_id) != _session_totals(session)
         stale_rows = len(absent) + len(differing)
 
         repaired = False
         if fix and (stale_rows or missing or usage_mismatch):
-            store = TokenEventStore(db)
             doomed = [row["id"] for row in absent]
             if doomed:
                 db.execute("DELETE FROM token_events WHERE id = ANY(%s)", (doomed,))
