@@ -242,9 +242,13 @@ When a publisher is attached:
   `BroadcastMixin.broadcast` catches only `TypeError` and `ValueError`, so a broadcast
   that `stop()` cancels raises `CancelledError` in its caller.
 - A workspace event is encoded by `canonical_json_async`, which yields to the loop about
-  every 64 Ki characters of output (`CANONICAL_PIECE_CHARS`). Its bytes equal
-  `canonical_json`'s, and its fragment frames equal `fragment_event`'s over those bytes,
-  so subscribers see the same frame bytes as before.
+  every 64 Ki characters of output (`CANONICAL_PIECE_CHARS`) and returns its buffer
+  without a copy. Its fragment frames are built by `fragment_event_async`, which yields
+  between 48 KiB base64 input blocks. Each frame's publish literal is encoded in string
+  slices of 8 KiB and yields about every 64 Ki of literal output, so each encode step handles
+  about one 64 KiB piece. The operation and request bodies are each joined once, as single
+  copies. The bytes equal the generic encoders' (`canonical_json`, `fragment_event`, and
+  `json_dumps` of `json_dumps` of each frame), so subscribers see the same frame bytes as before.
 - Ordering caveat: a workspace event is encoded before its publish takes its place. A
   direct broadcast that starts during that encode can enqueue ahead of it. Lifecycle
   publications are serialized by the lifecycle worker, so their order is unchanged.

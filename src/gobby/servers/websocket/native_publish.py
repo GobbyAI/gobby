@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
 from gobby.runner_backend import front_door_secret, supervisor_fd, supervisor_write_token
+from gobby.terminals.ws_protocol import CANONICAL_PIECE_CHARS
+from gobby.utils.datetime import to_json_safe
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -437,9 +440,14 @@ class NativePublisher:
 
 
 def _request_body(generation: str, ops: list[bytes]) -> bytes:
-    return b"".join(
-        (b'{"generation":', json_dumps(generation).encode(), b',"ops":[', b",".join(ops), b"]}")
-    )
+    # One join copies the batch once; joining the ops first would copy them twice.
+    parts = [b'{"generation":', json_dumps(generation).encode(), b',"ops":[']
+    for index, op in enumerate(ops):
+        if index:
+            parts.append(b",")
+        parts.append(op)
+    parts.append(b"]}")
+    return b"".join(parts)
 
 
 def _publish_op(filter_json: str, frames: list[bytes]) -> bytes:
@@ -456,20 +464,75 @@ def _publish_op(filter_json: str, frames: list[bytes]) -> bytes:
     return b"".join(pieces)
 
 
+# A string in a frame is escaped in slices of this many characters, so each escape call is small.
+_LITERAL_SLICE_CHARS = CANONICAL_PIECE_CHARS // 8
+
+
+def _json_pieces(value: Any) -> Iterator[str]:
+    """Yield text pieces whose concatenation is json.dumps(value), for a to_json_safe'd value.
+
+    json escapes each character on its own, so the slices of a string concatenate to the
+    string's whole escape. Every other scalar goes to json.dumps unchanged.
+    """
+    if isinstance(value, str):
+        yield '"'
+        for start in range(0, len(value), _LITERAL_SLICE_CHARS):
+            yield json.dumps(value[start : start + _LITERAL_SLICE_CHARS])[1:-1]
+        yield '"'
+    elif isinstance(value, dict):
+        yield "{"
+        for index, (key, item) in enumerate(value.items()):
+            if index:
+                yield ", "
+            yield json.dumps(key)
+            yield ": "
+            yield from _json_pieces(item)
+        yield "}"
+    elif isinstance(value, list):
+        yield "["
+        for index, item in enumerate(value):
+            if index:
+                yield ", "
+            yield from _json_pieces(item)
+        yield "]"
+    else:
+        yield json.dumps(value)
+
+
+async def _frame_literal(frame: Any) -> bytes:
+    """Return json_dumps(json_dumps(frame)).encode(), encoding it in pieces that yield the loop.
+
+    The inner text is json_dumps(frame). Its pieces are escaped again for the string literal,
+    so the literal is the escape of each piece in turn. It pauses about every
+    CANONICAL_PIECE_CHARS of literal output.
+    """
+    pieces: list[bytes] = [b'"']
+    pending = 0
+    for piece in _json_pieces(to_json_safe(frame)):
+        escaped = json.dumps(piece)[1:-1].encode()
+        pieces.append(escaped)
+        pending += len(escaped)
+        if pending >= CANONICAL_PIECE_CHARS:
+            pending = 0
+            await asyncio.sleep(0)
+    pieces.append(b'"')
+    return b"".join(pieces)
+
+
 async def _publish_ops(filter_json: str, sources: Sequence[dict[str, Any]]) -> list[bytes]:
     """Encodes the frames in order into publish ops, each within PUBLISH_CHUNK bytes.
 
     A frame is encoded as JSON and then as the JSON string literal its op carries. Each
     literal is dropped once its op is built, so no whole-payload list of frames is held.
-    The loop is yielded after each frame, so one frame's encoding is the longest stall.
+    The loop is yielded every CANONICAL_PIECE_CHARS of literal output and after each frame.
     """
     empty = len(_publish_op(filter_json, []))
     ops: list[bytes] = []
     chunk: list[bytes] = []
     size = empty
     for source in sources:
-        literal = json_dumps(json_dumps(source)).encode()
-        # json_dumps escapes to ASCII, so the literal's length is its encoded size.
+        literal = await _frame_literal(source)
+        # The literal is ASCII, so its length is its encoded size.
         # Each frame costs its encoded bytes plus the separator before it.
         cost = len(literal) + 2
         if chunk and size + cost > PUBLISH_CHUNK:

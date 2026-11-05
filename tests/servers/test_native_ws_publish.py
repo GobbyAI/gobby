@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import gc
 import json
 import tracemalloc
 import warnings
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -169,6 +170,60 @@ def test_publish_op_bytes_match_the_generic_encoder() -> None:
     literals = [json_dumps(payload).encode() for payload in payloads]
     op = {"op": "publish", "filter": message, "frames": payloads}
     assert native_publish._publish_op(json_dumps(message), literals) == json_dumps(op).encode()
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"type": "terminal_ws_fragment", "payload": "QUJD" * 50_000},
+        {"payload": "x" * (native_publish._LITERAL_SLICE_CHARS - 1)},
+        {"payload": "x" * native_publish._LITERAL_SLICE_CHARS},
+        {"payload": "x" * (native_publish._LITERAL_SLICE_CHARS + 1)},
+        {"payload": "é" * 20_000 + "😀" * 9_000},
+        {"text": 'quote " and \\ slash\n\t\x00' * 3_000},
+        {"when": datetime(2026, 11, 5, 12, 30, tzinfo=UTC), "day": date(2026, 11, 5)},
+        {"pair": ("a", None), "items": [{"b": 1, "a": [True, None, 1.5, float("nan")]}]},
+        {"empty": {}, "list": [], "text": ""},
+    ],
+    ids=[
+        "multi-slice-payload",
+        "slice-minus-one",
+        "exact-slice",
+        "slice-plus-one",
+        "non-bmp-and-accents",
+        "quotes-backslashes-controls",
+        "datetime-and-date",
+        "tuple-and-nested-list",
+        "empty-containers",
+    ],
+)
+async def test_frame_literal_bytes_match_the_generic_encoder(frame: dict[str, Any]) -> None:
+    assert await native_publish._frame_literal(frame) == json_dumps(json_dumps(frame)).encode()
+
+
+async def test_frame_literal_rejects_an_unencodable_value() -> None:
+    with pytest.raises(TypeError):
+        await native_publish._frame_literal({"bad": {1, 2}})
+
+
+async def test_frame_literal_yields_while_it_encodes_a_large_frame() -> None:
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    try:
+        literal = await native_publish._frame_literal({"payload": "A" * (1024 * 1024)})
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert len(literal) > 1024 * 1024
+    assert ticks >= 8
 
 
 def test_fragment_event_encodes_a_bounded_multiple_of_its_input(
@@ -1137,6 +1192,28 @@ def test_iter_fragment_event_frames_match_fragment_event() -> None:
         complete_json=raw,
     )
     assert list(frames) == expected
+
+
+async def test_fragment_event_async_frames_match_fragment_event() -> None:
+    event = {"type": "workspace_event", "seq": 42, "text": "é" * 1_000_000}
+    expected = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=canonical_json(event),
+    )
+    assert len(expected) > 1
+    # canonical_json_async returns a bytearray, the buffer the publisher fragments.
+    raw = await ws_protocol.canonical_json_async(event)
+    frames = await ws_protocol.fragment_event_async(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert frames == expected
 
 
 async def test_canonical_json_async_pauses_once_per_piece_budget() -> None:

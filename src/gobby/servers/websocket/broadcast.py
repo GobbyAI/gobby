@@ -19,7 +19,7 @@ from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_MAX_ENCODED_BYTES,
     TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
     canonical_json_async,
-    iter_fragment_event,
+    fragment_event_async,
 )
 from gobby.utils.datetime import to_json_safe_dict
 from gobby.utils.json_helpers import json_dumps
@@ -484,16 +484,13 @@ class BroadcastMixin:
             await self.broadcast(route, frames=[message])
         elif len(raw) <= TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
             workspace_id = message["workspace_id"]
-            frames: list[dict[str, Any]] = []
-            for fragment in iter_fragment_event(
+            frames = await fragment_event_async(
                 event="workspace_event",
                 terminal_id=workspace_id,
                 attachment_id=workspace_id,
                 message_seq=message["seq"],
                 complete_json=raw,
-            ):
-                frames.append(fragment)
-                await asyncio.sleep(0)
+            )
             await self.broadcast(route, frames=frames)
         else:
             # No client can reassemble these rows. Raising here would stop every
