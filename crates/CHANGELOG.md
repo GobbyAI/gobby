@@ -82,6 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gobby: codewiki refresh request failed` on every commit; rerun
   `gobby install` (or hand-edit the hook's Gobby section) to refresh them.
   Version: `1.6.1`.
+- **gcode savings reporting** — outline, symbol, symbol-at, and batch reads no
+  longer POST savings records to `/api/admin/savings/record`. The daemon serves
+  no handler for that route, so each read sent a request whose result was
+  discarded. Those reads also stop failing when the daemon URL cannot be
+  resolved, and the stale grant entry for the route is removed from the daemon.
+  Version: `1.9.104`.
 
 ### Changed
 
