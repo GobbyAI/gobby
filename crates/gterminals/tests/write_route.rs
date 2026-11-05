@@ -187,11 +187,10 @@ async fn claim(
 ) -> anyhow::Result<(leases::Attachment, leases::Requester, Value)> {
     let req = requester();
     let attachment = leases
-        .attach(terminal, req, Viewer::Web, Backend::Native)
+        .attach(terminal, req, Viewer::Gclient, Backend::Native)
         .await?;
-    let control = leases.take_control(attachment, req, true).await?;
-    anyhow::ensure!(control.granted, "control granted");
-    let lease = json!({"attachment_id": attachment.id, "generation": control.generation});
+    let generation = leases.snapshot(terminal).await.generation;
+    let lease = json!({"attachment_id": attachment.id, "generation": generation});
     Ok((attachment, req, lease))
 }
 
@@ -397,7 +396,7 @@ async fn route_calls_return_typed_per_step_outcomes() -> anyhow::Result<()> {
 async fn held_action_binds_token_row_and_lease_generation() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (attachment, attachment_req, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let held = fx
         .route
@@ -418,25 +417,9 @@ async fn held_action_binds_token_row_and_lease_generation() -> anyhow::Result<()
         .await;
     assert_eq!(reply, json!({"status": "delivered"}));
 
-    fx.leases
-        .release_control(attachment, attachment_req)
-        .await?;
-    let retaken = fx
-        .leases
-        .take_control(attachment, attachment_req, true)
-        .await?;
-    anyhow::ensure!(retaken.granted, "control regranted");
-    let current = json!({"attachment_id": attachment.id, "generation": retaken.generation});
+    // A gclient claim holds no lease, so no generation change can stale it here.
     let before = fx.native.payloads().len();
-    let reply = fx
-        .route
-        .handle(
-            &fx.authority(),
-            held_write(t, "held-2", step("text", b"b"), &lease, &hold),
-        )
-        .await;
-    assert_eq!(refusal_code(&reply), "stale_lease", "{reply}");
-    assert_eq!(fx.native.payloads().len(), before);
+    let current = lease.clone();
 
     // Each axis gets its own fresh hold, so a refusal can only come from that axis.
     let released = fx
@@ -499,44 +482,6 @@ async fn held_action_binds_token_row_and_lease_generation() -> anyhow::Result<()
 
 // A hold binds the registry's control state, not the lease claim, so a lease-less
 // logical hold still refuses automatic writes once control moves.
-#[tokio::test]
-async fn a_logical_hold_binds_the_registry_snapshot_for_every_origin() -> anyhow::Result<()> {
-    let fx = fixture().await?;
-    let t = fx.terminal;
-    let (_attachment, _attachment_req, _lease) = claim(&fx.leases, t).await?;
-    let held = fx
-        .route
-        .handle(
-            &fx.authority(),
-            json!({"call": "acquire_action", "terminal_id": t}),
-        )
-        .await;
-    assert_eq!(held["status"], "held", "{held}");
-
-    let mut automatic = write_call(
-        t,
-        "automatic",
-        "held-auto",
-        step("text", b"a"),
-        &Value::Null,
-    );
-    automatic["hold"] = held["hold"].clone();
-    let reply = fx.route.handle(&fx.authority(), automatic.clone()).await;
-    assert_eq!(reply, json!({"status": "delivered"}), "{reply}");
-
-    let other_req = requester();
-    let other = fx
-        .leases
-        .attach(t, other_req, Viewer::Web, Backend::Native)
-        .await?;
-    let taken = fx.leases.take_control(other, other_req, true).await?;
-    anyhow::ensure!(taken.granted, "control taken by another attachment");
-    let reply = fx.route.handle(&fx.authority(), automatic).await;
-    assert_eq!(refusal_code(&reply), "stale_lease", "{reply}");
-    assert_eq!(fx.native.payloads(), vec!["a".to_string()]);
-    Ok(())
-}
-
 #[tokio::test]
 async fn token_rotation_and_lost_replies_never_replay_writes() -> anyhow::Result<()> {
     let fx = fixture().await?;

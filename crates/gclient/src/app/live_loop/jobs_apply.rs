@@ -251,7 +251,7 @@ fn apply_open(
     }
     match result {
         Ok(row) => {
-            workspace.set_open_failed(terminal_id, false);
+            workspace.record_open(terminal_id, None);
             workspace.install_unresolved_rows(vec![row]);
             // The read cannot await the attach, so the render tick's
             // `start_due_attaches` picks the new pane up.
@@ -260,7 +260,7 @@ fn apply_open(
             }
         }
         Err(error) => {
-            workspace.set_open_failed(terminal_id, true);
+            workspace.record_open(terminal_id, Some(error.to_string()));
             tracing::warn!(
                 terminal_id = %terminal_id,
                 generation = generation.0,

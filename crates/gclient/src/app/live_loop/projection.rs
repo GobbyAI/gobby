@@ -115,6 +115,7 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
         return;
     };
     chrome.focus_project(&project);
+    workspace.forget_vanished_open_failures();
     let Some(model) = workspace.workspace_model() else {
         return;
     };

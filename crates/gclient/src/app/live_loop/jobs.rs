@@ -648,7 +648,7 @@ impl LoopJobs {
                     return false;
                 }
                 // A retry in flight holds its split's focus again.
-                workspace.set_open_failed(&terminal_id, false);
+                workspace.record_open(&terminal_id, None);
                 issue_terminal_open(workspace.daemon(), &self.tx, tag.clone(), terminal_id);
                 true
             }

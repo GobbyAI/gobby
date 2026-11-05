@@ -23,6 +23,13 @@ fn split_tab(b_terminal: Option<&str>) -> Workspace<LiveDaemon> {
     let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
         .expect("unconnected daemon handle");
     let mut workspace = Workspace::live(daemon);
+    apply_split(&mut workspace, b_terminal, 0);
+    workspace.select_project("project-1");
+    workspace
+}
+
+/// Applies the split snapshot at `seq`, with pane-b naming `b_terminal`.
+fn apply_split(workspace: &mut Workspace<LiveDaemon>, b_terminal: Option<&str>, seq: u64) {
     workspace.apply_workspace_snapshot(
         serde_json::from_value(json!({
             "workspace": {
@@ -53,12 +60,10 @@ fn split_tab(b_terminal: Option<&str>) -> Workspace<LiveDaemon> {
                     "label": null, "created_at": "", "updated_at": ""
                 }
             ],
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 0}
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": seq}
         }))
         .expect("workspace snapshot"),
     );
-    workspace.select_project("project-1");
-    workspace
 }
 
 fn settle(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome, result: JobResult) {
@@ -149,5 +154,49 @@ async fn a_focused_split_whose_terminal_open_failed_gives_up_focus() {
         chrome.viewer.focus.get("tab-1"),
         Some(&survivor),
         "a failed open never resolves, so focus falls back to the bound pane"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_open_keeps_the_error_it_failed_with() {
+    let mut workspace = split_tab(Some("terminal-b"));
+    let mut chrome = Chrome::dark();
+    bind_pane_a(&mut workspace, &mut chrome);
+    let expected = match workspace.open_live_terminal("terminal-b").await {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("an unconnected daemon cannot open a terminal"),
+    };
+
+    workspace.open_unresolved_terminals().await;
+
+    assert_eq!(
+        workspace.open_failure("terminal-b"),
+        Some(expected.as_str()),
+        "the sweep keeps the error text of the open it failed"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_open_is_forgotten_once_its_pane_leaves_the_workspace() {
+    let mut workspace = split_tab(Some("terminal-b"));
+    let mut chrome = Chrome::dark();
+    bind_pane_a(&mut workspace, &mut chrome);
+    settle(
+        &mut workspace,
+        &mut chrome,
+        JobResult::Opened {
+            terminal_id: "terminal-b".into(),
+            elapsed: Duration::ZERO,
+            result: Err(DaemonError::NotFound),
+        },
+    );
+    assert!(workspace.open_failed("terminal-b"));
+
+    apply_split(&mut workspace, Some("terminal-c"), 1);
+    sync_live_chrome(&mut workspace, &mut chrome);
+
+    assert!(
+        !workspace.open_failed("terminal-b"),
+        "a failure whose terminal left the workspace is not kept"
     );
 }
