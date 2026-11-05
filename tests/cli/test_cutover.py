@@ -1119,7 +1119,7 @@ def test_post_stop_activation_refusal_restarts_the_unchanged_daemon(
     _stub_cutover_pipeline(monkeypatch, tmp_path, events)
     monkeypatch.setattr(
         "gobby.releases.activation.agent_activation_refusal",
-        lambda: "spawned_agent_refused: the run appeared during the stop"
+        lambda *_args: "spawned_agent_refused: the run appeared during the stop"
         if "stop" in events
         else None,
     )

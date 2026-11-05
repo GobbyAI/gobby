@@ -238,7 +238,7 @@ def _do_stop(
 
     if force and wait:
         raise click.UsageError("--force and --wait are mutually exclusive")
-    if refusal := agent_activation_refusal():
+    if refusal := agent_activation_refusal(shutdown_intent):
         _step(f"Refusing to stop: {refusal}", error=True)
         return False
 
@@ -496,7 +496,7 @@ def restart(
     from gobby.cli.runtime import get_cli_runtime
     from gobby.releases.activation import agent_activation_refusal
 
-    refusal = agent_activation_refusal() or restart_start_refusal(
+    refusal = agent_activation_refusal("restart") or restart_start_refusal(
         get_cli_runtime(ctx), expected_identity=expected_identity
     )
     if refusal:
