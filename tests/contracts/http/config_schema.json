@@ -1418,6 +1418,15 @@
           "machineExport": false,
           "default": false
         },
+        "communications.operator_alert_channel": {
+          "type": "string",
+          "namespace": "communications",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": ""
+        },
         "communications.webhook_base_url": {
           "type": "string",
           "namespace": "communications",

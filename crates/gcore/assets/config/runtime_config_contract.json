@@ -1523,6 +1523,16 @@
     {
       "activation": "live",
       "default": "",
+      "key": "communications.operator_alert_channel",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "",
       "key": "communications.webhook_base_url",
       "machineExport": false,
       "namespace": "communications",

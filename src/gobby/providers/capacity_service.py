@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from typing import Literal, Protocol, cast
 
+from gobby.hooks.background_tasks import create_background_task
+from gobby.providers.quota_alerts import (
+    AlertEdge,
+    AlertSink,
+    transition,
+    transition_hint,
+)
 from gobby.providers.quota_observations import (
     QuotaAggregate,
     QuotaComponent,
@@ -37,6 +45,8 @@ from gobby.utils.datetime import datetime_to_iso, utc_now
 type ProviderCapacityState = Literal["available", "exhausted", "stale", "unknown"]
 type RunDatabase = Callable[..., Awaitable[object]]
 type Clock = Callable[[], datetime]
+
+logger = logging.getLogger(__name__)
 
 _MAX_CAS_ATTEMPTS = 5
 _REVISION_STEP = timedelta(microseconds=1)
@@ -135,6 +145,7 @@ class ProviderCapacityService:
         freshness_seconds: float = 60.0,
         clock: Clock = utc_now,
         run_db: RunDatabase | None = None,
+        alert_sink: AlertSink | None = None,
     ) -> None:
         self.storage = storage
         self._reporters = dict({"agy": AgyUsageReporter()} if reporters is None else reporters)
@@ -144,6 +155,7 @@ class ProviderCapacityService:
         self._freshness_seconds = freshness_seconds
         self._clock = clock
         self._run_db = run_db
+        self._alert_sink = alert_sink
         self._inflight: dict[tuple[str, str], asyncio.Task[ProviderCapacitySnapshot]] = {}
         self._write_locks: dict[str, asyncio.Lock] = {}
 
@@ -154,11 +166,13 @@ class ProviderCapacityService:
         *,
         machine_id: str,
         run_db: RunDatabase | None = None,
+        alert_sink: AlertSink | None = None,
     ) -> ProviderCapacityService:
         """Build the daemon's database-backed service with AGY registered."""
         return cls(
             ProviderCapacityStorage(db, machine_id=machine_id),
             run_db=run_db,
+            alert_sink=alert_sink,
         )
 
     async def get(self, provider: str) -> ProviderCapacitySnapshot:
@@ -192,23 +206,46 @@ class ProviderCapacityService:
     async def observe(self, observation: QuotaObservation) -> ProviderCapacitySnapshot:
         """Admit verified components through the per-provider CAS path and return the read."""
         provider = _provider_name(observation.provider)
+        edges: tuple[AlertEdge, ...] = ()
         async with self._write_lock(provider):
             for _ in range(_MAX_CAS_ATTEMPTS):
                 record = await self._run_store(self.storage.get, provider)
                 components, pane_hints = _decode(record)
                 merged, outcomes = merge_components(components, observation.components)
                 if "accepted" not in outcomes.values():
-                    return self._read(provider, record)
+                    snapshot = self._read(provider, record)
+                    break
+                admitted = QuotaObservation(
+                    provider=observation.provider,
+                    components=tuple(
+                        component
+                        for component in observation.components
+                        if outcomes.get(component.key) == "accepted"
+                    ),
+                    source_version=observation.source_version,
+                )
+                alerts = transition(_row_details(record), admitted, now=self._clock())
                 aggregate = await self._write(
-                    provider, record, merged, pane_hints, observation.source_version
+                    provider,
+                    record,
+                    merged,
+                    pane_hints,
+                    observation.source_version,
+                    alerts.details,
                 )
                 if aggregate is not None:
-                    return _snapshot(provider, aggregate, observation.source_version)
-            raise QuotaWriteContentionError(provider)
+                    snapshot = _snapshot(provider, aggregate, observation.source_version)
+                    edges = alerts.edges
+                    break
+            else:
+                raise QuotaWriteContentionError(provider)
+        self._schedule_alerts(edges)
+        return snapshot
 
     async def observe_pane_hint(self, hint: PaneQuotaHint) -> bool:
         """Persist one pane possible-limit hint; False when its occurrence was already seen."""
         provider = _provider_name(hint.provider)
+        edges: tuple[AlertEdge, ...] = ()
         async with self._write_lock(provider):
             for _ in range(_MAX_CAS_ATTEMPTS):
                 record = await self._run_store(self.storage.get, provider)
@@ -223,12 +260,28 @@ class ProviderCapacityService:
                         "detected_at": hint.detected_at.isoformat(),
                     },
                 }
+                alerts = transition_hint(_row_details(record), hint, now=self._clock())
                 written = await self._write(
-                    provider, record, components, seen, _source_version(record) or "unknown"
+                    provider,
+                    record,
+                    components,
+                    seen,
+                    _source_version(record) or "unknown",
+                    alerts.details,
                 )
                 if written is not None:
-                    return True
-            raise QuotaWriteContentionError(provider)
+                    edges = alerts.edges
+                    break
+            else:
+                raise QuotaWriteContentionError(provider)
+        self._schedule_alerts(edges)
+        return True
+
+    def _schedule_alerts(self, edges: Sequence[AlertEdge]) -> None:
+        """Hand committed edges to the sink as one background task, after the lock is released."""
+        if self._alert_sink is None or not edges:
+            return
+        create_background_task(_deliver_alerts(self._alert_sink, edges))
 
     async def _refresh_with_fallback(
         self,
@@ -303,6 +356,7 @@ class ProviderCapacityService:
         components: Mapping[str, QuotaComponent],
         pane_hints: Mapping[str, Mapping[str, str]],
         source_version: str,
+        alert_details: Mapping[str, object],
     ) -> QuotaAggregate | None:
         """Compare-and-set one row revision; None when a concurrent writer won the race."""
         now = self._clock()
@@ -320,7 +374,10 @@ class ProviderCapacityService:
             windows=tuple(window.to_dict() for window in aggregate.windows),
             reason=aggregate.reason,
             source_version=source_version,
-            details=encode_quota_details(components, pane_hints),
+            details={
+                **encode_quota_details(components, pane_hints),
+                "quota_alerts": dict(alert_details),
+            },
             expected_observed_at=None if record is None else record.observed_at,
         )
         return aggregate if written else None
@@ -376,6 +433,19 @@ class ProviderCapacityService:
 
     def _age_seconds(self, observed_at: datetime) -> float:
         return max(0.0, (self._clock() - observed_at).total_seconds())
+
+
+def _row_details(record: ProviderCapacityRecord | None) -> Mapping[str, object]:
+    """The full persisted row details; transitions read their own quota_alerts section."""
+    return {} if record is None else record.details
+
+
+async def _deliver_alerts(sink: AlertSink, edges: Sequence[AlertEdge]) -> None:
+    for edge in edges:
+        try:
+            await sink(edge)
+        except Exception as exc:
+            logger.warning("quota alert sink failed: %s", type(exc).__name__)
 
 
 def _snapshot(

@@ -64,9 +64,21 @@ def observation_from_rate_limits(
             return None
         components.append(component)
     reached = rate_limits.get("rate_limit_reached_type")
-    if reached is not None:
-        if not isinstance(reached, str) or reached not in _VERIFIED_REACHED_TYPES:
-            return None
+    spend_control = rate_limits.get("spend_control_reached")
+    if reached is not None and (
+        not isinstance(reached, str) or reached not in _VERIFIED_REACHED_TYPES
+    ):
+        return None
+    if spend_control is not None and not isinstance(spend_control, bool):
+        return None
+    if reached is not None or spend_control is True:
+        # Both supplied reached fields persist with the episode's source clock; limit_reached
+        # is derived from them by quota_alerts, never from individual_limit.
+        reached_metadata: dict[str, object] = {**metadata}
+        if reached is not None:
+            reached_metadata["rate_limit_reached_type"] = reached
+        if spend_control is not None:
+            reached_metadata["spend_control_reached"] = spend_control
         components.append(
             _hard_component(
                 "hard:rate_limit_reached",
@@ -74,7 +86,7 @@ def observation_from_rate_limits(
                 scope=scope,
                 source_observed_at=source_observed_at,
                 occurrence=occurrence,
-                metadata=metadata,
+                metadata=reached_metadata,
             )
         )
     if not components or len({component.key for component in components}) != len(components):
