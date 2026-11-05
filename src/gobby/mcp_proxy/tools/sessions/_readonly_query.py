@@ -13,7 +13,8 @@ membership. The denied-name check is a second layer. ``SQL_FROM_TEXT_FUNCTIONS``
 every built-in that runs SQL held in text. ``set_config`` is one: PUBLIC can execute it,
 and ``set_config('role', 'none')`` in the same statement would reset the role to the
 daemon runtime. A statement that names one of them is refused, and so is one that calls
-any function outside pg_catalog, since a public plpgsql function can EXECUTE text. A
+any function outside pg_catalog, since a public plpgsql function can EXECUTE text. A dotted
+name that matches such a function is refused too, because attribute notation calls it. A
 statement cannot call a function named only by concatenation, the text-to-SQL entry
 points (``*_to_xml``, dblink) are refused, and ``SET ROLE`` cannot start a SELECT or
 WITH.
@@ -126,17 +127,21 @@ _KEYWORD_SQL = "SELECT word FROM pg_get_keywords() WHERE catcode = 'R'"
 # EXISTS is a column-name keyword (catcode C). Unqualified exists(...) never reaches function
 # lookup; it parses as the EXISTS sublink, so it counts as a keyword here too.
 _EXTRA_KEYWORDS = frozenset({"exists"})
+# Lexed as PostgreSQL lexes, so text in a comment, a string, an E-string or a dollar quote is
+# never code, and code is never hidden inside one. A line comment ends at a newline or a carriage
+# return, as in PostgreSQL. A block comment ends at its first "*/". PostgreSQL nests them, so this
+# lexer can only see more code than PostgreSQL does: it refuses more and never less.
 _TOKEN = re.compile(
     r"(?P<space>\s+)"
+    r"|(?P<comment>--[^\n\r]*|/\*.*?\*/)"
+    r"|(?P<estring>e'(?:[^'\\]|\\.|'')*')"
+    r"|(?P<dollar>\$(?P<tag>(?:[a-z_][a-z0-9_]*)?)\$.*?\$(?P=tag)\$)"
     r"|(?P<string>'(?:[^']|'')*')"
     r'|(?P<quoted>"(?:[^"]|"")*")'
-    r"|(?P<word>[a-z_][a-z0-9_]*)"
+    r"|(?P<word>[a-z_][a-z0-9_$]*)"
     r"|(?P<punct>.)",
     re.DOTALL,
 )
-# A backslash (E'' strings), a dollar sign (dollar quotes and $n), or a comment can split a name
-# so the tokenizer never sees it whole. Those statements count every word, as the name gate did.
-_STRICT_MARKERS = ("\\", "$", "/*", "--")
 _UNICODE_ESCAPE = re.compile(r"\bu&", re.IGNORECASE)
 _STATEMENT_START = re.compile(r"(select|with)\b", re.IGNORECASE)
 
@@ -183,14 +188,18 @@ class _Token(NamedTuple):
 
 
 def _tokens(statement: str) -> list[_Token]:
-    """Split a lowercased statement into names, punctuation and string literals."""
+    """Split a lowercased statement into names, punctuation and opaque literals.
+
+    Whitespace and comments separate tokens and carry no meaning. Strings, E-strings and dollar
+    quotes are opaque values. A quoted identifier is a name with its quotes removed.
+    """
     tokens: list[_Token] = []
     for match in _TOKEN.finditer(statement):
         kind = match.lastgroup
         text = match.group()
-        if kind == "space":
+        if kind in {"space", "comment"}:
             continue
-        if kind == "string":
+        if kind in {"string", "estring", "dollar"}:
             tokens.append(_Token("other", text))
         elif kind == "quoted":
             tokens.append(_Token("name", text[1:-1].replace('""', '"'), quoted=True))
@@ -201,34 +210,43 @@ def _tokens(statement: str) -> list[_Token]:
     return tokens
 
 
-def _references(statement: str, keywords: frozenset[str]) -> set[str]:
-    """Names PostgreSQL may resolve to a function: qualified, or called and not a keyword.
+def _references(statement: str, keywords: frozenset[str]) -> tuple[set[str], set[str]]:
+    """Return the names PostgreSQL may resolve to a function, as (called, dotted).
 
-    Bind values are not scanned. A bare name that is not called, such as an alias, never
-    reaches function lookup, so it is not a reference.
+    ``called`` holds a name followed by "(" that is not a reserved keyword, and every quoted name
+    followed by "(". ``dotted`` holds every name after a "." (schema-qualified calls and attribute
+    notation both reach function lookup). Bind values are not scanned: they reach the server as
+    values, not text. A bare name that is not called, such as an alias, never reaches function
+    lookup.
     """
-    lowered = statement.lower()
-    if any(marker in lowered for marker in _STRICT_MARKERS):
-        return set(_NAME.findall(lowered))
-    tokens = _tokens(lowered)
-    references: set[str] = set()
+    tokens = _tokens(statement.lower())
+    called: set[str] = set()
+    dotted: set[str] = set()
     for index, token in enumerate(tokens):
         if token.kind != "name":
             continue
-        qualified = index > 0 and tokens[index - 1] == _Token("punct", ".")
-        called = index + 1 < len(tokens) and tokens[index + 1] == _Token("punct", "(")
-        if qualified or (called and (token.quoted or token.text not in keywords)):
-            references.add(token.text)
-    return references
+        if index > 0 and tokens[index - 1] == _Token("punct", "."):
+            dotted.add(token.text)
+        followed_by_paren = index + 1 < len(tokens) and tokens[index + 1] == _Token("punct", "(")
+        if followed_by_paren and (token.quoted or token.text not in keywords):
+            called.add(token.text)
+    return called, dotted
 
 
-def _name_refusal(names: set[str], references: set[str], catalog: _Catalog) -> str | None:
+def _name_refusal(
+    names: set[str], called: set[str], dotted: set[str], catalog: _Catalog
+) -> str | None:
     if names & (catalog.columns | catalog.tables | DENIED_NAMES):
         return (
             "That names a credential table or column, or a catalog that holds one. "
             "Those are never readable through query_readonly."
         )
-    if references & catalog.functions:
+    if dotted & catalog.functions:
+        return (
+            "That dotted name matches a function outside pg_catalog. Attribute notation can call "
+            "that function, so it is refused. Use a different alias for that column."
+        )
+    if called & catalog.functions:
         return (
             "That calls a function outside pg_catalog, which can run SQL held in text. "
             "It is refused."
@@ -266,12 +284,14 @@ def _run(db: HubDatabase, sql: str, params: list[Any], limit: int) -> dict[str, 
         statement_timeout_ms=STATEMENT_TIMEOUT_MS, repeatable_read_read_only=True
     ) as txn:
         catalog = _load_catalog(txn)
-        refusal = _name_refusal(
-            _names(statement, params), _references(statement, catalog.keywords), catalog
-        )
+        called, dotted = _references(statement, catalog.keywords)
+        refusal = _name_refusal(_names(statement, params), called, dotted, catalog)
         if refusal is not None:
             return _refused(refusal)
         txn.execute(f"SET LOCAL ROLE {QUERY_ROLE}")
+        # The lexer reads plain strings with standard_conforming_strings on. Pin it so the
+        # statement parses the way the lexer read it.
+        txn.execute("SET LOCAL standard_conforming_strings = on")
         wrapped = f"SELECT * FROM (\n{statement}\n) AS readonly_result LIMIT {limit}"
         rows = txn.execute(wrapped, params).fetchall()
     return {

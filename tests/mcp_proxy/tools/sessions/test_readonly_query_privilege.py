@@ -479,6 +479,29 @@ async def test_keyword_and_alias_names_pass_the_name_gate(
     assert len(result["rows"]) == 1
 
 
+# Comments and literals hold no call, so text inside them runs, including $ and backslashes.
+HARMLESS_TEXT_SHAPES = {
+    "block_comment_after_alias": "SELECT 1 AS score /* ordinary comment */",
+    "line_comment_after_alias": "SELECT 1 AS term -- ordinary comment",
+    "exists_with_block_comment": "SELECT EXISTS (SELECT 1) AS v /* ordinary comment */",
+    "dollar_in_literal": "SELECT '$' AS note, 1 AS score",
+    "dollar_quote_names_a_call": "SELECT $$run_text('SELECT 1')$$ AS v",
+    "e_string_escaped_quote_then_alias": r"SELECT E'it\'s' AS note, 1 AS score",
+}
+
+
+@pytest.mark.parametrize("name", sorted(HARMLESS_TEXT_SHAPES))
+@pytest.mark.usefixtures("run_text_schema")
+async def test_comments_and_literals_pass_the_name_gate(
+    registry: InternalToolRegistry, name: str
+) -> None:
+    """Text inside a comment or a literal is not a call, so it runs."""
+    result = await _run(registry, sql=HARMLESS_TEXT_SHAPES[name])
+
+    assert result["success"] is True, result.get("error")
+    assert len(result["rows"]) == 1
+
+
 @pytest.fixture
 def run_text_schema(temp_db: HubDatabase) -> Iterator[str]:
     """A plpgsql function outside pg_catalog that EXECUTEs its text, granted to the query role."""
@@ -513,6 +536,16 @@ CALL_FORMS = {
     "extension_quoted_keyword_name": 'SELECT "all"(1)::text AS v',
     "extension_quoted_exists": 'SELECT "exists"(1)::text AS v',
     "extension_quoted_schema_and_name": 'SELECT "pdb"."all"(1)::text AS v',
+    "unqualified_comment_before_paren": "SELECT run_text/**/('SELECT 1')::text AS v",
+    "schema_block_comment_no_space": "SELECT {schema}.run_text/**/('SELECT 1')::text AS v",
+    "schema_line_comment": "SELECT {schema}.run_text -- x\n('SELECT 1')::text AS v",
+    "extension_comment_before_paren": "SELECT score/**/(1)::text AS v",
+    "dollar_quote_hides_quote": "SELECT $$'$$ || {schema}.run_text('SELECT 1')::text AS v",
+    "tagged_dollar_quote_hides_quote": "SELECT $a$'$a$ || run_text('SELECT 1')::text AS v",
+    "e_string_quote_before_call": r"SELECT E'\'' || {schema}.run_text('SELECT 1')::text AS v",
+    "e_string_backslash_before_call": r"SELECT E'\\' || run_text('SELECT 1')::text AS v",
+    "e_string_quote_before_extension": r"SELECT E'\'', pdb.score(1)::text AS v",
+    "qualified_keyword_call": "SELECT pdb.all(1)::text AS v",
 }
 
 
@@ -525,3 +558,23 @@ async def test_call_of_a_function_outside_pg_catalog_is_refused_in_every_form(
 
     assert result["success"] is False
     assert result["error_code"] == "query_refused"
+
+
+# A column reached through a dot whose name matches a function outside pg_catalog. Attribute
+# notation can call that function, and the gate cannot tell the two apart statically.
+DOTTED_COLLISION_SHAPES = {
+    "table_alias_column": "SELECT t.score FROM (SELECT 1 AS score) t",
+    "parenthesized_row_column": "SELECT (t).score FROM (SELECT 1 AS score) t",
+}
+
+
+@pytest.mark.parametrize("name", sorted(DOTTED_COLLISION_SHAPES))
+async def test_dotted_name_matching_a_function_is_refused_with_alias_guidance(
+    registry: InternalToolRegistry, name: str
+) -> None:
+    """A dotted name matching a function is refused, with guidance to rename the alias."""
+    result = await _run(registry, sql=DOTTED_COLLISION_SHAPES[name])
+
+    assert result["success"] is False
+    assert result["error_code"] == "query_refused"
+    assert "alias" in result["error"]
