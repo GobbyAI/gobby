@@ -463,3 +463,24 @@ def test_attestation_without_sequence_does_not_shadow_a_sequenced_one(
 
     (row,) = data.in_flight
     assert row.stage == "test-after/approved"
+
+
+def test_run_listing_at_the_cap_is_a_gap_so_stalled_seats_are_not_hidden(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    project_id = str(sample_project["id"])
+    runs = tuple(
+        SimpleNamespace(
+            id=f"run-{number}",
+            child_session_id="069b55f3-906b-4f8c-a75d-a195e273547d",
+            task_id=None,
+            worktree_id=None,
+            stall_suspected=False,
+            status="running",
+        )
+        for number in range(500)
+    )
+
+    data = _collect(temp_db, project_id, tmp_path, runs=runs)
+
+    assert any(gap.startswith("live runs") and "500" in gap for gap in data.gaps)

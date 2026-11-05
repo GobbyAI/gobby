@@ -30,6 +30,7 @@ from gobby.tasks.state_semantics import TASK_HOLD_STATES
 _GIT_TIMEOUT_SECONDS = 10.0
 _NEEDS_DECISION_LABEL = "needs-decision"
 _OBJECT_NAME = re.compile(r"[0-9a-f]{4,64}")
+_RUN_LIMIT = 500
 _ATTENTION_STATES = frozenset({"blocked", "escalated"}) | TASK_HOLD_STATES
 
 _OPEN_TASKS_SQL = f"""
@@ -118,6 +119,11 @@ def collect_status(
     """Gather every report input. An unreadable receipt becomes a gap; a corrupt attestation store
     fails the run instead of being guessed at."""
     gaps: list[str] = []
+    if len(runs) >= _RUN_LIMIT:
+        gaps.append(
+            f"live runs - listing reached the {_RUN_LIMIT}-run cap; runs beyond it are not "
+            "checked for stalled seats"
+        )
     since = now - window
     open_rows = db.fetchall(_OPEN_TASKS_SQL, (project_id,))
     latest = _latest_attestations(db, project_id)
@@ -422,4 +428,4 @@ def active_worktrees(db: HubDatabase, project_id: str) -> list[Worktree]:
 
 def active_runs(db: HubDatabase) -> list[AgentRun]:
     """Live agent runs with their liveness overlay, read through the run manager."""
-    return LocalAgentRunManager(db).list_active_global(limit=500)
+    return LocalAgentRunManager(db).list_active_global(limit=_RUN_LIMIT)

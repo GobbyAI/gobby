@@ -13,8 +13,9 @@ from gobby.install.manifest import build_bundled_content_manifest
 from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 
-# Two uv builds, each bounded at 300s, plus copying the tracked tree.
-@pytest.mark.timeout(660)
+# Budget: copying the tracked tree, the sdist build (bounded at 1200s) and the wheel build
+# (bounded at 300s). The measurement behind the sdist bound is noted at the sdist build.
+@pytest.mark.timeout(1800)
 def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     source_root = tmp_path / "source"
@@ -44,9 +45,17 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
         **os.environ,
         "PYTHONDONTWRITEBYTECODE": "1",
         "SETUPTOOLS_SCM_PRETEND_VERSION": "0.5.0",
+        # The backend bounds each npm command with this budget; npm run build (tsc, vite)
+        # is the longest and takes the same budget as the sdist subprocess below.
+        "GOBBY_NPM_BUILD_TIMEOUT": "1200",
     }
     sdist_dir = tmp_path / "sdist"
     wheel_dir = tmp_path / "wheel"
+    # The sdist build runs the web UI build (npm ci, then tsc and vite), because the wheel
+    # must carry the UI index. Measured wall time, warm uv and npm caches: clean 0.5.0
+    # 5m31.8s; candidate dbadb7a951 5m40.6s; merged 621294a under sandbox load 14m03s
+    # (npm ci 3m04s, npm run build 9m52s, of which tsc 7m44s). The 1200s budget covers
+    # the loaded case with headroom.
     subprocess.run(
         ["uv", "build", "--sdist", "--out-dir", str(sdist_dir)],
         cwd=source_root,
@@ -54,7 +63,7 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=1200,
     )
     sdist_path = next(sdist_dir.glob("*.tar.gz"))
     subprocess.run(
