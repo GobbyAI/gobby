@@ -152,6 +152,61 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
 
 #[cfg(feature = "vt-engine")]
 #[tokio::test]
+async fn kill_during_the_exit_drain_emits_no_terminal_exited() {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: as root, process group 1 probes as signallable");
+        return;
+    }
+    let (shutdown, _) = watch::channel(false);
+    let state = HostState::new(
+        HostConfig::default(),
+        "control".to_string(),
+        "epoch".to_string(),
+        crate::host::image::PinnedImage::for_tests(),
+        1,
+        shutdown,
+    );
+    insert_native_slot(&state, "ht-drain", 24, 80).await;
+    // A group that has already exited, so the kill proves it gone at once.
+    let mut reaped = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn true");
+    let dead_pgid = i32::try_from(reaped.id()).expect("pid fits pgid");
+    reaped.wait().expect("reap true");
+    // The exit drain waits on this runtime. Its drain stays open until the
+    // runtime drops, so only removing the slot ends the drain.
+    let (runtime, _received) = crate::pane::PaneRuntime::test_with_channel(80, 24);
+    let identity = {
+        let mut inner = state.inner.lock().await;
+        let identity = inner.by_host_id["ht-drain"].clone();
+        let slot = inner.terminals.get_mut(&identity).expect("slot");
+        slot.pgid = dead_pgid;
+        slot.child = Some(crate::host::spawn::PreparedChild::from_test_runtime(
+            runtime,
+        ));
+        identity
+    };
+    let target = object(json!({"host_terminal_id": "ht-drain"}));
+    // The leader's exit settles first and parks in its drain; the kill then
+    // proves the group gone and removes the slot while that drain is parked.
+    let (settled, killed) = tokio::join!(
+        state.settle_leader_exit(&identity, "ht-drain", Some(0)),
+        state.kill(&target, Some(0)),
+    );
+    assert_eq!(killed["killed"], true, "{killed}");
+    assert!(
+        !settled,
+        "exit drain emitted terminal_exited after a kill settled the slot"
+    );
+    assert!(
+        !listed(&state, "ht-drain").await,
+        "killed slot still listed"
+    );
+}
+
+#[cfg(feature = "vt-engine")]
+#[tokio::test]
 async fn shutdown_drain_reaches_a_group_retained_after_an_unproven_kill() {
     use std::os::unix::process::CommandExt;
 

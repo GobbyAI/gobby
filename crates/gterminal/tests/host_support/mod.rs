@@ -15,6 +15,9 @@ pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
 pub const PID_FILE: &str = "gterm.pid";
 pub const TOKEN_FILE: &str = "gterm-control.token";
+/// The pid of the host this test spawned, so a readiness timeout can tell a
+/// host that died before binding from one still starting.
+pub const SPAWN_PID_FILE: &str = "gterm.spawned-pid";
 /// How long a spawned host may take to come up. A cold start pins the binary
 /// and re-execs from the pin before it binds, which a loaded machine stretches
 /// past five seconds (#23420). This is a hang guard, not a speed bound.
@@ -200,6 +203,8 @@ pub fn spawn_host_binary(
         cmd.env_remove(name);
     }
     let child = cmd.spawn().expect("spawn gterm host");
+    std::fs::write(socket_dir.join(SPAWN_PID_FILE), child.id().to_string())
+        .expect("record spawned host pid");
     HostProc {
         child,
         socket_dir: socket_dir.to_path_buf(),
@@ -241,13 +246,37 @@ pub fn wait_socket(path: &Path) {
     let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
     let stderr = std::fs::read_to_string(dir.join("gterm.stderr")).unwrap_or_default();
     let pid = std::fs::read_to_string(dir.join(PID_FILE)).unwrap_or_default();
+    let spawned = std::fs::read_to_string(dir.join(SPAWN_PID_FILE)).unwrap_or_default();
+    let state = host_process_state(&spawned);
     panic!(
         "timed out waiting for {}; path_len={}; exists={}; pid={pid:?}; \
-         log={log:?}; stderr={stderr:?}",
+         spawned_pid={spawned:?}; state={state:?}; log={log:?}; stderr={stderr:?}",
         path.display(),
         path.as_os_str().len(),
         path.exists(),
     );
+}
+
+/// `ps` state of the host this test spawned. `Z` means it exited before its
+/// socket appeared; `gone` means no such process remains.
+fn host_process_state(spawned: &str) -> String {
+    let Ok(pid) = spawned.trim().parse::<u32>() else {
+        return "no spawned pid recorded".to_string();
+    };
+    match Command::new("ps")
+        .args(["-o", "stat=,etime=", "-p", &pid.to_string()])
+        .output()
+    {
+        Ok(output) => {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if text.is_empty() {
+                "gone".to_string()
+            } else {
+                text
+            }
+        }
+        Err(err) => format!("ps failed: {err}"),
+    }
 }
 
 /// Poll `ready` until it reports true, panicking after five seconds.

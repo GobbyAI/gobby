@@ -288,6 +288,17 @@ fn holds_live_group(slot: &TerminalSlot) -> bool {
     slot.killing || (slot.kill_unproven && group_alive(slot.pgid))
 }
 
+/// The PTY drain for a slot's leader. Only a vt-engine slot has a PTY child.
+#[cfg(feature = "vt-engine")]
+fn output_drain(slot: &TerminalSlot) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    slot.child.as_ref()?.runtime.request_output_drain()
+}
+
+#[cfg(all(test, not(feature = "vt-engine")))]
+fn output_drain(_slot: &TerminalSlot) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    None
+}
+
 #[cfg(not(feature = "vt-engine"))]
 fn native_slot_alive(_slot: &TerminalSlot) -> bool {
     false
@@ -738,29 +749,37 @@ impl HostState {
         exit_code: Option<u32>,
     ) -> bool {
         let _gate = self.mutation_gate.read().await;
-        // The leader's last writes are already queued on its PTY, and the exit tail
-        // is read from the terminal the reader feeds. Wait for the reader to take them.
-        let drain = self
-            .inner
-            .lock()
-            .await
-            .terminals
-            .get(identity)
-            .filter(|slot| slot.host_terminal_id == host_terminal_id)
-            .and_then(|slot| slot.child.as_ref()?.runtime.request_output_drain());
+        // A slot that holds a live group belongs to its kill: leave it alone and
+        // do not drain. Otherwise the leader's last writes are already queued on
+        // its PTY, and the exit tail is read from the terminal the reader feeds.
+        // Wait for the reader to take them.
+        let (present, drain) = {
+            let inner = self.inner.lock().await;
+            match inner
+                .terminals
+                .get(identity)
+                .filter(|slot| slot.host_terminal_id == host_terminal_id)
+            {
+                Some(slot) if holds_live_group(slot) => return false,
+                Some(slot) => (true, output_drain(slot)),
+                None => (false, None),
+            }
+        };
         if let Some(drain) = drain {
             let _ = tokio::time::timeout(EXIT_DRAIN_WAIT, drain).await;
         }
         let mut inner = self.inner.lock().await;
-        if let Some(slot) = inner
+        match inner
             .terminals
             .get(identity)
             .filter(|slot| slot.host_terminal_id == host_terminal_id)
         {
-            if holds_live_group(slot) {
-                return false;
-            }
-            remove_terminal_slot(&mut inner, identity, None);
+            Some(slot) if holds_live_group(slot) => return false,
+            Some(_) => remove_terminal_slot(&mut inner, identity, None),
+            // Removed while the drain ran: the path that removed it settled the
+            // exit, so this one emits nothing.
+            None if present => return false,
+            None => {}
         }
         // Emitted before the `inner` lock is released: no reader sees the
         // slot gone while its event is still unwritten.
