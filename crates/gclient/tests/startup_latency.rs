@@ -406,17 +406,29 @@ async fn reconnect_attach_wait_keeps_menus_responsive() {
 
 #[tokio::test]
 async fn stage_timings_are_logged_once_per_launch() {
+    // A thread-local subscriber misses callsites that another test thread
+    // registers first: tracing-core rebuilds their interest from the
+    // registering thread's own default, which is none here. A process-global
+    // subscriber gives every thread the same interest. The writer keeps only
+    // lines emitted on this test's thread.
     let captured = Arc::new(Mutex::new(Vec::new()));
     let writer = Arc::clone(&captured);
+    let test_thread = std::thread::current().id();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
         .without_time()
         .with_target(false)
-        .with_writer(move || LogWriter(Arc::clone(&writer)))
+        .with_writer(move || -> Box<dyn Write> {
+            if std::thread::current().id() == test_thread {
+                Box::new(LogWriter(Arc::clone(&writer)))
+            } else {
+                Box::new(io::sink())
+            }
+        })
         .finish();
-    let guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("this binary installs its log subscriber only in this test");
     let _ = exercise_first_frame().await;
-    drop(guard);
 
     let bytes = captured.lock().expect("captured logs").clone();
     let logs = String::from_utf8(bytes).expect("UTF-8 logs");
