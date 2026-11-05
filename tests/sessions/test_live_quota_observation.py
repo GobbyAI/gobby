@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.app_context import ServiceContainer, clear_app_context, set_app_context
+from gobby.cli import tokens as tokens_cli
 from gobby.providers.capacity_service import ProviderCapacityService, ProviderCapacitySnapshot
 from gobby.providers.quota_alerts import AlertEdge, AlertSink
 from gobby.providers.quota_observations import QuotaObservation
@@ -30,7 +31,11 @@ from gobby.runner_init.services import _build_message_processor
 from gobby.sessions import processor_transcripts, turn_lifecycle
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.provider_capacity import PersistedCapacityState, ProviderCapacityRecord
+from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -232,6 +237,9 @@ async def test_quota_only_live_records(tmp_path: Path, monkeypatch: pytest.Monke
     assert {c.window.label for c in partial.components if c.window is not None} == {"five_hour"}
 
     # A windowless reached reading is its own exhausted component and carries no window.
+    # No native windowless warning exists to replay here: Codex metadata keeps only
+    # plan, credits and reached flags, and Claude allowed_warning stays unproven
+    # (plan 1065). metadata["warning"] comes only from the synthetic alerts fixture.
     harness.append(_codex_line(_ts(10), _REACHED))
     assert await harness.process()
     (reached,) = harness.observed()[2:]
@@ -395,3 +403,43 @@ def test_rebuild_writer_publishes_no_live_quota(tmp_path: Path) -> None:
     # Nothing is admitted, so the capacity store is never written.
     assert storage.upsert_calls == 0
     assert storage.records == {}
+
+
+_AUDIT_PROJECT_ID = "00000000-0000-4000-8000-000000000241"
+_AUDIT_MACHINE_ID = "21000000-0000-4000-8000-000000000241"
+
+
+@pytest.mark.integration
+def test_audit_publishes_no_live_quota(
+    hub_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit reads transcript totals only: with the real service installed, --fix writes no quota."""
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", _AUDIT_MACHINE_ID)
+    storage = _Storage()
+    shared = ProviderCapacityService(storage, alert_sink=AsyncMock())
+    set_app_context(cast(ServiceContainer, SimpleNamespace(provider_capacity_service=shared)))
+    try:
+        hub_db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (_AUDIT_PROJECT_ID, "Live Quota Audit"),
+        )
+        LocalMachineManager(hub_db).upsert_seen(_AUDIT_MACHINE_ID, TEST_USER_ID)
+        transcript = tmp_path / "codex.jsonl"
+        transcript.write_text(_codex_line(_ts(10), _REACHED) + "\n", encoding="utf-8")
+        session = SessionManager(hub_db).register(
+            external_id="codex-audit-quota",
+            machine_id=_AUDIT_MACHINE_ID,
+            source="codex",
+            project_id=_AUDIT_PROJECT_ID,
+            title="codex-audit-quota",
+            transcript_path=str(transcript),
+        )
+
+        for fix in (False, True):
+            tokens_cli._audit_session(hub_db, session.id, fix=fix)
+
+        # The fresh reached envelope is in the transcript, yet no reading reaches the store.
+        assert storage.upsert_calls == 0
+        assert storage.records == {}
+    finally:
+        clear_app_context()

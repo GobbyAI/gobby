@@ -751,6 +751,7 @@ class TestInitSubsystems:
                 "gobby.runner_init.servers.ProviderCapacityService.create_default",
                 return_value=capacity_service,
             ) as capacity_factory,
+            patch("gobby.runner_init.servers.build_operator_alert_sink") as alert_sink_factory,
             patch(
                 "gobby.runner_init.servers.LocalContextStore",
                 return_value=local_context_store,
@@ -802,6 +803,7 @@ class TestInitSubsystems:
             runner.database,
             machine_id="machine-1",
             run_db=None,
+            alert_sink=alert_sink_factory.return_value,
         )
         capability_service.prepare.assert_called_once_with()
         assert fake_client.start_calls == 0
