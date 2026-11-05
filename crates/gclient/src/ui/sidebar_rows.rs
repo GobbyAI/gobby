@@ -537,8 +537,12 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
                 display_width(&row.definition),
                 budget.saturating_sub(pinned_width(row)),
             );
+            // The lead stays put, so only the title's overrun beside it scrolls.
             let task = task_line(row).map_or(0, |(lead, title)| {
-                overrun(display_width(&lead) + display_width(&title), budget)
+                overrun(
+                    display_width(&title),
+                    budget.saturating_sub(display_width(&lead)),
+                )
             });
             name.max(task)
         }
@@ -576,7 +580,8 @@ fn pinned_width(row: &SidebarRow) -> usize {
 fn task_line(row: &SidebarRow) -> Option<(String, String)> {
     let (reference, title) = row.task.as_ref()?;
     let number = reference.rsplit('#').next().unwrap_or(reference);
-    Some((format!("Working task {number}"), format!(" {title}")))
+    // The lead keeps its trailing space, so a scrolled title never runs into it.
+    Some((format!("Working task {number} "), title.clone()))
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -744,16 +749,24 @@ pub(crate) fn row_third_line_with_travel<'a>(
     let style = Style::default().fg(chrome.palette.subtext0);
     let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
     if let Some((lead, title)) = task_line(row) {
-        spans.extend(ticker_spans(
-            &[
-                (&lead, Style::default().fg(chrome.palette.text)),
-                (&title, style),
-            ],
-            budget,
-            chrome.ticker,
-            max_travel,
-            chrome.prefs.title_scrolling,
-        ));
+        // The lead holds its cells; only the title scrolls in what remains.
+        let lead_width = display_width(&lead);
+        let lead_style = Style::default().fg(chrome.palette.text);
+        if lead_width <= budget {
+            spans.push(Span::styled(lead, lead_style));
+            let title_budget = budget - lead_width;
+            if title_budget > 0 {
+                spans.extend(ticker_spans(
+                    &[(&title, style)],
+                    title_budget,
+                    chrome.ticker,
+                    max_travel,
+                    chrome.prefs.title_scrolling,
+                ));
+            }
+        } else {
+            spans.push(Span::styled(truncate_end(&lead, budget), lead_style));
+        }
     } else {
         spans.push(Span::styled(
             truncate_end("No assigned task", budget),
