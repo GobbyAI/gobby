@@ -58,6 +58,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         # gcode: commit-bound search scope verification changed in #24029 under installed 1.9.80.
         # gcode: admitted-version read binding changed in #23834 under installed 1.9.81.
         ("gcode", "1.9.82"),
+        # gcode: history eligibility at the current config changed in #23582 under installed 1.9.105.
+        ("gcode", "1.9.106"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
     ],
