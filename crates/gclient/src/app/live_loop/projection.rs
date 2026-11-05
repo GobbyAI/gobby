@@ -140,10 +140,11 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
             })
         else {
             // Another project's tab, or a pane still landing: the placement
-            // waits while the daemon still has the tab.
+            // waits while the daemon still shows its pane on that tab. A pane
+            // that has left the model cannot resolve, so its placement is dropped.
             if workspace
                 .workspace_model()
-                .is_some_and(|model| model.tab(&tab_id).is_some())
+                .is_some_and(|model| model.pane(&pane_id).is_some_and(|row| row.tab_id == tab_id))
             {
                 held.push((tab_id, pane_id));
             }
