@@ -161,10 +161,16 @@ ENGINE_PROCESS_TOKEN = uuid.uuid4().hex
 _EDIT_WRITE_PENDING_PROCESS = "edit_write_pending_process"
 
 
-def mark_edit_write_pending(variables: dict[str, Any]) -> None:
-    """Record a pre-tool file mutation whose post-tool outcome this process must observe."""
+def mark_edit_write_pending(variables: dict[str, Any]) -> bool:
+    """Record a pre-tool file mutation whose post-tool outcome this process must observe.
+
+    Returns True when this call set the mark. A mark an earlier write still holds belongs to
+    that write, so a refusal of this call must leave it pending.
+    """
+    armed = not variables.get("edit_write_pending")
     variables["edit_write_pending"] = True
     variables[_EDIT_WRITE_PENDING_PROCESS] = ENGINE_PROCESS_TOKEN
+    return armed
 
 
 def edit_write_outcome_lost(variables: dict[str, Any]) -> bool:

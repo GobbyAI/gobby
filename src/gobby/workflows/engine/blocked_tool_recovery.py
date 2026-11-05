@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEventType, HookResponse
 from gobby.workflows.engine.block_batching import close_response_batch
-from gobby.workflows.engine.event_utils import _clear_edit_write_state, _is_write_like_event_data
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 if TYPE_CHECKING:
@@ -288,8 +287,6 @@ async def escalate_retry_limit(
     )
     if not gates:
         return None
-    if _is_write_like_event_data(evaluation.event.data):
-        _clear_edit_write_state(evaluation.block_state)
     response = engine._assemble_response(
         evaluation, override_decision=None, override_reason=None, block_gates=gates
     )

@@ -116,3 +116,24 @@ async def test_refused_sibling_then_a_later_success_leaves_no_pending_mark(
 
     stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
     assert "edit-write-recovery" not in (stop.reason or "")
+
+
+@pytest.mark.parametrize("refusal", sorted(REFUSALS))
+async def test_refusal_keeps_an_in_flight_siblings_mark(temp_db: HubDatabase, refusal: str) -> None:
+    """A refusal clears only the mark its own write armed; an in-flight sibling's mark survives."""
+    engine = RuleEngine(temp_db, mcp_dispatcher=_refusing_dispatcher)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+
+    rule_name, effect = REFUSALS[refusal]
+    rule_id = _insert_refusal_rule(temp_db, rule_name, effect)
+    refused = await engine.evaluate(_event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+    assert refused.decision == "block"
+    assert variables.get("edit_write_pending") is True
+
+    RuleDefinitionManager(temp_db).toggle_enabled(rule_id)
+    await engine.evaluate(_event(HookEventType.AFTER_TOOL, EDIT), SESSION_ID, variables)
+    assert variables.get("edit_write_pending") is False
+
+    stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
+    assert "edit-write-recovery" not in (stop.reason or "")

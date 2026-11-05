@@ -83,6 +83,8 @@ class EvaluationContext:
     rule_project_snapshot: Any = None
     rule_variable_sources: dict[str, Any] = field(default_factory=dict)
     pending_rule_evaluations: list[tuple[str, RuleResult, float]] = field(default_factory=list)
+    # True when this event's pre-tool write armed edit_write_pending; only its refusal clears it.
+    armed_edit_write_mark: bool = False
 
     @property
     def block_state(self) -> dict[str, Any]:
@@ -489,12 +491,8 @@ class EvaluationMixin:
                 block_effects_only=block_effects_only,
             )
             # A refused file mutation never executes, so no post-tool outcome will settle
-            # its pending mark. Every block gate on a before-tool write lands here.
-            if (
-                block_gates
-                and evaluation.is_before_tool
-                and _is_write_like_event_data(evaluation.event.data)
-            ):
+            # the mark it armed. Every block gate on that write lands here.
+            if block_gates and evaluation.armed_edit_write_mark:
                 _clear_edit_write_state(evaluation.block_state)
         except asyncio.CancelledError:
             bridge.cancel()
