@@ -473,11 +473,12 @@ async def _attach(
     *,
     request_id: str = "a1",
     encoding: str | None = None,
+    viewer: str = "web",
 ) -> str:
     harness.server.clients[ws] = {"subscriptions": {"*"}}
     payload = {
         "type": "terminal_attach",
-        "viewer": "web",
+        "viewer": viewer,
         "request_id": request_id,
         "terminal_id": row.id,
         "frame_delivery": "proxy",
@@ -1600,6 +1601,30 @@ _OBSERVER_THEME = {
     "foreground": {"r": 1, "g": 2, "b": 3},
     "background": {"r": 4, "g": 5, "b": 6},
 }
+
+
+@pytest.mark.asyncio
+async def test_a_gclient_pane_declares_its_theme_while_a_web_holder_keeps_the_lease(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    # A gclient pane is always writable, so its theme goes to its own stream
+    # even while a web viewer holds the writer lease.
+    harness = _harness(temp_db, sample_project)
+    harness.server.terminal_host_manager = _ThemedHost()
+    row = harness.native_row
+    ws_a = MockWebSocket()
+    ws_b = MockWebSocket()
+    att_a = await _attach(harness, ws_a, row, request_id="a")
+    att_b = await _attach(harness, ws_b, row, request_id="b", viewer="gclient")
+    frame_a, frame_b = harness.frame_list
+    await _take(harness, ws_a, row, att_a)
+    await _until(lambda: ws_a.messages_of_type("terminal_control_result"))
+
+    await _send(harness.server, ws_b, _set_theme(row, att_b, _OBSERVER_THEME))
+
+    assert frame_b.themes == [(att_b, _OBSERVER_THEME)]
+    assert frame_a.themes == []
+    assert _theme_errors(ws_b) == []
 
 
 @pytest.mark.asyncio

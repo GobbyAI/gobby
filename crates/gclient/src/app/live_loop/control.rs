@@ -22,6 +22,9 @@ use super::writer::PaneWriter;
 /// key for. The pane reattaches there and this key is dropped (#25653).
 pub const PROXY_NATIVE_INPUT: &str =
     "this terminal's input runs on its host stream; reattaching it, so the key was not sent";
+/// Status shown when a key is typed into a native pane whose close is in flight.
+/// The key stays off the daemon, and the close does not carry it (#25653).
+pub const CLOSING_NATIVE_INPUT: &str = "this pane is closing; the key was not sent";
 /// Status shown when so much was typed while a pane was reattaching that the
 /// queue holding it filled.
 pub const INPUT_QUEUE_FULL: &str =
@@ -152,6 +155,10 @@ pub(super) fn send_live_input(
             chrome.notify(Toast::warning(PROXY_NATIVE_INPUT));
             workspace.pane_mut(pane_id).promote_now();
         }
+        return Ok(());
+    }
+    if workspace.pane(pane_id).closing_native() {
+        chrome.notify(Toast::warning(CLOSING_NATIVE_INPUT));
         return Ok(());
     }
     let pane = workspace.pane(pane_id);

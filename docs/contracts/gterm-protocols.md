@@ -82,17 +82,19 @@ for a tmux attachment, `terminal_gone` after the pane disappears, or
 
 ### Input
 
-`Input` and `Paste` reach the PTY on a frame stream with a bound attachment, for a
-native slot. No grant, take, or read-only state gates them, and the host keeps no
-per-slot input state. The stream's bound `attachment_id` is the attribution that
-`input_activity` reports; an unbound stream reports `""` and types nothing.
+`Input` and `Paste` reach the PTY on a frame stream once `AttachTerminal` has attached
+it, for a native slot. A stream that has not attached yet refuses each input with
+`attach_required` and types nothing. No grant, take, or read-only state gates an
+attached stream, and the host keeps no per-slot input state. `BindAttachment` only
+names the attribution that `input_activity` reports; an attached stream that has not
+bound reports `""`, and its input still writes.
 
 Every refusal is an `InputRefused { code }` on the same stream and never closes
 it, so a refused key leaves output flowing:
 
 | Code | Meaning |
 | --- | --- |
-| `attach_required` | the stream has no bound attachment yet |
+| `attach_required` | the stream has not attached a terminal yet |
 | `not_native` | the slot is a tmux pane, which types through its own renderer |
 | `request_too_large` | over `MAX_WRITE_BYTES` (1 MiB) |
 | `pty_busy` | the PTY write channel is full |

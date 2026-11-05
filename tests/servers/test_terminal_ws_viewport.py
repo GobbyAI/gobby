@@ -12,8 +12,8 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_two_observers_independent_viewports() -> None:
     registry = TerminalLeaseRegistry()
-    a = await registry.attach("t", frame_delivery="proxy")
-    b = await registry.attach("t", frame_delivery="proxy")
+    a = await registry.attach("t", frame_delivery="proxy", viewer="gclient")
+    b = await registry.attach("t", frame_delivery="proxy", viewer="gclient")
     registry.set_viewport(a.attachment_id, rows=24, cols=80)
     registry.set_viewport(b.attachment_id, rows=40, cols=120)
     assert registry.viewport(a.attachment_id) == (24, 80)

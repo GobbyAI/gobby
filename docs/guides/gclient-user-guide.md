@@ -620,12 +620,16 @@ between the key and the PTY, so a busy or slow daemon no longer stalls the
 window, and the daemon never gates that input.
 
 Tmux panes and remote panes type through the daemon. A native pane whose direct
-connection fell back to `proxy` does not: a key typed there is dropped with a
-toast, and the pane reattaches to its host. A pane that typed instantly and then
-went sluggish fell back, and `~/.gobby/logs/gclient.log` records it as
-`direct-fallback`. Under `auto`, a
-fallen-back pane keeps trying the direct connection beside its proxy, first
-after 5 seconds and then backing off to once a minute. The proxy keeps
+connection fell back to `proxy` does not send keys through the daemon. It holds
+them: they wait for the pane's direct connection, then go out on its host stream.
+A key typed there asks for that connection at once rather than at its next
+scheduled try. If the direct connection fails while keys are held, those keys are
+dropped with a toast, and the pane stays on its proxy. A native pane whose close is
+in flight refuses keys with a toast and sends them nowhere. A pane that typed
+instantly and then went sluggish fell back, and `~/.gobby/logs/gclient.log` records
+it as `direct-fallback`. Under `auto`, a fallen-back pane keeps trying the direct
+connection beside its proxy, first after 5 seconds and then backing off to once a
+minute. The proxy keeps
 delivering frames until the host accepts and the direct stream is in place. Then the
 pane switches back, and the log records
 `direct-promotion`.
@@ -642,7 +646,10 @@ These messages belong to the direct path:
 
 | Status line | What happened |
 | --- | --- |
-| `this terminal's input runs on its host stream; reattaching it, so the key was not sent` | A native pane whose frames come over the daemon's proxy. The key is not sent, and the pane reattaches to its host. |
+| `this terminal's input runs on its host stream; reattaching it, so the key was not sent` | A native pane on the daemon's proxy that cannot promote back to its host stream: no direct locator, direct frames not allowed, or the daemon not ready. The key is not sent, and the pane reattaches to its host. |
+| `direct attach failed; typed input was not sent` | Keys held for a direct connection that then failed. They were dropped, and the pane stays on its proxy until its next try. |
+| `too much typed while the terminal reattached; the rest was dropped` | More keys were held than the 256 KiB hold limit while the pane reattached. The keys past the limit were dropped. |
+| `this pane is closing; the key was not sent` | A native pane whose close is in flight. Its keys stay off the daemon, so this key was dropped. |
 | `terminal refused input (<code>)` | The host refused a key, normally `attach_required` or `terminal_gone` once the PTY went away. Output keeps flowing, and the pane stays writable. |
 | `terminal input backlog; key dropped` | You typed faster than the terminal drained. That one keystroke is gone and is not retried, because a retried keystroke is the wrong keystroke. |
 

@@ -599,6 +599,58 @@ async def test_revalidate_before_persist() -> None:
     assert "op" not in _unresolved(store, terminal.id)
 
 
+@pytest.mark.asyncio
+async def test_gclient_operator_write_is_not_revalidated_against_the_lease() -> None:
+    # A gclient pane is always writable, so its operator write lands even when
+    # a web viewer takes the lease while the write is still held.
+    hold = asyncio.Event()
+    started = asyncio.Event()
+    runtime = FakeRuntime(hold=hold)
+    runtime.started = started
+    coordinator, _fake, store = _coordinator(runtime)
+    terminal = next(iter(store.rows.values()))
+    await _grant(coordinator, terminal.id)
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-g", viewer="gclient")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-2", viewer="web")
+
+    async def first() -> None:
+        await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key="hold",
+                origin="automatic",
+                kind="text",
+                payload="first",
+            )
+        )
+
+    holder = asyncio.create_task(first())
+    await started.wait()
+    takeover_task = asyncio.create_task(
+        coordinator.lease_registry.take_control(terminal.id, "att-2", takeover=True)
+    )
+    await _let_tasks_run()
+
+    waiter = asyncio.create_task(
+        coordinator.write(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key="op",
+                origin="operator",
+                kind="text",
+                payload="gclient-typed",
+                attachment_id="att-g",
+            )
+        )
+    )
+    await _let_tasks_run()
+    hold.set()
+    await holder
+    await takeover_task
+    await waiter
+    assert ("text", "gclient-typed") in runtime.write_log
+
+
 class _CountingStore(MemoryTerminalStore):
     """Memory store that records every coordinator-facing call."""
 

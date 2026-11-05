@@ -4,7 +4,7 @@ use gobby_terminal::protocol::{
 use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
-use super::flush_attached_input;
+use super::{flush_attached_input, send_live_input, CLOSING_NATIVE_INPUT};
 use crate::app::{Backend, Pane, PaneId, Workspace};
 use crate::daemon::{Generation, LiveDaemon};
 use crate::frame_source::{AttachLocator, PaneFrameSource, Transport, UnixSocketFrameSource};
@@ -86,5 +86,55 @@ async fn a_failed_flush_reports_every_key_it_could_not_write() {
         chrome.alert_log.len(),
         3,
         "each key whose write failed is reported, not only the first"
+    );
+}
+
+/// A native pane whose close is in flight refuses a typed key on the spot. The
+/// key never gets a daemon write sequence or writer, and the refusal is shown.
+#[tokio::test]
+async fn a_key_typed_into_a_closing_native_pane_never_reaches_the_daemon() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    pane.install_attachment(
+        "attachment-1".to_owned(),
+        Transport::Direct,
+        Generation(0),
+        0,
+        cut_direct_source("epoch-1").await,
+    );
+    assert!(
+        pane.begin_closing_detach().is_some(),
+        "the pane starts its close"
+    );
+    workspace.panes.insert(PaneId(1), pane);
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    send_live_input(
+        &mut workspace,
+        &mut chrome,
+        &mut jobs,
+        PaneId(1),
+        b"x",
+        false,
+    )
+    .expect("a refused key is not an error");
+
+    let pane = workspace.pane(PaneId(1));
+    assert_eq!(
+        pane.client_write_seq, 0,
+        "no terminal_input sequence was issued"
+    );
+    assert!(pane.writer.is_none(), "no daemon writer took the key");
+    assert_eq!(
+        chrome
+            .alert_log
+            .iter()
+            .filter(|toast| toast.title == CLOSING_NATIVE_INPUT)
+            .count(),
+        1,
+        "the refused key is shown"
     );
 }

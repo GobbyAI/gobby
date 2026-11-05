@@ -179,6 +179,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panes, so Codex read a light OSC 11 answer once at startup and drew light
   composer bands for its lifetime. Holder-wins on a granted pane is
   unchanged.
+- **Host control requests stay small** (#25653) — the control reader boxes a
+  parsed request, which clears clippy's `large_enum_variant` gate. No behavior
+  change. Version: `0.1.24`.
 
 #### gobby-client
 
@@ -199,6 +202,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   take grant sits on the path. Closing an external or adopted pane detaches its
   attachment. A failed open keeps its error text, and a split whose terminal
   leaves the workspace stops waiting on it. Version: `0.1.111`.
+- **Keys held for promotion and closing panes** (#25653) — a native pane that
+  fell back to the proxy holds its keys for the direct connection rather than
+  sending them through the daemon. A failed promotion drops them with a toast.
+  A key typed into a native pane whose close is in flight is refused with a
+  toast, and keys typed behind a recovery detach reach the new attachment.
+  Version: `0.1.112`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 
