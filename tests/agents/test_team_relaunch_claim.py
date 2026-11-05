@@ -134,7 +134,7 @@ def _attest(world: TeamWorld, task: Any, seat: Any, kind: str) -> None:
     )
 
 
-async def test_relaunched_developer_takes_the_claim_from_its_dead_predecessor(
+async def test_relaunched_seat_takes_the_claim_from_its_dead_predecessor(
     world: TeamWorld,
 ) -> None:
     db = world.case.db
@@ -149,7 +149,7 @@ async def test_relaunched_developer_takes_the_claim_from_its_dead_predecessor(
     reviewer = running_seat(world, original, REVIEWER)
     _record_seat(world, original, DEVELOPER, developer)
     _record_seat(world, original, REVIEWER, reviewer)
-    # The spawn auto-claim gives the developer the task; it records part of the evidence.
+    # The spawn auto-claim gives the first seat the task; it records part of the evidence.
     tasks.release_task_claim(task.id)
     tasks.claim_task(task.id, developer.id)
     _attest(world, task, developer, "recipe")
@@ -157,7 +157,7 @@ async def test_relaunched_developer_takes_the_claim_from_its_dead_predecessor(
     _end_seat(db, reviewer)
     world.finish(original)
 
-    # The dev team relaunches through its admission: a new execution joins the same team.
+    # The team relaunches through its admission: a new execution joins the same team.
     relaunch = world.child(task, RUNBOOK)
     relaunched = await _admit(world, relaunch, task, team_id=team["team_id"])
     assert relaunched["success"] is True, relaunched
@@ -166,7 +166,7 @@ async def test_relaunched_developer_takes_the_claim_from_its_dead_predecessor(
     _record_seat(world, relaunch, DEVELOPER, relaunched_developer)
     _record_seat(world, relaunch, REVIEWER, relaunched_reviewer)
 
-    # The live developer records the implement evidence; no hand-off is made by hand.
+    # The live seat records the implement evidence; no hand-off is made by hand.
     _attest(world, task, relaunched_developer, "recipe")
     _attest(world, task, relaunched_developer, "checks")
 
