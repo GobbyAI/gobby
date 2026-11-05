@@ -840,11 +840,14 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .expect("live loop input");
 }
 
-fn send_process_signal(signal: &str) {
+async fn send_process_signal(signal: &str) {
+    // Awaited, not blocking: a synchronous wait here would park the test's
+    // single-threaded runtime while the signal is delivered.
     let pid = std::process::id().to_string();
-    let status = std::process::Command::new("kill")
+    let status = tokio::process::Command::new("kill")
         .args([signal, pid.as_str()])
         .status()
+        .await
         .unwrap_or_else(|error| panic!("send {signal} to the gclient test process: {error}"));
     assert!(status.success(), "kill {signal} failed: {status}");
 }
@@ -909,7 +912,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
                 send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
             }
             LiveShutdownTrigger::Sigterm => {
-                send_process_signal("-TERM");
+                send_process_signal("-TERM").await;
             }
         }
         (exit_started, reconnect)
@@ -1055,12 +1058,12 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
                 send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
             }
-            LiveExitCause::Sigint => send_process_signal("-INT"),
-            LiveExitCause::Sigterm => send_process_signal("-TERM"),
+            LiveExitCause::Sigint => send_process_signal("-INT").await,
+            LiveExitCause::Sigterm => send_process_signal("-TERM").await,
             LiveExitCause::SighupThenQuit => {
                 // A hangup is ignored: the loop logs it, keeps routing
                 // input, and only the quit chord ends it.
-                send_process_signal("-HUP");
+                send_process_signal("-HUP").await;
                 wait_for_trace_stage(&trace, "sighup-ignored").await;
                 send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
                 wait_for_ws_request_count(&mock, "terminal_input", 2).await;
