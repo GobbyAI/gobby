@@ -66,6 +66,12 @@ you may claim the epic root for final validation.
 Relaunch through the same pipeline with team_id; preserve its workspace and
 report target. For supplemental spawn context use only accepted keys, such as
 `seat_context={"worktree": "<registered-tree>", "first_job": "<bounded assignment>"}`.
+Merge-level before staffing. A tree only falls behind its base through a work
+stoppage. Before you staff, relaunch or resume any seat in an existing tree, count
+`git -C <tree> rev-list --count HEAD..<stored base_branch>`. If it is above zero,
+merge the base in first and resolve every conflict in favor of the newer code;
+route a conflict that needs implementation through the integration leaf. Staff
+the tree only after it is level.
 Keep the static pair paused at an acknowledged clean point while a child lands.
 Persist one landing permit at a time and reconcile it after interruption.
 
@@ -93,6 +99,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 4.0.0_
+_Version: 4.1.0_
 
-_Last verified: 2026-11-04_
+_Last verified: 2026-11-05_
