@@ -29,7 +29,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I drops the script's folder from sys.path
-from mapcheck import load_nodes, norm_ref  # noqa: E402
+from mapcheck import load_nodes, norm_ref
 
 LEAKS = ("/private/tmp", "scratchpad/", "tree-audit", "phase2", "v2-work", "fold-", "map-synth",
          "dispositions-nodes", "wf-", "check-C", "verify-V")

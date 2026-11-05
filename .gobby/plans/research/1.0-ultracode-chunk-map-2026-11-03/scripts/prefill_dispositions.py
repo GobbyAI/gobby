@@ -21,7 +21,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I drops the script dir
-from mapcheck import load_nodes, norm_ref  # noqa: E402
+from mapcheck import load_nodes, norm_ref
 
 
 def main() -> int:
