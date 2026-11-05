@@ -399,7 +399,9 @@ class ProcessorTranscriptMixin:
                 )
 
         if was_caught_up and caught_up and parser_source is not None:
-            await collect_live_quota(self, session_id, parser_source, new_lines)
+            # Each envelope carries its stream cursor, its byte offset in the transcript.
+            positioned = list(zip(new_line_offsets, new_lines, strict=True))
+            await collect_live_quota(self, session_id, parser_source, positioned)
 
         if not stats_records:
             if pending_appender is not None:

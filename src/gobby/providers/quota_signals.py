@@ -69,10 +69,18 @@ def normalize_typed_signal(
     *,
     observed_at: datetime,
     source_key: str,
+    cursor: int | None = None,
 ) -> QuotaObservation | None:
-    """Normalize one top-level raw provider envelope; None for unverified or untrusted input."""
+    """Normalize one top-level raw provider envelope; None for unverified or untrusted input.
+
+    A transcript envelope passes its stream ``cursor`` (its byte offset), which joins the
+    occurrence digest so the occurrence names the stream position of the reading.
+    """
+    identity: dict[str, object] = {"provider": provider, "record": record}
+    if cursor is not None:
+        identity["cursor"] = cursor
     try:
-        occurrence = _digest({"provider": provider, "record": record})
+        occurrence = _digest(identity)
     except ValueError:
         # An integer past the digit limit cannot be fingerprinted, so the record is unverifiable.
         return None

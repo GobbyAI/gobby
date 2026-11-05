@@ -31,14 +31,17 @@ logger = logging.getLogger(__name__)
 
 def newest_live_observation(
     provider: str,
-    raw_lines: Sequence[str],
+    positioned_lines: Sequence[tuple[int, str]],
     *,
     now: datetime,
     source_key: str,
 ) -> QuotaObservation | None:
-    """Fold the fresh quota envelopes in ``raw_lines`` into one observation, newest wins."""
+    """Fold the fresh quota envelopes into one observation, newest wins per component.
+
+    Each entry pairs an envelope's stream cursor (its byte offset) with its raw line.
+    """
     newest: dict[str, QuotaComponent] = {}
-    for raw_line in raw_lines:
+    for cursor, raw_line in positioned_lines:
         record = _load_record(raw_line)
         if record is None:
             continue
@@ -46,7 +49,7 @@ def newest_live_observation(
         if observed_at is None or abs(now - observed_at).total_seconds() > FRESHNESS_SECONDS:
             continue
         observation = normalize_typed_signal(
-            provider, record, observed_at=observed_at, source_key=source_key
+            provider, record, observed_at=observed_at, source_key=source_key, cursor=cursor
         )
         if observation is None:
             continue
@@ -63,7 +66,7 @@ async def collect_live_quota(
     host: ProcessorHost,
     session_id: str,
     provider: str,
-    raw_lines: Sequence[str],
+    positioned_lines: Sequence[tuple[int, str]],
 ) -> None:
     """Observe the fresh quota in one caught-up pass; failures are logged, never raised."""
     service = host.provider_capacity_service
@@ -74,11 +77,12 @@ async def collect_live_quota(
         now = datetime.now(UTC)
         # Most passes carry no quota envelope, so the turn-generation read, a database
         # round trip, runs only when the probe finds an observation to admit.
-        if newest_live_observation(provider, raw_lines, now=now, source_key=session_id) is None:
+        probe = newest_live_observation(provider, positioned_lines, now=now, source_key=session_id)
+        if probe is None:
             return
         generation = await host._run_db(_turn_generation, session_manager, session_id)
         observation = newest_live_observation(
-            provider, raw_lines, now=now, source_key=f"{session_id}:{generation}"
+            provider, positioned_lines, now=now, source_key=f"{session_id}:{generation}"
         )
         if observation is not None:
             await service.observe(observation)
