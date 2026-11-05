@@ -56,3 +56,5 @@ When the adaptation feels native to each context, call `get_skill_file(name="imp
 - Hide core functionality on smaller devices (if it matters, make it work)
 - Lock orientation to dodge a layout bug
 - Trust simulators alone (posture, gestures, and performance need hardware)
+
+_Version: 1.0.0_

@@ -74,3 +74,5 @@ When deriving OKLCH ramps, vary lightness and reduce chroma near white and black
 - The result is recognizably this product, not a generic “colorful” treatment.
 
 When the palette earns its place, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.
+
+_Version: 1.0.0_

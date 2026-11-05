@@ -31,4 +31,6 @@ the stored result. Do not poll history as a replacement for event-driven waits.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#cli-run-history).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

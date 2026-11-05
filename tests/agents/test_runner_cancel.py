@@ -39,7 +39,7 @@ def test_cancel_run_preserves_terminal_child(
 
         assert runner.cancel_run("terminal-child-run") is True
 
-        cancel_run.assert_called_once_with("terminal-child-run")
+        cancel_run.assert_called_once_with("terminal-child-run", terminal_reason=None)
     preserved = sessions.get(child.id)
     assert preserved is not None
     assert preserved.status == terminal_status

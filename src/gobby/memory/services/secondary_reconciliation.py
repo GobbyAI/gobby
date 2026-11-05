@@ -133,6 +133,7 @@ def _snapshot_matches(row: dict[str, Any], memory: Memory) -> bool:
     return (
         row.get("deleted_at") is None
         and row["content"] == memory.content
+        and row["rationale"] == memory.rationale
         and str(row["project_id"]) == memory.project_id
         and bool(row["is_global"]) == memory.is_global
         and row["memory_type"] == memory.memory_type.value
@@ -298,6 +299,7 @@ async def _apply_reconcile_sql(
             SET vector_needs_reindex = FALSE
             WHERE id = %s
               AND content = %s
+              AND rationale IS NOT DISTINCT FROM %s
               AND project_id = %s
               AND is_global = %s
               AND memory_type = %s
@@ -306,6 +308,7 @@ async def _apply_reconcile_sql(
             (
                 current.id,
                 current.content,
+                current.rationale,
                 current.project_id,
                 current.is_global,
                 current.memory_type.value,

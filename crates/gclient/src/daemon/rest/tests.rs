@@ -164,35 +164,45 @@ async fn one_deadline_spans_send_and_body() {
     server.abort();
 }
 
+/// An idle or waiting session is parked between turns, still live: the
+/// sidebar takes its ref from these rows, so the fetch must ask for every
+/// live status the daemon writes.
 #[tokio::test]
-async fn session_fetch_requests_every_live_daemon_status() {
+async fn sessions_fetch_asks_for_every_live_status() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.expect("accept");
-        let mut request = vec![0_u8; 8192];
-        let read = stream.read(&mut request).await.expect("read request");
-        let body = r#"{"sessions":[],"count":0,"next_cursor":null}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        while !request.windows(4).any(|boundary| boundary == b"\r\n\r\n") {
+            let count = stream.read(&mut chunk).await.expect("read request");
+            assert_ne!(count, 0, "request closed before headers completed");
+            request.extend_from_slice(&chunk[..count]);
+        }
+        let body = br#"{"sessions":[]}"#;
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
             body.len()
         );
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .expect("write response");
-        String::from_utf8_lossy(&request[..read]).into_owned()
+        stream.write_all(head.as_bytes()).await.expect("write head");
+        stream.write_all(body).await.expect("write body");
+        stream.shutdown().await.expect("end response");
+        String::from_utf8(request).expect("utf8 request")
     });
-    let base = Url::parse(&format!("http://{address}/")).expect("base url");
-    let client = RestClient::new(base, "token".to_string()).expect("client");
+    let client = RestClient::new(
+        Url::parse(&format!("http://{address}")).expect("url"),
+        "token".into(),
+    )
+    .expect("rest client");
     client.sessions("project-1").await.expect("sessions");
-    let request = server.await.expect("server task");
-    let target = request
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .expect("request target");
-    let url = Url::parse(&format!("http://{address}{target}")).expect("request url");
+    let request = server.await.expect("request server");
+    let target = request.lines().next().expect("request line");
+    let url = Url::parse(&format!(
+        "http://host{}",
+        target.split(' ').nth(1).expect("request target")
+    ))
+    .expect("target url");
     let statuses: Vec<String> = url
         .query_pairs()
         .filter(|(key, _)| key == "status_in")
@@ -209,8 +219,7 @@ async fn session_fetch_requests_every_live_daemon_status() {
             "awaiting_input",
             "awaiting_approval",
             "awaiting_handoff",
-        ],
-        "the sessions fetch must request every daemon live status"
+        ]
     );
 }
 

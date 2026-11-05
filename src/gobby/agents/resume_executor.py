@@ -48,6 +48,7 @@ from gobby.agents.resume_metadata import (
 )
 from gobby.agents.resume_placement import launch_resume
 from gobby.agents.sandbox_gate import SandboxRequiredError, resolve_resume_sandbox
+from gobby.agents.sandbox_resolvers import managed_claude_settings_args
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawn_executor_support import (
     _codex_runtime_config_overrides,
@@ -518,7 +519,12 @@ async def resume_agent_run(
             command.extend(["--mcp-config", claude_mcp_path])
             if strict_mcp:
                 command.append("--strict-mcp-config")
-        command.extend(sandbox_args)
+        command.extend(
+            managed_claude_settings_args(
+                sandbox_args,
+                srt_enforced=launch.enforced and launch.backend == "srt",
+            )
+        )
         command.append(prompt)
     # Merge only the launch-snapshot keys refreshed above. The full local
     # metadata dict carries protocol keys from a stale read (phase, native

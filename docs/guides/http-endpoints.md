@@ -260,9 +260,17 @@ Response:
   "status": "registered",
   "external_id": "session-abc123",
   "id": "generated-uuid",
-  "machine_id": "machine-xyz"
+  "machine_id": "machine-xyz",
+  "session_status": "active"
 }
 ```
+
+`session_status` is the session's lifecycle status after registration.
+An expired terminal session that re-registers itself, naming its own id in the
+`X-Gobby-Session-Id` header, is reactivated unless its CLI has exited, a clear
+successor replaced it, or another live session holds its pane. A registration
+from any other caller leaves it expired.
+A session that belongs to another machine returns 409.
 
 ### `POST /api/sessions/find_current`
 
@@ -496,13 +504,12 @@ and `validation_criteria`.
 | `POST` | `/api/agents/spawn` | Spawn one agent. |
 | `POST` | `/api/agents/spawn/batch` | Spawn multiple agents. |
 | `POST` | `/api/agents/spawn/prompt-preview` | Preview a spawn prompt. |
-| `GET` | `/api/agents/launch-defaults` | Read agent launch defaults. |
 | `POST` | `/api/agents/cleanup` | Reconcile stale runs using timeout criteria. |
 
 Agent HTTP routes are operator/client interfaces. Spawn requires `task_id` and
 uses `agent_name`; MCP spawn requires `prompt` and uses `agent`. HTTP batches
-contain individual spawn requests. `GET /api/agents/launch-defaults` is read-only;
-there is no corresponding PUT route. Use configuration management for changes.
+contain individual spawn requests. Launch models come from the project policy's
+`agent_model_defaults` map and the agent definition; see the agent spawning reference.
 
 ## Memory, Skills, Workflows, And Rules
 

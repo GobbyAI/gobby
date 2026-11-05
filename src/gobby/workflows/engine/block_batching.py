@@ -2,7 +2,7 @@
 
 A provider that dispatches every tool call of one assistant response in parallel
 delivers the whole prepared batch before the agent can read the first denial, so
-charging each sibling denial to the consecutive-tool-block budget spends five
+charging each sibling denial to the blocked-retry budget spends five
 attempts on one remediation opportunity. The same payloads name the issuing
 agent, and Claude Code subagents share their parent's session id, so one flat
 counter also charges one subagent's blocks to another.
@@ -86,9 +86,11 @@ def block_scope(variables: dict[str, Any], context: str) -> dict[str, Any]:
     return scope
 
 
-def clear_block_scopes(variables: dict[str, Any]) -> None:
-    """Drop every subagent block scope at a turn boundary."""
-    variables[BLOCK_SCOPES_VARIABLE] = {}
+def drop_block_scope(variables: dict[str, Any], context: str) -> None:
+    """Forget one subagent's block scope after its terminal stop."""
+    scopes = variables.get(BLOCK_SCOPES_VARIABLE)
+    if isinstance(scopes, dict):
+        scopes.pop(context, None)
 
 
 def delivers_response_batch_boundary(source: SessionSource | str | None) -> bool:

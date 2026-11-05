@@ -271,23 +271,22 @@ class EvaluationMixin:
         variables: dict[str, Any],
     ) -> None:
         """Update failed-tool and edit/write recovery state after tool completion."""
+        # Each agent context owns its pending flag; the main agent's is the flat one.
+        block_state = block_scope(variables, agent_context_key(event.data))
         if hook_event_tool_outcome(event.data, event.metadata).succeeded is False:
-            variables["tool_block_pending"] = True
+            block_state["tool_block_pending"] = True
             self._check_catastrophic_failure(event, variables)
             return
-
-        # Snapshot before clearing: a parallel non-edit success should not clear
-        # edit state created by a tool failure in the same turn.
-        had_pending_failure = variables.get("tool_block_pending", False)
-
-        variables["tool_block_pending"] = False
-        block_state = block_scope(variables, agent_context_key(event.data))
+        # Snapshot before clearing: a parallel non-edit success in this agent context
+        # should not clear edit state created by a tool failure in the same turn.
+        had_pending_failure = bool(block_state.get("tool_block_pending"))
+        block_state["tool_block_pending"] = False
         clear_blocked_tool_recovery_state(block_state)
         block_state["consecutive_tool_blocks"] = 0
 
-        if variables.get("edit_write_pending"):
+        if block_state.get("edit_write_pending"):
             if _is_write_like_event_data(event.data) or not had_pending_failure:
-                _clear_edit_write_state(variables)
+                _clear_edit_write_state(block_state)
 
     async def _finalize_block_response(
         self,
@@ -552,11 +551,12 @@ class EvaluationMixin:
         ctx = evaluation.rule_context
         allowed_funcs = evaluation.rule_allowed_funcs
         if ctx is None or allowed_funcs is None:
+            # block_state is the issuing agent context's blocked-retry budget.
             ctx = await offload(
                 self._build_eval_context,
                 evaluation.event,
                 evaluation.variables,
-                evaluation.eval_context,
+                {**(evaluation.eval_context or {}), "block_state": evaluation.block_state},
             )
             allowed_funcs = await offload(self._build_allowed_funcs, ctx)
             evaluation.rule_context = ctx
@@ -573,7 +573,7 @@ class EvaluationMixin:
             )
             ctx["event"] = freeze_evaluation_value(evaluation.event)
             project_snapshot = evaluation.rule_project_snapshot
-        protected_keys = {"variables", "event", "tool_input", "source", "project"}
+        protected_keys = {"variables", "event", "tool_input", "source", "project", "block_state"}
         protected_keys.update(evaluation.eval_context or {})
 
         for row, body in rules:
@@ -803,12 +803,12 @@ class EvaluationMixin:
                     # Track the blocked tool so repeated retries can escalate,
                     # but do not mark this as a tool execution failure.
                     if evaluation.is_before_tool:
-                        evaluation.variables["_last_blocked_tool"] = _get_tool_identity(
+                        evaluation.block_state["_last_blocked_tool"] = _get_tool_identity(
                             evaluation.event.data
                         )
                         # Blocked edit/write never executed - nothing to recover
                         if _is_write_like_event_data(evaluation.event.data):
-                            _clear_edit_write_state(evaluation.variables)
+                            _clear_edit_write_state(evaluation.block_state)
 
             rule_latency = (time.perf_counter() - rule_start) * 1000
             rule_result: RuleResult = "block" if rule_blocked else "allow"
@@ -968,6 +968,7 @@ class EvaluationMixin:
                         row=gate.row,
                         delivery=gate.delivery,
                         staged=evaluation.staged_variable_updates,
+                        writer="acknowledge_variable",
                     )
             _apply_staged_effects_metadata(meta, evaluation)
             return HookResponse(

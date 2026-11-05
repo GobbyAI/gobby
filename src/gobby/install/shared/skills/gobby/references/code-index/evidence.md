@@ -95,4 +95,6 @@ When evidence cannot serve the claim, say why in the claim and fall back:
 
 Contract: [gcode evidence](../../../../../../../../docs/contracts/gcode-cli.md#deterministic-evidence).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-02_

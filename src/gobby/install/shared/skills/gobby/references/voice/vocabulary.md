@@ -24,3 +24,5 @@ Vocabulary biases Whisper recognition; it does not rename words in transcripts
 or configure external providers. Do not clear terms merely to diagnose a typo.
 
 See [vocabulary tools](../../../../../../../../docs/guides/voice.md#whisper-vocabulary-tools).
+
+_Version: 1.0.0_

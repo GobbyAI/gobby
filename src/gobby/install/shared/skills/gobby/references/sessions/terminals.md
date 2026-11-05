@@ -13,16 +13,19 @@ transcript tail is not proof of a live terminal screen. Missing pane/transcript
 errors require restoring the actual runtime or using transcript diagnostics.
 
 `send_keys` requires current caller context. The `no-send-keys` rule (default tag)
-withholds it from every definition except the Orchestrator and Assistant, which
-carry the `send_keys` capability; the operator's own unspawned terminal stays
-exempt. `capture_output` is not withheld by that rule. Before any key is written,
+withholds it from every definition except the Orchestrator, which carries the
+`send_keys` capability; the operator's own unspawned terminal stays exempt.
+`capture_output` is not withheld by that rule. The `no-send-wake` rule (default tag)
+does the same for `send_wake`, which types one fixed line; only the Assistant
+holds its `send_wake` capability. Before any key is written,
 the target must show an idle agent CLI composer: a bare shell, an empty or dead
 terminal, a session with no live agent CLI, a draft or held composer, and a
 credential prompt are refused, and undeterminable state fails closed. A tmux
 target without a process group is refused as unconfirmed.
 The selected `block-cross-project-send-keys` rule restricts targets to the caller,
 its project, or its ancestor/descendant tree, and `block-web-chat-send-keys`
-blocks both tools for web-chat callers. Seat guidance permits stalled-session
+blocks `send_keys`, `send_wake` and `capture_output` for web-chat callers, and
+`send_wake` also applies the target's `message_sender_capabilities` admission. Seat guidance permits stalled-session
 resume only, never steering. No seat may enter credentials or type into a password
 or credential prompt. These permissions do not authorize answering a user's approval dialog.
 Use the session target intentionally; do not use raw tmux to evade a refusal.
@@ -32,8 +35,12 @@ nonliteral input selects named keys such as `Enter` or `C-c`. A `/fast` first
 token is refused: ask the user to run the provider speed toggle. Managed writes
 can be indeterminate; inspect the resulting state before risking duplicate input.
 
-Automatic writes (wakes, compaction, continuations, watchdog reprompts) type only
-into a composer the input ledger reads empty. `release_composer` takes another
+Automatic writes (wakes, continuations, watchdog reprompts) type only into a
+composer the input ledger reads empty. `set_handoff` compaction and `/clear` are
+the exception: the handoff owns the composer, so it wipes whatever is there,
+including an operator draft, before it types the command. If no frame then shows
+the composer empty, the delivery fails with `composer_not_clean` and types
+nothing. `release_composer` takes another
 session's reference and starts its live terminal clean in that ledger. Call it
 only after `capture_output` shows no draft and no provider menu: a seat spawned
 before the ledger existed reads unknown until released, and a usage-limit stop
@@ -64,4 +71,6 @@ until it lapses.
 
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 
-_Last verified: 2026-10-06_
+_Version: 2.0.0_
+
+_Last verified: 2026-11-04_

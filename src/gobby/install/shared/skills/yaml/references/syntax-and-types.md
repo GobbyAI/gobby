@@ -41,3 +41,5 @@
   `yes`, `no`, and `none` when the value is not intentionally boolean/null.
 - Preserve units explicitly where the platform supports them, such as memory,
   CPU, timeout, and duration fields.
+
+_Version: 1.0.0_

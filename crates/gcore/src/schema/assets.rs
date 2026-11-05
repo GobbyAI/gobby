@@ -464,9 +464,23 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 488,
-        filename: "488_session_status_line.sql",
+        filename: "488_reply_waits_skip_daemon_receipts.sql",
+        checksum: "fb5b29fd8a17582f6ca84dc0b4ae19e7c95abc9c60a632a1f2c3cd72c26693ef",
+        sql: include_str!(
+            "../../assets/schema/migrations/488_reply_waits_skip_daemon_receipts.sql"
+        ),
+    },
+    EmbeddedMigration {
+        version: 489,
+        filename: "489_session_startup_marks.sql",
+        checksum: "fe7e5507c77bffaa5724bc2a47466f79d2476a4d4e4d87e71724d18beb032ace",
+        sql: include_str!("../../assets/schema/migrations/489_session_startup_marks.sql"),
+    },
+    EmbeddedMigration {
+        version: 490,
+        filename: "490_session_status_line.sql",
         checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
-        sql: include_str!("../../assets/schema/migrations/488_session_status_line.sql"),
+        sql: include_str!("../../assets/schema/migrations/490_session_status_line.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

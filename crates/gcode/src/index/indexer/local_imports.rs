@@ -17,9 +17,9 @@
 //! time it runs, so resolution is order-independent: it does not matter whether
 //! the caller or the callee file was indexed first.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use postgres::Client;
+use postgres::{Client, GenericClient};
 
 use crate::db;
 use crate::index::api;
@@ -68,43 +68,85 @@ fn resolve_pending_local_import_calls(
 ) -> anyhow::Result<LocalImportRepair> {
     let pending_count = pending.len();
     let owners = pending_call_owners(&pending);
+    let mut lookups = HashMap::new();
     let mut resolved_count = 0usize;
+    let mut replacements = Vec::with_capacity(pending_count);
+    // One transaction covers every lookup and write, so the pass commits once.
+    let mut tx = conn.transaction()?;
     for call in &pending {
-        let candidate_files = call.local_import_candidate_files();
-        let resolved_id = if call.local_import_uses_default_export_fallback() {
-            db::resolve_default_import_symbol_id(conn, project_id, machine_id, &candidate_files)?
-        } else if let Some(qualifier) = call.local_import_type_member_qualifier() {
-            db::resolve_local_type_member_symbol_id(
-                conn,
-                project_id,
-                machine_id,
-                &candidate_files,
-                &qualifier,
-                &call.callee_name,
-            )?
-        } else {
-            db::resolve_local_callee_symbol_id(
-                conn,
-                project_id,
-                machine_id,
-                &candidate_files,
-                &call.callee_name,
-            )?
-        };
-        let resolved = match resolved_id {
-            Some(id) => {
-                resolved_count += 1;
-                resolved_symbol_call(call, id)
-            }
-            None => unresolved_call(call),
-        };
-        api::promote_local_import_call(conn, project_id, call, &resolved)?;
+        let resolved =
+            match resolve_pending_callee(&mut tx, project_id, machine_id, call, &mut lookups)? {
+                Some(id) => {
+                    resolved_count += 1;
+                    resolved_symbol_call(call, id)
+                }
+                None => unresolved_call(call),
+            };
+        replacements.push(resolved);
     }
+    api::promote_local_import_calls(&mut tx, project_id, &pending, &replacements)?;
+    tx.commit()?;
     Ok(LocalImportRepair {
         pending: pending_count,
         resolved: resolved_count,
         owners: owners.into_iter().collect(),
     })
+}
+
+/// The lookup a pending call needs. Calls that share a lookup and candidate
+/// files get the same answer, so the pass runs each distinct lookup once.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum CalleeLookup {
+    DefaultExport,
+    TypeMember { qualifier: String, name: String },
+    Callee { name: String },
+}
+
+type CalleeLookups = HashMap<(CalleeLookup, Vec<String>), Option<String>>;
+
+fn resolve_pending_callee(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    machine_id: &str,
+    call: &CallRelation,
+    lookups: &mut CalleeLookups,
+) -> anyhow::Result<Option<String>> {
+    let candidate_files = call.local_import_candidate_files();
+    let lookup = if call.local_import_uses_default_export_fallback() {
+        CalleeLookup::DefaultExport
+    } else if let Some(qualifier) = call.local_import_type_member_qualifier() {
+        CalleeLookup::TypeMember {
+            qualifier,
+            name: call.callee_name.clone(),
+        }
+    } else {
+        CalleeLookup::Callee {
+            name: call.callee_name.clone(),
+        }
+    };
+    let key = (lookup, candidate_files);
+    if let Some(resolved) = lookups.get(&key) {
+        return Ok(resolved.clone());
+    }
+    let (lookup, candidate_files) = &key;
+    let resolved = match lookup {
+        CalleeLookup::DefaultExport => {
+            db::resolve_default_import_symbol_id(conn, project_id, machine_id, candidate_files)?
+        }
+        CalleeLookup::TypeMember { qualifier, name } => db::resolve_local_type_member_symbol_id(
+            conn,
+            project_id,
+            machine_id,
+            candidate_files,
+            qualifier,
+            name,
+        )?,
+        CalleeLookup::Callee { name } => {
+            db::resolve_local_callee_symbol_id(conn, project_id, machine_id, candidate_files, name)?
+        }
+    };
+    lookups.insert(key, resolved.clone());
+    Ok(resolved)
 }
 
 fn pending_call_owners(pending: &[CallRelation]) -> BTreeSet<String> {

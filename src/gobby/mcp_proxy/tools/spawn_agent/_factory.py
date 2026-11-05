@@ -24,6 +24,7 @@ from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
+from ._launch_settings import agent_provider_for_spawn, load_model_defaults
 from ._network_override import apply_network_override, validate_network_override
 from ._provider_resolution import (
     concrete_provider,
@@ -245,14 +246,22 @@ def _load_agent_body(
         AgentDefinitionBody if found, None otherwise.
 
     Raises:
-        AgentResolutionError: The stored definition names ``terminal_backend``.
+        AgentResolutionError: The stored definition names ``terminal_backend``, or a named
+            definition is disabled (its seat would fail closed on every tool call).
     """
     if db is None:
         return None
 
-    from gobby.workflows.agent_resolver import resolve_agent
+    from gobby.workflows.agent_resolver import resolve_agent, resolve_agent_with_row
+    from gobby.workflows.selectors import binds_named_definition
 
-    return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
+    found = resolve_agent_with_row(name, db, cli_source=cli_source, project_id=project_id)
+    if found is None:
+        return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
+    body, row = found
+    if not row.enabled and binds_named_definition(name):
+        raise AgentResolutionError(f"Agent definition '{name}' is disabled")
+    return body
 
 
 def create_spawn_agent_registry(
@@ -359,7 +368,7 @@ def create_spawn_agent_registry(
             branch_name: Git branch name (auto-generated from task if not provided)
             base_branch: Base branch for worktree/clone
             clone_id: Existing clone ID to reuse
-            worktree_id: Existing worktree to reuse (full UUID or unique id prefix)
+            worktree_id: Existing worktree to reuse (full UUID, unique id prefix, or branch name)
             cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
             workflow: Workflow/pipeline to use
             execution_mode: Run lifetime; session resumes default to interactive, otherwise
@@ -570,9 +579,12 @@ def create_spawn_agent_registry(
                     classifier=StallClassifier(detection_registry),
                 )
 
+                # Each provider here is the one its launch takes, through the same policy-map
+                # lookup spawn_agent_impl uses, so a chain never picks a provider it will not run.
+                model_defaults = await asyncio.to_thread(load_model_defaults, db, project_id)
                 agent_provider = resolve_spawn_provider(
                     explicit_provider=None,
-                    agent_provider=agent_body.provider,
+                    agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
                     default_provider=default_provider,
                 )
 
@@ -609,7 +621,9 @@ def create_spawn_agent_registry(
                             break
                         candidate_provider = resolve_spawn_provider(
                             explicit_provider=None,
-                            agent_provider=candidate.provider,
+                            agent_provider=agent_provider_for_spawn(
+                                candidate, model, model_defaults
+                            ),
                             default_provider=default_provider,
                         )
                         if candidate_provider not in failed_providers:
@@ -685,9 +699,10 @@ def create_spawn_agent_registry(
                     "error": "A run on another machine needs a parent session and a project",
                 }
             try:
+                model_defaults = await asyncio.to_thread(load_model_defaults, db, project_id)
                 run_provider = resolve_spawn_provider(
                     explicit_provider=provider,
-                    agent_provider=agent_body.provider if agent_body is not None else None,
+                    agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
                     default_provider=default_provider,
                 )
             except ValueError as exc:
@@ -701,6 +716,7 @@ def create_spawn_agent_registry(
                 daemon_config=config_resolver() if config_resolver is not None else None,
                 placement=placement,
                 completion_registry=completion_registry,
+                model_defaults=model_defaults,
                 request=remote_spawn.RemoteSpawnRequest(
                     parent_session_id=resolved_parent_session_id,
                     project_id=project_id,

@@ -31,4 +31,6 @@ bounded manifest or bypass requirements by setting tracking variables.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#reference-files).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

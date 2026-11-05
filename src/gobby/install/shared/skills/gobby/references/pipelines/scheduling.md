@@ -45,4 +45,6 @@ lifecycle. Never mutate the user's live state as a documentation test.
 
 Verified guide: [cron-scheduler.md](../../../../../../../../docs/guides/cron-scheduler.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

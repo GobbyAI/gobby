@@ -21,8 +21,8 @@ so context resets reload the operating guidance.
 
 Keep all rounds and checkpoint commits attributed to this umbrella task. Continue
 authorized work while gates remain armed. Use the applicable event-driven wait
-when waiting on actual dependent work or a review; do not create a wait merely
-to end a turn.
+when waiting on actual dependent work (another session, an agent run, or your own
+provider background task) or a review; do not create a wait merely to end a turn.
 
 When the user finishes the live scope, require exactly one live umbrella claim,
 resolve unfinished findings, validate after final edits, and commit changed work.
@@ -37,4 +37,5 @@ again; an old session variable does not prove ownership.
 
 Guide: [Live Interactive Work](../../../../../../../../docs/guides/tasks.md#live-interactive-work).
 
-_Last verified: 2026-09-12_
+_Version: 1.0.1_
+_Last verified: 2026-11-03_

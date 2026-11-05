@@ -9,6 +9,7 @@ from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from tests.mcp_proxy.caller_principal_support import operator_caller
 
 pytestmark = pytest.mark.unit
 
@@ -512,6 +513,7 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
         patch(
             "gobby.utils.project_context.reset_project_context",
         ),
+        operator_caller(),
     ):
         mock_pm_class.return_value.resolve_ref.return_value = mock_project
         result = await daemon_tools.call_tool(
@@ -562,6 +564,7 @@ async def test_call_tool_resolves_hash_session_in_caller_project_before_target_o
             return_value=sentinel.token,
         ) as mock_ref,
         patch("gobby.utils.project_context.reset_project_context"),
+        operator_caller(),
     ):
         mock_pm_class.return_value.resolve_ref.side_effect = resolve_ref
         result = await daemon_tools.call_tool(
@@ -639,6 +642,7 @@ async def test_call_tool_top_level_wrapper_fields_win_and_nested_session_id_stay
         patch(
             "gobby.utils.project_context.reset_project_context",
         ),
+        operator_caller(),
     ):
         mock_pm_class.return_value.resolve_ref.return_value = mock_project
         await daemon_tools.call_tool(

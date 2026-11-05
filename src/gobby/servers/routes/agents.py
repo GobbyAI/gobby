@@ -14,48 +14,20 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, Field, ValidationError
 
-from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.servers.routes.agent_definition_requests import (
+    CreateAgentDefinitionRequest,
+    UpdateAgentDefinitionRequest,
+)
 from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
-from gobby.workflows.agent_models import AgentPromptBlocks
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
 _SAFE_DEFINITION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
-_LEGACY_STEP_KEYS = {
-    "steps": "step_workflow.steps",
-    "step_variables": "step_workflow.variables",
-    "exit_condition": "step_workflow.exit_condition",
-}
-
-
-def _reject_legacy_step_keys(data: Any) -> Any:
-    if isinstance(data, dict):
-        for key, hint in _LEGACY_STEP_KEYS.items():
-            if key in data:
-                raise ValueError(f"Use {hint} instead of top-level {key}")
-        legacy_prompts = [
-            key for key in ("role", "goal", "personality", "instructions") if key in data
-        ]
-        if legacy_prompts:
-            named = ", ".join(legacy_prompts)
-            raise ValueError(
-                f"Legacy prompt fields are no longer accepted: {named}. "
-                "Use prompts.persona for interactive guidance and prompts.agent "
-                "for spawned-run instructions."
-            )
-    return data
 
 
 def _row_body(row: Any) -> dict[str, Any]:
@@ -93,97 +65,6 @@ def _bundled_definition_path(agents_path: Path, name: str) -> Path:
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid agent definition name") from None
     return yaml_path
-
-
-class CreateAgentDefinitionRequest(BaseModel):
-    """Request body for creating an agent definition in the DB.
-
-    Unknown keys are rejected: a field the agent body does not carry would
-    otherwise be dropped silently.
-    Lifetime and authority fields (including persistent_workspace,
-    read_all_agent_workspaces and task_attestation_writes) are operator-configured.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    project_id: str | None = None
-    description: str | None = None
-    version: str | None = None
-    sources: list[str] | None = None
-    surfaces: list[str] | None = None
-    prompts: AgentPromptBlocks = Field(default_factory=AgentPromptBlocks)
-    provider: str = "inherit"
-    model: str | None = None
-    reasoning_effort: str | None = None
-    reasoning_required: bool | None = None
-    fallback_agent: str | None = None
-    checkout_mode: str | None = "inherit"
-    base_branch: str = "inherit"
-    timeout: float = 0
-    prewarm_pre_commit_store: bool = True
-    workflows: dict[str, Any] | None = None
-    blocked_tools: list[str] | None = None
-    blocked_mcp_tools: list[str] | None = None
-    implementation_domains: list[str] | None = None
-    task_categories: list[str] | None = None
-    enabled: bool = True
-    tags: list[str] | None = None
-    step_workflow: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_legacy_steps(cls, data: Any) -> Any:
-        return _reject_legacy_step_keys(data)
-
-    @field_validator("reasoning_effort", mode="before")
-    @classmethod
-    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return normalize_reasoning_effort(str(value))
-
-
-class UpdateAgentDefinitionRequest(BaseModel):
-    """Editable definition fields; operator lifetime/authority keys are rejected."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    description: str | None = None
-    version: str | None = None
-    sources: list[str] | None = None
-    surfaces: list[str] | None = None
-    prompts: AgentPromptBlocks | None = None
-    provider: str | None = None
-    model: str | None = None
-    reasoning_effort: str | None = None
-    reasoning_required: bool | None = None
-    fallback_agent: str | None = None
-    checkout_mode: str | None = None
-    base_branch: str | None = None
-    timeout: float | None = None
-    prewarm_pre_commit_store: bool | None = None
-    workflows: dict[str, Any] | None = None
-    step_workflow: dict[str, Any] | None = None
-    enabled: bool | None = None
-    blocked_tools: list[str] | None = None
-    blocked_mcp_tools: list[str] | None = None
-    implementation_domains: list[str] | None = None
-    task_categories: list[str] | None = None
-    tags: list[str] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_legacy_steps(cls, data: Any) -> Any:
-        return _reject_legacy_step_keys(data)
-
-    @field_validator("reasoning_effort", mode="before")
-    @classmethod
-    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return normalize_reasoning_effort(str(value))
 
 
 class CleanupAgentRunsRequest(BaseModel):
@@ -425,6 +306,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 reasoning_effort=request.reasoning_effort,
                 reasoning_required=request.reasoning_required,
                 fallback_agent=request.fallback_agent,
+                fallbacks=request.fallbacks or [],
                 checkout_mode=request.checkout_mode,
                 base_branch=request.base_branch,
                 timeout=request.timeout,
@@ -520,6 +402,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "blocked_mcp_tools",
                     "implementation_domains",
                     "task_categories",
+                    "fallbacks",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]
@@ -960,9 +843,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         await _require_definition_operator(http_request)
         try:
             from gobby.agents.sync import get_bundled_agents_path
+            from gobby.utils.strict_yaml import load_strict_yaml
             from gobby.workflows.definitions import AgentDefinitionBody
 
-            # Load from bundled agents directory
             agents_path = get_bundled_agents_path()
             yaml_path = _bundled_definition_path(agents_path, name)
             if not yaml_path.exists():
@@ -970,7 +853,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     status_code=404,
                     detail=f"File-based agent definition '{name}' not found",
                 )
-            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            data = load_strict_yaml(yaml_path.read_text(encoding="utf-8"))
             data["name"] = data.get("name", name)
             body = AgentDefinitionBody.model_validate(data)
             manager = _get_manager()

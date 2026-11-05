@@ -36,6 +36,12 @@ from tests.fixtures.isolated_checkout import insert_overlay, install_isolated_ch
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def managed_worktree_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+    return tmp_path
+
+
 def _git(cwd: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -239,6 +245,63 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
     assert adopted == 1
     assert inspected_paths == [valid_path.resolve()]
     assert registrations == [("project-1", "task/valid", str(valid_path.resolve()), "trunk")]
+
+
+@pytest.mark.asyncio
+async def test_worktree_scan_skips_linked_worktrees_outside_managed_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    managed_root = tmp_path / "managed"
+    managed_path = managed_root / "project" / "task-managed"
+    scratch_path = tmp_path / "scratchpad" / "clean"
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
+    worktrees = [
+        WorktreeInfo(path=str(repo), branch="main", commit="a"),
+        WorktreeInfo(path=str(scratch_path), branch=None, commit="a"),
+        WorktreeInfo(path=str(managed_root), branch="task/root", commit="a"),
+        WorktreeInfo(path=str(managed_path), branch="task/managed", commit="a"),
+    ]
+    inspected_paths: list[Path] = []
+    registrations: list[tuple[object, ...]] = []
+
+    async def inspect_worktree(path: Path) -> WorktreeInfo:
+        inspected_paths.append(path)
+        return WorktreeInfo(path=str(path), branch="task/managed", commit="a")
+
+    def register_adopted(*args: object) -> tuple[object, bool]:
+        registrations.append(args)
+        return object(), True
+
+    async def list_worktrees(_manager: object, *, failure_log_level: int) -> list[WorktreeInfo]:
+        return worktrees
+
+    async def get_default_branch() -> str:
+        return "main"
+
+    manager = SimpleNamespace(
+        inspect_worktree=inspect_worktree,
+        get_default_branch=get_default_branch,
+    )
+    monkeypatch.setattr(reconciliation, "WorktreeGitManager", lambda _path: manager)
+    monkeypatch.setattr(worktree_git_status, "list_worktrees", list_worktrees)
+    storage = cast("LocalWorktreeManager", SimpleNamespace(register_adopted=register_adopted))
+    project = cast("Project", SimpleNamespace(id="project-1", name="project"))
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    adopted = await reconciliation._reconcile_project_worktrees(
+        project,
+        str(repo),
+        storage,
+        run_db=run_db,
+    )
+
+    assert adopted == 1
+    assert inspected_paths == [managed_path.resolve()]
+    assert registrations == [("project-1", "task/managed", str(managed_path.resolve()), "main")]
 
 
 @pytest.mark.asyncio

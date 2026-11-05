@@ -34,3 +34,5 @@ actual configuration instead of switching providers silently.
 
 See [audio API](../../../../../../../../docs/guides/voice.md#api-and-websocket-reference)
 and [troubleshooting](../../../../../../../../docs/guides/voice.md#troubleshooting).
+
+_Version: 1.0.0_

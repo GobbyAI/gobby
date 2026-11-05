@@ -155,7 +155,8 @@ def test_query_and_surface_state_parity(
         "hold_state = 'ready'",
         "state_bucket = 'ready'",
         "closed_at = now(), closed_reason = NULL",
-        "closed_at = now(), closed_reason = 'completed'",
+        "closed_at = now(), closed_reason = '   '",
+        "closed_at = now(), closed_reason = repeat('x', 121)",
     ],
 )
 @pytest.mark.integration

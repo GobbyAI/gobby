@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import time
 from collections.abc import Iterator
@@ -30,6 +29,7 @@ from gobby.utils.local_token import (
     read_managed_api_token,
     verify_agent_api_token,
 )
+from gobby.utils.native_bin import resolve_native_bin
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
     FENCING_EPOCH,
@@ -165,7 +165,8 @@ def test_native_orphan_maintenance_config_fetch(
     postgres_db: HubDatabase,
     postgres_database_url: str,
 ) -> None:
-    binary = shutil.which("gcode")
+    # A PATH lookup can find an agent-session shim that rewrites GOBBY_HOME.
+    binary = resolve_native_bin("gcode")
     if binary is None:
         pytest.skip("native config regression requires installed gcode")
     monkeypatch.setattr("gobby.servers.auth_service.resolve_auth_schema", lambda _: "auth")

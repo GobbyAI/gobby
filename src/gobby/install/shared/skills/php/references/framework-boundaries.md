@@ -44,3 +44,5 @@ or serialization.
   PSR-18 client contracts where the package exposes them.
 - Avoid binding package APIs to one framework unless the package is explicitly
   framework-specific.
+
+_Version: 1.0.0_

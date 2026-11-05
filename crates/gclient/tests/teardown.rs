@@ -855,12 +855,13 @@ async fn send_process_signal(signal: &str) {
 async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShutdownStall) {
     let mock = MockDaemon::start("shutdown-token").await;
     mock.use_unique_attachment_ids();
+    mock.set_attach_backend("terminal-shutdown", "tmux");
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-shutdown", "backend": "native", "state": "live"}],
+            "items": [{"terminal_id": "terminal-shutdown", "backend": "tmux", "state": "live"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         }),
@@ -1013,12 +1014,13 @@ impl LiveExitCause {
 async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<String>>>) {
     let mock = MockDaemon::start("exit-token").await;
     mock.use_unique_attachment_ids();
+    mock.set_attach_backend("terminal-exit", "tmux");
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-exit", "backend": "native", "state": "live"}],
+            "items": [{"terminal_id": "terminal-exit", "backend": "tmux", "state": "live"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-exit", "seq": 1}
         }),

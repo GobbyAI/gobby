@@ -32,6 +32,11 @@ MAX_WAITING_FUTURES = 65_536
 # can exceed it. Capping each POST bounds its latency; one operation larger than the limit
 # still goes alone.
 MAX_BATCH_BYTES = 1024 * 1024
+# A publish call splits into ops of at most this many encoded bytes, so no request body grows
+# with the call. The cap sits above MAX_BATCH_BYTES because each subscriber queues 16 batches
+# (gdaemon broker.rs MAX_QUEUED_BATCHES); finer ops could retire a slow subscriber on a burst
+# that one op accepts today. A frame above the cap goes alone in its own op.
+PUBLISH_CHUNK = 4 * 1024 * 1024
 
 REQUEST_TIMEOUT = 2.0
 TOKEN_WAIT = 2.0
@@ -158,12 +163,19 @@ class NativePublisher:
     def publish(
         self, message: dict[str, Any], frames: Sequence[dict[str, Any]] = ()
     ) -> asyncio.Future[None]:
-        # Frames are encoded exactly as BroadcastMixin.broadcast encodes them.
-        payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]
-        return self._enqueue({"op": "publish", "filter": message, "frames": payloads})
+        # Frames are encoded exactly as BroadcastMixin.broadcast encodes them. The filter
+        # repeats in every op this call splits into, so callers pass routing fields only.
+        # Every op is encoded before any is queued, so a frame that fails to encode queues none.
+        ops = _publish_ops(json_dumps(message), frames or (message,))
+        futures = [self._enqueue(op) for op in ops]
+        if len(futures) == 1:
+            return futures[0]
+        return asyncio.ensure_future(_settle_all(futures))
 
     def subscribe(self, leg: int, events: Iterable[str]) -> asyncio.Future[None]:
-        return self._enqueue({"op": "subscribe", "leg": leg, "events": list(events)})
+        return self._enqueue(
+            json_dumps({"op": "subscribe", "leg": leg, "events": list(events)}).encode()
+        )
 
     def fail_generation(self, generation: str | None) -> None:
         """Retire the current generation without retrying its work, then rebind."""
@@ -207,13 +219,12 @@ class NativePublisher:
             await asyncio.sleep(TOKEN_POLL_INTERVAL)
         return token
 
-    def _enqueue(self, op: dict[str, Any]) -> asyncio.Future[None]:
+    def _enqueue(self, encoded: bytes) -> asyncio.Future[None]:
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         generation = self._generation
         if generation is None:
             future.set_result(None)
             return future
-        encoded = json_dumps(op).encode()
         # Each operation holds exactly one waiting future, so the op count is the future count.
         if (
             self._retained_bytes + len(encoded) > MAX_RETAINED_BYTES
@@ -364,6 +375,49 @@ def _request_body(generation: str, ops: list[bytes]) -> bytes:
     return b"".join(
         (b'{"generation":', json_dumps(generation).encode(), b',"ops":[', b",".join(ops), b"]}")
     )
+
+
+def _publish_op(filter_json: str, frames: list[bytes]) -> bytes:
+    """Encodes a publish op from frame literals, each already encoded as a JSON string.
+
+    The op is joined once from its pieces, so assembling it holds no copy of the frames.
+    """
+    pieces = [b'{"op": "publish", "filter": ', filter_json.encode(), b', "frames": [']
+    for index, frame in enumerate(frames):
+        if index:
+            pieces.append(b", ")
+        pieces.append(frame)
+    pieces.append(b"]}")
+    return b"".join(pieces)
+
+
+def _publish_ops(filter_json: str, sources: Sequence[dict[str, Any]]) -> list[bytes]:
+    """Encodes the frames in order into publish ops, each within PUBLISH_CHUNK bytes.
+
+    A frame is encoded as JSON and then as the JSON string literal its op carries. Each
+    literal is dropped once its op is built, so no whole-payload list of frames is held.
+    """
+    empty = len(_publish_op(filter_json, []))
+    ops: list[bytes] = []
+    chunk: list[bytes] = []
+    size = empty
+    for source in sources:
+        literal = json_dumps(json_dumps(source)).encode()
+        # json_dumps escapes to ASCII, so the literal's length is its encoded size.
+        # Each frame costs its encoded bytes plus the separator before it.
+        cost = len(literal) + 2
+        if chunk and size + cost > PUBLISH_CHUNK:
+            ops.append(_publish_op(filter_json, chunk))
+            chunk = []
+            size = empty
+        chunk.append(literal)
+        size += cost
+    ops.append(_publish_op(filter_json, chunk))
+    return ops
+
+
+async def _settle_all(futures: list[asyncio.Future[None]]) -> None:
+    await asyncio.gather(*futures)
 
 
 def native_publisher_from_environment(

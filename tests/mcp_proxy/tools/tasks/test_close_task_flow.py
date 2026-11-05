@@ -19,7 +19,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_close as _commit_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
-from gobby.storage.tasks import Task, TaskHasOpenChildrenError
+from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.tasks.closure_policy import ClosureDecision
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -71,16 +71,18 @@ def _ready_evaluation(task: Task) -> CloseEvaluation:
     )
 
 
+def _approved_closure(*_args: object, facts: dict[str, Any], **_kwargs: object) -> Any:
+    """An approving policy whose snapshot records the observed facts, as storage does."""
+    return SimpleNamespace(
+        decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision"),
+        snapshot=SimpleNamespace(facts=dict(facts)),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _policy_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     """Policy decisions are exercised separately against isolated PostgreSQL."""
-    monkeypatch.setattr(
-        lifecycle,
-        "prepare_closure",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
-        ),
-    )
+    monkeypatch.setattr(lifecycle, "prepare_closure", _approved_closure)
     monkeypatch.setattr(lifecycle, "session_agent_definition", lambda *_args: None)
     monkeypatch.setattr(
         lifecycle,
@@ -131,7 +133,12 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
     monkeypatch.setattr(
         lifecycle,
         "prepare_closure",
-        record("policy", SimpleNamespace(decision=_ready_evaluation(task).decision)),
+        record(
+            "policy",
+            SimpleNamespace(
+                decision=_ready_evaluation(task).decision, snapshot=SimpleNamespace(facts={})
+            ),
+        ),
     )
     monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", record("resolve_task", task.id))
     monkeypatch.setattr(lifecycle, "resolve_task_repo_path", record("repo", "/repo"))
@@ -201,14 +208,15 @@ async def test_a_child_created_during_the_close_window_asks_for_a_retry(
     evaluation = _ready_evaluation(task)
     monkeypatch.setattr(lifecycle, "_evaluate_close", AsyncMock(return_value=evaluation))
     manager = cast(MagicMock, ctx.task_manager)
-    manager.close_task.side_effect = TaskHasOpenChildrenError(task.id, ["late-child (Late child)"])
+    # A late child moves the closure revision, so the guarded close loses the race.
+    manager.close_task.side_effect = TaskStaleStateError(task.id)
     cleanup = MagicMock()
     monkeypatch.setattr(close_finalization, "_cleanup_closed_claim", cleanup)
     result = await _commit_close(
         ctx, evaluation, reason="done", changes_summary="Done", commit_sha=None
     )
     assert result["error"] == "close_state_changed"
-    assert "Late child" in result["message"]
+    assert "reload and retry" in result["message"]
     cleanup.assert_not_called()
 
 

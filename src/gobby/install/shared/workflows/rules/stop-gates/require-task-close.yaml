@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [stop-gates, enforcement, lifecycle, gobby, default]
 
 rules:
@@ -14,6 +15,7 @@ rules:
           - Done: commit its files, clear any gates, then call gobby-tasks:close_task with the commit_sha.
           - Waiting on a running agent or close review: call gobby-agents:wait_for_agent, then end the turn.
           - Waiting on a restart, landing or reply from another session: call gobby-agents:wait_for_coordination, then end the turn.
+          - Waiting on your own provider background task that re-invokes you when it finishes: call gobby-agents:wait_for_coordination(background_task_id=<its task id>, timeout=<seconds>), then end the turn.
           - Blocked by another open task: record it with gobby-tasks:add_dependency (task_id=<claimed>, depends_on=<blocker>).
           - Stuck or needing a human decision: call gobby-tasks:escalate_task with the reason.
           Restating status without taking one of these exits keeps this gate firing.

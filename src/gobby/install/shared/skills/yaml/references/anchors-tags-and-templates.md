@@ -35,3 +35,5 @@
   review and safer for operators.
 - Keep generated YAML snapshots or rendered manifests in sync if the repo tracks
   them.
+
+_Version: 1.0.0_

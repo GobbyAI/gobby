@@ -52,3 +52,5 @@ path. Define a routing seam and verification signals, introduce the replacement
 behind it, then migrate and verify consumers one at a time. After every consumer
 uses the new path, delete the legacy implementation, seam, adapters, flags,
 obsolete checks, and any unnecessary facade. Run final validation after cleanup.
+
+_Version: 1.0.0_

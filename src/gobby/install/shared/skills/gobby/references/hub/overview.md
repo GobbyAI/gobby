@@ -26,3 +26,5 @@ database service; changing a query's project does not repair it. Installation,
 lease promotion, secret distribution, and datastore recovery are operator
 procedures in the [shared-stack guide](../../../../../../../../docs/guides/shared-stack.md).
 Do not bypass a standby daemon's lease fence.
+
+_Version: 1.0.0_

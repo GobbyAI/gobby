@@ -17,6 +17,7 @@ from gobby.agents.team_communications import (
     relaunched_seat,
 )
 from gobby.sessions.clear_continuation import resolve_clear_successor
+from gobby.sessions.fanout_wake import parked_without_claim_session_ids
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
 from gobby.storage.sessions import (
@@ -46,6 +47,13 @@ if TYPE_CHECKING:
 ACTIVE_AGENT_RUN_STATUSES = ("queued", "pending", "running")
 DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
 MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent")
+SYSTEM_SESSION_REPLY_REFUSAL = (
+    "The system session delivers daemon and Telegram messages but has no reader, so "
+    "nothing sent to it is delivered. To answer a Telegram message while this session is "
+    "attached to that conversation, type the reply normally: it is mirrored there "
+    "automatically. When not attached, reply with gobby-communications:send_message on "
+    "the message's channel."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +69,10 @@ class MailboxSendResult:
     target_id: str | None = None
     selector_metadata: dict[str, Any] | None = None
     wake_results: list[dict[str, Any]] = field(default_factory=list)
+    # Whether committed rows still owe live wakes; ``dispatch_wakes`` delivers them.
+    wake_requested: bool = False
+    # Recipients whose committed rows owe a live wake; the others stay queued without one.
+    wake_session_ids: list[str] = field(default_factory=list)
     failed_broadcasts: list[dict[str, Any]] = field(default_factory=list)
     error_code: str | None = None
     error: str | None = None
@@ -129,7 +141,7 @@ class MailboxService:
         content: str,
         target_id: str | None = None,
         message_id: str | None = None,
-        wake: bool | None = False,
+        wake: bool | None = None,
         priority: str = "normal",
         message_type: str = "message",
         metadata: Mapping[str, Any] | None = None,
@@ -140,9 +152,52 @@ class MailboxService:
     ) -> MailboxSendResult:
         """Send a mailbox message to an explicit resolved target selector.
 
-        ``wake=None`` takes the target default: direct targets wake and fanout stays
-        queued. Recipient definitions declare required sender capabilities; direct
-        targets refuse unauthorized senders and fanout withholds those recipients.
+        ``wake=None`` takes the target default: direct and global targets wake, and
+        project fanout stays queued. Fanout never live-wakes a recipient parked between
+        turns with no claimed task; its row waits for that seat's next turn. Recipient
+        definitions declare required sender capabilities; direct targets refuse
+        unauthorized senders and fanout withholds those recipients.
+        """
+        result = self.persist(
+            from_session_id=from_session_id,
+            target=target,
+            content=content,
+            target_id=target_id,
+            message_id=message_id,
+            wake=wake,
+            priority=priority,
+            message_type=message_type,
+            metadata=metadata,
+            project_id=project_id,
+            preserve_content=preserve_content,
+            replace_composer=replace_composer,
+            attachment=attachment,
+        )
+        if result.wake_requested:
+            result.wake_results = await self.dispatch_wakes(result, priority=priority)
+        return result
+
+    def persist(
+        self,
+        *,
+        from_session_id: str,
+        target: str,
+        content: str,
+        target_id: str | None = None,
+        message_id: str | None = None,
+        wake: bool | None = None,
+        priority: str = "normal",
+        message_type: str = "message",
+        metadata: Mapping[str, Any] | None = None,
+        project_id: str | None = None,
+        preserve_content: bool = False,
+        replace_composer: bool = False,
+        attachment: AttachmentDraft | None = None,
+    ) -> MailboxSendResult:
+        """Commit a send's rows without live side effects; ``send`` documents the arguments.
+
+        Synchronous so a caller that must bound a stalled database can run it in a
+        worker under a database operation deadline, then call ``dispatch_wakes``.
         """
         if not preserve_content:
             content = content.strip()
@@ -184,7 +239,20 @@ class MailboxService:
                     },
                 )
             if wake is None:
-                wake = not resolution.fanout
+                wake = not resolution.fanout or resolution.target == "global"
+            parked: frozenset[str] = frozenset()
+            if wake and resolution.fanout:
+                parked = parked_without_claim_session_ids(self._db, recipient_ids)
+                if parked:
+                    resolution = replace(
+                        resolution,
+                        selector_metadata={
+                            **resolution.selector_metadata,
+                            "parked_recipients": len(parked),
+                        },
+                    )
+            wake_session_ids = [r for r in recipient_ids if r not in parked] if wake else []
+            owed_wake = frozenset(wake_session_ids)
             if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
                 raise ValueError("message_id requires exactly one direct recipient")
             broadcast_id = str(uuid.uuid4()) if resolution.fanout else None
@@ -213,6 +281,9 @@ class MailboxService:
 
             for recipient_id in recipient_ids:
                 message_metadata = dict(metadata or {})
+                # Fanout identity is system-assigned; caller metadata can never claim it.
+                message_metadata.pop("broadcast_id", None)
+                message_metadata.pop("broadcast", None)
                 # This capability is an internal ingress argument, never caller metadata.
                 message_metadata.pop("operator_comms", None)
                 if replace_composer:
@@ -227,7 +298,7 @@ class MailboxService:
                     metadata=message_metadata,
                     broadcast_id=broadcast_id,
                     resolution=resolution,
-                    wake_requested=wake,
+                    wake_requested=recipient_id in owed_wake,
                 )
                 message = self._message_manager.create_message(
                     from_session=from_session_id,
@@ -243,18 +314,6 @@ class MailboxService:
                 if attachment is not None:
                     self._attachment_manager.create(message.id, attachment)
 
-        wake_results: list[dict[str, Any]] = []
-        if wake:
-            # Persistence is complete. The dispatcher owns live-wake policy and
-            # channel-specific bounds; an outer timeout can interrupt tmux submission.
-            wake_results = await dispatch_mailbox_wakes(
-                self._wake_dispatcher,
-                self._session_manager,
-                messages,
-                recipient_ids,
-                priority=priority,
-            )
-
         return MailboxSendResult(
             messages=messages,
             recipient_session_ids=recipient_ids,
@@ -262,7 +321,32 @@ class MailboxService:
             target=resolution.target,
             target_id=resolution.target_id,
             selector_metadata=resolution.selector_metadata,
-            wake_results=wake_results,
+            wake_requested=bool(wake_session_ids),
+            wake_session_ids=wake_session_ids,
+        )
+
+    async def dispatch_wakes(
+        self, result: MailboxSendResult, *, priority: str = "normal"
+    ) -> list[dict[str, Any]]:
+        """Wake the recipients whose committed rows still owe a live wake."""
+        # Persistence is complete. The dispatcher owns live-wake policy and
+        # channel-specific bounds; an outer timeout can interrupt tmux submission.
+        owed = set(result.wake_session_ids)
+        pairs = [
+            (message, session_id)
+            for message, session_id in zip(
+                result.messages, result.recipient_session_ids, strict=True
+            )
+            if session_id in owed
+        ]
+        if not pairs:
+            return []
+        return await dispatch_mailbox_wakes(
+            self._wake_dispatcher,
+            self._session_manager,
+            [message for message, _ in pairs],
+            [session_id for _, session_id in pairs],
+            priority=priority,
         )
 
     async def wake_committed(self, message_id: str) -> list[dict[str, Any]]:
@@ -399,6 +483,9 @@ class MailboxService:
         project_id: str | None,
         allow_cross_project: bool = False,
     ) -> str:
+        if to_session_id == system_session_id():
+            # The daemon's sender has no mailbox reader, so a reply here reaches no one.
+            raise ValueError(SYSTEM_SESSION_REPLY_REFUSAL)
         recipient: Session | None = self._session_manager.get(to_session_id)
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")

@@ -221,7 +221,6 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "hooks": _route("hook execution", "operation ConfigRuntime.capture"),
     "import_mcp_server": _route("MCP import", "request ConfigRuntime.capture"),
     "indexing": _route("memory indexing", "operation ConfigRuntime.capture"),
-    "launch_defaults": _route("agent launch", "operation ConfigRuntime.capture"),
     "logging": _route("logging operations", "operation ConfigRuntime.capture"),
     "max_active_agents": _route(
         "agent spawn admission and batch dispatch", "operation ConfigRuntime.capture"

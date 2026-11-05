@@ -104,3 +104,5 @@ fi
 
 Use parameter expansion for simple string operations. Switch to a structured
 language or a format-aware tool for JSON, YAML, XML, or nested data.
+
+_Version: 1.0.0_

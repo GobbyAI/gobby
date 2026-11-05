@@ -17,6 +17,17 @@ impl<D: Daemon> Workspace<D> {
         if self.host_recovering.contains(&pane_id) || self.host_recovered.contains(&pane_id) {
             return None;
         }
+        // A host grant the pane already holds is the host's decision, and a
+        // daemon take that never answered does not revoke it (ruling
+        // b59e4ce9). Tearing the attachment down would drop the host stream
+        // that carries it, so keys typed after the take gave up would stall.
+        if self
+            .panes
+            .get(&pane_id)
+            .is_some_and(|pane| pane.direct_input())
+        {
+            return None;
+        }
         let outcome = {
             let pane = self.panes.get_mut(&pane_id)?;
             let terminal_id = pane.terminal_id.clone();

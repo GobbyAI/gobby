@@ -37,3 +37,5 @@
   config contract.
 - If removing support, search for in-repo examples, docs, and generated outputs
   that still use the old shape.
+
+_Version: 1.0.0_

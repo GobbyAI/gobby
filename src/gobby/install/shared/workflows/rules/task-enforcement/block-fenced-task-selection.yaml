@@ -1,0 +1,42 @@
+version: "1.0.0"
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+# A running shell, exec or native-agent call stays bound to the task that was
+# active when it started. Selecting another task while it runs would leave its
+# later edits on a task the session no longer works. This rule refuses that
+# switch; binding bookkeeping (start, complete, clear_pending) stays in Python.
+#
+# The rule is the only enforcement point: the claim transaction no longer checks.
+# Both the provider hook and the MCP proxy evaluate before_tool for these calls.
+# The residual window is a fencing call that starts between this evaluation and
+# the claim commit (parallel tool calls in one turn). That call still binds to the
+# task selected when it started, so its edits are attributed correctly; only the
+# refusal is missed. A transfer or claim-flow hand-off that selects a task for
+# another seat has no tool event in the recipient's session and is not fenced.
+rules:
+  block-fenced-task-selection:
+    description: "Refuse claim_task or create_task(claim) while a running call is bound to another task"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >-
+      event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+      and tool_input.get('server_name') == 'gobby-tasks'
+      and (
+        (
+          tool_input.get('tool_name') == 'claim_task'
+          and pending_selection_fence_calls(tool_input.get('task_id'))
+        )
+        or (
+          tool_input.get('tool_name') == 'create_task'
+          and str(tool_input.get('claim')).lower() == 'true'
+          and pending_selection_fence_calls(None)
+        )
+      )
+    effects:
+      - type: block
+        reason: >-
+          Task selection is fenced by running calls
+          {{ pending_selection_fence_calls(tool_input.get('task_id')
+          if tool_input.get('tool_name') == 'claim_task' else None) | join(', ') }};
+          wait for completion or stop them before calling claim_task again.

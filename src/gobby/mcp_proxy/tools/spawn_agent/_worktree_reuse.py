@@ -19,6 +19,41 @@ from gobby.storage.tasks import TaskArtifactManager
 from gobby.worktrees.base_branch import select_worktree_base
 
 
+def resolve_reused_worktree_id(worktree_storage: Any, project_id: str | None, ref: str) -> str:
+    """Resolve an explicit ``worktree_id`` argument: an id or unique prefix, else a branch name.
+
+    Raises:
+        ValueError: If the reference is an ambiguous id prefix, or is neither an
+            id nor the branch name of a worktree in the project.
+    """
+    try:
+        return str(worktree_storage.resolve_reference(ref))
+    except ValueError as id_error:
+        if project_id:
+            by_branch = worktree_storage.get_by_branch(project_id, ref.strip())
+            if by_branch is not None:
+                return str(by_branch.id)
+        if str(id_error).startswith("Ambiguous"):
+            raise
+        raise ValueError(
+            f"Worktree '{ref}' not found: it matched neither a worktree id nor a branch "
+            "name in this project"
+        ) from id_error
+
+
+def refuse_foreign_task_binding(existing_worktree: Any, task_id: str | None) -> None:
+    """Refuse a claiming spawn into a worktree bound to a different task.
+
+    Same-task reuse stays allowed, so a crashed or ended seat can recover its tree.
+    """
+    bound_task_id = existing_worktree.task_id
+    if bound_task_id and task_id and bound_task_id != task_id:
+        raise RuntimeError(
+            f"Cannot reuse worktree {existing_worktree.id}: it is bound to task "
+            f"{bound_task_id}, not the spawn's task {task_id}"
+        )
+
+
 async def prepare_reused_worktree(
     *,
     existing_worktree: Any,
@@ -27,7 +62,14 @@ async def prepare_reused_worktree(
     spawn_config: SpawnConfig,
     main_repo_path: str,
 ) -> tuple[IsolationContext, Any]:
-    """Prepare an explicit reused worktree for a new run, synced onto its base."""
+    """Prepare an explicit reused worktree for a new run, synced onto its base.
+
+    Work in progress never refuses reuse, so a tree a live session still owns refuses
+    here, as does a tree bound to a different task than the one this spawn claims.
+    """
+    if await asyncio.to_thread(worktree_storage.is_claimed_by_live_session, existing_worktree.id):
+        raise RuntimeError(f"Cannot reuse claimed live worktree: {existing_worktree.id}")
+    refuse_foreign_task_binding(existing_worktree, spawn_config.task_id)
     base_branch, base_commit_sha = await select_worktree_base(git_manager, spawn_config.base_branch)
     sync_result: ReusedWorktreeSyncResult = await sync_reused_worktree_to_base(
         git_manager=git_manager,
@@ -48,6 +90,7 @@ async def prepare_reused_worktree(
         "main_repo_path": main_repo_path,
         "reused_worktree": True,
         "base_branch": base_branch,
+        **sync_result.isolation_extra(),
     }
     if sync_result.base_commit_sha:
         extra["base_commit_sha"] = sync_result.base_commit_sha

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 import os
 import subprocess
 from pathlib import Path
@@ -12,18 +11,17 @@ from typing import Any
 
 import pytest
 
-from gobby.agents import agent_workspaces
+from gobby.agents import agent_workspaces, team_teardown
 from gobby.agents.agent_workspaces import (
     bind_session_workspace,
     commit_workspace,
-    drain_workspace_commits,
     ensure_workspace,
     register_agent_workspace_cron,
-    schedule_workspace_commit,
     workspace_anchor,
     workspace_git_dir,
 )
 from gobby.hooks.event_handlers import _agent, _session_end
+from gobby.hooks.event_handlers._session_start import materialize
 from gobby.mcp_proxy.tools.sessions import _terminal
 from gobby.runner_init import orchestration
 from gobby.storage.cron import CronJobStorage
@@ -155,30 +153,17 @@ class _Executor:
         self.handlers[name] = handler
 
 
-async def test_trigger_failures_are_non_blocking(
+async def test_backup_runs_only_from_the_nightly_cron(
     gobby_home: Path,
     temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    async def broken(project_id: str, trigger: str) -> str | None:
-        raise RuntimeError(f"disk full during {trigger}")
-
-    monkeypatch.setattr(agent_workspaces, "commit_workspace", broken)
-    caplog.set_level(logging.WARNING)
-
-    schedule_workspace_commit(PROJECT, "session_end")
-    await drain_workspace_commits()
-    assert "disk full during session_end" in caplog.text
-    monkeypatch.setattr(agent_workspaces, "commit_workspace", commit_workspace)
-
-    # Each trigger site schedules the commit and returns; none awaits or raises it.
-    for trigger_site in (
-        _terminal.register_terminal_tools,
-        _agent.AgentEventHandlerMixin.handle_pre_compact,
-        _session_end.SessionEndMixin.handle_session_end,
-    ):
-        assert "schedule_workspace_commit(" in inspect.getsource(trigger_site), trigger_site
+    # No lifecycle event backs up the workspace: the event scheduler is gone and no
+    # handoff, compaction, session start or end, or team teardown site commits.
+    assert not hasattr(agent_workspaces, "schedule_workspace_commit")
+    assert not hasattr(agent_workspaces, "drain_workspace_commits")
+    for lifecycle_module in (_terminal, _agent, _session_end, materialize, team_teardown):
+        source = inspect.getsource(lifecycle_module)
+        assert "commit_workspace" not in source, lifecycle_module.__name__
     assert "register_agent_workspace_cron(" in inspect.getsource(orchestration.init_orchestration)
 
     # The nightly cron commits a dirty tree.

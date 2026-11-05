@@ -121,6 +121,19 @@ class TestGetStepStatus:
         assert result["success"] is True
         assert result["has_workflow"] is False
 
+    def test_missing_session_names_the_outer_call_tool_parameter(self) -> None:
+        """The refusal says where the session goes: call_tool's own session_id."""
+        from gobby.mcp_proxy.tools.workflows._query import get_step_status
+
+        mocks = _make_mocks()
+
+        result = get_step_status(mocks["session_manager"], session_id="")
+
+        assert result["success"] is False
+        assert "outer call_tool" in result["error"]
+        assert "session_id=" in result["error"]
+        mocks["session_manager"].resolve_session_reference.assert_not_called()
+
 
 def test_query_module_keeps_step_status_only() -> None:
     from gobby.mcp_proxy.tools.workflows import _query

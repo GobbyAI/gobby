@@ -56,3 +56,5 @@ If injection is absent, check owner reachability, profile content, logs, the
 seeded variable and actual rule conditions. Do not widen the rule or copy private
 profile text into a repository to bypass the boundary. See
 [getting started](../../../../../../../../docs/guides/README.md#getting-started).
+
+_Version: 1.0.0_

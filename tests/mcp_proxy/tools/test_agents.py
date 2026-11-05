@@ -895,7 +895,7 @@ class TestStopAgent:
         assert result["terminal_reason"] == "user_cancelled"
         assert result["agent_step_instances_deleted"] == 1
         assert "workflow_instances_deleted" not in result
-        runner.cancel_run.assert_called_once_with("run-123")
+        runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
         cleanup.assert_called_once_with(
             runtime_db,
             run_id="run-123",
@@ -1596,7 +1596,7 @@ class TestKillAgent:
             result = await kill_agent(session_id="sess-456")
 
         assert result["status"] == "cancelled"
-        runner.cancel_run.assert_called_once_with("run-123")
+        runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
         runner.complete_run.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1674,7 +1674,7 @@ class TestKillAgent:
 
         assert result["success"] is True
         assert result["workflow_stopped"] is True
-        runner.cancel_run.assert_called_once_with("run-123")
+        runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
 
     @pytest.mark.asyncio
     async def test_parent_kill_forwards_terminal_services(self) -> None:
@@ -2179,7 +2179,7 @@ class TestKillAgentSelfTerminationViaRunId:
             result = await kill_agent(run_id="run-123")
 
         assert result["success"] is True
-        runner.cancel_run.assert_called_once_with("run-123")
+        runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
         runner.complete_run.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2205,7 +2205,7 @@ class TestKillAgentSelfTerminationViaRunId:
             result = await kill_agent(run_id="run-123")
 
         assert result["success"] is True
-        runner.cancel_run.assert_called_once_with("run-123")
+        runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
         runner.complete_run.assert_not_called()
 
 

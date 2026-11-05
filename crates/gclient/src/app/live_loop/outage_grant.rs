@@ -47,7 +47,9 @@ pub(super) fn verify_owner_only(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// The `grant_input` request giving `attachment_id` input on the terminal.
+/// The keypress `grant_input` request giving `attachment_id` input on the
+/// terminal. It sends `takeover: false`, so the host refuses rather than
+/// displacing a peer that holds the grant (#25653).
 pub(super) fn grant_request(
     id: &str,
     host_terminal_id: &str,
@@ -60,6 +62,7 @@ pub(super) fn grant_request(
         "id": id,
         "method": "grant_input",
         "host_attachment_id": host_attachment_id,
+        "takeover": false,
     })
 }
 
@@ -95,8 +98,9 @@ pub(super) fn grant_outcome(reply: &Value) -> GrantOutcome {
     }
 }
 
-/// Asks the host serving `frame_socket` to give `attachment_id` input on the
-/// terminal. Each call is its own authenticated connection.
+/// Asks the host serving `frame_socket` for a keypress's input on the terminal;
+/// the host refuses a peer's grant rather than displacing it. Each call is its
+/// own authenticated connection.
 pub(super) async fn grant(
     frame_socket: &Path,
     host_terminal_id: &str,

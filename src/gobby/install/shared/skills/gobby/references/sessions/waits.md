@@ -28,4 +28,6 @@ bounded diagnostics.
 
 Guide: [Event-driven waits](../../../../../../../../docs/guides/sessions.md#event-driven-waits).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

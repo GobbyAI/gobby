@@ -10,6 +10,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
+from tests.mcp_proxy.caller_principal_support import operator_caller, session_ref_resolves_to
 from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
 pytestmark = pytest.mark.unit
@@ -256,7 +257,8 @@ class TestGobbyDaemonToolsListMcpServers:
         tools_handler._mcp_manager.connections = {}
         tools_handler._mcp_manager.health = {}
 
-        result = await tools_handler.list_mcp_servers(session_id="session-123")
+        with operator_caller(), session_ref_resolves_to("session-123"):
+            result = await tools_handler.list_mcp_servers(session_id="session-123")
 
         assert result["success"] is True
         tools_handler.tool_proxy.record_servers_listed.assert_called_once_with("session-123")
@@ -625,7 +627,8 @@ class TestGobbyDaemonToolsListTools:
             return_value={"tools": [{"name": "tool1"}], "tool_count": 1}
         )
 
-        result = await tools_handler.list_tools(server_name="server1", session_id="session-123")
+        with operator_caller(), session_ref_resolves_to("session-123"):
+            result = await tools_handler.list_tools(server_name="server1", session_id="session-123")
 
         assert result["tool_count"] == 1
         assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
@@ -637,7 +640,8 @@ class TestGobbyDaemonToolsListTools:
             return_value={"status": "success", "tools": [], "tool_count": 0}
         )
 
-        await tools_handler.list_tools(server_name="server1", session_id="session-123")
+        with operator_caller(), session_ref_resolves_to("session-123"):
+            await tools_handler.list_tools(server_name="server1", session_id="session-123")
 
         tools_handler.tool_proxy.list_tools.assert_called_once_with(
             "server1",
@@ -698,11 +702,12 @@ class TestGobbyDaemonToolsGetToolSchema:
         """get_tool_schema should not emit an internal proxy AFTER_TOOL event."""
         tools_handler.tool_proxy.get_tool_schema = AsyncMock(return_value={"name": "tool"})
 
-        result = await tools_handler.get_tool_schema(
-            "my-server",
-            "my-tool",
-            session_id="session-123",
-        )
+        with operator_caller(), session_ref_resolves_to("session-123"):
+            result = await tools_handler.get_tool_schema(
+                "my-server",
+                "my-tool",
+                session_id="session-123",
+            )
 
         assert result == {"name": "tool"}
         tools_handler.tool_proxy.get_tool_schema.assert_awaited_once_with(

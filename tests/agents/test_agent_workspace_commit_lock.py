@@ -19,9 +19,7 @@ import pytest
 from gobby.agents import agent_workspaces
 from gobby.agents.agent_workspaces import (
     commit_workspace,
-    drain_workspace_commits,
     ensure_workspace,
-    schedule_workspace_commit,
     workspace_anchor,
     workspace_git_dir,
 )
@@ -103,9 +101,11 @@ def _configure_filter(project_id: str, name: str, clean: str) -> None:
 
 
 async def _trigger(project_id: str, trigger: str) -> None:
-    """Fire one production commit trigger and wait for it; failures are logged, never raised."""
-    schedule_workspace_commit(project_id, trigger)
-    await drain_workspace_commits()
+    """Run one commit and log, never raise, its failure, as the nightly cron does."""
+    try:
+        await commit_workspace(project_id, trigger)
+    except Exception as exc:
+        agent_workspaces.logger.warning("Agent workspace commit failed (%s): %s", trigger, exc)
 
 
 @contextmanager

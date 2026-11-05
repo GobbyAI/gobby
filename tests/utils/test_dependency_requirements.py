@@ -53,6 +53,102 @@ def test_srt_node_preflight_enforces_upstream_engine(
         assert "Install Node.js 22.12.0 or newer" in (status.error or "")
 
 
+def test_node_probe_retries_a_transient_spawn_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # #25645: after a restart the healthy-node cache is empty, so the first sandboxed
+    # spawn probes live; one failed spawn on a loaded machine must not lock it out.
+    node = tmp_path / "node"
+    node.write_text("node")
+    monkeypatch.setattr(shutil, "which", lambda name: str(node))
+    monkeypatch.setattr(requirements, "_healthy_node", None)
+    monkeypatch.setattr(requirements, "PROBE_RETRY_DELAY_SECONDS", 0.0, raising=False)
+    calls: list[list[str]] = []
+
+    def flaky(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if len(calls) == 1:
+            raise BlockingIOError(35, "Resource temporarily unavailable")
+        return subprocess.CompletedProcess(command, 0, "v26.13.0\n", "")
+
+    monkeypatch.setattr(spawn, "run", flaky)
+    status = requirements.node_dependency_status()
+
+    assert status.state == "healthy"
+    assert status.installed_version == "26.13.0"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("outcome", "cause"),
+    [
+        (BlockingIOError(35, "Resource temporarily unavailable"), "Resource temporarily"),
+        (subprocess.CompletedProcess(["node"], 134, "", "dyld: Library not loaded"), "dyld"),
+    ],
+)
+def test_node_probe_failure_reports_its_cause(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    outcome: BaseException | subprocess.CompletedProcess[str],
+    cause: str,
+) -> None:
+    node = tmp_path / "node"
+    node.write_text("node")
+    monkeypatch.setattr(shutil, "which", lambda name: str(node))
+    monkeypatch.setattr(requirements, "_healthy_node", None)
+    monkeypatch.setattr(requirements, "PROBE_RETRY_DELAY_SECONDS", 0.0, raising=False)
+    calls: list[list[str]] = []
+
+    def failing(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(spawn, "run", failing)
+    status = requirements.node_dependency_status()
+
+    assert status.state == "invalid"
+    assert status.path == str(node.resolve())
+    assert cause in (status.error or "")
+    assert "detected unavailable" not in (status.error or "")
+    assert len(calls) == 2
+
+
+def test_node_probe_timeout_reuses_the_verified_unchanged_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # #25631: under heavy load `node --version` can exceed its timeout. An unchanged
+    # binary that already verified healthy keeps its status; a changed one re-probes.
+    node = tmp_path / "node"
+    node.write_text("first")
+    monkeypatch.setattr(shutil, "which", lambda name: str(node))
+    calls: list[list[str]] = []
+
+    def healthy(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "v26.13.0\n", "")
+
+    def slow(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        raise subprocess.TimeoutExpired(command, 10)
+
+    monkeypatch.setattr(spawn, "run", healthy)
+    assert requirements.node_dependency_status().state == "healthy"
+    monkeypatch.setattr(spawn, "run", slow)
+    reused = requirements.node_dependency_status()
+    assert reused.state == "healthy"
+    assert reused.installed_version == "26.13.0"
+    assert len(calls) == 1
+
+    node.write_text("replaced binary")
+    changed = requirements.node_dependency_status()
+    assert len(calls) == 2
+    assert changed.state == "invalid"
+    assert "timed out" in (changed.error or "")
+    assert "version is invalid" not in (changed.error or "")
+
+
 def _raise_srt_runtime_error(message: str) -> None:
     raise SrtRuntimeError(message)
 

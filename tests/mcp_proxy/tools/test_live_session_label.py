@@ -374,8 +374,7 @@ def test_reference_contract_4_1_3(variables: dict[str, list[str]], authorized: b
     assert (error is None) is authorized
     if not authorized:
         assert error is not None
-        assert "get_skill_file" in error
-        assert "references/tasks/live-work.md" in error
+        assert '"get_skill", {"names":["gobby:references/tasks/live-work.md"]}' in error
 
     automated = _context(agent_run_id="run-1")
     assert automated.session_var_manager is not None

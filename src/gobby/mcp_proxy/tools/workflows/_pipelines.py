@@ -41,6 +41,7 @@ from gobby.utils.session_context import (
     get_request_principal,
     get_session_context,
 )
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.definitions import normalize_workflow_definition_enabled
 from gobby.workflows.pipeline.gatekeeper import approval_decider
 from gobby.workflows.pipeline_models import PipelineDefinition
@@ -97,7 +98,7 @@ def _require_pipeline(
 
 
 def _parse_pipeline_yaml(yaml_content: str) -> dict[str, Any]:
-    data = yaml.safe_load(yaml_content)
+    data = load_strict_yaml(yaml_content)
     if not isinstance(data, dict) or "name" not in data:
         raise ValueError("Invalid YAML: must be a mapping with a 'name' field")
     if data.get("type") != "pipeline":

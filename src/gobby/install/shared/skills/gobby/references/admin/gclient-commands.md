@@ -53,3 +53,5 @@ Read the error text for the specific reason.
 
 For interactive startup, workspace navigation, and pane control, see the
 [gclient user guide](../../../../../../../../docs/guides/gclient-user-guide.md).
+
+_Version: 1.0.0_

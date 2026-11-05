@@ -32,3 +32,5 @@ a manual landing.
 
 See the [task guide](../../../../../../../../docs/guides/tasks.md) for detailed
 commit attribution and close evidence.
+
+_Version: 1.0.0_

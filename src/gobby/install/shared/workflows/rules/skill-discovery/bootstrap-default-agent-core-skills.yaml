@@ -1,50 +1,51 @@
+version: "2.0.0"
 tags: [skill-discovery, context, gobby, default]
 
 rules:
   bootstrap-default-agent-core-skills:
-    description: "Request ordered core guidance once per context epoch"
+    description: "Request every instruction this context owes in one call"
     event: turn_start
     enabled: true
     priority: 9
-    when: >
-      not variables.get('handoff_pull_pending')
-      and (
-        not skill_loaded('gobby:references/skills/loading.md')
-        or (
-          not skill_loaded('gobby:references/memory/overview.md')
-          and not has_open_tool_error(
-            "gobby-skills/get_skill_file",
-            {"name": "gobby", "path": "references/memory/overview.md"}
-          )
-        )
-        or (
-          not variables.get('restraint_disabled')
-          and not skill_loaded('restraint')
-        )
-        or (
-          not variables.get('brevity_disabled')
-          and not skill_loaded('brevity')
-        )
-      )
+    # A pending handoff pull is answered by the sibling rule in the pull's
+    # result, so the compact turn shows the bundle once, after the pull.
+    when: "not variables.get('handoff_pull_pending')"
     effects:
-      - type: load_skill
-        skill: gobby:references/skills/loading.md
-        when: "not skill_loaded('gobby:references/skills/loading.md')"
-      - type: load_skill
-        skill: gobby:references/memory/overview.md
-        when: >
-          not skill_loaded('gobby:references/memory/overview.md')
-          and not has_open_tool_error(
-            "gobby-skills/get_skill_file",
-            {"name": "gobby", "path": "references/memory/overview.md"}
-          )
-      - type: load_skill
-        skill: brevity
-        when: >
-          not variables.get('brevity_disabled')
-          and not skill_loaded('brevity')
-      - type: load_skill
-        skill: restraint
-        when: >
-          not variables.get('restraint_disabled')
-          and not skill_loaded('restraint')
+      # Core guidance plus what this context's gates will require: development
+      # obligations and code navigation for claimed source work, and the plan
+      # reference once Plan Mode was entered. context_instructions appends the
+      # seat's declared procedure, references and required skills and the
+      # claimed task's extras, drops loaded and unavailable ones, and keeps the
+      # order, so one get_skill(names) call satisfies every gate.
+      - type: inject_context
+        template: &owed_instructions >-
+          {{ skill_fetch_batch_directive(context_instructions(
+            ['gobby:references/memory/overview.md']
+            + ([] if variables.get('brevity_disabled') else ['brevity'])
+            + ([] if variables.get('restraint_disabled') else ['restraint'])
+            + (['gobby:references/development/obligations.md']
+               if variables.get('claimed_task_is_source_work') else [])
+            + (['gobby:references/code-index/overview.md']
+               if variables.get('claimed_task_is_source_work')
+               and variables.get('code_index_available')
+               and not variables.get('code_index_preflight_warning') else [])
+            + (['gobby:references/plan/overview.md']
+               if variables.get('plan_mode')
+               and variables.get('plan_skill_directive_delivered')
+               and not skill_loaded('gobby:references/plan/drafting.md')
+               and not skill_loaded('gobby:references/plan/review.md')
+               and not skill_loaded('gobby:references/plan/enhancement.md') else [])
+          )) }}
+
+  bootstrap-instructions-after-handoff:
+    description: "Request every instruction this context owes with the handoff it just read"
+    event: after_tool
+    enabled: true
+    priority: 9
+    when: >
+      event.data.get('mcp_server') == 'gobby-sessions'
+      and event.data.get('mcp_tool') == 'get_handoff'
+      and tool_call_succeeded()
+    effects:
+      - type: inject_context
+        template: *owed_instructions

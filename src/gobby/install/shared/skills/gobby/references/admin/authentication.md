@@ -63,3 +63,5 @@ operator revocation and allow the run to re-handshake, confirming unless `--yes`
 
 See [authentication](../../../../../../../../docs/guides/admin-operations.md#authentication)
 and [HTTP authentication](../../../../../../../../docs/guides/http-endpoints.md).
+
+_Version: 1.0.0_

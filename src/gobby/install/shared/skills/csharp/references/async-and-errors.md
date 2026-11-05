@@ -46,3 +46,5 @@ Make asynchronous work, cancellation, and failure modes explicit.
 - Put retries at the edge and make them idempotent.
 - Do not retry validation failures, authorization failures, malformed payloads,
   or unknown side-effecting operations.
+
+_Version: 1.0.0_

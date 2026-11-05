@@ -37,4 +37,6 @@ the running connection is authorized from storage success alone.
 
 Guide: [OAuth MCP servers](../../../../../../../../docs/guides/mcp-oauth.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

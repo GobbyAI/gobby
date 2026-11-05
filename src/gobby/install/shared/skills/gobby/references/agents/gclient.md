@@ -66,13 +66,18 @@ When the policy names no layout, open a new tab titled for the agent's role.
 - Message other sessions with `gobby-agents:send_message`. Keystrokes are not a
   messaging transport.
 - `gobby-sessions:send_keys` types into a session's terminal. Only the
-  Orchestrator and Assistant definitions and the operator's own terminal may use
+  Orchestrator definition and the operator's own terminal may use
   it, and it reaches only the caller, sessions in the same project, or the
   caller's agent tree. The target must show an idle agent composer: a bare shell,
   an empty or dead terminal, a session with no live agent CLI, a draft or held
   composer, and a credential prompt are refused. Use it to resume a stalled
   session with keystrokes; never to steer another seat's work or to enter
   credentials.
+- `gobby-sessions:send_wake` types one fixed line, `continue: check your queued Gobby
+  messages and proceed`, and Enter into a session's terminal. It takes only a session;
+  no text can be supplied. Only the Assistant definition and the operator's own terminal
+  may use it, and it applies the `send_message` recipient admission and the `send_keys`
+  terminal checks.
 - `gobby-sessions:capture_output` takes one diagnostic snapshot of a session's
   last terminal lines, for state hooks do not report, such as a permission
   dialog. It is not a monitor: wait for a terminal pattern with
@@ -81,4 +86,6 @@ When the policy names no layout, open a new tab titled for the agent's role.
 
 Guide: [gclient workspaces](../../../../../../../../docs/guides/gclient-user-guide.md#workspaces).
 
-_Last verified: 2026-10-23_
+_Version: 2.0.0_
+
+_Last verified: 2026-11-04_

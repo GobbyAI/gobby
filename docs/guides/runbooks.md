@@ -1,7 +1,7 @@
 # Runbooks
 
 The fleet runs in three parts. Admin is the operator's Orchestrator and
-Assistant panes. Support is one tab of standing seats that carry releases,
+Assistant seats. Support is one tab of standing seats that carry releases,
 triage, the operational digest, stalled-session recovery and task
 consolidation. Each code task gets its own DevTeam, which ends when the task
 closes. This guide covers how each part starts and where its seats report.
@@ -52,9 +52,8 @@ Triage. See [agents](agents.md#seats) for each seat's role.
 ## Launch Support
 
 The Orchestrator launches the `support` runbook into one Support tab in the
-shared checkout. It holds the Release Manager, Triage, Archivist, Recovery
-Steward and Consolidator. The Log Monitor and Metrics Monitor are in neither
-runbook; the Orchestrator spawns them on the operator's go.
+shared checkout. It holds the Release Manager, Triage, Archivist, Security
+Auditor, Recovery Steward and Consolidator.
 
 Triage goes first, because the other seats report to it:
 
@@ -65,15 +64,17 @@ gobby pipelines run support -i workspace=<workspace> -i project_path=<checkout> 
   -i report_to=<Triage ref>
 ```
 
-Add the project policy's `launch_defaults.support` values as inputs. The guard
-skips each seat whose agent already runs live in the project on this machine,
+Pass no model inputs: each seat's model comes from the project policy's
+`agent_model_defaults` entry, or from its definition when the policy names none.
+The guard skips each seat whose agent already runs live in the project on this machine,
 so the second run launches only the missing seats, and a later re-run fills
 gaps without duplicating a seat. Relaunch a missing Triage first the same way.
 
 ## Launch a DevTeam
 
-Run the single dev-team pipeline for either a task or epic with task, workspace,
-report_to and project_policy.launch_defaults['dev-team']. It launches developer,
+Run the single dev-team pipeline for either a task or epic with task, workspace
+and report_to. Seat models come from the project policy's `agent_model_defaults`
+map, or from each definition, unless a `<seat>_model` input overrides them. It launches developer,
 code-reviewer and dev-team-lead in Dev Team - #N. The pair uses the registered
 task tree; the lead stays in main. admit_team chooses single-task or epic mode.
 The bundled file is dev-team.yaml; there is no separate epic pipeline.
@@ -109,18 +110,20 @@ team. Report through the configured report target and use durable waits.
 
 ## Launch planning
 
-The Orchestrator launches `team-planning` with `task`, `workspace`, `project_path`,
-`seats` and `report_to=<Triage ref>`. The Plan Writer opens the `Team Planning - #<task>`
-tab, the Plan Adversary and Plan Enhancer split beside it, and `seat_pane` adds
-seats to an existing pane.
+The Orchestrator launches `plan-team` with `task`, `workspace`, `project_path`,
+`seats` and `report_to=<Triage ref>`. The Plan Writer opens the `Plan Team - #<task>`
+tab, the Plan Adversary and Plan Advocate split beside it, the `plan-team-lead` splits
+last, and `seat_pane` adds seats to an existing pane.
 When `task` has no open planning child, the runbook creates one under it, and the
 Plan Writer claims that child before writing `.gobby/plans/task-<seq>.md`. Each seat's
-prompt names the task, the plan path and its teammates' session refs. Once the seats
-launch, the runbook also sends the Plan Writer the Adversary and Enhancer refs.
-The Writer's enhancer edits, unresolved disagreements and stamped plan reach
-the Orchestrator through Triage's digest.
+prompt names the task, the plan path and its teammates' session refs, and the lead's
+launch prompt names every team seat, launched or already live. The runbook then sends each
+team seat its lead's session ref and its teammates' refs, so the seats report to the lead;
+a live lead gets the team's refs in a message. A partial rerun reconnects the whole roster.
+Until that connect message, the seats report to `report_to`. The lead relays the exchange and delivers the reviewed plan,
+its stamped plan and open objections to `report_to`, which Triage digests.
 
-The operator can launch the three-seat `team-planning` runbook directly:
-`gobby pipelines run team-planning -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
+The operator can launch the four-seat `plan-team` runbook directly:
+`gobby pipelines run plan-team -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
 
 _Last verified: 2026-10-23_

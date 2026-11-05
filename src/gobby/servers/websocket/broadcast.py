@@ -195,9 +195,10 @@ class BroadcastMixin:
         Filters messages based on client subscriptions using _is_subscribed.
 
         Args:
-            message: Dictionary to serialize and send
-            frames: Wire frames each recipient of ``message`` receives in order
-                instead of it, for a message sent as fragments
+            message: Dictionary that selects recipients. Without ``frames`` it is also
+                the payload; with ``frames`` pass only the fields subscriptions read.
+            frames: Wire frames each selected recipient receives in order instead of
+                ``message``, so a fragmented message never repeats its rows in the filter
         """
         if self.native_publisher is not None:
             # Native mode: gdaemon's broker owns fanout and subscription filtering.
@@ -470,8 +471,15 @@ class BroadcastMixin:
 
     async def _publish_workspace_event(self, message: dict[str, Any]) -> None:
         raw = canonical_json(message)
+        # Subscriptions select on the event's scalar fields. The routing copy carries those
+        # alone, so a native publish never repeats the rows in each op it sends.
+        route = {
+            key: value
+            for key, value in message.items()
+            if key not in ("workspace", "tabs", "panes")
+        }
         if len(raw) <= TERMINAL_LIST_MAX_ENCODED_BYTES:
-            await self.broadcast(message)
+            await self.broadcast(route, frames=[message])
         elif len(raw) <= TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
             workspace_id = message["workspace_id"]
             frames = fragment_event(
@@ -481,7 +489,7 @@ class BroadcastMixin:
                 message_seq=message["seq"],
                 complete_json=raw,
             )
-            await self.broadcast(message, frames=frames)
+            await self.broadcast(route, frames=frames)
         else:
             # No client can reassemble these rows. Raising here would stop every
             # lifecycle publication, so the event goes out without them and the
@@ -492,7 +500,9 @@ class BroadcastMixin:
                 message["workspace_id"],
                 len(raw),
             )
-            await self.broadcast({**message, "workspace": None, "tabs": [], "panes": []})
+            await self.broadcast(
+                route, frames=[{**message, "workspace": None, "tabs": [], "panes": []}]
+            )
 
     async def broadcast_autonomous_event(
         self,

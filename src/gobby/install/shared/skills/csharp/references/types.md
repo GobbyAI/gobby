@@ -45,3 +45,5 @@ Use the type system to make invalid states hard to represent.
   strings should stay at adapter boundaries.
 - Convert weak input to typed DTOs, value objects, or domain models quickly.
 - Keep reflection-based behavior behind small, tested adapters.
+
+_Version: 1.0.0_

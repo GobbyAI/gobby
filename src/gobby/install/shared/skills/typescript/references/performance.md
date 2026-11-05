@@ -104,3 +104,5 @@ Move to the relevant framework skill for framework-specific performance rules.
 ## Benchmarks
 
 Use benchmarks for pure algorithms, parsers, serializers, and transforms. Keep fixtures realistic and include worst-case inputs. Do not benchmark code that spends most time in network or database calls without replacing those dependencies with controlled fakes.
+
+_Version: 1.0.0_

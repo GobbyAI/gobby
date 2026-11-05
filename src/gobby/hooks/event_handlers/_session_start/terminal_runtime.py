@@ -108,7 +108,30 @@ def discover_and_bind_external_terminal(
 ) -> NativeTerminalBind | None:
     """Discover the external terminal and bind an eligible native host row."""
     terminal_manager = getattr(handler, "terminal_manager", None)
-    if terminal_manager is None or not session_id or not project_id or not terminal_context:
+    if terminal_manager is None:
+        return None
+    return bind_discovered_terminal(
+        terminal_manager,
+        handler.logger,
+        session_id=session_id,
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
+
+
+def bind_discovered_terminal(
+    terminal_manager: Any,
+    logger: Any,
+    *,
+    session_id: str | None,
+    project_id: str | None,
+    terminal_context: dict[str, Any] | None,
+) -> NativeTerminalBind | None:
+    """Seed the session's external terminal and bind its native host row.
+
+    Returns the native row still held by another owner, for a retry once it is freed.
+    """
+    if not session_id or not project_id or not terminal_context:
         return None
 
     from gobby.storage.terminals import ProjectOwnershipConflictError
@@ -122,7 +145,7 @@ def discover_and_bind_external_terminal(
             terminal_context=terminal_context,
         )
     except ProjectOwnershipConflictError:
-        handler.logger.info("external terminal discovery conflict for session %s", session_id)
+        logger.info("external terminal discovery conflict for session %s", session_id)
 
     # A tmux pane started inside gterm is the innermost terminal. Its managed
     # tmux row owns delivery while the outer native row remains unbound.

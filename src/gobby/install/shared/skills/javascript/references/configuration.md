@@ -61,3 +61,5 @@ Add `// @ts-check` to files that benefit from local checking if repo-wide `check
 - Prefer `lint`, `test`, `build`, and `typecheck` names that fit the existing repo.
 - Avoid scripts that depend on a developer's global packages, shell aliases, or local daemon state.
 - Document required environment variables through examples or validation, not by letting scripts fail later.
+
+_Version: 1.0.0_

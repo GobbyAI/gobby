@@ -1014,6 +1014,30 @@ fn roster_seat_title_survives_task_titles_and_missing_run_rows() {
     assert_eq!(model.agents[0].definition_label(), "Lane 1 Developer");
 }
 
+/// A parked session's ref shows, and a seat moved onto a successor session
+/// (compaction, clear, handoff) shows the successor's ref.
+#[test]
+fn seat_ref_follows_its_bound_session_whether_idle_or_replaced() {
+    let row = |id: &str, reference: &str, status: &str| SessionRow {
+        id: id.into(),
+        reference: Some(reference.into()),
+        status: status.into(),
+        ..Default::default()
+    };
+    let mut rows = SidebarRows::default();
+    rows.sessions.insert(
+        PROJECT.into(),
+        vec![row("old", "#100", "idle"), row("new", "#101", "waiting")],
+    );
+    let mut seat = entry("session:seat", Some("terminal-seat"));
+    seat.session_id = Some("old".into());
+    let model_before = model(&rows, &[seat.clone()], &[]);
+    assert_eq!(model_before.agents[0].session_ref.as_deref(), Some("#100"));
+    seat.session_id = Some("new".into());
+    let model_after = model(&rows, &[seat], &[]);
+    assert_eq!(model_after.agents[0].session_ref.as_deref(), Some("#101"));
+}
+
 /// 3.1.6: the model slug is the display name, else the raw model, lowercased
 /// with each whitespace run joined by one `-` and the effort appended.
 #[test]

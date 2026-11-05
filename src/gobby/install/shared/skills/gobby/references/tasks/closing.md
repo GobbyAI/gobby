@@ -10,8 +10,9 @@ checklist, category-to-step mapping, role roster or close-reason enum.
 
 1. Finish the implementation and acceptance criteria. Resolve owned findings.
 2. Perform the validation, testing and review required by the selected workflow.
-   Record exact commands, results, limitations and nonapplicability truthfully.
-   Follow project test-quality, type and suppression checks for changed tests.
+   Record exact commands and results, limitations and nonapplicability truthfully.
+   For changed tests, run the project's test-types and test-quality audits and the
+   suppression ratchet.
 3. Record evidence with `record_attestation(task_id, kind, result, summary, ...)`.
    Its optional reference is a scheme/value pair, such as a Git SHA or a document
    identifier. JSON evidence can carry criteria and validation results. The server
@@ -22,25 +23,36 @@ checklist, category-to-step mapping, role roster or close-reason enum.
 5. Record any final evidence required for that exact candidate. Preview
    `close_task(task_id=..., commit_sha=..., changes_summary=..., preview=true)`.
    For non-Git work, omit the commit and repository parameters.
-6. Resolve every policy refusal. Use the returned `snapshot_revision` as
-   `expected_closure_revision` on the final call when binding it to that preview.
-   A changed task, policy or evidence may require another preview.
-7. After `closed=true`, review task memories and personally remove the clean,
-   merged task worktree and branch when the workflow calls for cleanup.
+6. Resolve every policy refusal, then repeat the close with `preview=false`. Use the
+   returned `snapshot_revision` as `expected_closure_revision` on the final call when
+   binding it to that preview. A changed task, policy or evidence may require another
+   preview.
+7. After `closed=true`, call `gobby-memory:review_task_memories(task_id, changes_summary)`
+   and personally remove the clean, merged task worktree and branch when the workflow
+   calls for cleanup.
 
 Use `link_commit` when attaching work without closing. An explicit candidate can
-also be linked atomically with the final close; preview leaves links unchanged.
+also be linked atomically with the final close.
+Preview leaves task state and commit links unchanged.
 A close reason is nonblank text, at most 120 characters. Selected YAML determines
 which reasons need disposition evidence, references or other requirements.
 
 ## Evidence and policy
 
-Kinds declare allowed_results and guidance in task_attestation_kinds. The server refuses other results with that guidance. The engine does not interpret
+Kinds declare allowed_results and guidance in task_attestation_kinds. The server refuses other results with that guidance.
+A selected closure rule may declare an `attestation_shape` (kinds, result, reference scheme and
+value pattern, task applicability). Recording refuses evidence that shape can never accept and
+names the accepted shape. A result the author's definition declares for the kind in
+task_attestation_kinds stays recordable, such as `rejected`; a definition that declares no kinds
+can record only the shape's result for shaped kinds. The engine does not interpret
 an `implementation`, `test`, `independent-review` or `closing` record as special authority.
 The selected `task_close` and `task_land` rules inspect the task, authenticated
 caller, repository facts and append-only attestation history. Rules can require
 ordered records, exact references, approved results, independent authors or
 particular author capabilities. They can also operate without a Git repository.
+Close does not score transcripts; it evaluates recorded attestations and repository
+facts. `integration_ancestry` is true when every linked commit is an ancestor of the
+integration branch.
 
 `task_attestation_writes` grants kinds (or `*`); `task_attestation_scope` limits
 the tasks an author can attest. Authors correct their own evidence with
@@ -50,7 +62,7 @@ it does not allow overwriting evidence. Never author a peer's attestation.
 The bundled coding policy requires TDD evidence, implementation, validation,
 OCR self-review, a linked and integrated candidate, clean attributed files and
 closing evidence. Follow its current rules for ordering and candidate references.
-The paired workflow additionally requires independent review. Task-specific
+The paired workflow additionally requires independent reviewers. Task-specific
 security approval remains independent and capability-bound. A later rejection
 or correction can revoke approval for a subsequent landing or close attempt.
 These are YAML policies, not task-engine assumptions about all tasks.
@@ -77,8 +89,9 @@ A landing request records its admission snapshot in its receipt; changed evidenc
 is evaluated on the next request. Code owns integrity and authenticated
 provenance. Definitions, rules and pipelines own completion standards.
 
-Follow the assigned restart and activation owner. Announce a daemon restart or
-cutover globally, honor quiet hours, proceed, and report DAEMON BACK when healthy.
+Follow the assigned restart and activation owner. Honor quiet hours and proceed;
+the daemon sends its own hold notice before a restart or cutover and DAEMON BACK
+once healthy.
 Separately coordinate operations that can kill agent panes.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
@@ -95,6 +108,6 @@ Security paths force approval at land even without a label. Filers label obvious
 trust-boundary work; leads inspect the diff and add security-review when needed.
 Only the operator or authorized policy owner removes that label.
 
-_Version: 2.0.0_
+_Version: 3.0.1_
 
-_Last verified: 2026-11-01_
+_Last verified: 2026-11-03_

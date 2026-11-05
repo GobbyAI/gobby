@@ -2,8 +2,8 @@
 //! additions of the Python `prepare_*_spawn` plans.
 use super::sandbox::runtime::SandboxLaunch;
 use crate::node_commands::{DroidMode, SpawnPayload};
-use anyhow::{Result, bail};
-use serde_json::Value;
+use anyhow::{Context, Result, bail};
+use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, path::Path};
 
 /// Gobby MCP tools Codex may call without prompting.
@@ -30,7 +30,7 @@ pub fn build_command(
     env: &BTreeMap<String, String>,
 ) -> Result<Vec<String>> {
     Ok(match payload.provider.as_str() {
-        "claude" => claude_argv(payload, cwd, sandbox_launch),
+        "claude" => claude_argv(payload, cwd, sandbox_launch)?,
         "codex" => codex_argv(payload, cwd, gobby_home, sandbox_launch, env),
         "grok" => grok_argv(payload, cwd),
         "droid" => droid_argv(payload, cwd),
@@ -39,7 +39,11 @@ pub fn build_command(
     })
 }
 
-fn claude_argv(payload: &SpawnPayload, cwd: &Path, sandbox_launch: &SandboxLaunch) -> Vec<String> {
+fn claude_argv(
+    payload: &SpawnPayload,
+    cwd: &Path,
+    sandbox_launch: &SandboxLaunch,
+) -> Result<Vec<String>> {
     let mut argv = vec!["claude".to_string()];
     match non_empty(&payload.resume_session_id) {
         Some(resume) => push_pair(&mut argv, "--resume", resume),
@@ -53,15 +57,62 @@ fn claude_argv(payload: &SpawnPayload, cwd: &Path, sandbox_launch: &SandboxLaunc
         push_pair(&mut argv, "--mcp-config", &mcp_config.display().to_string());
         argv.push("--strict-mcp-config".into());
     }
-    push_pair(
-        &mut argv,
-        "--settings",
-        r#"{"sandbox": {"enabled": false}}"#,
-    );
-    argv.extend(sandbox_launch.provider_args.iter().cloned());
-    argv.extend(payload.provider_args.iter().cloned());
+    // The preflighted sandbox arguments outrank caller arguments.
+    let (settings, passthrough) =
+        managed_claude_settings([&payload.provider_args, &sandbox_launch.provider_args])?;
+    push_pair(&mut argv, "--settings", &settings);
+    argv.extend(passthrough);
     push_prompt(&mut argv, &payload.prompt);
-    argv
+    Ok(argv)
+}
+
+/// Folds every `--settings` pair of `arg_lists` (rising precedence, inline JSON objects only)
+/// into one payload, then applies the managed keys on top: a node launch always runs inside
+/// SRT, so Claude's own sandbox stays off, and every managed launch disables idle compaction.
+/// Returns the compact payload and the remaining arguments in their original order.
+fn managed_claude_settings(arg_lists: [&[String]; 2]) -> Result<(String, Vec<String>)> {
+    let mut settings = Value::Object(Map::new());
+    let mut passthrough = Vec::new();
+    for args in arg_lists {
+        let mut args = args.iter();
+        while let Some(arg) = args.next() {
+            if arg != "--settings" {
+                passthrough.push(arg.clone());
+                continue;
+            }
+            let raw = args.next().context("Claude --settings has no value")?;
+            let payload: Value = serde_json::from_str(raw)
+                .context("Claude --settings must be an inline JSON object")?;
+            if !payload.is_object() {
+                bail!("Claude --settings must be an inline JSON object");
+            }
+            merge_settings(&mut settings, payload);
+        }
+    }
+    merge_settings(
+        &mut settings,
+        json!({"sandbox": {"enabled": false}, "idleCompaction": false}),
+    );
+    Ok((serde_json::to_string(&settings)?, passthrough))
+}
+
+/// Overlays `overlay` onto `base`, merging nested objects key by key.
+fn merge_settings(base: &mut Value, overlay: Value) {
+    match (base, overlay) {
+        (Value::Object(base), Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                match base.get_mut(&key) {
+                    Some(existing) if existing.is_object() && value.is_object() => {
+                        merge_settings(existing, value);
+                    }
+                    _ => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
+    }
 }
 
 fn codex_argv(

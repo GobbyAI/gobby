@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [skill-discovery, context, gobby, default]
 
 rules:
@@ -6,8 +7,8 @@ rules:
     event: session_start
     enabled: true
     # Session-start reset must beat turn_start skill-load rules so a compact
-    # or clear epoch starts with an empty loaded_skills ledger. Meta skill
-    # loads themselves wait on handoff_pull_pending until get_handoff runs.
+    # or clear epoch starts with an empty loaded_skills ledger. The core
+    # bootstrap fires on the pull turn; its loads run after get_handoff.
     priority: 8
     when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
     effects:
@@ -19,6 +20,9 @@ rules:
         value: []
       - type: set_variable
         variable: loaded_skill_references
+        value: []
+      - type: set_variable
+        variable: unavailable_instructions
         value: []
       # A stale true here would let the first commit after a compact through on
       # a review from before the reset, since reloading the skill satisfies

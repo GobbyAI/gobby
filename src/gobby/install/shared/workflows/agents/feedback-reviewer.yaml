@@ -4,11 +4,16 @@ description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   Markdown report and validated findings for human-reviewed tasks.
 
-version: "4.0.1"
+version: "4.2.0"
 enabled: true
 priority: 20
 surfaces: [spawn]
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: medium
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
 checkout_mode: none
 prewarm_pre_commit_store: false
 blocked_mcp_tools:
@@ -88,19 +93,12 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load restraint and proportionality before reviewing feedback"
       status_message: |
-        Execute loads through mcp__gobby__call_tool.
-        Plain requirements use get_skill(name=<name>). Exact references
-        use get_skill_file(name=<skill>, path=<reference path>): first fetch
-        its schema with get_tool_schema in a separate outer result. Follow
-        each page.next_cursor with only cursor until null before continuing.
-        Load both required methodology skills through the Gobby proxy:
-        1. get_skill(name="restraint") on gobby-skills
-        2. get_skill(name="proportionality") on gobby-skills
-        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
-        call_tool("gobby-skills", "get_skill", {"name": "restraint"}) and
-        call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
-        native Skill, GitHub/app connector, and Computer Use tools bypass
-        Gobby's observable skill tracking.
+        Load restraint and proportionality in one call before reviewing feedback:
+        call_tool("gobby-skills", "get_skill", {"names": ["restraint", "proportionality"]}).
+        Follow each page.next_cursor with only cursor until null; an instruction
+        is loaded once a page.completed lists it. Use only this proxy call; native
+        Skill, GitHub/app connector, and Computer Use tools bypass Gobby's skill
+        tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -112,19 +110,19 @@ step_workflow:
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'restraint'"
+          when: "skill_loaded('restraint')"
           action: set_variable
           variable: restraint_loaded
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'proportionality'"
+          when: "skill_loaded('proportionality')"
           action: set_variable
           variable: proportionality_loaded
           value: true
       transitions:
         - to: review
-          when: "vars.restraint_loaded and vars.proportionality_loaded"
+          when: "skill_loaded('restraint') and skill_loaded('proportionality')"
 
     - name: review
       mcp_error_policy: stay

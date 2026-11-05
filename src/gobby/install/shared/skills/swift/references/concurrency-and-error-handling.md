@@ -51,3 +51,5 @@ MainActor code, Sendable models, retries, resources, or exception translation.
   priority-sensitive paths.
 - Prefer deterministic async tests with controlled clocks, fake services, local
   actors, and focused task-group inputs.
+
+_Version: 1.0.0_

@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [task-enforcement, enforcement, tasks, gobby, default, guardrail]
 
 rules:

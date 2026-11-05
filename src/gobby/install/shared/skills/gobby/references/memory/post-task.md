@@ -30,4 +30,6 @@ before claiming review success.
 Guide: [Post-task review](../../../../../../../../docs/guides/memory.md#post-task-review)
 and [Lifecycle rules](../../../../../../../../docs/guides/memory.md#lifecycle-rules).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-29_

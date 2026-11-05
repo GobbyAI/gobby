@@ -24,7 +24,7 @@ it does not require the Orchestrator or another named seat. Existing operator
 approval and evidence/manifest requirements still apply.
 
 Load [drafting](drafting.md) and [coverage](coverage.md) for narrative authoring. Resolve material decisions with standalone `elicit` and `restraint`. Preserve research findings in each owning deliverable.
-Base validation and explicit user approval are mandatory. [Enhancement](enhancement.md) and [adversarial review](review.md) are optional and require their own authorization. The team-planning runbook launches the Writer, a live Enhancer and the Adversary together and runs one interactive pass per plan with no numbered rounds: the Writer drafts, the coordinator that owns the run disposes the Enhancer's edits, the Writer edits, the Adversary reviews to consensus by send_message and then applies M1 through [approval](approval.md)'s handoff-manifest route, the coordinator reviews the stamped plan, and the operator approves before expansion. No seat spawns another. [Approval](approval.md) owns manifest application; [expansion](expansion.md) owns task-tree creation; [lifecycle](lifecycle.md) owns registration and archive. Use [repair](repair.md) for validator residue and interrupted review checkpoints.
+Base validation and explicit user approval are mandatory. [Enhancement](enhancement.md) and [adversarial review](review.md) are optional and require their own authorization. The plan-team runbook launches the Writer, a live Plan Advocate and the Adversary together and runs one interactive pass per plan with no numbered rounds: the Writer drafts, the coordinator that owns the run disposes the Plan Advocate's edits, the Writer edits, the Adversary reviews to consensus by send_message and then applies M1 through [approval](approval.md)'s handoff-manifest route, the coordinator reviews the stamped plan, and the operator approves before expansion. No seat spawns another. [Approval](approval.md) owns manifest application; [expansion](expansion.md) owns task-tree creation; [lifecycle](lifecycle.md) owns registration and archive. Use [repair](repair.md) for validator residue and interrupted review checkpoints.
 
 ## Constraints and recovery
 The canonical artifact is `.gobby/plans/<slug>.md`. Provider write restrictions still apply. Staged conversation is not a saved or validated plan. Drafting/review creates no synthetic planning or per-round tasks; registration waits for a real implementation root.
@@ -33,5 +33,5 @@ On unknown IDs inspect registered plans and task ancestry. On stale evidence sto
 
 See [Plans and plan mode](../../../../../../../../docs/guides/plans-and-plan-mode.md#mental-model).
 
-_Version: 1.1.0_
-_Last verified: 2026-11-01_
+_Version: 2.0.0_
+_Last verified: 2026-11-04_

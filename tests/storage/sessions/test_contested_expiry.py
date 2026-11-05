@@ -383,7 +383,7 @@ def test_lifecycle_reads_do_not_decode_unrelated_variables(
 
     monkeypatch.setattr(_contested_expiry, "_stored_variables", observe_decode)
     if consumer == "clear-successor":
-        assert _clear_successor_of(temp_db, session.id) == successor
+        assert _clear_successor_of(temp_db, session) == successor
     else:
         assert _contested_expiry.session_has_active_native_subagent(temp_db, session.id) is True
     assert decode_sizes

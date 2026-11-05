@@ -26,7 +26,12 @@ def test_environment_keeps_validation_writes_in_run(provider: str, tmp_path: Pat
 
     environment = run.environment(provider)
     assert environment["OCR_NO_UPDATE"] == "1"
-    assert Path(environment["UV_PROJECT_ENVIRONMENT"]).is_relative_to(run.cache)
+    # #25645: uv uses the checkout's seeded .venv. An empty value also clears one
+    # inherited from the daemon; a per-run environment starts empty and cannot
+    # build the editable install in a read-only checkout.
+    assert {**os.environ, "UV_PROJECT_ENVIRONMENT": "/inherited", **environment}[
+        "UV_PROJECT_ENVIRONMENT"
+    ] == ""
 
 
 def test_reviewer_shell_skips_user_startup_files(tmp_path: Path) -> None:

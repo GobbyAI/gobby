@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [progressive-discovery, enforcement, mcp, gobby, default]
 
 rules:

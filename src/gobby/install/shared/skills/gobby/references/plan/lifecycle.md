@@ -19,4 +19,6 @@ There is no standalone public plans HTTP registry route; operator HTTP plan-mode
 
 See [Plan records](../../../../../../../../docs/guides/plans-and-plan-mode.md#plan-records) and [Archive and delete](../../../../../../../../docs/guides/plans-and-plan-mode.md#archive-and-delete).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

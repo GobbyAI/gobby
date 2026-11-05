@@ -116,6 +116,32 @@ def _fragment_dict(
     }
 
 
+def _wrapped_size(
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+    index: int,
+    more: bool,
+    size: int,
+) -> int:
+    """Return the wrapped length of a fragment with a `size`-byte slice, without encoding it.
+
+    The base64 alphabet needs no JSON escaping, so the payload adds 4 * ceil(size / 3) bytes.
+    """
+    envelope = _fragment_dict(
+        event=event,
+        terminal_id=terminal_id,
+        attachment_id=attachment_id,
+        message_seq=message_seq,
+        index=index,
+        more=more,
+        chunk=b"",
+    )
+    return len(canonical_json(envelope)) + (size + 2) // 3 * 4
+
+
 def _greedy_chunks(
     complete_json: bytes,
     *,
@@ -126,26 +152,30 @@ def _greedy_chunks(
 ) -> list[bytes]:
     chunks: list[bytes] = []
     offset = 0
+    # A wrapped fragment holds its base64 payload, so a take above this bound never fits.
+    # Halving to the bound first skips only probes that cannot fit.
+    bound = TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES // 4 * 3
     while offset < len(complete_json):
         remaining = len(complete_json) - offset
         take = remaining
+        while take > bound:
+            take //= 2
         while take > 0:
-            chunk = complete_json[offset : offset + take]
-            probe = _fragment_dict(
+            size = _wrapped_size(
                 event=event,
                 terminal_id=terminal_id,
                 attachment_id=attachment_id,
                 message_seq=message_seq,
                 index=len(chunks),
                 more=offset + take < len(complete_json),
-                chunk=chunk,
+                size=take,
             )
-            if len(canonical_json(probe)) < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
-                chunks.append(chunk)
+            if size < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+                chunks.append(complete_json[offset : offset + take])
                 offset += take
                 break
             take = max(1, take // 2)
-            if take == 1 and len(canonical_json(probe)) >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+            if take == 1 and size >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
                 raise ValueError("fragment_too_large")
         else:
             raise ValueError("fragment_too_large")
@@ -167,22 +197,17 @@ def fragment_event(
     midpoint = max(1, len(complete_json) // 2)
     slices = [complete_json[:midpoint], complete_json[midpoint:]]
     if any(
-        len(
-            canonical_json(
-                _fragment_dict(
-                    event=event,
-                    terminal_id=terminal_id,
-                    attachment_id=attachment_id,
-                    message_seq=message_seq,
-                    index=index,
-                    more=index < len(slices) - 1,
-                    chunk=chunk,
-                )
-            )
+        _wrapped_size(
+            event=event,
+            terminal_id=terminal_id,
+            attachment_id=attachment_id,
+            message_seq=message_seq,
+            index=index,
+            more=index < len(slices) - 1,
+            size=len(chunk),
         )
         >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES
         for index, chunk in enumerate(slices)
-        if chunk
     ):
         slices = _greedy_chunks(
             complete_json,

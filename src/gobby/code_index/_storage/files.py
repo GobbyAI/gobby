@@ -278,17 +278,6 @@ class CodeIndexFileStorageMixin:
             for row in rows
         ]
 
-    def mark_vectors_synced(self, file_id: str, content_hash: str) -> bool:
-        """Mark a file's vectors as synced if the content hash still matches."""
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                """UPDATE code_indexed_files
-                   SET vectors_synced = TRUE, vector_sync_attempted_at = %s
-                   WHERE id = %s AND content_hash = %s""",
-                (datetime.now(UTC).isoformat(), file_id, content_hash),
-            )
-            return cursor.rowcount > 0
-
     def mark_vector_sync_attempted(self, file_id: str) -> bool:
         """Mark that a vector sync was attempted, even if it later fails."""
         now = datetime.now(UTC).isoformat()
@@ -301,15 +290,15 @@ class CodeIndexFileStorageMixin:
             )
             return cursor.rowcount > 0
 
-    def mark_graph_synced(self, file_id: str, content_hash: str) -> bool:
-        """Mark a file's graph edges as synced if the content hash still matches."""
+    def mark_graph_synced(self, file: IndexedFile) -> bool:
+        """Mark a no-graph-shortcut file synced if its snapshot language and hash still match."""
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
                    SET graph_synced = TRUE, graph_sync_attempted_at = %s
-                   WHERE id = %s AND content_hash = %s""",
-                (now, file_id, content_hash),
+                   WHERE id = %s AND content_hash = %s AND language = %s""",
+                (now, file.id, file.content_hash, file.language),
             )
             return cursor.rowcount > 0
 

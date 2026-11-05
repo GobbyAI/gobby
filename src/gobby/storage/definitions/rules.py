@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -51,6 +52,21 @@ _UPDATE_FIELDS = frozenset(
 # Template sync may re-scope a row when its YAML moves between the global and a
 # project rules directory; interactive updates never change ownership.
 _SYNC_FIELDS = _UPDATE_FIELDS | {"project_id"}
+
+
+def rule_definition_protected(definition_json: Any) -> bool:
+    """Whether a stored rule body is protected; an unreadable body fails closed."""
+    body = definition_json
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except json.JSONDecodeError:
+            return True
+    return not isinstance(body, dict) or body.get("protected") is True
+
+
+def _protected(row: RuleDefinitionRow) -> bool:
+    return rule_definition_protected(row.definition_json)
 
 
 def _lock_live_row(txn: Transaction, definition_id: str) -> RuleDefinitionRow:
@@ -254,10 +270,17 @@ class RuleDefinitionManager:
             incoming: Mapping[str, Any] = fields
             if from_sync:
                 incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
-            self._validate(
-                str(incoming.get("name", current.name)),
-                incoming.get("definition_json", current.definition_json),
+            # Disabling is the one write an invalid stored row still accepts (#25487).
+            disable_only = (
+                not restore
+                and incoming.get("enabled") is False
+                and incoming.keys() <= {"enabled", "enabled_pinned"}
             )
+            if not disable_only:
+                self._validate(
+                    str(incoming.get("name", current.name)),
+                    incoming.get("definition_json", current.definition_json),
+                )
             values: dict[str, Any] = {}
             for key, value in incoming.items():
                 if key in {"sources", "tags"}:
@@ -286,7 +309,8 @@ class RuleDefinitionManager:
         now = utc_now()
         with self.db.transaction() as txn:
             current = _lock_live_row(txn, definition_id)
-            self._validate(current.name, current.definition_json)
+            if not current.enabled:
+                self._validate(current.name, current.definition_json)
             row = txn.execute(
                 """
                 UPDATE rule_definitions
@@ -390,13 +414,25 @@ class RuleDefinitionManager:
         ]
 
     def list_effective(self, project_id: str | None) -> list[RuleDefinitionRow]:
-        """Resolve project overrides before callers filter events or enabled state."""
+        """Resolve project overrides before callers filter events or enabled state.
+
+        A project row displaces a same-name global row unless the global row is
+        protected; a protected rule changes only through the operator.
+        """
         by_name: dict[str, RuleDefinitionRow] = {}
         for row in self.list_all(project_id=project_id):
-            if row.project_id == project_id:
+            if row.project_id not in (None, project_id):
+                continue
+            current = by_name.get(row.name)
+            if current is None:
                 by_name[row.name] = row
             elif row.project_id is None:
-                by_name.setdefault(row.name, row)
+                if _protected(row):
+                    by_name[row.name] = row
+            elif row.project_id == project_id and not (
+                current.project_id is None and _protected(current)
+            ):
+                by_name[row.name] = row
         return sorted(by_name.values(), key=lambda row: (row.priority, row.name, row.id))
 
     def list_by_event(

@@ -33,6 +33,9 @@ PANE_FOCUSED = "pane_focused"
 RETRYABLE_WAKE_SKIPS = frozenset(
     {"session_active", COMPOSER_OCCUPIED, COMPOSER_UNCONFIRMED, PANE_FOCUSED}
 )
+# Skips from wake_state_failure for a recipient outside the live statuses. The durable
+# message stays queued until that session resumes; no live wake is pending.
+NOT_LIVE_WAKE_SKIPS = frozenset({"session_expired", "session_not_live"})
 
 
 def parse_tmux_session(terminal_context: Any) -> str | None:

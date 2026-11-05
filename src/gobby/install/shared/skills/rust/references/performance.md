@@ -117,3 +117,5 @@ fn process(handler: &Box<dyn Handler>) { handler.handle(); }
 // Good: generic — monomorphized, inlined
 fn process(handler: &impl Handler) { handler.handle(); }
 ```
+
+_Version: 1.0.0_

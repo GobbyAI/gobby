@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import psutil
 import pytest
 
 from gobby.agents.detection.safe_regex import RegexOutcome, RegexSearchResult, SafeRegex
@@ -16,7 +18,10 @@ from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as gate
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import register_send_keys_tool
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.terminals.runtime import Delivered
+from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger, read_composer
+from gobby.terminals.pane_io import SendResult, composer_gate_for_write
+from gobby.terminals.runtime import Delivered, NamedKey, SnapshotMode
+from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -53,7 +58,7 @@ async def test_node_composer_requires_verified_claude_entrypoint(
     if package == "claude" and not busy:
         assert refusal is None
     else:
-        assert refusal is not None
+        assert isinstance(refusal, gate.SendKeysRefusal)
         assert refusal.code == (
             "send_keys_composer_not_idle" if package == "claude" else "send_keys_target_unconfirmed"
         )
@@ -86,11 +91,22 @@ class _Manager:
 
 
 class _Pane:
+    backend = "fake"
+    target = TERMINAL_ID
+
     def __init__(self, text: str | None) -> None:
         self._text = text
+        self.keys: list[str] = []
 
-    async def snapshot(self, lines: int = 80, *, mode: str = "text") -> str | None:
+    async def snapshot(self, lines: int = 80, *, mode: SnapshotMode = "text") -> str | None:
         return self._text
+
+    async def send_key(self, key: NamedKey) -> SendResult:
+        self.keys.append(key)
+        return True, None
+
+    async def type_text(self, text: str) -> SendResult:
+        raise AssertionError(f"the gate never types text: {text!r}")
 
 
 def _terminal(pgid: int | None = 4321) -> SimpleNamespace:
@@ -111,8 +127,11 @@ def _scene(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> _Manager:
     monkeypatch.setattr(
         gate, "foreground_executables", lambda pids: scene["foreground"] if pids else {}
     )
-    monkeypatch.setattr(gate, "read_composer", lambda _id: SimpleNamespace(state=scene["composer"]))
-    monkeypatch.setattr(gate, "live_runtime_pane", lambda *_args: pane)
+    if scene["composer"] is not None:  # None reads the bound composer ledger
+        monkeypatch.setattr(
+            gate, "read_composer", lambda _id: SimpleNamespace(state=scene["composer"])
+        )
+    monkeypatch.setattr(gate, "live_runtime_pane", lambda *_args: scene.get("live_pane", pane))
     monkeypatch.setattr(gate, "_detection_registry", lambda _manager: BundledDetectionRegistry())
     return _Manager(scene["terminal"], scene["lookup_error"])
 
@@ -211,7 +230,7 @@ async def test_refuses_a_target_that_cannot_take_keys(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == code
     assert "gobby-agents:send_message" in refusal.message
 
@@ -241,8 +260,10 @@ async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPat
     no_manager = await gate.send_keys_target_refusal(SESSION_ID, None, object())
     no_registry = await gate.send_keys_target_refusal(SESSION_ID, _Manager(_terminal(), None), None)
 
-    assert no_manager is not None and no_manager.code == "send_keys_target_unconfirmed"
-    assert no_registry is not None and no_registry.code == "send_keys_target_unconfirmed"
+    assert isinstance(no_manager, gate.SendKeysRefusal)
+    assert no_manager.code == "send_keys_target_unconfirmed"
+    assert isinstance(no_registry, gate.SendKeysRefusal)
+    assert no_registry.code == "send_keys_target_unconfirmed"
 
 
 @pytest.mark.asyncio
@@ -279,7 +300,7 @@ async def test_refuses_an_unknown_versioned_binary(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
 
 
@@ -292,7 +313,7 @@ async def test_refuses_a_versioned_path_that_does_not_exist(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
 
 
@@ -317,7 +338,7 @@ async def test_a_busy_rule_timeout_over_a_hook_denial_refuses(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_composer_not_idle"
 
 
@@ -355,7 +376,7 @@ def public_send_keys(
         agent_depth=0 if operator else 1,
     )
     if not operator:
-        SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "orchestrator")
+        SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "fixture-seat")
     target = session_manager.register(
         external_id="send-keys-public-target",
         machine_id=require_machine_id(),
@@ -435,3 +456,242 @@ async def test_public_send_keys_applies_the_composer_gate_to_the_operator(
     assert result["error_code"] == "send_keys_target_bare_shell"
     assert "gobby-agents:send_message" in result["error"]
     writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("composer", "route"),
+    [
+        ("held", "send_keys(keys='ctrl_u', literal=false)"),
+        ("draft", "gobby-sessions:release_composer"),
+        ("unknown", "gobby-sessions:release_composer"),
+    ],
+)
+async def test_occupied_composer_refusal_names_a_recovery_route(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    composer: str,
+    route: str,
+) -> None:
+    register, writer, target_id = public_send_keys
+    handler = register(_scene(monkeypatch, composer=composer))
+
+    result = await handler(session_id=target_id, keys="resume\n")
+
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    assert route in result["recovery"]
+    writer.assert_not_awaited()
+
+
+@pytest.fixture
+def held_compact() -> Iterator[ComposerLedger]:
+    """Bind a ledger whose composer holds a daemon-typed, unsubmitted ``/compact``."""
+    ledger = ComposerLedger()
+    ledger.release(TERMINAL_ID)
+    ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload="/compact")
+    bind_composer_ledger(ledger)
+    assert read_composer(TERMINAL_ID).state == "held"
+    yield ledger
+    bind_composer_ledger(None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keys", ["ctrl_u", "C-u"])
+async def test_clear_key_drains_a_held_compact_so_a_later_handoff_does_not_replay_it(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    held_compact: ComposerLedger,
+    keys: str,
+) -> None:
+    register, writer, target_id = public_send_keys
+    pane = _Pane(IDLE_COMPOSER)
+    handler = register(_scene(monkeypatch, composer=None, live_pane=pane))
+
+    result = await handler(session_id=target_id, keys=keys, literal=False)
+
+    assert result["success"] is True
+    assert result["cleared"] is True
+    # The drain runs through the pane, never as a raw daemon write that keeps the hold.
+    writer.assert_not_awaited()
+    assert "ctrl_u" in pane.keys
+    assert read_composer(TERMINAL_ID).state == "empty"
+    # A later compact handoff types /compact fresh instead of replaying a held command.
+    assert await composer_gate_for_write(pane, action="compact", pending_payload="/compact") == (
+        True,
+        None,
+        "empty",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("keys", "literal"),
+    [("ctrl_u\n", True), ("/compact", True), ("enter", False), ("escape", False)],
+    ids=["clear-with-enter", "text", "enter", "escape"],
+)
+async def test_only_a_pure_clear_key_may_touch_a_held_composer(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    held_compact: ComposerLedger,
+    keys: str,
+    literal: bool,
+) -> None:
+    register, writer, target_id = public_send_keys
+    pane = _Pane(IDLE_COMPOSER)
+    handler = register(_scene(monkeypatch, composer=None, live_pane=pane))
+
+    result = await handler(session_id=target_id, keys=keys, literal=literal)
+
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    assert pane.keys == []
+    writer.assert_not_awaited()
+    assert read_composer(TERMINAL_ID).state == "held"
+
+
+@pytest.mark.asyncio
+async def test_clear_key_on_an_operator_draft_still_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+) -> None:
+    register, writer, target_id = public_send_keys
+    pane = _Pane(IDLE_COMPOSER)
+    handler = register(_scene(monkeypatch, composer="draft", live_pane=pane))
+
+    result = await handler(session_id=target_id, keys="ctrl_u", literal=False)
+
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    assert "gobby-sessions:release_composer" in result["recovery"]
+    assert pane.keys == []
+    writer.assert_not_awaited()
+
+
+# An SRT-sandboxed provider runs under Gobby's Node runner. The runner leads the pane's
+# process group and the native build is its child in that same group, so the group
+# leader's command reads as ``node``. Every pid below is synthetic.
+SRT_RUNNER_PID = 4321
+SRT_CHILD_PID = 4322
+
+
+class _SrtChild:
+    def __init__(self, pid: int, exe: str, *, group: int = SRT_RUNNER_PID) -> None:
+        self.pid = pid
+        self._exe = exe
+        self.group = group
+
+    def exe(self) -> str:
+        return self._exe
+
+
+class _SrtRunner:
+    def __init__(self, children: list[_SrtChild]) -> None:
+        self._children = children
+
+    def children(self, recursive: bool = False) -> list[_SrtChild]:
+        assert recursive is False
+        return self._children
+
+
+def _native_build(tmp_path: Path) -> Path:
+    build = tmp_path / "share" / "claude" / "versions" / "2.1.318"
+    build.parent.mkdir(parents=True)
+    build.touch()
+    return build
+
+
+def _srt_pane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, children: list[_SrtChild]) -> Path:
+    """Install a runner under GOBBY_HOME and give the runner pane these children."""
+    home = tmp_path / "home"
+    runner = home / "tools" / "srt" / SRT_RELEASE.version / "runner.mjs"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("// SRT runner fixture\n")
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    groups = {SRT_RUNNER_PID: SRT_RUNNER_PID} | {child.pid: child.group for child in children}
+
+    def getpgid(pid: int) -> int:
+        if pid not in groups:
+            raise ProcessLookupError(pid)
+        return groups[pid]
+
+    monkeypatch.setattr(os, "getpgid", getpgid)
+    monkeypatch.setattr(psutil, "Process", lambda pid: _SrtRunner(children))
+    monkeypatch.setattr(
+        gate, "foreground_node_script", lambda pid: str(runner) if pid == SRT_RUNNER_PID else None
+    )
+    return runner
+
+
+@pytest.mark.asyncio
+async def test_srt_runner_admits_an_idle_composer_on_its_native_claude_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    build = _native_build(tmp_path)
+    _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+
+    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("child", ["none", "shell", "node", "unknown-build", "left-group"])
+async def test_srt_runner_refuses_without_a_live_agent_cli_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, child: str
+) -> None:
+    build = _native_build(tmp_path)
+    children = {
+        "none": [],
+        "shell": [_SrtChild(SRT_CHILD_PID, "/bin/sh")],
+        "node": [_SrtChild(SRT_CHILD_PID, "/opt/homebrew/bin/node")],
+        "unknown-build": [
+            _SrtChild(SRT_CHILD_PID, str(tmp_path / "share/claude/versions/2.1.999"))
+        ],
+        "left-group": [_SrtChild(SRT_CHILD_PID, str(build), group=9999)],
+    }[child]
+    _srt_pane(monkeypatch, tmp_path, children)
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_target_unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_a_runner_copy_outside_the_installed_root_admits_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    build = _native_build(tmp_path)
+    _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
+    copy = tmp_path / "elsewhere" / "runner.mjs"
+    copy.parent.mkdir()
+    copy.write_text("// copied runner\n")
+    monkeypatch.setattr(gate, "foreground_node_script", lambda pid: str(copy))
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_target_unconfirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        pytest.param({"snapshot": "Password:"}, "send_keys_credential_prompt", id="password"),
+        pytest.param({"composer": "draft"}, "send_keys_composer_not_idle", id="human-draft"),
+        pytest.param(
+            {"snapshot": HOOK_DENIAL_OVER_LIVE_TURN}, "send_keys_composer_not_idle", id="live-turn"
+        ),
+    ],
+)
+async def test_srt_admission_leaves_the_composer_checks_in_force(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, Any], code: str
+) -> None:
+    build = _native_build(tmp_path)
+    _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"}, **overrides)
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == code

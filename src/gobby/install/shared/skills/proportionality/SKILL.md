@@ -1,7 +1,7 @@
 ---
 name: proportionality
 description: Judge whether mechanism is proportionate to the goal. Flag complexity with no concrete consumer or stated requirement — speculative abstraction, indirection without payoff, single-value config, framework overkill. Ambition and size are never findings. Shared by plan, epic, and leaf review.
-version: "1.0.0"
+version: "2.0.0"
 category: methodology
 internal: true
 triggers: over-engineering, proportionality, rube goldberg, yagni, premature abstraction, gold-plating
@@ -14,7 +14,7 @@ metadata:
 # proportionality — Anti-Rube-Goldberg Review Methodology
 
 > Internal methodology skill; loaded with `get_skill(name="proportionality")` by
-> `plan-adversary` (plan altitude) and `epic-reviewer` (epic altitude); a leaf
+> `plan-adversary` (plan altitude) and `code-reviewer` (epic altitude); a leaf
 > code review applies it at leaf altitude. Not a user-facing command.
 >
 > `restraint` is the authoring-side counterpart: restraint disciplines work
@@ -136,7 +136,7 @@ The criterion is identical at every altitude; the unit under review changes.
   consumer named anywhere in the plan, or config/flags/profile fields with a
   single value. Feeds the `over-engineering` finding category in `gobby:references/plan/review.md`.
   Ambitious-but-justified epics produce zero proportionality findings.
-- **Epic altitude (`epic-reviewer`).** Unit = the whole epic across its
+- **Epic altitude (`code-reviewer`).** Unit = the whole epic across its
   leaves. Watch for cross-leaf duplication that should have been one shared
   thing, frameworks introduced by one leaf and used by none, and product
   behavior no plan section asked for. This is the same criterion the

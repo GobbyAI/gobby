@@ -4,6 +4,12 @@ Load before creating, editing, exporting, duplicating or retiring a pipeline.
 Discover with `list_pipelines` on `gobby-workflows`; `get_pipeline(name=...)`
 summarizes a subset of step fields. Use `export_pipeline` for full YAML.
 
+MCP pipeline creation, updating, deletion and `reload_cache` require
+`manage_workflow_definitions` or the operator's terminal. Other seats can read,
+export and evaluate definitions and request mutations from an authorized
+session. Cache reload imports and synchronizes definitions, so it requires the
+same authority as an explicit definition write.
+
 1. Choose a unique descriptive name and explicit project scope. Prepare YAML
    with `type: pipeline`, unique step IDs and at least one executable step.
 2. Load validation guidance, then call `create_pipeline(yaml_content=...,
@@ -42,4 +48,5 @@ write or from a CLI conversion receipt.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#installation-and-operator-boundaries).
 
-_Last verified: 2026-09-12_
+_Version: 1.0.0_
+_Last verified: 2026-11-03_

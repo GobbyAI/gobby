@@ -135,3 +135,5 @@ Use `Enum` or `StrEnum` when values are public, reused widely, serialized, or ne
 ## Public API Surface
 
 Export public types deliberately through package `__init__.py` or documented modules. Do not expose private helper types because tests or downstream code reached into internals.
+
+_Version: 1.0.0_

@@ -45,3 +45,5 @@
 - Release the owner and verify whether work cancels, completes independently, or
   intentionally keeps another object alive.
 - Use Thread Sanitizer or the repository's race harness for changed shared state.
+
+_Version: 1.0.0_

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.sessions.status_events import SessionStatusTransition
@@ -38,12 +39,50 @@ class _RevivalHost(Protocol):
 
     def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
+    def revive_expired_terminal_session(
+        self,
+        session_id: str,
+        current: Session | None = None,
+        *,
+        trigger: RevivalTrigger = ...,
+    ) -> Session | None: ...
+
+
+class RevivalTrigger(Enum):
+    """What brought fresh evidence that an expired terminal session lives."""
+
+    # Hook activity: past the revival horizon the row stays expired.
+    ACTIVITY = "activity"
+    # An explicit register_session call: the caller asserts the session is live, so the
+    # horizon does not apply. Clear successors, exited CLIs and pane contests still do.
+    REGISTRATION = "registration"
+
 
 class _TerminalRevivalMixin:
+    def revive_registered_terminal_session(
+        self: _RevivalHost, session: Session, *, caller_session_id: str | None
+    ) -> Session:
+        """Reactivate an expired terminal row that its own session registers again.
+
+        Only the session itself may revive the row this way: a registration from another
+        session, or from no session, leaves it expired. Returns the row as it stands
+        afterwards, still expired when ownership refuses it.
+        """
+        if session.session_type != "terminal" or session.status != "expired":
+            return session
+        if caller_session_id != session.id:
+            return session
+        revived = self.revive_expired_terminal_session(
+            session.id, session, trigger=RevivalTrigger.REGISTRATION
+        )
+        return revived or session
+
     def revive_expired_terminal_session(
         self: _RevivalHost,
         session_id: str,
         current: Session | None = None,
+        *,
+        trigger: RevivalTrigger = RevivalTrigger.ACTIVITY,
     ) -> Session | None:
         """Reconcile terminal ownership when fresh activity arrives.
 
@@ -60,7 +99,7 @@ class _TerminalRevivalMixin:
         if current.status not in {*TERMINAL_OWNER_STATUSES, "expired"}:
             return current
 
-        successor_id = _clear_successor_of(self.db, session_id)
+        successor_id = _clear_successor_of(self.db, current)
         if successor_id is not None:
             # The CLI cleared this session and a successor bound to the pane, so
             # the row is finished by construction. A late hook still carrying its
@@ -93,7 +132,7 @@ class _TerminalRevivalMixin:
             )
             return current
 
-        past_horizon = past_terminal_revival_horizon(current)
+        past_horizon = trigger is RevivalTrigger.ACTIVITY and past_terminal_revival_horizon(current)
         identity = terminal_session_identity(current)
         if identity is None:
             if current.status != "expired" or past_horizon:
@@ -335,14 +374,34 @@ class _TerminalRevivalMixin:
         return self.get(session_id)
 
 
-def _clear_successor_of(db: HubDatabase, session_id: str) -> str | None:
-    """Return the session that consumed this row's clear marker, if any."""
-    # Module-level import would be circular: clear_continuation imports this package.
-    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+def _clear_successor_of(db: HubDatabase, current: Session) -> str | None:
+    """Return the session that succeeded this row through a clear, if any.
 
-    variables = read_session_variables(db, session_id, keys=(CLEAR_ATTEMPT_VARIABLE,))
+    A staged clear names its successor in the consumed clear marker. A native clear has
+    no marker: its successor links this row as parent and runs in the same CLI process.
+    A spawned child also links its parent but runs in its own process, so it never
+    matches.
+    """
+    # Module-level imports would be circular: both modules import this package.
+    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+    from gobby.sessions.handoff_identity import terminal_process_contexts_match
+
+    variables = read_session_variables(db, current.id, keys=(CLEAR_ATTEMPT_VARIABLE,))
     marker = variables.get(CLEAR_ATTEMPT_VARIABLE) if variables else None
     consumed_by = marker.get("consumed_by") if isinstance(marker, dict) else None
-    if isinstance(consumed_by, str) and consumed_by and consumed_by != session_id:
+    if isinstance(consumed_by, str) and consumed_by and consumed_by != current.id:
         return consumed_by
+    if not current.terminal_context:
+        return None
+    rows = db.fetchall(
+        """
+        SELECT id, terminal_context FROM sessions
+        WHERE parent_session_id = %s AND id <> %s AND source = %s
+          AND session_type = 'terminal' AND status = ANY(%s)
+        """,
+        (current.id, current.id, current.source, list(LIVE_SESSION_STATUSES)),
+    )
+    for row in rows:
+        if terminal_process_contexts_match(row["terminal_context"], current.terminal_context):
+            return str(row["id"])
     return None

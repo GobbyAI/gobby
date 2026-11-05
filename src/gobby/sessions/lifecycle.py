@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+import psycopg
+
 from gobby.config.app import DaemonConfig
 from gobby.config.features import KnowledgeGraphQueueConfig
 from gobby.config.persistence import MemoryDreamConfig
@@ -24,6 +26,7 @@ from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
 from gobby.storage.hook_receipts import retire_expired_session_hook_effects
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_startup_marks import prune_startup_marks
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.token_events import TokenEventStore
@@ -334,6 +337,11 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 "Failed to retire hook effects for expired sessions",
                 exc_info=True,
             )
+        try:
+            # Marks are not sessions, so the expiry count leaves them out.
+            prune_startup_marks(self.session_manager.db)
+        except psycopg.Error:
+            logger.warning("Failed to prune unconsumed session startup marks", exc_info=True)
 
         # Zero-message sessions created by spurious SESSION_START events can be
         # cleaned up much faster than the normal 24h stale-session sweep.

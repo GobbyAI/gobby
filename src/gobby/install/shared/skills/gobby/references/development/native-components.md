@@ -72,3 +72,5 @@ Inspect installed configuration before declaring the effective terminal backend
 or any rule active. Template defaults are source evidence only. Native spawning
 requires an available host and has no silent tmux fallback; use typed failures
 and the relevant agent/session recovery procedure.
+
+_Version: 1.0.0_

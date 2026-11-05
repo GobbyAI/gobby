@@ -43,6 +43,7 @@ class TestRunPipelineNoWait:
             steps=[MagicMock()],
             inputs={},
             outputs={},
+            strict_inputs=False,
         )
 
         mock_execution = MagicMock(id="efb0a4a5-34ca-5183-b344-aa1958be7828")

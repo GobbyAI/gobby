@@ -131,14 +131,27 @@ def advance_claim_flow(
     }
     if record.kind in stage.done_when and record.result == stage.rejected_result:
         target = stage.on_rejected
-    elif (
-        stage.done_when
-        and len(references) <= 1
-        and all(
-            kind in active and active[kind].result == stage.approved_result
-            for kind in stage.done_when
-        )
+    elif stage.done_when and all(
+        kind in active and active[kind].result == stage.approved_result for kind in stage.done_when
     ):
+        if stage.next is not None and len(references) > 1:
+            latest = max(
+                (active[kind] for kind in stage.done_when if active[kind].reference is not None),
+                key=lambda item: item.sequence,
+            )
+            reference = latest.reference
+            if reference is None:
+                raise ValueError("claim_flow reference is unavailable")
+            conflicting = ", ".join(
+                f"{kind}={item.reference.scheme}:{item.reference.value}"
+                for kind, item in active.items()
+                if kind in stage.done_when and item.reference is not None
+            )
+            raise ValueError(
+                f"claim_flow stage {name!r} requires one reference across done_when evidence. "
+                f"Accepted reference for this attempt: {reference.scheme}:{reference.value}. "
+                f"Supersede conflicting records or omit references for unrelated evidence: {conflicting}"
+            )
         target = stage.next
     if target is None:
         return
