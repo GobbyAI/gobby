@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import logging
 import math
 from collections.abc import Awaitable, Callable, Collection, Mapping
@@ -114,21 +115,20 @@ def transition_hint(
     generation: str,
     now: datetime,
 ) -> AlertTransition:
-    """Record one pane hint for its live generation and return the possible-limit edge.
+    """Record one pane hint's occurrence for its live generation and return the edge it raises.
 
-    Each generation keeps its last occurrence, so a replay of that occurrence is a duplicate.
-    An older occurrence that is no longer the last one counts as new, and it can notify once
-    the cooldown has passed. Hints never touch quota components, so they never rearm or clear
-    a verified incident.
+    A generation keeps the digest of every occurrence it has seen until it is retired, so a
+    replay of any of them is a duplicate and never notifies. An unseen occurrence inside the
+    cooldown is recorded and stays silent, so its later replay cannot notify either. Hints never
+    touch quota components, so they never rearm or clear a verified incident.
     """
     state = _load(previous_details, HINT_SECTION)
     generations = _section(state, "generations")
-    if _mapping(generations.get(generation)).get("occurrence") == hint.occurrence:
+    seen = _digests(generations.get(generation))
+    digest = hashlib.sha256(hint.occurrence.encode()).hexdigest()
+    if digest in seen:
         return AlertTransition(details=state, duplicate=True)
-    generations[generation] = {
-        "occurrence": hint.occurrence,
-        "detected_at": hint.detected_at.isoformat(),
-    }
+    generations[generation] = {"digests": [*seen, digest]}
     last = _parse_time(state.get("notified_at"))
     if last is not None and now - last < HINT_COOLDOWN:
         return AlertTransition(details=state)
@@ -369,6 +369,10 @@ def _credit_transition(
         raw = component.metadata.get("credits")
         if isinstance(raw, Mapping):
             credits.setdefault(component.scope, raw)
+    # Only a windowed reading can show that no window is exhausted; a windowless one keeps drawing.
+    windowed = {
+        component.scope for component in observation.components if component.window is not None
+    }
     ledger = _section(state, "credits")
     for scope, raw in credits.items():
         reading_at = readings[scope]
@@ -382,16 +386,17 @@ def _credit_transition(
         text = raw_balance if isinstance(raw_balance, str) else None
         value = _balance_value(text)
         has_credits = raw.get("has_credits")
-        if has_credits is False or not _scope_exhausted(state, scope, reading_at):
+        if has_credits is False:
             drawing = False
         elif has_credits is True and value is not None and prior_value is not None:
-            if value < prior_value:
+            exhausted = _scope_exhausted(state, scope, reading_at)
+            if value < prior_value and exhausted:
                 if not drawing:
                     edges.append(
                         AlertEdge(provider=provider, kind="drawing_credits", credit_balance=text)
                     )
                     drawing = True
-            elif value > prior_value:
+            elif value >= prior_value or (scope in windowed and not exhausted):
                 drawing = False
         ledger[scope] = {
             "balance": text if value is not None else prior.get("balance"),
@@ -449,6 +454,14 @@ def _section(state: dict[str, object], name: str) -> dict[str, object]:
         section = {}
         state[name] = section
     return section
+
+
+def _digests(entry: object) -> list[str]:
+    """The occurrence digests one live generation has seen."""
+    raw = _mapping(entry).get("digests")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, str)]
 
 
 def _load(previous_details: Mapping[str, object], name: str) -> dict[str, object]:

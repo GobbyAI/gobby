@@ -691,7 +691,7 @@ async def test_possible_limit_hint_edges() -> None:
     await _settle()
     assert sink.take() == []
 
-    # A replay of the last occurrence from a live generation never notifies, even after the cooldown.
+    # A replay of an occurrence this generation has seen never notifies, even after the cooldown.
     clock.now = _T0 + timedelta(seconds=1000)
     replay = _pane_hint("seat-a:pane-2", _T0 + timedelta(seconds=60))
     assert await service.observe_pane_hint(replay, generation="seat-a") is False
@@ -733,7 +733,7 @@ async def test_possible_limit_hint_edges() -> None:
     assert sink.take() == []
 
 
-async def test_pane_hint_dedupe_is_bounded_per_live_generation() -> None:
+async def test_pane_hint_dedupe_is_per_live_generation() -> None:
     clock = _Clock(_T0)
     storage = _Storage(clock)
     sink = _Sink()
@@ -749,7 +749,7 @@ async def test_pane_hint_dedupe_is_bounded_per_live_generation() -> None:
     assert sink.take() == [("possible_limit", None, None, None)]
     assert len(_pane_hint_generations(storage)) == 70
 
-    # Past the old 64-entry cap every live generation keeps its last occurrence: replays stay silent.
+    # Every live generation keeps the digests of its occurrences, so replays stay silent.
     clock.now = _T0 + timedelta(seconds=1000)
     first = _pane_hint("gen-0:occ-1", _T0)
     assert await service.observe_pane_hint(first, generation="gen-0") is False
@@ -768,6 +768,27 @@ async def test_pane_hint_dedupe_is_bounded_per_live_generation() -> None:
     assert sink.take() == [("possible_limit", None, None, None)]
 
 
+async def test_no_occurrence_is_evicted_within_a_live_generation() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    # 70 distinct occurrences in one live generation, all inside one cooldown window.
+    for index in range(70):
+        clock.now = _T0 + timedelta(seconds=index)
+        occurrence = _pane_hint(f"gen-a:occ-{index}", clock.now)
+        assert await service.observe_pane_hint(occurrence, generation="gen-a") is True
+    await _settle()
+    assert sink.take() == [("possible_limit", None, None, None)]
+
+    # The earliest occurrence is still in the digest set, so its replay after the bound stays silent.
+    clock.now = _T0 + timedelta(seconds=1000)
+    earliest = _pane_hint("gen-a:occ-0", _T0)
+    assert await service.observe_pane_hint(earliest, generation="gen-a") is False
+    await _settle()
+    assert sink.take() == []
+
+
 async def test_retired_generations_leave_the_bounded_state() -> None:
     clock = _Clock(_T0)
     storage = _Storage(clock)
@@ -782,9 +803,8 @@ async def test_retired_generations_leave_the_bounded_state() -> None:
     assert set(_pane_hint_generations(storage)) == {"gen-b"}
 
 
-async def test_older_non_last_occurrence_is_the_documented_boundary() -> None:
-    """One occurrence is kept per live generation. An earlier occurrence that is no longer the
-    last one counts as new once the cooldown has passed; the reviewer adjudicates this boundary."""
+async def test_replayed_occurrence_never_notifies() -> None:
+    """Every occurrence stays in its generation's digest set, so a replay never notifies."""
     clock = _Clock(_T0)
     storage = _Storage(clock)
     sink = _Sink()
@@ -805,9 +825,9 @@ async def test_older_non_last_occurrence_is_the_documented_boundary() -> None:
 
     clock.now = _T0 + timedelta(seconds=1000)
     older = _pane_hint("gen-a:occ-1", _T0)
-    assert await service.observe_pane_hint(older, generation="gen-a") is True
+    assert await service.observe_pane_hint(older, generation="gen-a") is False
     await _settle()
-    assert sink.take() == [("possible_limit", None, None, None)]
+    assert sink.take() == []
 
 
 async def test_hint_and_incident_sections_survive_each_other() -> None:
@@ -1013,6 +1033,237 @@ async def test_weekly_credit_incident_and_reset() -> None:
         ("exhausted", "weekly", 100, None),
         ("drawing_credits", None, None, "6.00"),
     ]
+
+
+async def test_equal_balance_clears_drawing_and_rearms() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="e:1", used=40.0, weekly=100.0, has_credits=True, balance="10.00"
+        ),
+    )
+    assert sink.take() == [("exhausted", "weekly", 100, None)]
+
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="e:2", used=40.0, weekly=100.0, has_credits=True, balance="9.00"
+        ),
+    )
+    assert sink.take() == [("drawing_credits", None, None, "9.00")]
+
+    # An equal valid balance clears the drawing state silently.
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="e:3", used=40.0, weekly=100.0, has_credits=True, balance="9.00"
+        ),
+    )
+    assert sink.take() == []
+
+    # The next lower balance in the same exhausted window draws again.
+    clock.now = _T0 + timedelta(minutes=3)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="e:4", used=40.0, weekly=100.0, has_credits=True, balance="8.00"
+        ),
+    )
+    assert sink.take() == [("drawing_credits", None, None, "8.00")]
+
+
+async def test_missing_has_credits_retains_drawing_state() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="m:1", used=40.0, weekly=100.0, has_credits=True, balance="10.00"
+        ),
+    )
+    assert sink.take() == [("exhausted", "weekly", 100, None)]
+
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="m:2", used=40.0, weekly=100.0, has_credits=True, balance="9.00"
+        ),
+    )
+    assert sink.take() == [("drawing_credits", None, None, "9.00")]
+
+    # A reading without has_credits records the balance but keeps the drawing state.
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="m:3", used=40.0, weekly=100.0, has_credits=None, balance="8.00"
+        ),
+    )
+    assert sink.take() == []
+
+    # The retained drawing state means a lower explicit balance does not draw a second time.
+    clock.now = _T0 + timedelta(minutes=3)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="m:4", used=40.0, weekly=100.0, has_credits=True, balance="7.50"
+        ),
+    )
+    assert sink.take() == []
+
+    # Only an explicit equal balance clears it, and the next lower balance draws again.
+    clock.now = _T0 + timedelta(minutes=4)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="m:5", used=40.0, weekly=100.0, has_credits=True, balance="7.50"
+        ),
+    )
+    assert sink.take() == []
+
+    clock.now = _T0 + timedelta(minutes=5)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="m:6", used=40.0, weekly=100.0, has_credits=True, balance="7.00"
+        ),
+    )
+    assert sink.take() == [("drawing_credits", None, None, "7.00")]
+
+
+async def test_windowless_reading_never_clears_drawing() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="wl:1", used=40.0, weekly=100.0, has_credits=True, balance="10.00"
+        ),
+    )
+    assert sink.take() == [("exhausted", "weekly", 100, None)]
+
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="wl:2", used=40.0, weekly=100.0, has_credits=True, balance="9.00"
+        ),
+    )
+    assert sink.take() == [("drawing_credits", None, None, "9.00")]
+
+    # The weekly reading is now stale and this windowless reading shows no window, so the
+    # drawing state stays as it was.
+    clock.now = _T0 + timedelta(minutes=1, seconds=901)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="wl:3",
+            include_primary=False,
+            reached="rate_limit_reached",
+            has_credits=True,
+            balance="8.00",
+        ),
+    )
+    assert sink.take() == [("exhausted", None, None, None), ("limit_reached", None, None, None)]
+
+    # The retained drawing state suppresses a lower exhausted balance: no second alert.
+    clock.now = _T0 + timedelta(minutes=1, seconds=902)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="wl:4", used=40.0, weekly=100.0, has_credits=True, balance="7.75"
+        ),
+    )
+    assert sink.take() == []
+
+    # A later weekly reset admits the windowed reading with no exhausted window, which clears
+    # drawing silently; the reset itself is the only edge.
+    next_week = _WEEK_RESET + timedelta(days=7)
+    clock.now = _T0 + timedelta(minutes=1, seconds=903)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="wl:5",
+            used=40.0,
+            weekly=0.0,
+            weekly_reset=next_week,
+            has_credits=True,
+            balance="7.50",
+        ),
+    )
+    assert sink.take() == [("reset", "weekly", None, None)]
+
+    clock.now = _T0 + timedelta(minutes=1, seconds=904)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="wl:6",
+            used=40.0,
+            weekly=100.0,
+            weekly_reset=next_week,
+            has_credits=True,
+            balance="7.00",
+        ),
+    )
+    assert sink.take() == [
+        ("exhausted", "weekly", 100, None),
+        ("drawing_credits", None, None, "7.00"),
+    ]
+
+
+async def test_windowless_reached_clear_rearms_limit_reached() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="wc:1", include_primary=False, reached="rate_limit_reached"
+        ),
+    )
+    assert sink.take() == [("exhausted", None, None, None), ("limit_reached", None, None, None)]
+
+    # An explicit windowless clear is an admitted reading: it clears limit_reached, and no reset.
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="wc:2",
+            include_primary=False,
+            reached=None,
+            spend_control=False,
+        ),
+    )
+    assert sink.take() == []
+
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="wc:3", include_primary=False, reached="rate_limit_reached"
+        ),
+    )
+    assert sink.take() == [("limit_reached", None, None, None)]
 
 
 async def test_five_hour_later_reset_leaves_weekly_untouched() -> None:

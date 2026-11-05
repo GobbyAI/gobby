@@ -710,7 +710,7 @@ async def test_pane_hints_persist_for_every_provider() -> None:
         assert (await service.get(provider)).state == "unknown"
 
 
-async def test_pane_hints_keep_one_occurrence_per_generation() -> None:
+async def test_pane_hints_keep_occurrence_digests_per_generation() -> None:
     clock = _Clock(_T0)
     storage = _MemoryStorage(clock)
     service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
@@ -726,7 +726,7 @@ async def test_pane_hints_keep_one_occurrence_per_generation() -> None:
     record = storage.get("codex")
     assert record is not None
     _, pane_hints = decode_quota_details(record.details)
-    # No occurrence history is kept; the live generation keeps only its last occurrence.
+    # Pane hints stay out of the quota row; the live generation keeps its occurrence digests.
     assert pane_hints == {}
     section = record.details.get("pane_hint_alerts")
     assert isinstance(section, dict)
@@ -735,7 +735,9 @@ async def test_pane_hints_keep_one_occurrence_per_generation() -> None:
     assert list(generations) == ["seat-a"]
     entry = generations["seat-a"]
     assert isinstance(entry, dict)
-    assert entry.get("occurrence") == f"pane-occ-{total - 1}"
+    digests = entry.get("digests")
+    assert isinstance(digests, list)
+    assert len(digests) == total
 
 
 def test_codex_malformed_reached_and_reset_handling() -> None:

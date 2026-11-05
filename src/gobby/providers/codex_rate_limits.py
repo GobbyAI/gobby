@@ -85,6 +85,17 @@ def observation_from_rate_limits(
                 metadata=metadata,
             )
         )
+    elif not components and _explicit_reached_clear(rate_limits):
+        # Windows carry a clear in their metadata; a windowless clear needs its own component.
+        components.append(
+            _reached_clear_component(
+                rate_limits,
+                limit_id=limit_id,
+                scope=scope,
+                source_observed_at=source_observed_at,
+                occurrence=occurrence,
+            )
+        )
     if not components or len({component.key for component in components}) != len(components):
         return None
     return QuotaObservation(provider=_PROVIDER, components=tuple(components))
@@ -183,6 +194,37 @@ def _hard_component(
         source_observed_at=source_observed_at,
         occurrence=occurrence,
         metadata=metadata,
+    )
+
+
+def _explicit_reached_clear(rate_limits: Mapping[str, object]) -> bool:
+    """True when the payload supplies both reached fields, the type null and spend control false."""
+    return (
+        all(name in rate_limits for name in _REACHED_FIELDS)
+        and rate_limits["rate_limit_reached_type"] is None
+        and rate_limits["spend_control_reached"] is False
+    )
+
+
+def _reached_clear_component(
+    rate_limits: Mapping[str, object],
+    *,
+    limit_id: str,
+    scope: str,
+    source_observed_at: datetime,
+    occurrence: str,
+) -> QuotaComponent:
+    """Carry an explicit windowless clear: neither exhaustion nor verified recovery."""
+    return QuotaComponent(
+        key=component_key(_PROVIDER, scope, limit_id, "reached:clear"),
+        provider=_PROVIDER,
+        limit_id=limit_id,
+        scope=scope,
+        scope_known=False,
+        state="available",
+        source_observed_at=source_observed_at,
+        occurrence=occurrence,
+        metadata={"reached": {name: rate_limits[name] for name in _REACHED_FIELDS}},
     )
 
 
