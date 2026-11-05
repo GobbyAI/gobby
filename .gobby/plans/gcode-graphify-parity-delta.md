@@ -44,8 +44,8 @@ refresh to +120.495 ms p50, within budget on the activated implementation
 #22604 landed the label gate with every consumer `off` (Decision 8).
 
 **What remains.** P1 is closed: 1.2 delivered the read order, and 1.1 closed
-without delivering its measurement (Decision 2). Two things are left, and Josh
-decided both on 2026-11-05 (Decision 12):
+without delivering its measurement (Decision 2). Three things are left, and Josh
+decided all three on 2026-11-05 (Decision 12):
 
 - Every head-to-head number is stale. The September bakeoff
   (`docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md`) measured
@@ -56,6 +56,8 @@ decided both on 2026-11-05 (Decision 12):
 - The label gate has no quality evidence. #22604 closed without its study, so
   `docs/evidence/community-labels-2026-09/label-quality.md` does not exist and
   the ship decision is open (2.3).
+- Box has no live consumer evidence. Its OpenRouter attempt returned HTTP 400,
+  and the wire note names no consumer per decision shape (2.4).
 
 **When the leaves close:**
 - A provisioning record shows a fresh isolated harness, the Orchestrator's
@@ -68,6 +70,8 @@ decided both on 2026-11-05 (Decision 12):
   parity+ property (2.2).
 - A label-quality report records Josh's ratings of 30 sampled communities and
   the ship rule they select, with every decision consumer `off` (2.3).
+- A dated `clef:27b` capture on local Ollama records Box's round trip or its
+  finding, and the wire note names a consumer and live-path test per shape (2.4).
 
 ## Decision Record
 `kind: framing`
@@ -201,12 +205,15 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
       re-registered.
     - D3, the owner of real Box consumer evidence and of the V2 checks that
       `docs/evidence/decisions/item-4-checklist-2026-10-26.md` lists as
-      outstanding. This plan owns neither, and no decision consumer leaves
-      `off` without them. #24238 (Decision classifier path) closed on
-      2026-11-04, so neither has an open owner until a consumer asks to
-      enforce. No leaf here needs them, because the `--no-decisions` branch
-      ships every consumer `off`, so parity+ property 3 stays missing and
-      2.2 records it so.
+      outstanding. Josh answered on 2026-11-05: "On 22948, tell the
+      orchestrator to load Clef (not Clef flash) with Ollama and use that".
+      The Orchestrator scoped it: "capture the Box evidence on Clef (full, not
+      Flash) served locally by Ollama", with model `clef:27b`, and drop the
+      OpenRouter dependency. Leaf 2.4 owns that evidence, and the Orchestrator
+      owns its capture step. LM Studio's `clef-flash` is not used. The V2
+      checks gate enforcement, and this plan enables none: the
+      `--no-decisions` branch ships every consumer `off`, so no leaf needs
+      them, parity+ property 3 stays missing, and 2.2 records it so.
 13. **The Orchestrator is the only Docker-capable session, and the executor is
     a sandboxed developer.** Spawned seats always run under SRT, and
     `spawn_agent` has no unsandboxed fallback.
@@ -297,7 +304,7 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
 ## Constraints
 `kind: framing`
 
-- The Orchestrator launches all three leaves in a Dev Team in epic mode for
+- The Orchestrator launches all four leaves in a Dev Team in epic mode for
   #22948, the only mode that grants the epic folder. That launch waits on Josh's
   freeze: no new teams until #25765 and #25653 are proven live.
 - Leaves 2.1 and 2.2 are heavy measurement work. The fleet's load hold in
@@ -657,14 +664,15 @@ Consumers unchanged:
 **Goal**: parity+ claims rest on numbers measured on current gcode, and the
 label gate has its quality evidence and ship rule.
 
-**Granularity:** three leaves. Provisioning (2.1) and measurement (2.2) split
+**Granularity:** four leaves. Provisioning (2.1) and measurement (2.2) split
 at the boundary where all four October roots stopped, so provisioning closes
 with its own durable record and a relaunched seat resumes measurement from it.
 Each lists more than six files, and the count does not call for a further
 split: 2.1's are dated copies of one harness that only runs together, and
 2.2's are the runner copies and the records its report traces to. Each leaf
 keeps to six acceptance items. The study (2.3) shares no target or service with
-the other two, so it has no edge to them.
+the other two, so it has no edge to them. The Box capture (2.4) shares no
+target with any of them, so it has no edge either.
 
 ### 2.1 Provision the rerun harness and pass C0 [category: test]
 `kind: deliverable`
@@ -1140,9 +1148,9 @@ Targets:
      communities and 15 `gobby` communities with 3 or more members.
    - Run, from the main checkout: `PYTHONPATH=/Users/josh/Projects/gobby/src uv run --project
      /Users/josh/Projects/gobby python /Users/josh/Projects/gobby/scripts/community_label_study.py prepare
-     --wire-api openrouter-decisions --api-base https://openrouter.ai/api --model
-     typesafe/jev-1.14-20261014 --identity-contract response_version --no-decisions --out <dir>`. The
-     parser requires the decision flags, and this branch does not use them.
+     --wire-api systemone --api-base http://127.0.0.1:11434 --model clef:27b --identity-contract
+     response_version --no-decisions --out <dir>`. The parser requires the decision flags, and
+     `_prepare` builds no decision configuration under `--no-decisions`, so they are inert.
 3. **Check the sample.** Read `run.json`, and report the generation-failure count and the exact CSV row
    count. A failed generation collapses an item to its deterministic name, which is not evidence of
    generation quality. The sheet goes out only when the count is 0, or when the Orchestrator accepts the
@@ -1174,6 +1182,82 @@ Targets:
 **Verification:** `GOBBY_TEST_PROTECT=1 uv run pytest tests/scripts/test_community_label_study.py`, with
 `DATABASE_URL` at the isolated test hub, and every number in `label-quality.md` traces to the committed
 `label-quality-results.md` or `run.json`.
+
+### 2.4 Capture Box on local Clef and record the consumer evidence [category: docs]
+`kind: deliverable`
+
+Targets:
+- `docs/evidence/decisions/systemone-live.md`
+- `docs/evidence/decisions/wire-contracts.md`
+- `docs/evidence/decisions/box-red-square-2026-11.png`
+
+**Research context:**
+- Josh's D3 answer, 2026-11-05, verbatim: "On 22948, tell the orchestrator to load Clef (not
+  Clef flash) with Ollama and use that". The Orchestrator scoped it: "capture the Box evidence on
+  Clef (full, not Flash) served locally by Ollama", model `clef:27b` (18 GB), installed in local
+  Ollama and not loaded. OpenRouter is dropped: its Box attempt returned HTTP 400
+  (`docs/evidence/decisions/item-4-checklist-2026-10-26.md`, lines 104-109). LM Studio's
+  `clef-flash` is not used.
+- What is owed: `docs/evidence/decisions/item-4-checklist-2026-10-26.json` lists "Resolve the Box
+  failure and obtain #24248's required real consumer round-trip evidence."
+  `.gobby/plans/community-label-decisions.md` 3.5 specified a "Decision shape consumers" section
+  in the wire note. That leaf closed with #22604, and `wire-contracts.md` has no such section.
+- Consumers and live-path tests, all present: Choice,
+  `tests/code_index/test_community_labeler.py::test_gate_admits_at_threshold_and_rejects_below`;
+  Noul, `::test_carry_keeps_name_above_threshold_without_generation`; Score,
+  `::test_sufficient_deterministic_label_skips_generation`; Box, #24248's
+  `gobby-decisions:evaluate` tool,
+  `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_round_trips_every_decision_shape`,
+  which posts all four shapes. #24248's closing commit is
+  `fe0c921cbe2780838fcb0c339d4e3f8a23e943b6`.
+- Capture tool: `scripts/decisions_live_capture.py::main` runs Choice, Noul, Score and Box through
+  `DecisionService`, then the raw probes, and appends one dated section to `--out`. It requires
+  `--alias`, `--box-image` and `--out`. `build_decisions_config` fixes the service timeout at 30 s,
+  and `--probe-timeout-seconds` sets the probes'. A failed shape is recorded as a `finding`.
+- Ollama precedent: `systemone-live.md` Run 8 ran `clef:27b` at `http://127.0.0.1:11434` on the
+  `systemone` wire with `response_version` identity, for Choice, Noul and Score only. Box on a local
+  `systemone` surface is unverified (`wire-contracts.md`, section 9), and LM Studio's route rejected
+  Box with HTTP 400, "Expected 'choice' | 'score' | 'noul'" (`systemone-live.md`, 2026-10-25).
+- Box input bounds (`wire-contracts.md`, section 9): PNG or JPEG, 280 to 1568 pixels per side, so a
+  512 by 512 image fits. Pillow is in `uv.lock`.
+- Execution context: the work directory is in the epic folder, which
+  `src/gobby/agents/agent_workspaces.py::spawn_workspace_write_paths` grants only to the seats of a
+  live epic-mode team, so this leaf runs in the #22948 epic-mode team. Every decision consumer
+  stays `off`, and this leaf changes no configuration.
+
+**Implementation:**
+1. **Image.** With Pillow through `uv run`, write a 512 by 512 PNG of a red square centered on white
+   to `<dir>/red-square-512.png`, where `<dir>` is
+   `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/box-capture-2026-11/`.
+   Record its SHA-256.
+2. **Orchestrator steps.** Send these through the Dev Team Lead and Triage with the exact commands
+   and the image's SHA-256, for a time outside `project_policy.quiet_hours`:
+   - Load `clef:27b` in local Ollama, so the 30 s service timeout does not include the cold load,
+     and report the context length `ollama ps` shows for it.
+   - Once, from the main checkout, with no retries: `PYTHONPATH=/Users/josh/Projects/gobby/src uv run
+     --project /Users/josh/Projects/gobby python
+     /Users/josh/Projects/gobby/scripts/decisions_live_capture.py --wire-api systemone --api-base
+     http://127.0.0.1:11434 --model clef:27b --identity-contract response_version
+     --backend-max-state-tokens <that context length> --alias clef:27b --box-image
+     <dir>/red-square-512.png --probe-timeout-seconds 600 --out <dir>/clef-capture.md`.
+3. **Record.** Append `<dir>/clef-capture.md` unchanged to `systemone-live.md`, and commit the image
+   as `docs/evidence/decisions/box-red-square-2026-11.png`.
+4. **Wire note.** Add a "Decision shape consumers" section to `wire-contracts.md` that names each
+   shape's consumer and live-path test above, #24248's closing commit, and the Clef Box result: the
+   edges and confidence when Box parsed, or the finding's reason and detail verbatim when it did
+   not. In section 9, replace "Box runtime support remains unverified there" with the observed
+   Ollama result. A Box finding stays a finding: the section says Box live evidence on Clef is
+   unmet, and no consumer leaves `off`.
+
+**Acceptance:**
+
+- 2.4.1 - The dated capture section records `wire_api` `systemone`, `api_base` `http://127.0.0.1:11434`, `request_model` `clef:27b`, all four shapes, and the Box shape's parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
+- 2.4.2 - The wire note's "Decision shape consumers" section names a product consumer and live-path test for each of Choice, Noul, Score and Box, with #24248's closing commit and the Clef Box result. file: `docs/evidence/decisions/wire-contracts.md`.
+- 2.4.3 - Section 9 of the wire note states the observed Ollama Box result in place of "remains unverified". file: `docs/evidence/decisions/wire-contracts.md`.
+- 2.4.4 - The committed image's SHA-256 equals the one sent with the Orchestrator's command. file: `docs/evidence/decisions/box-red-square-2026-11.png`.
+
+**Verification:** the committed capture section is byte-equal to `<dir>/clef-capture.md`, the image
+hash matches, and the diff changes no configuration file.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1257,8 +1341,13 @@ Targets:
   waits on Josh's freeze until #25765 and #25653 are proven live. #24701 is edited
   at expansion to be blocked by the 2.3 task. It accepts the Plan Advocate
   gobby#19939's PA-22948-01 as written, adding the resume rule to 2.2 step 1 with
-  no new store. D3 stays with Josh, and Decision 12 holds on this plan owning
-  neither unless he differs.
+  no new store. D3 was still open.
+- 2026-11-05: Josh answered D3, relayed by the Orchestrator gobby#19309: "On
+  22948, tell the orchestrator to load Clef (not Clef flash) with Ollama and use
+  that". Decision 12 records it, leaf 2.4 captures Box on `clef:27b` in local
+  Ollama and records the consumer evidence, and 2.3's inert decision flags name
+  the same backend, so the plan has no OpenRouter dependency. This resolves the
+  Adversary gobby#19936's GP-20261105-01.
 
 ## V2: Verification
 `kind: verification`
@@ -1275,3 +1364,5 @@ After the leaves pass:
 5. Confirm `label-quality.md` exists and `docs/guides/llm-features.md` no longer calls
    the study pending. The Orchestrator then soft-deletes the C1 registration, and
    confirms #24701's `blocked-by` names the closed study leaf.
+6. Confirm `wire-contracts.md` has the "Decision shape consumers" section and
+   `systemone-live.md` the dated `clef:27b` capture.
