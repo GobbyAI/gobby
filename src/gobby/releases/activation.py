@@ -11,12 +11,14 @@ from __future__ import annotations
 import logging
 import os
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import psycopg
 
 from gobby.cli.runtime import CliRuntime
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.storage.project_checkouts import require_root
+from gobby.utils.daemon_url import DaemonUrlError, validate_daemon_url
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
@@ -35,6 +37,9 @@ logger = logging.getLogger(__name__)
 ACTIVATE_DAEMON = "activate_daemon"
 # Stop and start are never admitted for a spawned identity; only these can be granted.
 _GRANTABLE_OPERATIONS = frozenset({"restart", "cutover"})
+# A marked caller's restart is decided by the daemon route; only cutover, which has no route,
+# is verified on the seat itself.
+_LOCALLY_VERIFIED_OPERATIONS = frozenset({"cutover"})
 _SPAWNED_ENV_NAMES = (
     "GOBBY_AGENT_RUN_ID",
     "GOBBY_MANAGED_EXECUTION_ID",
@@ -72,29 +77,64 @@ def operator_credential_readable() -> bool:
     return True
 
 
+def caller_is_spawned() -> bool:
+    """Whether this process carries any spawn marker. The markers are evidence, never a grant."""
+    return any(os.environ.get(name, "").strip() for name in _SPAWNED_ENV_NAMES)
+
+
 def agent_activation_refusal(operation: str) -> str | None:
     """Refuse a daemon activation step from a spawned agent unless its verified identity admits it.
 
     A caller with no spawn marker passes only when it can read the operator's bootstrap
     credential. A cleared environment is not evidence of the operator, so it is refused when
     that credential is unreadable. The run id in the environment is only a marker and grants
-    nothing. A marked caller is refused for stop and start, and for restart and cutover unless
-    the managed capability it presents verifies and its installed definition holds
-    activate_daemon.
+    nothing. A marked caller is refused for stop and start. A marked restart is never admitted
+    here: the daemon route decides it with the daemon's own key (spawned_restart_refusal then
+    posts it). Cutover has no route, so a marked caller's cutover verifies its managed
+    capability locally.
     """
-    if not any(os.environ.get(name, "").strip() for name in _SPAWNED_ENV_NAMES):
+    if not caller_is_spawned():
         if operator_credential_readable():
             return None
         return (
             f"{_REFUSED}: no spawn marker and no readable operator credential; "
             "daemon activation follows the configured owner"
         )
-    if operation not in _GRANTABLE_OPERATIONS:
-        return (
-            f"{_REFUSED}: spawned agents may not stop or start the daemon; "
-            "activation follows the configured owner"
-        )
+    if operation == "restart":
+        return f"{_REFUSED}: a spawned seat's restart is decided by the daemon route, not locally"
+    if operation not in _LOCALLY_VERIFIED_OPERATIONS:
+        return spawned_whole_daemon_refusal()
     return _verified_refusal(operation)
+
+
+def spawned_whole_daemon_refusal() -> str:
+    """The refusal for a marked caller's stop or start, which no spawned seat may run."""
+    return (
+        f"{_REFUSED}: spawned agents may not stop or start the daemon; "
+        "activation follows the configured owner"
+    )
+
+
+def spawned_restart_refusal() -> str | None:
+    """Refuse a marked caller's restart before it posts, without reading the operator bootstrap.
+
+    The seat must present its private managed envelope and the daemon URL it was spawned with.
+    Nothing here grants the restart: the route verifies the presented token with the daemon's
+    key and the installed definition, and refuses before any stop.
+    """
+    try:
+        token = read_managed_api_token()
+    except RuntimeError as exc:
+        return f"{_REFUSED}: {exc}"
+    if token is None:
+        return f"{_REFUSED}: no managed capability is presented for restart"
+    try:
+        url = validate_daemon_url(os.environ.get("GOBBY_DAEMON_URL", ""), source="GOBBY_DAEMON_URL")
+    except DaemonUrlError:
+        return f"{_REFUSED}: no daemon URL is presented for restart"
+    if urlsplit(url).port is None:
+        return f"{_REFUSED}: no daemon URL is presented for restart"
+    return None
 
 
 def _verified_refusal(operation: str) -> str | None:

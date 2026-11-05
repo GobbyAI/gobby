@@ -102,22 +102,69 @@ def test_spawned_stop_and_start_stay_refused_even_for_a_holder(
     assert refusal.startswith("spawned_agent_refused")
 
 
-@pytest.mark.parametrize("operation", ["restart", "cutover"])
-def test_verified_holder_passes_restart_and_cutover(
-    spawned: Callable[[bool], None], operation: str
-) -> None:
+def test_verified_holder_passes_cutover_locally(spawned: Callable[[bool], None]) -> None:
     spawned(True)
 
-    assert agent_activation_refusal(operation) is None
+    assert agent_activation_refusal("cutover") is None
 
 
-@pytest.mark.parametrize("operation", ["restart", "cutover"])
+def test_spawned_restart_is_never_admitted_by_a_local_stop_half(
+    spawned: Callable[[bool], None],
+) -> None:
+    """A verified holder's restart is decided by the daemon route, so no local stop may run it."""
+    spawned(True)
+
+    refusal = agent_activation_refusal("restart")
+
+    assert refusal is not None
+    assert "decided by the daemon route" in refusal
+
+
+def test_spawned_restart_refusal_needs_only_the_private_envelope_and_the_daemon_url(
+    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_DAEMON_URL", "http://127.0.0.1:61987")
+
+    assert activation.spawned_restart_refusal() is None
+
+
+def test_spawned_restart_refusal_names_a_missing_envelope(
+    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(activation, "read_managed_api_token", lambda: None)
+
+    refusal = activation.spawned_restart_refusal()
+
+    assert refusal is not None
+    assert "no managed capability is presented for restart" in refusal
+
+
+@pytest.mark.parametrize("url", ["", "http://127.0.0.1", "ftp://127.0.0.1:61987"])
+def test_spawned_restart_refusal_needs_a_usable_daemon_url_with_a_port(
+    spawned: Callable[[bool], None], monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("GOBBY_DAEMON_URL", url)
+
+    refusal = activation.spawned_restart_refusal()
+
+    assert refusal is not None
+    assert "no daemon URL is presented" in refusal
+
+
+def test_spawned_whole_daemon_refusal_names_stop_and_start(
+    spawned: Callable[[bool], None],
+) -> None:
+    refusal = activation.spawned_whole_daemon_refusal()
+
+    assert "spawned agents may not stop or start the daemon" in refusal
+
+
 def test_verified_definition_without_the_capability_is_refused(
-    spawned: Callable[[bool], None], operation: str
+    spawned: Callable[[bool], None],
 ) -> None:
     spawned(False)
 
-    refusal = agent_activation_refusal(operation)
+    refusal = agent_activation_refusal("cutover")
 
     assert refusal is not None
     assert "activate_daemon" in refusal
@@ -167,7 +214,7 @@ def test_capability_that_fails_its_signature_is_refused(
         activation, "classify_agent_api_token", lambda _token, _key: "capability_invalid"
     )
 
-    refusal = agent_activation_refusal("restart")
+    refusal = agent_activation_refusal("cutover")
 
     assert refusal is not None
     assert "capability_invalid" in refusal
@@ -184,7 +231,7 @@ def test_capability_without_a_signing_key_is_refused(
         lambda _token, key: "signing_key_unavailable" if key is None else CLAIMS,
     )
 
-    refusal = agent_activation_refusal("restart")
+    refusal = agent_activation_refusal("cutover")
 
     assert refusal is not None
     assert "signing_key_unavailable" in refusal
