@@ -444,7 +444,7 @@ async def test_output_only_freshness() -> None:
         kind="usage_limit",
         detected_at=_T0,
     )
-    assert await hint_only.observe_pane_hint(hint) is True
+    assert await hint_only.observe_pane_hint(hint, generation="seat-a") is True
     assert (await hint_only.get("codex")).state == "unknown"
 
     # A later hint does not move the exhausted component's clock back into freshness.
@@ -455,7 +455,7 @@ async def test_output_only_freshness() -> None:
         kind="usage_limit",
         detected_at=clock.now,
     )
-    assert await service.observe_pane_hint(later_hint) is True
+    assert await service.observe_pane_hint(later_hint, generation="seat-a") is True
     assert (await service.get("codex")).state == "stale"
 
 
@@ -689,9 +689,9 @@ async def test_pane_hint_persistence_dedupes_occurrences() -> None:
         kind="usage_limit",
         detected_at=_T0,
     )
-    assert await service.observe_pane_hint(hint) is True
+    assert await service.observe_pane_hint(hint, generation="seat-a") is True
     # A duplicate is recognized before any write, so it neither refreshes nor duplicates.
-    assert await service.observe_pane_hint(hint) is False
+    assert await service.observe_pane_hint(hint, generation="seat-a") is False
 
 
 async def test_pane_hints_persist_for_every_provider() -> None:
@@ -703,14 +703,14 @@ async def test_pane_hints_persist_for_every_provider() -> None:
             kind="usage_limit",
             detected_at=_T0,
         )
-        assert await service.observe_pane_hint(hint) is True
+        assert await service.observe_pane_hint(hint, generation=f"{provider}-seat") is True
         # The persisted dedupe record recognizes a repeat before any write.
-        assert await service.observe_pane_hint(hint) is False
+        assert await service.observe_pane_hint(hint, generation=f"{provider}-seat") is False
         # A hint alone is never a quota reading.
         assert (await service.get(provider)).state == "unknown"
 
 
-async def test_pane_hints_keep_only_the_newest_occurrences() -> None:
+async def test_pane_hints_keep_one_occurrence_per_generation() -> None:
     clock = _Clock(_T0)
     storage = _MemoryStorage(clock)
     service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
@@ -722,14 +722,20 @@ async def test_pane_hints_keep_only_the_newest_occurrences() -> None:
             kind="usage_limit",
             detected_at=_T0 + timedelta(seconds=index),
         )
-        assert await service.observe_pane_hint(hint) is True
+        assert await service.observe_pane_hint(hint, generation="seat-a") is True
     record = storage.get("codex")
     assert record is not None
     _, pane_hints = decode_quota_details(record.details)
-    # The oldest detections are evicted; the newest PANE_HINT_LIMIT stay as dedupe records.
-    assert len(pane_hints) == PANE_HINT_LIMIT
-    assert "pane-occ-0" not in pane_hints
-    assert f"pane-occ-{total - 1}" in pane_hints
+    # No occurrence history is kept; the live generation keeps only its last occurrence.
+    assert pane_hints == {}
+    section = record.details.get("pane_hint_alerts")
+    assert isinstance(section, dict)
+    generations = section.get("generations")
+    assert isinstance(generations, dict)
+    assert list(generations) == ["seat-a"]
+    entry = generations["seat-a"]
+    assert isinstance(entry, dict)
+    assert entry.get("occurrence") == f"pane-occ-{total - 1}"
 
 
 def test_codex_malformed_reached_and_reset_handling() -> None:

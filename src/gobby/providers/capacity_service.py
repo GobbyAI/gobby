@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
@@ -12,8 +12,11 @@ from typing import Literal, Protocol, cast
 
 from gobby.hooks.background_tasks import create_background_task
 from gobby.providers.quota_alerts import (
+    HINT_SECTION,
+    QUOTA_SECTION,
     AlertEdge,
     AlertSink,
+    retire_pane_hint_generations,
     transition,
     transition_hint,
 )
@@ -224,14 +227,15 @@ class ProviderCapacityService:
                     ),
                     source_version=observation.source_version,
                 )
-                alerts = transition(_row_details(record), admitted, now=self._clock())
+                alerts = transition(_row_details(record), admitted)
                 aggregate = await self._write(
                     provider,
                     record,
                     merged,
                     pane_hints,
                     observation.source_version,
-                    alerts.details,
+                    quota_alerts=alerts.details,
+                    pane_hint_alerts=_row_section(record, HINT_SECTION),
                 )
                 if aggregate is not None:
                     snapshot = _snapshot(provider, aggregate, observation.source_version)
@@ -242,32 +246,51 @@ class ProviderCapacityService:
         self._schedule_alerts(edges)
         return snapshot
 
-    async def observe_pane_hint(self, hint: PaneQuotaHint) -> bool:
-        """Persist one pane possible-limit hint; False when its occurrence was already seen."""
+    async def retire_pane_generations(self, provider: str, live: Collection[str]) -> None:
+        """Drop pane-hint generations whose terminal is no longer live; no write when none died."""
+        name = _provider_name(provider)
+        async with self._write_lock(name):
+            for _ in range(_MAX_CAS_ATTEMPTS):
+                record = await self._run_store(self.storage.get, name)
+                section = _row_section(record, HINT_SECTION)
+                retired = retire_pane_hint_generations(section, live)
+                if retired == section:
+                    return
+                components, pane_hints = _decode(record)
+                written = await self._write(
+                    name,
+                    record,
+                    components,
+                    pane_hints,
+                    _source_version(record) or "unknown",
+                    quota_alerts=_row_section(record, QUOTA_SECTION),
+                    pane_hint_alerts=retired,
+                )
+                if written is not None:
+                    return
+            raise QuotaWriteContentionError(name)
+
+    async def observe_pane_hint(self, hint: PaneQuotaHint, *, generation: str) -> bool:
+        """Record one pane hint for its live generation; False when its occurrence is a replay."""
         provider = _provider_name(hint.provider)
         edges: tuple[AlertEdge, ...] = ()
         async with self._write_lock(provider):
             for _ in range(_MAX_CAS_ATTEMPTS):
                 record = await self._run_store(self.storage.get, provider)
                 components, pane_hints = _decode(record)
-                if hint.occurrence in pane_hints:
+                alerts = transition_hint(
+                    _row_details(record), hint, generation=generation, now=self._clock()
+                )
+                if alerts.duplicate:
                     return False
-                seen = {
-                    **pane_hints,
-                    hint.occurrence: {
-                        "provider": provider,
-                        "kind": hint.kind,
-                        "detected_at": hint.detected_at.isoformat(),
-                    },
-                }
-                alerts = transition_hint(_row_details(record), hint, now=self._clock())
                 written = await self._write(
                     provider,
                     record,
                     components,
-                    seen,
+                    pane_hints,
                     _source_version(record) or "unknown",
-                    alerts.details,
+                    quota_alerts=_row_section(record, QUOTA_SECTION),
+                    pane_hint_alerts=alerts.details,
                 )
                 if written is not None:
                     edges = alerts.edges
@@ -356,7 +379,9 @@ class ProviderCapacityService:
         components: Mapping[str, QuotaComponent],
         pane_hints: Mapping[str, Mapping[str, str]],
         source_version: str,
-        alert_details: Mapping[str, object],
+        *,
+        quota_alerts: Mapping[str, object],
+        pane_hint_alerts: Mapping[str, object],
     ) -> QuotaAggregate | None:
         """Compare-and-set one row revision; None when a concurrent writer won the race."""
         now = self._clock()
@@ -376,7 +401,8 @@ class ProviderCapacityService:
             source_version=source_version,
             details={
                 **encode_quota_details(components, pane_hints),
-                "quota_alerts": dict(alert_details),
+                QUOTA_SECTION: dict(quota_alerts),
+                HINT_SECTION: dict(pane_hint_alerts),
             },
             expected_observed_at=None if record is None else record.observed_at,
         )
@@ -436,8 +462,14 @@ class ProviderCapacityService:
 
 
 def _row_details(record: ProviderCapacityRecord | None) -> Mapping[str, object]:
-    """The full persisted row details; transitions read their own quota_alerts section."""
+    """The full persisted row details; transitions read their own alert section."""
     return {} if record is None else record.details
+
+
+def _row_section(record: ProviderCapacityRecord | None, name: str) -> dict[str, object]:
+    """A copy of one named alert section of the row; empty when absent or malformed."""
+    section = _row_details(record).get(name)
+    return dict(section) if isinstance(section, Mapping) else {}
 
 
 async def _deliver_alerts(sink: AlertSink, edges: Sequence[AlertEdge]) -> None:

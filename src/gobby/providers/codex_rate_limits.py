@@ -30,6 +30,7 @@ _VERIFIED_REACHED_TYPES = frozenset(
         "workspace_member_usage_limit_reached",
     }
 )
+_REACHED_FIELDS = ("rate_limit_reached_type", "spend_control_reached")
 
 
 def observation_from_rate_limits(
@@ -44,6 +45,14 @@ def observation_from_rate_limits(
         return None
     limit_id = _limit_id(rate_limits.get("limit_id"))
     if limit_id is None:
+        return None
+    reached = rate_limits.get("rate_limit_reached_type")
+    spend_control = rate_limits.get("spend_control_reached")
+    if reached is not None and (
+        not isinstance(reached, str) or reached not in _VERIFIED_REACHED_TYPES
+    ):
+        return None
+    if spend_control is not None and not isinstance(spend_control, bool):
         return None
     scope = f"source:{source_key}"
     metadata = _metadata(rate_limits)
@@ -63,22 +72,9 @@ def observation_from_rate_limits(
         if component is None:
             return None
         components.append(component)
-    reached = rate_limits.get("rate_limit_reached_type")
-    spend_control = rate_limits.get("spend_control_reached")
-    if reached is not None and (
-        not isinstance(reached, str) or reached not in _VERIFIED_REACHED_TYPES
-    ):
-        return None
-    if spend_control is not None and not isinstance(spend_control, bool):
-        return None
     if reached is not None or spend_control is True:
-        # Both supplied reached fields persist with the episode's source clock; limit_reached
-        # is derived from them by quota_alerts, never from individual_limit.
-        reached_metadata: dict[str, object] = {**metadata}
-        if reached is not None:
-            reached_metadata["rate_limit_reached_type"] = reached
-        if spend_control is not None:
-            reached_metadata["spend_control_reached"] = spend_control
+        # The reached mapping rides in metadata; limit_reached is derived from it by
+        # quota_alerts, never from individual_limit.
         components.append(
             _hard_component(
                 "hard:rate_limit_reached",
@@ -86,7 +82,7 @@ def observation_from_rate_limits(
                 scope=scope,
                 source_observed_at=source_observed_at,
                 occurrence=occurrence,
-                metadata=reached_metadata,
+                metadata=metadata,
             )
         )
     if not components or len({component.key for component in components}) != len(components):
@@ -219,7 +215,11 @@ def _window_label(minutes: int) -> str:
 
 
 def _metadata(rate_limits: Mapping[str, object]) -> dict[str, object]:
-    """Keep the allowlisted plan and credit facts; drop every other payload field."""
+    """Keep the allowlisted plan, credit, and reached facts; drop every other payload field.
+
+    The reached mapping holds only the reached keys the payload supplied, with their validated
+    values, so a missing key stays distinct from an explicit null.
+    """
     metadata: dict[str, object] = {}
     plan_type = rate_limits.get("plan_type")
     if isinstance(plan_type, str) and plan_type:
@@ -236,4 +236,7 @@ def _metadata(rate_limits: Mapping[str, object]) -> dict[str, object]:
             allowed["balance"] = balance
         if allowed:
             metadata["credits"] = allowed
+    reached = {name: rate_limits[name] for name in _REACHED_FIELDS if name in rate_limits}
+    if reached:
+        metadata["reached"] = reached
     return metadata

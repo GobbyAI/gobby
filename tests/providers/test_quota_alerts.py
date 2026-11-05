@@ -8,6 +8,7 @@ failures are exercised through the real sink builder.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -16,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from gobby.config.communications import CommunicationsConfig
-from gobby.providers.capacity_service import ProviderCapacityService
+from gobby.providers.capacity_service import ProviderCapacityService, QuotaWriteContentionError
 from gobby.providers.codex_rate_limits import observation_from_rate_limits
 from gobby.providers.quota_alerts import (
     AlertEdge,
@@ -38,8 +39,16 @@ _MACHINE_ID = "dddddddd-dddd-4ddd-8ddd-000000000003"
 _T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 _RESET = _T0 + timedelta(hours=5)
 _NOTIFY_COOLDOWN = timedelta(seconds=900)
+_WEEK_RESET = _T0 + timedelta(days=7)
 
 type _Key = tuple[AlertKind, str | None, int | None, str | None]
+
+
+class _Absent:
+    """Marks a reached field the payload omits; None stays an explicit JSON null."""
+
+
+_ABSENT = _Absent()
 
 
 class _Clock:
@@ -212,7 +221,7 @@ def _hard(
         source_observed_at=at,
         occurrence=occurrence,
         resets_at=resets_at,
-        metadata={"rate_limit_reached_type": "rate_limit_reached"},
+        metadata={"reached": {"rate_limit_reached_type": "rate_limit_reached"}},
     )
 
 
@@ -379,7 +388,8 @@ async def test_no_inferred_recovery() -> None:
 
     # A pane hint is a possible limit only; it never clears a verified incident.
     await service.observe_pane_hint(
-        PaneQuotaHint(provider="codex", occurrence="pane-1", kind="limit", detected_at=clock.now)
+        PaneQuotaHint(provider="codex", occurrence="pane-1", kind="limit", detected_at=clock.now),
+        generation="seat-a",
     )
     await _settle()
     assert [key for key in sink.take() if key[0] == "reset"] == []
@@ -483,23 +493,32 @@ def _codex_observation(
     *,
     occurrence: str,
     used: float = 100.0,
+    primary_reset: datetime = _RESET,
+    include_primary: bool = True,
+    weekly: float | None = None,
+    weekly_reset: datetime = _WEEK_RESET,
     has_credits: bool | None = None,
     balance: str | None = None,
-    reached: str | None = None,
-    spend_control: bool | None = None,
+    reached: object = _ABSENT,
+    spend_control: object = _ABSENT,
     individual: bool | None = None,
 ) -> QuotaObservation | None:
-    rate_limits: dict[str, object] = {
-        "limit_id": "codex",
-        "primary": {
+    rate_limits: dict[str, object] = {"limit_id": "codex"}
+    if include_primary:
+        rate_limits["primary"] = {
             "used_percent": used,
             "window_minutes": 300,
-            "resets_at": int(_RESET.timestamp()),
-        },
-    }
-    if reached is not None:
+            "resets_at": int(primary_reset.timestamp()),
+        }
+    if weekly is not None:
+        rate_limits["secondary"] = {
+            "used_percent": weekly,
+            "window_minutes": 10080,
+            "resets_at": int(weekly_reset.timestamp()),
+        }
+    if reached is not _ABSENT:
         rate_limits["rate_limit_reached_type"] = reached
-    if spend_control is not None:
+    if spend_control is not _ABSENT:
         rate_limits["spend_control_reached"] = spend_control
     if individual is not None:
         rate_limits["individual_limit"] = individual
@@ -602,40 +621,89 @@ async def test_codex_flag_and_credit_predicates() -> None:
     assert [key for key in individual_sink.take() if key[0] == "limit_reached"] == []
 
 
+def _pane_hint(occurrence: str, at: datetime) -> PaneQuotaHint:
+    return PaneQuotaHint(provider="codex", occurrence=occurrence, kind="limit", detected_at=at)
+
+
+def _details_section(storage: _Storage, name: str) -> Mapping[str, object]:
+    record = storage.get("codex")
+    assert record is not None
+    section = record.details.get(name)
+    assert isinstance(section, Mapping)
+    return section
+
+
+def _pane_hint_generations(storage: _Storage) -> Mapping[str, object]:
+    generations = _details_section(storage, "pane_hint_alerts").get("generations")
+    assert isinstance(generations, Mapping)
+    return generations
+
+
+async def _observe(service: ProviderCapacityService, observation: QuotaObservation | None) -> None:
+    assert observation is not None
+    await service.observe(observation)
+    await _settle()
+
+
+class _RejectingStorage(_Storage):
+    """Every compare-and-set loses, so no row write commits."""
+
+    def upsert(
+        self,
+        *,
+        provider: str,
+        state: PersistedCapacityState,
+        observed_at: datetime,
+        windows: Sequence[Mapping[str, object]],
+        reason: str | None,
+        source_version: str,
+        details: Mapping[str, object],
+        expected_observed_at: datetime | None,
+    ) -> bool:
+        return False
+
+
 async def test_possible_limit_hint_edges() -> None:
     clock = _Clock(_T0)
     storage = _Storage(clock)
     sink = _Sink()
     service = _service(clock, storage, sink)
 
-    def hint(occurrence: str, at: datetime) -> PaneQuotaHint:
-        return PaneQuotaHint(provider="codex", occurrence=occurrence, kind="limit", detected_at=at)
-
     clock.now = _T0
-    assert await service.observe_pane_hint(hint("seat-a:pane-1", clock.now)) is True
+    assert (
+        await service.observe_pane_hint(_pane_hint("seat-a:pane-1", clock.now), generation="seat-a")
+        is True
+    )
     await _settle()
     assert sink.take() == [("possible_limit", None, None, None)]
 
     # Inside the 900s cooldown: a new occurrence from the same seat, and one from another seat.
     clock.now = _T0 + timedelta(seconds=60)
-    await service.observe_pane_hint(hint("seat-a:pane-2", clock.now))
-    await _settle()
-    assert sink.take() == []
-
+    assert (
+        await service.observe_pane_hint(_pane_hint("seat-a:pane-2", clock.now), generation="seat-a")
+        is True
+    )
     clock.now = _T0 + timedelta(seconds=100)
-    await service.observe_pane_hint(hint("seat-b:pane-1", clock.now))
+    assert (
+        await service.observe_pane_hint(_pane_hint("seat-b:pane-1", clock.now), generation="seat-b")
+        is True
+    )
     await _settle()
     assert sink.take() == []
 
-    # A replayed occurrence never notifies, even after the cooldown.
+    # A replay of the last occurrence from a live generation never notifies, even after the cooldown.
     clock.now = _T0 + timedelta(seconds=1000)
-    assert await service.observe_pane_hint(hint("seat-a:pane-1", _T0)) is False
+    replay = _pane_hint("seat-a:pane-2", _T0 + timedelta(seconds=60))
+    assert await service.observe_pane_hint(replay, generation="seat-a") is False
     await _settle()
     assert sink.take() == []
 
     # A genuinely new occurrence after the bound notifies again.
-    clock.now = _T0 + _NOTIFY_COOLDOWN + timedelta(seconds=1)
-    await service.observe_pane_hint(hint("seat-a:pane-3", clock.now))
+    clock.now = _T0 + timedelta(seconds=1001)
+    assert (
+        await service.observe_pane_hint(_pane_hint("seat-a:pane-3", clock.now), generation="seat-a")
+        is True
+    )
     await _settle()
     assert sink.take() == [("possible_limit", None, None, None)]
     assert render_alert(AlertEdge(provider="codex", kind="possible_limit")) == (
@@ -643,13 +711,446 @@ async def test_possible_limit_hint_edges() -> None:
     )
 
     # Restart baselines panes again but keeps the persisted dedupe and cooldown.
-    clock.now = _T0 + _NOTIFY_COOLDOWN + timedelta(seconds=2)
+    clock.now = _T0 + timedelta(seconds=1002)
     restarted = _service(clock, storage, sink)
-    assert await restarted.observe_pane_hint(hint("seat-a:pane-3", clock.now)) is False
+    assert (
+        await restarted.observe_pane_hint(
+            _pane_hint("seat-a:pane-3", clock.now), generation="seat-a"
+        )
+        is False
+    )
     await _settle()
     assert sink.take() == []
 
-    clock.now = _T0 + _NOTIFY_COOLDOWN + timedelta(seconds=3)
-    await restarted.observe_pane_hint(hint("seat-a:pane-4", clock.now))
+    clock.now = _T0 + timedelta(seconds=1003)
+    assert (
+        await restarted.observe_pane_hint(
+            _pane_hint("seat-a:pane-4", clock.now), generation="seat-a"
+        )
+        is True
+    )
     await _settle()
     assert sink.take() == []
+
+
+async def test_pane_hint_dedupe_is_bounded_per_live_generation() -> None:
+    clock = _Clock(_T0)
+    storage = _Storage(clock)
+    sink = _Sink()
+    service = _service(clock, storage, sink)
+
+    # 70 live generations, one occurrence each, all inside one cooldown window.
+    for index in range(70):
+        clock.now = _T0 + timedelta(seconds=index)
+        generation = f"gen-{index}"
+        occurrence = _pane_hint(f"{generation}:occ-1", clock.now)
+        assert await service.observe_pane_hint(occurrence, generation=generation) is True
+    await _settle()
+    assert sink.take() == [("possible_limit", None, None, None)]
+    assert len(_pane_hint_generations(storage)) == 70
+
+    # Past the old 64-entry cap every live generation keeps its last occurrence: replays stay silent.
+    clock.now = _T0 + timedelta(seconds=1000)
+    first = _pane_hint("gen-0:occ-1", _T0)
+    assert await service.observe_pane_hint(first, generation="gen-0") is False
+    last = _pane_hint("gen-69:occ-1", clock.now)
+    assert await service.observe_pane_hint(last, generation="gen-69") is False
+    await _settle()
+    assert sink.take() == []
+
+    # A genuinely new occurrence after the bound notifies again.
+    clock.now = _T0 + timedelta(seconds=1001)
+    assert (
+        await service.observe_pane_hint(_pane_hint("gen-5:occ-2", clock.now), generation="gen-5")
+        is True
+    )
+    await _settle()
+    assert sink.take() == [("possible_limit", None, None, None)]
+
+
+async def test_retired_generations_leave_the_bounded_state() -> None:
+    clock = _Clock(_T0)
+    storage = _Storage(clock)
+    service = _service(clock, storage, _Sink())
+
+    for generation in ("gen-a", "gen-b", "gen-c"):
+        occurrence = _pane_hint(f"{generation}:occ-1", clock.now)
+        assert await service.observe_pane_hint(occurrence, generation=generation) is True
+    assert set(_pane_hint_generations(storage)) == {"gen-a", "gen-b", "gen-c"}
+
+    await service.retire_pane_generations("codex", live=("gen-b",))
+    assert set(_pane_hint_generations(storage)) == {"gen-b"}
+
+
+async def test_older_non_last_occurrence_is_the_documented_boundary() -> None:
+    """One occurrence is kept per live generation. An earlier occurrence that is no longer the
+    last one counts as new once the cooldown has passed; the reviewer adjudicates this boundary."""
+    clock = _Clock(_T0)
+    storage = _Storage(clock)
+    sink = _Sink()
+    service = _service(clock, storage, sink)
+
+    clock.now = _T0
+    assert (
+        await service.observe_pane_hint(_pane_hint("gen-a:occ-1", clock.now), generation="gen-a")
+        is True
+    )
+    clock.now = _T0 + timedelta(seconds=1)
+    assert (
+        await service.observe_pane_hint(_pane_hint("gen-a:occ-2", clock.now), generation="gen-a")
+        is True
+    )
+    await _settle()
+    assert sink.take() == [("possible_limit", None, None, None)]
+
+    clock.now = _T0 + timedelta(seconds=1000)
+    older = _pane_hint("gen-a:occ-1", _T0)
+    assert await service.observe_pane_hint(older, generation="gen-a") is True
+    await _settle()
+    assert sink.take() == [("possible_limit", None, None, None)]
+
+
+async def test_hint_and_incident_sections_survive_each_other() -> None:
+    clock = _Clock(_T0)
+    storage = _Storage(clock)
+    sink = _Sink()
+    service = _service(clock, storage, sink)
+    scope = "account:acct-1"
+
+    clock.now = _T0
+    await _observe(
+        service,
+        QuotaObservation(
+            provider="codex", components=(_hard(scope=scope, at=clock.now, occurrence="m:1"),)
+        ),
+    )
+    assert sink.take() == [("exhausted", None, None, None), ("limit_reached", None, None, None)]
+
+    clock.now = _T0 + timedelta(seconds=1)
+    assert (
+        await service.observe_pane_hint(_pane_hint("m-gen:occ-1", clock.now), generation="m-gen")
+        is True
+    )
+    await _settle()
+    assert sink.take() == [("possible_limit", None, None, None)]
+
+    # The hint stamp lives in its own section; the incident section stays free of it.
+    assert "hint_notified_at" not in _details_section(storage, "quota_alerts")
+    assert "notified_at" in _details_section(storage, "pane_hint_alerts")
+
+    # A component write carries the hint section forward, so the hint replay stays deduped.
+    clock.now = _T0 + timedelta(seconds=2)
+    await _observe(
+        service,
+        QuotaObservation(
+            provider="codex", components=(_warning(scope=scope, at=clock.now, occurrence="m:2"),)
+        ),
+    )
+    assert sink.take() == [("warn", None, None, None)]
+    assert "m-gen" in _pane_hint_generations(storage)
+
+    # A hint write carries the incident forward: the verified recovery still resets it.
+    clock.now = _T0 + timedelta(seconds=3)
+    await _observe(
+        service,
+        QuotaObservation(
+            provider="codex", components=(_recovery(scope=scope, at=clock.now, occurrence="m:3"),)
+        ),
+    )
+    assert sink.take() == [("reset", None, None, None)]
+
+
+@pytest.mark.parametrize(
+    ("arm_reached", "arm_spend"),
+    [("rate_limit_reached", _ABSENT), (_ABSENT, True)],
+    ids=["reached_type", "spend_control"],
+)
+async def test_reached_clear_rearms_limit_reached(arm_reached: object, arm_spend: object) -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="r:1", used=40.0, reached=arm_reached, spend_control=arm_spend
+        ),
+    )
+    assert sink.take() == [("exhausted", None, None, None), ("limit_reached", None, None, None)]
+
+    # Explicit null and false clear the flag; the hard incident stays open, so no reset edge.
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(clock, occurrence="r:2", used=40.0, reached=None, spend_control=False),
+    )
+    assert sink.take() == []
+
+    # The same verified signal after the clear rearms limit_reached once; exhausted never repeats.
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="r:3", used=40.0, reached=arm_reached, spend_control=arm_spend
+        ),
+    )
+    assert sink.take() == [("limit_reached", None, None, None)]
+
+
+async def test_clear_without_incident_is_silent() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(clock, occurrence="c:1", used=40.0, reached=None, spend_control=False),
+    )
+    assert sink.take() == []
+
+
+async def test_partial_reached_fields_preserve_the_incident() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(clock, occurrence="p:1", used=40.0, reached="rate_limit_reached"),
+    )
+    assert sink.take() == [("exhausted", None, None, None), ("limit_reached", None, None, None)]
+
+    # One reached key alone is not a clear, and a flag still set is not a rearm.
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(service, _codex_observation(clock, occurrence="p:2", used=40.0, reached=None))
+    assert sink.take() == []
+
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service, _codex_observation(clock, occurrence="p:3", used=40.0, spend_control=False)
+    )
+    assert sink.take() == []
+
+    clock.now = _T0 + timedelta(minutes=3)
+    await _observe(
+        service,
+        _codex_observation(clock, occurrence="p:4", used=40.0, reached="rate_limit_reached"),
+    )
+    assert sink.take() == []
+
+
+async def test_weekly_credit_incident_and_reset() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+    next_week = _WEEK_RESET + timedelta(days=7)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="w:1", used=40.0, weekly=95.0, has_credits=True, balance="10.00"
+        ),
+    )
+    assert sink.take() == [("warn", "weekly", 95, None)]
+
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="w:2", used=40.0, weekly=100.0, has_credits=True, balance="7.50"
+        ),
+    )
+    assert sink.take() == [
+        ("exhausted", "weekly", 100, None),
+        ("drawing_credits", None, None, "7.50"),
+    ]
+
+    # A repeated exhausted reading with the same balance stays silent.
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="w:3", used=40.0, weekly=100.0, has_credits=True, balance="7.50"
+        ),
+    )
+    assert sink.take() == []
+
+    # The weekly reset is the only edge; it clears the drawing state silently.
+    clock.now = _T0 + timedelta(minutes=3)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="w:4",
+            used=40.0,
+            weekly=0.0,
+            weekly_reset=next_week,
+            has_credits=True,
+            balance="7.50",
+        ),
+    )
+    assert sink.take() == [("reset", "weekly", None, None)]
+
+    # A fresh weekly exhaustion with a falling balance draws again.
+    clock.now = _T0 + timedelta(minutes=4)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="w:5",
+            used=40.0,
+            weekly=100.0,
+            weekly_reset=next_week + timedelta(days=7),
+            has_credits=True,
+            balance="6.00",
+        ),
+    )
+    assert sink.take() == [
+        ("exhausted", "weekly", 100, None),
+        ("drawing_credits", None, None, "6.00"),
+    ]
+
+
+async def test_five_hour_later_reset_leaves_weekly_untouched() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+    later_five_reset = _RESET + timedelta(hours=5)
+
+    clock.now = _T0
+    await _observe(service, _codex_observation(clock, occurrence="f:1", used=100.0, weekly=20.0))
+    assert sink.take() == [("exhausted", "five_hour", 100, None)]
+
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="f:2", used=0.0, primary_reset=later_five_reset, weekly=20.0
+        ),
+    )
+    assert sink.take() == [("reset", "five_hour", None, None)]
+
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="f:3", used=0.0, primary_reset=later_five_reset, weekly=20.0
+        ),
+    )
+    assert sink.take() == []
+
+
+async def test_stale_exhausted_window_never_draws() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    clock.now = _T0
+    await _observe(
+        service,
+        _codex_observation(
+            clock, occurrence="s:1", used=40.0, weekly=100.0, has_credits=True, balance="10.00"
+        ),
+    )
+    assert sink.take() == [("exhausted", "weekly", 100, None)]
+
+    # The weekly window is absent 901s later; its stored exhaustion is past the freshness bound.
+    clock.now = _T0 + timedelta(seconds=901)
+    await _observe(
+        service,
+        _codex_observation(clock, occurrence="s:2", used=40.0, has_credits=True, balance="7.50"),
+    )
+    assert sink.take() == []
+
+
+async def test_disabled_communications_never_send(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="gobby.providers.quota_alerts")
+    edge = AlertEdge(provider="codex", kind="exhausted", window="weekly", percent=100)
+    channel = _Channel()
+    sink = build_operator_alert_sink(
+        manager=lambda: channel,
+        config=lambda: CommunicationsConfig(enabled=False, operator_alert_channel="ops"),
+    )
+
+    await sink(edge)
+
+    assert channel.sent == []
+    assert render_alert(edge) in caplog.text
+
+
+async def test_lost_write_sends_nothing() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _RejectingStorage(clock), sink)
+
+    with pytest.raises(QuotaWriteContentionError):
+        await service.observe(
+            QuotaObservation(
+                provider="codex",
+                components=(_hard(scope="account:acct-1", at=_T0, occurrence="lost:1"),),
+            )
+        )
+    await _settle()
+    assert sink.take() == []
+
+
+async def test_alerts_deliver_after_the_write_returns() -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    await service.observe(
+        QuotaObservation(
+            provider="codex",
+            components=(_hard(scope="account:acct-1", at=_T0, occurrence="o:1"),),
+        )
+    )
+    # The row write has committed and the lock is released; delivery is scheduled, not inline.
+    assert sink.take() == []
+    await _settle()
+    assert sink.take() == [("exhausted", None, None, None), ("limit_reached", None, None, None)]
+
+
+@pytest.mark.parametrize(
+    ("second_has_credits", "second_balance"),
+    [(True, None), (None, "7.50")],
+    ids=["missing_balance", "missing_has_credits"],
+)
+async def test_missing_credit_inputs_never_draw(
+    second_has_credits: bool | None,
+    second_balance: str | None,
+) -> None:
+    clock = _Clock(_T0)
+    sink = _Sink()
+    service = _service(clock, _Storage(clock), sink)
+
+    # The first balance is a baseline under an exhausted window; it sends only the window edge.
+    clock.now = _T0
+    await _observe(
+        service, _codex_observation(clock, occurrence="m:1", has_credits=True, balance="10.00")
+    )
+    assert sink.take() == [("exhausted", "five_hour", 100, None)]
+
+    # A reading missing either credit input never draws, even under an exhausted window.
+    clock.now = _T0 + timedelta(minutes=1)
+    await _observe(
+        service,
+        _codex_observation(
+            clock,
+            occurrence="m:2",
+            has_credits=second_has_credits,
+            balance=second_balance,
+        ),
+    )
+    assert sink.take() == []
+
+    # A later complete falling reading draws once.
+    clock.now = _T0 + timedelta(minutes=2)
+    await _observe(
+        service, _codex_observation(clock, occurrence="m:3", has_credits=True, balance="6.00")
+    )
+    assert sink.take() == [("drawing_credits", None, None, "6.00")]

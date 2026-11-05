@@ -11,19 +11,25 @@ import asyncio
 import copy
 import logging
 import math
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from gobby.config.communications import CommunicationsConfig
-from gobby.providers.quota_observations import QuotaComponent, QuotaObservation
+from gobby.providers.quota_observations import (
+    FRESHNESS_SECONDS,
+    QuotaComponent,
+    QuotaObservation,
+)
 from gobby.providers.quota_signals import PaneQuotaHint
 
 logger = logging.getLogger(__name__)
 
 WARN_PERCENT = 90.0
 HINT_COOLDOWN = timedelta(seconds=900)
+QUOTA_SECTION = "quota_alerts"
+HINT_SECTION = "pane_hint_alerts"
 _RANK: dict[str, int] = {"ok": 0, "warn": 1, "exhausted": 2}
 _NOUNS: dict[str, str] = {"warn": "warning", "exhausted": "exhausted", "reset": "reset"}
 
@@ -51,10 +57,14 @@ class AlertEdge:
 
 @dataclass(frozen=True, slots=True)
 class AlertTransition:
-    """Persisted alert state after one transition, plus the edges it raises."""
+    """Persisted alert state after one transition, plus the edges it raises.
+
+    ``duplicate`` marks a pane hint whose occurrence its live generation already recorded.
+    """
 
     details: dict[str, object] = field(default_factory=dict)
     edges: tuple[AlertEdge, ...] = ()
+    duplicate: bool = False
 
 
 type AlertSink = Callable[[AlertEdge], Awaitable[None]]
@@ -69,17 +79,16 @@ class OperatorChannel(Protocol):
 def transition(
     previous_details: Mapping[str, object],
     observation: QuotaObservation,
-    *,
-    now: datetime,
 ) -> AlertTransition:
-    """Return the next persisted alert state and the edges this observation raises.
+    """Return the next persisted incident state and the edges this observation raises.
 
     The observation carries only admitted components. Window levels rise monotonically
-    within one reset epoch and rearm when a later reset arrives. A hard episode alerts
-    once per scope and limit until newer positive evidence for that same key clears it.
+    within one reset epoch and rearm when a later reset arrives. A hard episode alerts once
+    per scope and limit. Its reached flag follows the reached mapping of each scope's newest
+    reading, and only a verified recovery of the episode resets it.
     """
     provider = observation.provider
-    state = _load(previous_details)
+    state = _load(previous_details, QUOTA_SECTION)
     edges: list[AlertEdge] = []
     for component in observation.components:
         if component.window is not None:
@@ -90,7 +99,11 @@ def transition(
             _recovery_transition(state, provider, component, edges)
         else:
             _warning_transition(state, provider, component, edges)
-    _credit_transition(state, provider, observation, now, edges)
+    readings = _scope_readings(observation)
+    for scope, reading_at in readings.items():
+        reached = _scope_reached(observation, scope)
+        _reached_transition(state, provider, scope, reading_at, reached, edges)
+    _credit_transition(state, provider, observation, readings, edges)
     return AlertTransition(details=state, edges=tuple(edges))
 
 
@@ -98,19 +111,43 @@ def transition_hint(
     previous_details: Mapping[str, object],
     hint: PaneQuotaHint,
     *,
+    generation: str,
     now: datetime,
 ) -> AlertTransition:
-    """Return the next hint cooldown state and the possible-limit edge, if any.
+    """Record one pane hint for its live generation and return the possible-limit edge.
 
-    Hints never touch quota components, so they never rearm or clear a verified incident.
+    Each generation keeps its last occurrence, so a replay of that occurrence is a duplicate.
+    An older occurrence that is no longer the last one counts as new, and it can notify once
+    the cooldown has passed. Hints never touch quota components, so they never rearm or clear
+    a verified incident.
     """
-    state = _load(previous_details)
-    last = _parse_time(state.get("hint_notified_at"))
+    state = _load(previous_details, HINT_SECTION)
+    generations = _section(state, "generations")
+    if _mapping(generations.get(generation)).get("occurrence") == hint.occurrence:
+        return AlertTransition(details=state, duplicate=True)
+    generations[generation] = {
+        "occurrence": hint.occurrence,
+        "detected_at": hint.detected_at.isoformat(),
+    }
+    last = _parse_time(state.get("notified_at"))
     if last is not None and now - last < HINT_COOLDOWN:
         return AlertTransition(details=state)
-    state["hint_notified_at"] = now.isoformat()
+    state["notified_at"] = now.isoformat()
     edge = AlertEdge(provider=hint.provider, kind="possible_limit")
     return AlertTransition(details=state, edges=(edge,))
+
+
+def retire_pane_hint_generations(
+    section: Mapping[str, object],
+    live: Collection[str],
+) -> dict[str, object]:
+    """Return the pane-hint section without the generations whose terminal is no longer live."""
+    state: dict[str, object] = copy.deepcopy(dict(section))
+    generations = state.get("generations")
+    if isinstance(generations, dict):
+        for generation in [name for name in generations if name not in live]:
+            del generations[generation]
+    return state
 
 
 def render_alert(edge: AlertEdge) -> str:
@@ -147,9 +184,10 @@ def build_operator_alert_sink(
 
     async def send(edge: AlertEdge) -> None:
         text = render_alert(edge)
-        channel = config().operator_alert_channel
+        settings = config()
+        channel = settings.operator_alert_channel
         communications = manager()
-        if communications is None or not channel:
+        if not settings.enabled or communications is None or not channel:
             logger.info("operator alert not delivered, channel unavailable: %s", text)
             return
         try:
@@ -172,7 +210,8 @@ def _window_transition(
     if window is None or window.limit <= 0:
         return
     percent = window.used / window.limit * 100.0
-    if window.used >= window.limit:
+    exhausted = window.used >= window.limit
+    if exhausted:
         level = "exhausted"
     elif percent >= WARN_PERCENT:
         level = "warn"
@@ -203,6 +242,8 @@ def _window_transition(
         "scope": component.scope,
         "level": new_level,
         "epoch": kept_epoch.isoformat() if kept_epoch is not None else None,
+        "exhausted": exhausted,
+        "observed_at": component.source_observed_at.isoformat(),
     }
 
 
@@ -213,17 +254,15 @@ def _episode_transition(
     edges: list[AlertEdge],
 ) -> None:
     episodes = _section(state, "episodes")
-    reached = _reached(component.metadata)
-    prior = episodes.get(component.key)
-    if prior is None:
-        episodes[component.key] = {"reached": reached}
-        edges.append(AlertEdge(provider=provider, kind="exhausted"))
-        if reached:
-            edges.append(AlertEdge(provider=provider, kind="limit_reached"))
+    if component.key in episodes:
         return
-    if reached and _mapping(prior).get("reached") is not True:
-        episodes[component.key] = {"reached": True}
-        edges.append(AlertEdge(provider=provider, kind="limit_reached"))
+    episodes[component.key] = {
+        "scope": component.scope,
+        "tracks": "reached" in component.metadata,
+        "reached": False,
+        "observed_at": component.source_observed_at.isoformat(),
+    }
+    edges.append(AlertEdge(provider=provider, kind="exhausted"))
 
 
 def _recovery_transition(
@@ -252,11 +291,77 @@ def _warning_transition(
     warned.pop(component.key, None)
 
 
+def _scope_readings(observation: QuotaObservation) -> dict[str, datetime]:
+    """The newest source reading per scope among the admitted components."""
+    readings: dict[str, datetime] = {}
+    for component in observation.components:
+        current = readings.get(component.scope)
+        if current is None or component.source_observed_at > current:
+            readings[component.scope] = component.source_observed_at
+    return readings
+
+
+def _scope_reached(observation: QuotaObservation, scope: str) -> bool | None:
+    """A verified reached signal wins over a clear; a silent reading yields None."""
+    flags = {_reached_flag(c.metadata) for c in observation.components if c.scope == scope}
+    if True in flags:
+        return True
+    if False in flags:
+        return False
+    return None
+
+
+def _reached_flag(metadata: Mapping[str, object]) -> bool | None:
+    """True for a verified reached signal, False for an explicit clear, None when silent.
+
+    A clear needs both reached keys present, the type null and spend control false. A partial
+    reading says nothing, so it preserves the incident.
+    """
+    reached = _mapping(metadata.get("reached"))
+    reached_type = reached.get("rate_limit_reached_type")
+    spend_control = reached.get("spend_control_reached")
+    if (isinstance(reached_type, str) and reached_type) or spend_control is True:
+        return True
+    if (
+        "rate_limit_reached_type" in reached
+        and "spend_control_reached" in reached
+        and reached_type is None
+        and spend_control is False
+    ):
+        return False
+    return None
+
+
+def _reached_transition(
+    state: dict[str, object],
+    provider: str,
+    scope: str,
+    reading_at: datetime,
+    reached: bool | None,
+    edges: list[AlertEdge],
+) -> None:
+    """Apply a scope's reached flag to its tracked episodes; an older reading never applies."""
+    if reached is None:
+        return
+    episodes = _section(state, "episodes")
+    for key, entry in list(episodes.items()):
+        item = _mapping(entry)
+        if item.get("scope") != scope or item.get("tracks") is not True:
+            continue
+        observed = _parse_time(item.get("observed_at"))
+        if observed is not None and reading_at < observed:
+            continue
+        was_reached = item.get("reached") is True
+        episodes[key] = {**item, "reached": reached, "observed_at": reading_at.isoformat()}
+        if reached and not was_reached:
+            edges.append(AlertEdge(provider=provider, kind="limit_reached"))
+
+
 def _credit_transition(
     state: dict[str, object],
     provider: str,
     observation: QuotaObservation,
-    now: datetime,
+    readings: Mapping[str, datetime],
     edges: list[AlertEdge],
 ) -> None:
     credits: dict[str, Mapping[str, object]] = {}
@@ -266,47 +371,49 @@ def _credit_transition(
             credits.setdefault(component.scope, raw)
     ledger = _section(state, "credits")
     for scope, raw in credits.items():
+        reading_at = readings[scope]
         prior = _mapping(ledger.get(scope))
+        prior_at = _parse_time(prior.get("observed_at"))
+        if prior_at is not None and reading_at < prior_at:
+            continue
         drawing = prior.get("drawing") is True
         prior_value = _number(prior.get("value"))
         raw_balance = raw.get("balance")
         text = raw_balance if isinstance(raw_balance, str) else None
         value = _balance_value(text)
         has_credits = raw.get("has_credits")
-        if has_credits is False:
+        if has_credits is False or not _scope_exhausted(state, scope, reading_at):
             drawing = False
         elif has_credits is True and value is not None and prior_value is not None:
             if value < prior_value:
-                if not drawing and _scope_exhausted(state, scope, now):
+                if not drawing:
                     edges.append(
                         AlertEdge(provider=provider, kind="drawing_credits", credit_balance=text)
                     )
                     drawing = True
-            else:
+            elif value > prior_value:
                 drawing = False
         ledger[scope] = {
             "balance": text if value is not None else prior.get("balance"),
             "value": value if value is not None else prior_value,
             "drawing": drawing,
+            "observed_at": reading_at.isoformat(),
         }
 
 
-def _scope_exhausted(state: Mapping[str, object], scope: str, now: datetime) -> bool:
+def _scope_exhausted(state: Mapping[str, object], scope: str, reading_at: datetime) -> bool:
+    """True when a scope window measured exhausted within the freshness bound and resets later."""
     for entry in _mapping(state.get("windows")).values():
         item = _mapping(entry)
-        if item.get("scope") != scope or item.get("level") != "exhausted":
+        if item.get("scope") != scope or item.get("exhausted") is not True:
+            continue
+        observed = _parse_time(item.get("observed_at"))
+        if observed is None or (reading_at - observed).total_seconds() > FRESHNESS_SECONDS:
             continue
         epoch = _parse_time(item.get("epoch"))
-        if epoch is None or epoch > now:
+        if epoch is None or epoch > reading_at:
             return True
     return False
-
-
-def _reached(metadata: Mapping[str, object]) -> bool:
-    reached_type = metadata.get("rate_limit_reached_type")
-    return (isinstance(reached_type, str) and bool(reached_type)) or (
-        metadata.get("spend_control_reached") is True
-    )
 
 
 def _balance_value(text: str | None) -> float | None:
@@ -344,6 +451,6 @@ def _section(state: dict[str, object], name: str) -> dict[str, object]:
     return section
 
 
-def _load(previous_details: Mapping[str, object]) -> dict[str, object]:
-    raw = previous_details.get("quota_alerts")
+def _load(previous_details: Mapping[str, object], name: str) -> dict[str, object]:
+    raw = previous_details.get(name)
     return copy.deepcopy(dict(raw)) if isinstance(raw, Mapping) else {}
