@@ -377,15 +377,14 @@ class AuthService:
             return AuthDecision(allowed=False, code="forged_identity", status_code=401)
         if not identity_headers_match(request, presented.principal):
             return AuthDecision(allowed=False, code="forged_identity", status_code=401)
-        if grant_route.required is not None:
-            presented = present_or_reject(
-                self._grant_service,
-                raw_grant,
-                now=now,
-                required=grant_route.required,
-            )
-            if isinstance(presented, AuthDecision):
-                return presented
+        presented = present_or_reject(
+            self._grant_service,
+            raw_grant,
+            now=now,
+            required=grant_route.required,
+        )
+        if isinstance(presented, AuthDecision):
+            return presented
         supplied = bearer if isinstance(bearer, AgentApiTokenClaims) else None
         user_id, break_glass = self._resolved_caller(request, bearer=supplied)
         return AuthDecision(

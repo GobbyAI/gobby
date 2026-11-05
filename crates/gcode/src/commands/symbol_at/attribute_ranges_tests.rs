@@ -26,7 +26,7 @@ fn check_declaration(path: &str, source: &str, name: &str, body: &str) -> anyhow
         .expect("expected declaration is in fixture");
     let end = start + body.len();
     assert_eq!(
-        symbol_source(source.as_bytes(), symbol).0,
+        symbol_source(source.as_bytes(), symbol),
         body,
         "{}: {name}",
         path.display()
@@ -34,7 +34,6 @@ fn check_declaration(path: &str, source: &str, name: &str, body: &str) -> anyhow
     let by_id = crate::commands::symbols::read_symbol_source(root, symbol)?
         .expect("symbol-by-ID source exists");
     assert_eq!(by_id.text, body);
-    assert_eq!(by_id.symbol_bytes, body.len());
     assert_eq!((symbol.byte_start, symbol.byte_end), (start, end));
     let first_line = source[..start]
         .bytes()
