@@ -48,8 +48,6 @@ _INDEX_EXCLUDED_DIRS = frozenset(
         ".cache",
     }
 )
-# Git's verdicts for this event's paths, keyed by repository root then path.
-_IGNORED_TARGETS_KEY = "_code_navigation_ignored_targets"
 # Failures raised before gcode consults the index: gcore GrantError::cli_code
 # (crates/gcore/src/grant/mod.rs) and checkout resolution (crates/gcode/src/cli_error.rs).
 # Every navigation in that checkout fails the same way until the environment is repaired.
@@ -243,14 +241,13 @@ def _git_ignored(root: Path, paths: list[Path]) -> set[Path]:
     return {path for path in paths if path in echoed}
 
 
-def _ignored_targets(data: dict[str, Any], root: Path | None, paths: Sequence[Path]) -> set[Path]:
-    """Return the excluded paths, asking Git once per repository per event.
+def _ignored_targets(root: Path | None, paths: Sequence[Path]) -> set[Path]:
+    """Return the excluded paths, asking Git once per repository per call.
 
-    More than one rule condition can ask about the same event, so Git's answers
-    stay on its payload (#22815). Nothing carries across events: a .gitignore
-    edit applies to the next call.
+    Rule conditions read the event as read-only data, so the answers are never
+    stored on it (#25630). Nothing carries across calls: a .gitignore edit
+    applies to the next one.
     """
-    answers: dict[str, dict[str, bool]] = data.get(_IGNORED_TARGETS_KEY) or {}
     ignored: set[Path] = set()
     pending: dict[Path, list[Path]] = {}
     for path in paths:
@@ -259,17 +256,9 @@ def _ignored_targets(data: dict[str, Any], root: Path | None, paths: Sequence[Pa
             if decision:
                 ignored.add(path)
             continue
-        known = answers.get(str(decision), {})
-        if str(path) not in known:
-            pending.setdefault(decision, []).append(path)
-        elif known[str(path)]:
-            ignored.add(path)
+        pending.setdefault(decision, []).append(path)
     for git_root, batch in pending.items():
-        answered = _git_ignored(git_root, batch)
-        answers.setdefault(str(git_root), {}).update({str(p): p in answered for p in batch})
-        ignored |= answered
-    if pending:
-        data[_IGNORED_TARGETS_KEY] = answers
+        ignored |= _git_ignored(git_root, batch)
     return ignored
 
 
@@ -400,8 +389,8 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
                 segment["canonical_narrow_source_context"] = True
                 segment["canonical_source_line_count"] = line_count
     metadata["canonical_code_navigation_segments"] = segments
-    # Interactive callers need --project to retrieve another checkout's file.
-    # Managed seats skip unadmitted overlays in navigation_requires_index below.
+    # A read of the primary checkout from a linked worktree needs --project.
+    # Reads of other linked worktrees skip the index gates for every session.
     read_roots = {
         checkout_root(path)
         for segment, resolved in zip(segments, segment_paths, strict=True)
@@ -576,10 +565,7 @@ def navigation_requires_index(
             segment.get("canonical_code_index_navigation")
             or segment.get("canonical_code_navigation_script_execution")
             or segment.get("canonical_code_navigation_repo_scope") is False
-            or (
-                segment.get("canonical_code_navigation_checkout_scope") is False
-                and variables.get("is_spawned_agent")
-            )
+            or segment.get("canonical_code_navigation_checkout_scope") is False
             or segment.get("canonical_search_revision_scoped")
         ):
             continue
@@ -609,9 +595,7 @@ def navigation_requires_index(
                     for other in segments
                     for path in other.get("canonical_code_navigation_ignore_candidates") or []
                 }
-                ignored = _ignored_targets(
-                    data, current_project_root(data), sorted(every_candidate)
-                )
+                ignored = _ignored_targets(current_project_root(data), sorted(every_candidate))
             if {Path(path) for path in candidates} <= ignored:
                 continue
         return True

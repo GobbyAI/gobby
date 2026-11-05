@@ -23,6 +23,7 @@ pytest_plugins = [
     "tests.review_coverage_helpers",
     "tests.fixtures.e2e_run_cleanup",
     "tests.fixtures.socket_paths",
+    "tests.fixtures.hang_guard",
 ]
 
 
@@ -165,6 +166,16 @@ def _allow_worktree_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.utils.dev import WORKTREE_DAEMON_OVERRIDE_ENV
 
     monkeypatch.setenv(WORKTREE_DAEMON_OVERRIDE_ENV, "1")
+
+
+@pytest.fixture(autouse=True)
+def _unconfigured_codex_seat_index() -> Iterator[None]:
+    """Leave no test's stored /clear row read behind: each HookManager configures one,
+    over a database the next test no longer has."""
+    from gobby.hooks.terminal_context import configure_codex_seat_index
+
+    yield
+    configure_codex_seat_index(None)
 
 
 @pytest.fixture(autouse=True)

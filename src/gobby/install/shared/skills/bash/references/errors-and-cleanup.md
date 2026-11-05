@@ -79,3 +79,5 @@ manages background work.
 Traps are global shell state. Sourced libraries should return cleanup handles or
 offer explicit cleanup functions. When trap composition is unavoidable, capture
 and restore existing trap behavior carefully and test nested users.
+
+_Version: 1.0.0_

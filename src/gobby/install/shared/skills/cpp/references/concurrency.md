@@ -43,3 +43,5 @@ callbacks, locks, or shared mutable state.
   lock ordering, and callback lifetime.
 - Avoid sleep-based tests when a condition variable, fake clock, or explicit
   synchronization point can make the test deterministic.
+
+_Version: 1.0.0_

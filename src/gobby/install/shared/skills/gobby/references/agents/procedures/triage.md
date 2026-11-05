@@ -1,7 +1,7 @@
 # triage procedures
 
 - First check, every turn. Call `get_handoff` when one is pending, then read your queued messages.
-- Pace the digest yourself. After each digest, register `gobby-agents:wait_for_coordination(timeout=300)` with `owner_session=<Orchestrator ref>` and `reply=true`. Expiry starts the next digest and an Orchestrator reply starts it early. Never sleep or poll, and keep no other reminder.
+- Pace the digest yourself. After each digest, register `gobby-agents:wait_for_coordination(timeout=300)` with `owner_session=<Orchestrator ref>` and `reply=true`. Expiry starts the next digest and an Orchestrator reply starts it early. When nothing changed since the last digest, send nothing and re-arm the wait; never wake the Orchestrator for an all-steady digest. Never sleep or poll, and keep no other reminder.
 - Wake the Orchestrator. Send every message to the Orchestrator with wake=true, digests included; an omitted wake leaves it queued and unread. When the Orchestrator checks in for pending work, answer at once with every queued item, or "nothing pending".
 - Landed lists. Send each landed list to the Archivist, not the Orchestrator: `gobby-agents:send_message(target="session", target_id=<Archivist ref>)`. The Archivist records it in the daily digest, so leave the list out of your Orchestrator digest.
 - Operator decisions. Send each decision the operator must make to the Assistant: `gobby-agents:send_message(target="session", target_id=<Assistant ref>)`, one message per decision with its task ref, its title and the decision needed. The Assistant keeps the operator's `Decisions needed:` list, so leave decisions out of your Orchestrator digest.
@@ -9,10 +9,10 @@
 - Review blockers. Carry the task, candidate, review findings and decision needed in the next digest. Retry and reviewer-selection policy come from the selected workflow; a fixed rejection count or message format has no lifecycle effect.
 - Escalations. Before each digest, list open escalated tasks with `gobby-tasks:list_tasks(escalated=true, closed=false)`. Include each new explicit escalation, landing conflict or refused worktree cleanup with its reason and title. Send the required decision to the Orchestrator; task mutation remains outside your authority.
 - Disposition closes. Forward the task, proposed reason, supporting attestation and responsible closer. The selected policy determines completion requirements; no fixed role owns a reason.
-- Release batches. The Release Manager's global BEFORE, DAEMON BACK and RELEASE FAILED notices reach you instead of the Orchestrator. Relay each one in the next digest with its outcome.
-- Rulings and dispositions. Forward an Orchestrator ruling, including HOLD/GO work decisions, to its named target seat immediately with wake=true. Preserve the full decision, task and candidate, record the delivery ID and mark its ledger item resolved. Later digests carry the resolved status instead of repeating the decision as open. If the target is ambiguous or delivery fails, report that blocker to the Orchestrator at once and keep it blocked until delivered. Global restart/cutover notices and pane recovery remain direct exceptions.
+- Release Manager outcomes. Relay each promotion, restart or cutover result or refusal to the Orchestrator at once with wake=true. You can't direct that seat; only the Orchestrator can.
+- Rulings and dispositions. The Orchestrator usually sends rulings directly to the target seat. Before repeating an item as open, look for its answer: the asking seat's follow-up, the claim or task state, or an Orchestrator message naming the task. Mark it resolved and leave it out of the digest once answered. When the Orchestrator does send you a ruling to forward, forward it immediately with wake=true, preserve the full decision, task and candidate, and record the delivery ID. If the target is ambiguous or delivery fails, report that blocker to the Orchestrator at once and keep it blocked until delivered.
 - Artifacts. Follow `gobby:references/agents/messaging.md`. Retrieve complete parts, verify their digest and relay the exact content in new messages addressed to the recipient; a foreign private path or message ID addressed to another seat is insufficient. Forward developer reviews to their target developer and operator reports to the Assistant for reconstruction and attachment delivery through project_policy.operator_channel. Triage stays read-only and need not write a local artifact to relay it.
 
-_Version: 2.0.0_
+_Version: 3.0.0_
 
-_Last verified: 2026-11-02_
+_Last verified: 2026-11-04_

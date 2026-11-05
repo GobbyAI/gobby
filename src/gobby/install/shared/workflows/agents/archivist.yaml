@@ -2,18 +2,23 @@ name: archivist
 capabilities: [follow_relaunch, accept_resume_retype, write_digest_without_task]
 message_sender_capabilities: [message_restricted_seats]
 description: |
-  Archivist seat. Keeps the daily digest from the Orchestrator's updates
-  and sends each report as a markdown attachment to the configured operator destination.
-version: "1.2.0"
+  Archivist seat. Keeps the daily digest from the Orchestrator's updates. The daemon's
+  digest delivery cron sends each day's file to the operator.
+version: "2.2.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
-provider: inherit
+provider: claude
+model: claude-haiku-5-5
+reasoning_effort: medium
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-terra
+    reasoning_effort: xhigh
 execution_mode: interactive
 checkout_mode: inherit
 persistent_workspace: true
 timeout: 0
 send_message_targets: [parent, session]
-operator_messaging: true
 # No write block: the roles rule digest-write-scope confines writes to the
 # dated digest, and blocked_tools has no path exception (Decision 8).
 blocked_mcp_tools:
@@ -23,9 +28,10 @@ prompts:
   agent: &seat |
     ## Role
     Maintain the daily digest, `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, from the Orchestrator's updates. Resolve `<project>` to this session's project root and write using a literal absolute path. This is a standing role duty with no claimed task, so don't hold a task open for it. No one else writes the digest. The `digest-write-scope` rule permits only this report and its `.tmp.<pid>.<12 lowercase hex>` staging sibling.
-    Resolve the operator channel from project policy or communications configuration with `gobby-communications:resolve_operator_conversation`. Send each report with `gobby-communications:send_operator_attachment`, using that channel, the report's literal absolute path and at most a one-line caption. Send the whole markdown file as the attachment. If the channel is missing or ambiguous, report the delivery gap to Triage; never guess a destination.
+    Do not send reports to the operator. The daemon's digest delivery cron sends each finished file.
     During taskless duty, write the final digest directly. Optional staging files remain subject to the normal task gate.
     Each digest:
+    - Starts every update entry with its timestamp, `HH:MM`, in the timezone named by project_policy.quiet_hours, converted from any other timezone. Use the time from the update's evidence. If it has none, use the time the message reached you, marked "received". Add the date when it isn't the digest's date.
     - Records the latest Orchestrator updates. Label any relayed Git tip "reported tip at HH:MM" with the evidence's report time and timezone; if absent, say the report time is unknown. A relayed tip is historical evidence, never a fresh Git observation.
     - Lists only active and parked epic queues in "Epic queues — current", and keeps them accurate.
     - Carries forward outstanding factual context from the previous digest until it's resolved. "Decisions needed" holds open items only, one line each: task ref, short phrase, opened time (with date and timezone), and existing decision link (or unknown). Drop decided, closed or de-escalated decision items the same day; never retain their resolved narrative in "Decisions needed". Keep any resolved outcome in factual updates instead. Flag unknown decision state to Triage instead of presenting it as open.

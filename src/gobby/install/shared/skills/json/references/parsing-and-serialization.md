@@ -33,3 +33,5 @@
 - JSON Patch and JSON Merge Patch have different semantics. Confirm which one
   the API expects before editing patches or examples.
 - Test add, remove, replace, null, and missing-field behavior for patch changes.
+
+_Version: 1.0.0_

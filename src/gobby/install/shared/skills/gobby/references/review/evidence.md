@@ -57,3 +57,5 @@ Details: [audit findings](../../../../../../../../docs/guides/test-quality.md#au
 [baselines](../../../../../../../../docs/guides/test-quality.md#baselines),
 [suppressions](../../../../../../../../docs/guides/test-quality.md#suppressions),
 and [focused mutation testing](../../../../../../../../docs/guides/test-quality.md#focused-mutation-testing).
+
+_Version: 1.0.0_

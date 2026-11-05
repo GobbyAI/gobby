@@ -50,3 +50,5 @@
 - Use weak tables only after choosing weak keys, values, or both from the cache's
   ownership model. Test collection-sensitive behavior without assuming an exact
   collection instant.
+
+_Version: 1.0.0_

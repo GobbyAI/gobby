@@ -39,3 +39,5 @@ publication before retiring sources. It does not collect files from other nodes.
 
 See [pack/unpack](../../../../../../../../docs/guides/admin-operations.md#pack-and-unpack)
 and [files ownership](../../../../../../../../docs/architecture/hub-owned-files-home.md).
+
+_Version: 1.0.0_

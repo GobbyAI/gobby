@@ -44,3 +44,5 @@ serialization, secrets, and dependency changes.
 - Never commit real secrets in config, tests, snapshots, fixtures, logs, or
   exception messages.
 - Use framework secret stores or env handling consistently with local practice.
+
+_Version: 1.0.0_

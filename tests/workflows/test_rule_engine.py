@@ -36,6 +36,11 @@ from gobby.workflows.engine.effects import MAX_OBSERVATIONS
 from gobby.workflows.engine.event_utils import _resolve_rule_events
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+from tests.workflows.rule_arming import (
+    SYNTHETIC_ESCALATION_PREFIX,
+    SYNTHETIC_RETRY_LIMIT_RULE,
+    install_retry_limit_rule,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -1971,6 +1976,29 @@ class TestBeforeToolBlockTracking:
         assert variables.get("tool_block_pending") is None
 
     @pytest.mark.asyncio
+    async def test_subagent_block_records_in_its_own_context(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A subagent's blocked call never becomes the parent's last blocked tool."""
+
+        _insert_rule(
+            manager,
+            "block-edit",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="block", reason="No editing", tools=["Edit"])],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit", "agent_id": "a1"})
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables.get("_last_blocked_tool") is None
+        assert variables["_last_blocked_scopes"]["a1"]["_last_blocked_tool"] == "Edit"
+
+    @pytest.mark.asyncio
     async def test_tool_block_pending_not_set_on_stop_block(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
@@ -2058,6 +2086,43 @@ class TestBeforeToolBlockTracking:
 
         assert variables["tool_block_pending"] is True
 
+    @pytest.mark.asyncio
+    async def test_subagent_tool_outcome_stays_in_its_own_context(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A subagent's failure never holds the parent's stop, and its success never clears it."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        failed = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit", "agent_id": "a1"})
+        failed.metadata["is_failure"] = True
+        await engine.evaluate(failed, session_id=SESSION_ID, variables=variables)
+
+        assert variables.get("tool_block_pending") is None
+        assert variables["_last_blocked_scopes"]["a1"]["tool_block_pending"] is True
+
+        variables["tool_block_pending"] = True
+        succeeded = _make_event(
+            HookEventType.AFTER_TOOL, data={"tool_name": "Edit", "agent_id": "a2"}
+        )
+        await engine.evaluate(succeeded, session_id=SESSION_ID, variables=variables)
+
+        assert variables["tool_block_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_success_keeps_edit_state_while_this_context_failed(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A non-edit success keeps edit state while its own context has a failure pending."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"edit_write_pending": True, "tool_block_pending": True}
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables["edit_write_pending"] is True
+        assert variables["tool_block_pending"] is False
+
     @pytest.mark.parametrize(
         "payload,expected_pending",
         [
@@ -2123,9 +2188,10 @@ class TestConsecutiveToolBlocks:
     async def test_short_circuit_fires_at_threshold(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """At the configured threshold, engine should short-circuit without evaluating rules."""
+        """At the threshold the retry-limit rule blocks before other rules take effect."""
+        install_retry_limit_rule(db)
 
-        # Insert a rule with set_variable to prove it never runs
+        # Insert a rule with set_variable to prove its side effect never runs
         _insert_rule(
             manager,
             "block-edit-with-side-effect",
@@ -2151,20 +2217,19 @@ class TestConsecutiveToolBlocks:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response.reason
-        assert "Most recent original block reason:" in response.reason
-        assert "Rule enforced by Gobby: [block-edit]\nNo editing" in response.reason
-        assert "Recovery required:" in response.reason
-        assert "STOP retrying" not in response.reason
-        # Rule should NOT have been evaluated — no side effect
+        assert response.reason.startswith(
+            f"Rule enforced by Gobby: [{SYNTHETIC_RETRY_LIMIT_RULE}]\n"
+            f"{SYNTHETIC_ESCALATION_PREFIX}: Edit x5 | "
+            "Rule enforced by Gobby: [block-edit]\nNo editing"
+        )
         assert variables.get("rule_ran") is None
 
     @pytest.mark.asyncio
     async def test_short_circuit_fallback_when_original_reason_unavailable(
         self, db: HubDatabase
     ) -> None:
-        """Threshold block should tell agents to scroll up when stored reason is absent."""
-
+        """The threshold block still fires when no original reason was stored."""
+        install_retry_limit_rule(db)
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
             "consecutive_tool_blocks": 3,
@@ -2176,10 +2241,7 @@ class TestConsecutiveToolBlocks:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "Most recent original block reason:" not in response.reason
-        assert "The prior block reason was unavailable." in response.reason
-        assert "Scroll up and read the immediately preceding tool error" in response.reason
-        assert "Recovery required:" in response.reason
+        assert response.reason.endswith(f"{SYNTHETIC_ESCALATION_PREFIX}: Edit x5 | none")
 
     @pytest.mark.asyncio
     async def test_counter_resets_on_successful_after_tool(self, db: HubDatabase) -> None:
@@ -2789,6 +2851,39 @@ class TestEditWritePending:
         stop_event = _make_event(HookEventType.STOP)
         response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_subagent_edit_blocked_by_rule_clears_only_its_own_pending(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A rule-blocked subagent Edit clears that subagent's pending state, not the parent's."""
+        _insert_rule(
+            manager,
+            "block-edit-rule",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                tools=["Edit"],
+                effects=[RuleEffect(type="block", reason="No task claimed")],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        # The parent's own Edit is still in flight.
+        variables: dict[str, Any] = {"edit_write_pending": True}
+
+        edit_event = _make_event(
+            HookEventType.BEFORE_TOOL, data={"tool_name": "Edit", "agent_id": "a1"}
+        )
+        response = await engine.evaluate(edit_event, session_id=SESSION_ID, variables=variables)
+        assert response.decision == "block"
+
+        assert variables["_last_blocked_scopes"]["a1"]["edit_write_pending"] is False
+        assert variables["edit_write_pending"] is True
+
+        stop_event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
+        assert response.decision == "block"
+        assert "edit-write-recovery" in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_by_non_edit_success(
@@ -3742,8 +3837,10 @@ class TestLiveActiveRuleSelection:
                 "_agent_type": "fixture-policy",
                 "_active_rule_names": ["opt-in-rule"],
             }
-            await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-            assert variables.get("baseline-rule", False) is (not enabled)
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+            # #25617: a disabled seat fails closed instead of gaining the baseline set.
+            assert (response.decision == "block") is (not enabled)
+            assert "baseline-rule" not in variables
             assert "opt-in-rule" not in variables
 
     @pytest.mark.asyncio
@@ -3956,16 +4053,17 @@ class TestLiveActiveRuleSelection:
         assert second is first
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_name", [None, "missing-agent", "disabled-agent"])
+    @pytest.mark.parametrize("agent_name", [None, "default", "missing-agent", "disabled-agent"])
     @pytest.mark.parametrize("snapshot", [None, [], ["opt-in-rule"]])
-    async def test_unresolved_definition_uses_baseline_without_cached_authority(
+    async def test_unresolved_named_definition_fails_closed_without_cached_authority(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
         agent_name: str | None,
         snapshot: list[str] | None,
     ) -> None:
-        """Cached selections cannot grant or remove rules after a definition vanishes."""
+        """An unbound session keeps the baseline; a named seat whose definition vanished
+        is refused, and cached selections grant nothing either way."""
         if agent_name == "disabled-agent":
             AgentDefinitionManager(db).create(
                 name=agent_name,
@@ -4002,10 +4100,26 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        assert variables.get("baseline") is True
+        named = agent_name not in (None, "default")
+        assert response.decision == ("block" if named else "allow")
+        assert (f"'{agent_name}'" in (response.reason or "")) is named
+        assert variables.get("baseline") is (None if named else True)
         assert variables.get("opt_in") is None
+
+    @pytest.mark.asyncio
+    async def test_unresolved_named_definition_does_not_block_turn_end(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_agent_type": "missing-agent"}
+
+        response = await engine.evaluate(
+            _make_event(HookEventType.STOP), session_id=SESSION_ID, variables=variables
+        )
+
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_invalid_agent_definition_fails_loudly(
@@ -4065,6 +4179,7 @@ class TestAgentScope:
             ),
         )
 
+        _insert_agent(manager, "fixture-definition-3588bb72", include=["*"])
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"_agent_type": "fixture-definition-3588bb72"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})

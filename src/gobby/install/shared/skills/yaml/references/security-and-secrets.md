@@ -34,3 +34,5 @@
 - Verify generated/rendered output does not leak secret values.
 - Include security-relevant validation evidence in the task closeout when the
   YAML controls CI, deployment, identity, or network exposure.
+
+_Version: 1.0.0_

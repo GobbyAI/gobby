@@ -47,3 +47,5 @@
 - Avoid mass assignment, unsafe `constantize`, string eval, YAML object loading,
   path traversal, SQL fragments, and shell interpolation.
 - Use parameterized queries, strong parameters, and framework escaping helpers.
+
+_Version: 1.0.0_

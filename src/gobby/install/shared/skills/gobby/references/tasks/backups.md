@@ -29,4 +29,6 @@ Hub-wide disaster recovery belongs to admin.
 Guides: [Storage and Backups](../../../../../../../../docs/guides/tasks.md#storage-and-backups),
 [Task CLI](../../../../../../../../docs/guides/cli-commands.md#task-lifecycle).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-22_

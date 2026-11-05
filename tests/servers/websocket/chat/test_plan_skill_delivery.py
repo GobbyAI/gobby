@@ -29,14 +29,69 @@ from gobby.servers.websocket.chat.backends.droid import (
 )
 from gobby.servers.websocket.chat.backends.grok import GrokManagedChatSession, GrokWebChatBackend
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.servers.test_fire_lifecycle_parity import ChatMixinHost
-from tests.workflows.test_plan_mode_rules import SESSION_ID, _create_session, _sync_bundled
+
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PROJECT_ID = "22222222-2222-4222-8222-222222222222"
+DIRECTIVE_SKILL = "gobby:references/plan/overview.md"
+RECEIPT = "plan_skill_directive_delivered"
+
+
+def _create_session(db: HubDatabase) -> None:
+    db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP)",
+        (PROJECT_ID, "plan-skill-delivery"),
+    )
+    db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (
+            SESSION_ID,
+            "plan-skill-ext",
+            "21000000-0000-4000-8000-000000000002",
+            "claude",
+            PROJECT_ID,
+        ),
+    )
+
+
+def _install_synthetic_rules(db: HubDatabase) -> None:
+    """Deliver the directive once per plan period on receipt; clear and compact reset it."""
+    reset = [RuleEffect(type="set_variable", variable=RECEIPT, value=False)]
+    rules = {
+        "synthetic-plan-directive-once": RuleDefinitionBody(
+            event=RuleTriggerEvent.TURN_START,
+            when=f"variables.get('plan_mode') and not variables.get('{RECEIPT}')",
+            effects=[
+                RuleEffect(type="load_skill", delivery="on_receipt", skill=DIRECTIVE_SKILL),
+                RuleEffect(
+                    type="set_variable", delivery="on_receipt", variable=RECEIPT, value=True
+                ),
+            ],
+        ),
+        "synthetic-plan-directive-reset-on-clear": RuleDefinitionBody(
+            event=RuleTriggerEvent.SESSION_START,
+            when="event.data.get('source') in ['clear', 'compact']",
+            effects=reset,
+        ),
+        "synthetic-plan-directive-reset-on-compact": RuleDefinitionBody(
+            event=RuleTriggerEvent.PRE_COMPACT, effects=reset
+        ),
+    }
+    for name, body in rules.items():
+        RuleDefinitionManager(db).create(
+            name=name, definition_json=body.model_dump(), enabled=True, tags=["default"]
+        )
+
 
 pytestmark = pytest.mark.integration
 
@@ -127,7 +182,7 @@ def managed_session(provider: str, wire: ProviderWire, monkeypatch: pytest.Monke
 def bind_rules(
     db: HubDatabase, session: Any, tmp_path: Path, request: pytest.FixtureRequest
 ) -> tuple[ChatMixinHost, SessionVariableManager]:
-    _sync_bundled(db)
+    _install_synthetic_rules(db)
     _create_session(db)
     manager = SessionManager(db)
     variables = SessionVariableManager(db)

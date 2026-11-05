@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from collections.abc import Mapping
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from uuid import UUID
 
 from fastapi import HTTPException, Request
+from starlette.requests import HTTPConnection
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.mcp_proxy.services.server_resolution import (
@@ -36,7 +38,7 @@ from gobby.utils.session_context import (
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.utils.session_context import RequestPrincipal
+    from gobby.utils.session_context import PrincipalResolver, RequestPrincipal
 
 logger = logging.getLogger("gobby.servers.routes.mcp.endpoints.execution")
 
@@ -310,14 +312,21 @@ def _seed_request_principal(
     """Bind the request's authenticated caller, resolved only when a tool asks for it."""
     if request is None:
         return
+    tokens.principal_token = bind_request_principal(server, request)
+
+
+def bind_request_principal(
+    server: HTTPServer, connection: HTTPConnection
+) -> contextvars.Token[PrincipalResolver]:
+    """Bind the connection's authenticated caller, resolved only when a tool asks for it."""
 
     async def principal() -> RequestPrincipal:
         resolved: RequestPrincipal = await server.run_db(
-            server.auth_service.request_principal, request
+            server.auth_service.request_principal, connection
         )
         return resolved
 
-    tokens.principal_token = set_request_principal(principal)
+    return set_request_principal(principal)
 
 
 async def _bind_agent_run_context(

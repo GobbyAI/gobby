@@ -1,6 +1,7 @@
 ---
 name: annotate
 description: Import Gobby Annotate capture exports into actionable Gobby tasks. Use for /gobby annotate with a capture path or a request to turn a Gobby Annotate bundle into tasks.
+version: "1.0.0"
 metadata:
   gobby:
     audience: all

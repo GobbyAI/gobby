@@ -214,3 +214,33 @@ def test_inline_python_unproven_writes_stay_unknown(repo: Path, script: str) -> 
 
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+_SRT_PROBE = (
+    "D=/Users/josh/.gobby/tools/srt/0.0.79/node_modules/@anthropic-ai/sandbox-runtime/dist; "
+    'grep -rn "function whichSync" $D | head; '
+    'f=$(grep -rln "function whichSync" $D | head -1); '
+    'n=$(grep -n "function whichSync" $f | cut -d: -f1); '
+    'sed -n "{start},$((n+30))p" $f'
+)
+
+
+def test_sandbox_runtime_probe_with_arithmetic_addresses_reads(repo: Path) -> None:
+    data = _metadata(_SRT_PROBE.format(start="$((n))"), repo)
+
+    assert data.get("canonical_repo_mutation") is not True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A substitution's output is arbitrary sed program text: n=$(echo '1w x') writes.
+        _SRT_PROBE.format(start="$n"),
+        "n=$(echo '1w x'); sed -n \"${n}p\" a.py",
+    ],
+)
+def test_substituted_sed_program_text_stays_unknown_write(repo: Path, command: str) -> None:
+    data = _metadata(command, repo)
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True

@@ -35,8 +35,8 @@ from gobby.tasks.state_semantics import (
     is_task_closed,
     validate_task_close_reason,
 )
-from gobby.utils.daemon_git import GitOk, daemon_git
-from gobby.utils.git import descends_from_all, normalize_commit_sha
+from gobby.utils.daemon_git import GitOk, daemon_git, normalize_commit_sha
+from gobby.utils.git import descends_from_all
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
@@ -143,7 +143,7 @@ async def _evaluate_close(
         if not isinstance(resolved, GitOk):
             return evaluation.refuse("invalid_commit_sha", "commit_sha must resolve to a commit.")
         candidate = resolved.stdout.strip()
-        canonical = await asyncio.to_thread(normalize_commit_sha, candidate, cwd=repo)
+        canonical = await normalize_commit_sha(candidate, cwd=repo)
         if canonical is None:
             return evaluation.refuse("invalid_commit_sha", "commit_sha must resolve to a commit.")
         named = [sha for sha in commits if candidate.startswith(sha) or sha.startswith(candidate)]

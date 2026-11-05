@@ -34,6 +34,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CRITERIA_DESCRIPTION = (
+    "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. "
+    "Be precise."
+)
+
 
 def _enum_schema(values: Iterable[str]) -> Any:
     return {"enum": list(values)}
@@ -63,7 +68,7 @@ class TaskCreateRequest(BaseModel):
         default=None,
         description=f"Task domain: {', '.join(sorted(VALID_CATEGORIES))}",
     )
-    validation_criteria: str | None = Field(default=None, description="Acceptance criteria")
+    validation_criteria: str | None = Field(default=None, description=_CRITERIA_DESCRIPTION)
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Required for code tasks; routes implementation to the matching developer.",
@@ -94,7 +99,7 @@ class TaskUpdateRequest(BaseModel):
     labels: list[str] | None = Field(default=None, description="New labels")
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
     category: str | None = Field(default=None, description="New category")
-    validation_criteria: str | None = Field(default=None, description="New validation criteria")
+    validation_criteria: str | None = Field(default=None, description=_CRITERIA_DESCRIPTION)
     implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
         default=None,
         description="Code task implementation domain.",

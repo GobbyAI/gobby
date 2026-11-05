@@ -105,27 +105,39 @@ class TestBuildGobbyInstructions:
         assert result == _FALLBACK_INSTRUCTIONS
         assert "<gobby_system>" in result
 
-    def test_prompt_and_fallback_have_identical_skill_loading_safeguards(self) -> None:
-        """Prompt and fallback should enforce the same complete-delivery contract."""
+    def test_prompt_and_fallback_are_the_same_instructions(self) -> None:
+        """A missing prompt file must not change what the agent is told."""
         from gobby.mcp_proxy.instructions import (
             _FALLBACK_INSTRUCTIONS,
             build_gobby_instructions,
         )
 
-        def skills_section(instructions: str) -> str:
-            return instructions.split("<skills>", maxsplit=1)[1].split("</skills>", maxsplit=1)[0]
+        assert build_gobby_instructions() == _FALLBACK_INSTRUCTIONS
 
-        prompt_section = skills_section(build_gobby_instructions())
-        fallback_section = skills_section(_FALLBACK_INSTRUCTIONS)
+    def test_rendered_instructions_fit_the_client_budget(self) -> None:
+        """Claude Code cuts MCP server instructions off near 4,100 characters."""
+        from gobby.mcp_proxy.instructions import build_gobby_instructions
 
-        assert prompt_section == fallback_section
-        assert "Each request returns one content page" in prompt_section
-        assert "final entrypoint page is available in active context" in prompt_section
-        assert "Collapsed UI previews are presentation-only" in prompt_section
-        assert "Do not use `Promise.all`" in prompt_section
-        assert "current page's `content` together with `page`" in prompt_section
-        assert "`…N tokens truncated…`" in prompt_section
-        assert "restart that skill or file lookup individually" in prompt_section
+        rendered = build_gobby_instructions()
+
+        assert len(rendered) < 4000
+        assert rendered.endswith("</gobby_system>")
+
+    def test_skills_section_teaches_one_batch_load(self) -> None:
+        """Skills and references load together; only completed pages count."""
+        from gobby.mcp_proxy.instructions import build_gobby_instructions
+
+        instructions = build_gobby_instructions()
+        section = instructions.split("<skills>", maxsplit=1)[1].split("</skills>", maxsplit=1)[0]
+
+        assert 'get_skill(names=["<skill>", "<skill>:references/<topic>.md", ...])' in section
+        assert "Only a completed final page counts" in section
+        assert "`page.completed`" in section
+        assert "Never bypass failed delivery with a manual variable write" in section
+        assert "`…N tokens truncated…`" in section
+        assert "`get_skill_file` and `get_skill_files` stay behind the schema gate" in section
+        assert "Promise.all" not in section
+        assert "sequentially" not in section
 
     def test_prompt_and_fallback_have_identical_code_search_routing(self) -> None:
         """Always-visible and fallback instructions must select the same search lane."""
@@ -156,14 +168,3 @@ class TestBuildGobbyInstructions:
             "Direct `gcode` calls do not require loading `gobby:references/code-index/overview.md`"
             in prompt_section
         )
-
-
-def test_instructions_name_gated_skill_file_tools() -> None:
-    """Skill reference loads are behind the schema gate and say so."""
-    from gobby.mcp_proxy.instructions import build_gobby_instructions
-
-    result = build_gobby_instructions()
-
-    assert "`get_skill_file` and `get_skill_files` are not bootstrap tools" in result
-    assert '`get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file")`' in result
-    assert "after the schema lease above, using the exact `get_skill_file(" in result

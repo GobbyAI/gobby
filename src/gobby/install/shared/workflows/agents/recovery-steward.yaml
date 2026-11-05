@@ -6,10 +6,16 @@ description: |
   Triage for resume, and alerts Triage when a DevTeam has gone quiet. Its backstop
   sweep ends the leftover seats of closed tasks and deletes the worktrees that
   have landed. Never restarts the daemon or edits code.
-version: "2.2.0"
+version: "4.1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
-provider: inherit
+provider: claude
+model: claude-sonnet-5-5
+reasoning_effort: medium
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-terra
+    reasoning_effort: xhigh
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
@@ -64,5 +70,6 @@ workflows:
       - "name:require-seat-procedure"
       - "tag:default"
       - "tag:worker-safety"
+      - "name:reviewer-write-scope"
   variables:
     _seat_procedure: gobby:references/agents/procedures/recovery-steward.md

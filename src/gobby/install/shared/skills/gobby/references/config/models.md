@@ -60,3 +60,5 @@ then use the owning diagnostics/recovery path. A runtime grant's availability
 binding governs CLI capability use; enumeration does not override it. See
 [AI configuration](../../../../../../../../docs/guides/ai-configuration.md) and
 [storage and embeddings](../../../../../../../../docs/guides/configuration.md#storage-embeddings-and-memory).
+
+_Version: 1.0.0_

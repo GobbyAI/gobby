@@ -15,3 +15,5 @@ sync, or store GitHub/Linear issue identity on projects or tasks.
 
 See [integrations](../../../../../../../../docs/guides/integrations.md) and
 [MCP tools](../../../../../../../../docs/guides/mcp-tools.md).
+
+_Version: 1.0.0_

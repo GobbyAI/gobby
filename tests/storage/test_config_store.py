@@ -282,7 +282,7 @@ class TestConfigPersistence:
             # < hooks.adapter_timeout (26s).
             "workflow.timeout": 22.5,
             "tool_approvals.global_rules": ["Read(*)"],
-            "launch_defaults.123": {"provider": "codex"},
+            "context_window_overrides.gpt-7-sol": 200000,
         }
 
         mutations.patch(expected_revision=0, patch=ConfigPatch(values=values))

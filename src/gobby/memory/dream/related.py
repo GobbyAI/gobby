@@ -49,7 +49,7 @@ _DEFAULT_FETCH_LIMIT = 20
 _DEFAULT_TOP_K = 5
 _T = TypeVar("_T")
 
-_TASK_REF_PATTERN = re.compile(r"#(\d{3,6})")
+_TASK_REF_PATTERN = re.compile(r"#(\d{3,})")
 _STOPWORDS = frozenset(
     {
         "about",

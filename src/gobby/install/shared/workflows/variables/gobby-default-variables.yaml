@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [session-defaults, initialization]
 
 variables:
@@ -46,9 +47,6 @@ variables:
   claimed_task_requires_tdd:
     value: false
     description: "Whether any task claimed by this session requires TDD"
-  claimed_task_acceptance_test_paths:
-    value: []
-    description: "Acceptance test paths derived from claimed task validation criteria"
   claimed_task_is_source_work:
     value: false
     description: "Whether any task claimed by this session is category code, refactor, or test"
@@ -92,6 +90,9 @@ variables:
   loaded_skill_references:
     value: []
     description: "Exact skill:references/path.md identities completely fetched in the current context"
+  unavailable_instructions:
+    value: []
+    description: "Skill and reference identities a get_skill(names) batch reported unavailable in the current context; the instruction bootstrap stops requesting them"
   code_index_navigation_used_this_turn:
     value: false
     description: "True after successful gcode navigation in the current turn"

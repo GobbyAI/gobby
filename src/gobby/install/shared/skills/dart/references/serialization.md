@@ -32,3 +32,5 @@ local storage, database adapters, or build-runner surfaces.
 - Treat Drift, Isar, Hive, shared preferences, secure storage, GraphQL, REST,
   and platform channel schemas as external boundaries.
 - Test migrations and adapters when persisted or generated shape changes.
+
+_Version: 1.0.0_

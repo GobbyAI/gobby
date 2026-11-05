@@ -7,6 +7,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.storage.sessions import system_session_id
+
+TELEGRAM_MESSAGE_TYPE = "telegram_message"
 PENDING_MESSAGE_CONTEXT_BUDGET = 6_500
 PENDING_MESSAGE_INLINE_LIMIT = 2_000
 
@@ -95,7 +98,39 @@ def message_group_header(message_type: str) -> str:
         return "[Pending command results]:"
     if message_type == "completion_notification":
         return "[Pending completion notifications]:"
+    if message_type == TELEGRAM_MESSAGE_TYPE:
+        return "[Pending Telegram messages]:"
     return "[Pending P2P messages from other sessions]:"
+
+
+def _telegram_metadata(message: Any) -> dict[str, Any] | None:
+    """Metadata of Telegram ingress the daemon delivered; None for anything a session sent."""
+    if str(getattr(message, "message_type", "")) != TELEGRAM_MESSAGE_TYPE:
+        return None
+    if getattr(message, "from_session", None) != system_session_id():
+        return None
+    return message_metadata(message)
+
+
+def _telegram_sender(metadata: Mapping[str, Any]) -> str:
+    username = metadata.get("sender_username")
+    return f"Telegram @{username}: " if isinstance(username, str) and username else "Telegram: "
+
+
+def _telegram_reply_guidance(metadata: Mapping[str, Any]) -> str:
+    # Set only by daemon ingress for the enrolled operator's attached conversation.
+    if metadata.get("operator_comms") is True:
+        return (
+            " This session is attached to this Telegram conversation: type your reply "
+            "normally and it is mirrored there automatically. Do not also send it with "
+            "gobby-agents:send_message."
+        )
+    channel = metadata.get("channel")
+    target = f'(channel="{channel}")' if isinstance(channel, str) and channel else ""
+    return (
+        " This session is not attached to this Telegram conversation, so typed text is "
+        f"not mirrored there; reply with gobby-communications:send_message{target}."
+    )
 
 
 def _render_message_line(
@@ -109,18 +144,25 @@ def _render_message_line(
 ) -> str:
     priority = str(getattr(message, "priority", "normal") or "normal")
     priority_label = _priority_label(priority)
-    sender = (
-        "" if _is_self_origin(message) else resolve_sender(getattr(message, "from_session", None))
-    )
+    telegram = _telegram_metadata(message)
+    if telegram is not None:
+        sender = _telegram_sender(telegram)
+    elif _is_self_origin(message):
+        sender = ""
+    else:
+        sender = resolve_sender(getattr(message, "from_session", None))
+    guidance = _telegram_reply_guidance(telegram) if telegram is not None else ""
     if len(content) <= inline_limit:
-        suffix = _message_context_suffix(message, message_type, message_id)
-        return f"- {priority_label}{sender}{content}{suffix}"
+        suffix = _message_context_suffix(
+            message, message_type, message_id, attribute_sender=telegram is None
+        )
+        return f"- {priority_label}{sender}{content}{suffix}{guidance}"
 
     reference = (
         f"{len(content):,}-character message; retrieve with "
         f'gobby-agents:get_inter_session_message(message_id="{message_id}").'
     )
-    return f"- {priority_label}{sender}{reference}"
+    return f"- {priority_label}{sender}{reference}{guidance}"
 
 
 def _priority_label(priority: str) -> str:
@@ -131,11 +173,14 @@ def _priority_label(priority: str) -> str:
     return f"[PRIORITY: {priority.upper()}] "
 
 
-def _message_context_suffix(message: Any, message_type: str, message_id: str) -> str:
+def _message_context_suffix(
+    message: Any, message_type: str, message_id: str, *, attribute_sender: bool = True
+) -> str:
     metadata = message_metadata(message)
     bits: list[str] = [f"message_id={message_id}", f"type={message_type}"]
     from_session = getattr(message, "from_session", None)
-    if from_session and not _is_self_origin(message):
+    # Telegram ingress comes from the daemon's sender, which is not a reply address.
+    if attribute_sender and from_session and not _is_self_origin(message):
         bits.append(f"from_session={from_session}")
     for key in ("run_id", "task_id", "completion_id"):
         value = metadata.get(key)

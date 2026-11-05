@@ -36,4 +36,6 @@ Guides: [Tooling](../../../../../../../../docs/guides/rules.md#public-tooling),
 [CLI](../../../../../../../../docs/guides/cli-commands.md#rules-and-pipelines),
 [HTTP](../../../../../../../../docs/guides/http-endpoints.md#memory-skills-workflows-and-rules).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

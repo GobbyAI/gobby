@@ -32,7 +32,12 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.project_context import reset_project_context, set_project_context
-from gobby.utils.session_context import session_context_for_test
+from gobby.utils.session_context import (
+    RequestPrincipal,
+    reset_request_principal,
+    session_context_for_test,
+    set_request_principal,
+)
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
@@ -276,12 +281,21 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
             db=harness.db,
             session_manager=sessions,
         )
-        registered = await proxy.call_tool(
-            server_name="gobby-agents",
-            tool_name="wait_for_coordination",
-            arguments={"owner_session": owner_ref, "reply": True, "brief": False},
-            session_id=external_id,
-        )
+
+        # The /mcp route binds the caller; the operator may delegate a session.
+        async def operator() -> RequestPrincipal:
+            return None
+
+        principal_token = set_request_principal(operator)
+        try:
+            registered = await proxy.call_tool(
+                server_name="gobby-agents",
+                tool_name="wait_for_coordination",
+                arguments={"owner_session": owner_ref, "reply": True, "brief": False},
+                session_id=external_id,
+            )
+        finally:
+            reset_request_principal(principal_token)
     else:
         project_token = set_project_context({"id": PERSONAL_PROJECT_ID})
         try:

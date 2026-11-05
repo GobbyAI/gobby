@@ -42,3 +42,5 @@ Do not introduce a second test runner for one feature unless the existing runner
 - Use realistic names and fields, but keep fixtures small enough that failures are readable.
 
 Before finishing, run the narrowest command that covers the changed package, then run broader lint or workspace checks when the change affects shared behavior.
+
+_Version: 1.0.0_

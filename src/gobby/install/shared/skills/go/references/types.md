@@ -43,3 +43,5 @@ Validate JSON, form data, CLI args, files, environment variables, queue messages
 ## Public APIs
 
 Exported identifiers need doc comments and stable behavior. Keep constructors explicit when a type has invariants, dependencies, or validation.
+
+_Version: 1.0.0_

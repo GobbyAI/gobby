@@ -27,6 +27,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
+from gobby.adapters.codex_impl.native_exec_failures import is_simple_native_exec_cell
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
@@ -76,6 +77,7 @@ class _PendingLookup(NamedTuple):
     refusal: str = ""
     # Only an unterminated tail or a missing match can be completed by a later write.
     retryable: bool = False
+    outer_call_id: str | None = None
 
 
 def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
@@ -83,6 +85,7 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
     parser = CodexTranscriptParser()
     validated: dict[str, str | None] = {}
     batches: dict[str, list[dict[str, Any]]] = {}
+    simple_cells: set[str] = set()
     try:
         with Path(transcript_path).open(encoding="utf-8") as transcript:
             for index, line in enumerate(transcript):
@@ -96,6 +99,8 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
                 if isinstance(parsed, ParsedMessage) and parsed.content_type == "tool_use":
                     arguments = parsed.tool_input or {}
                     if parsed.tool_use_id and parsed.tool_name in FUNCTIONS_EXEC_NAMES:
+                        if is_simple_native_exec_cell(arguments.get("raw")):
+                            simple_cells.add(parsed.tool_use_id)
                         calls = literal_shell_calls(arguments.get("raw"))
                         if calls is not None and len(calls) > 1:
                             batches[parsed.tool_use_id] = calls
@@ -110,7 +115,7 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
                     ):
                         cwd = arguments.get("cwd")
                         validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
-    except (OSError, UnicodeError, ValueError) as exc:
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
         return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
@@ -146,10 +151,15 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
     )
     if cwd is None:
         return _PendingLookup(None, "matched call has no proven cwd")
-    return _PendingLookup(str(cwd))
+    outer = match["outer_call_id"]
+    # A yielded or multi-command cell can no longer vouch for one inner invocation.
+    unique_outer = outer if outer in chain["calls"] and outer in simple_cells else None
+    return _PendingLookup(str(cwd), outer_call_id=unique_outer)
 
 
-def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
+def _pending_shell_workdir(
+    input_data: dict[str, Any], *, correlation: dict[str, str] | None = None
+) -> str | None:
     """Borrow cwd only from one proven, still-pending provider shell call.
 
     Native Bash hooks omit nested exec_command.workdir. Reuse the transcript
@@ -178,6 +188,10 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         lookup = _pending_shell_lookup(transcript_path, command)
     if lookup.workdir is None:
         logger.warning("cwd proof refused: %s", lookup.refusal)
+    elif correlation is not None and lookup.outer_call_id is not None:
+        explicit = any(tool_input.get(key) for key in ("workdir", "cwd"))
+        if not explicit or current_tool_cwd(input_data) == Path(lookup.workdir):
+            correlation["outer_call_id"] = lookup.outer_call_id
     return lookup.workdir
 
 
@@ -278,6 +292,7 @@ class CodexHooksAdapter(BaseAdapter):
         session_id = input_data.get("session_id", "")
         raw_tool_input = input_data.get("tool_input")
         shell_cwd_unproven = False
+        shell_correlation: dict[str, str] = {}
 
         from gobby.hooks.normalization import (
             is_shell_tool,
@@ -290,7 +305,7 @@ class CodexHooksAdapter(BaseAdapter):
             if not isinstance(shell_input, dict):
                 shell_cwd_unproven = True
             elif not any(shell_input.get(key) for key in ("workdir", "cwd")):
-                workdir = _pending_shell_workdir(input_data)
+                workdir = _pending_shell_workdir(input_data, correlation=shell_correlation)
                 if workdir is not None:
                     input_data = {
                         **input_data,
@@ -300,6 +315,17 @@ class CodexHooksAdapter(BaseAdapter):
                     shell_cwd_unproven = True
             elif current_tool_cwd(input_data) is None:
                 shell_cwd_unproven = True
+            elif not node_origin():
+                path = input_data.get("transcript_path")
+                command = shell_input.get("command", shell_input.get("cmd"))
+                if isinstance(path, str) and isinstance(command, str):
+                    lookup = _pending_shell_lookup(path, command)
+                    if (
+                        lookup.workdir is not None
+                        and lookup.outer_call_id is not None
+                        and current_tool_cwd(input_data) == Path(lookup.workdir)
+                    ):
+                        shell_correlation["outer_call_id"] = lookup.outer_call_id
 
         if hook_type == "PostToolUse" and is_shell_tool(input_data.get("tool_name")):
             command_result = _command_execution_result(input_data)
@@ -337,6 +363,8 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata: dict[str, Any] = {"_native_hook_type": hook_type}
+        if shell_correlation:
+            metadata["_native_shell_outer_call_id"] = shell_correlation["outer_call_id"]
         if shell_cwd_unproven:
             # The launcher's cwd cannot vouch for a script in a computed workdir.
             # Keep it for session lookup, but classify without it for the read-only proof.

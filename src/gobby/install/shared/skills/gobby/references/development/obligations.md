@@ -82,3 +82,5 @@ and scoped browser validation. Native socket/platform requirements are in
 [native components](native-components.md). Human details:
 [testing](../../../../../../../../docs/guides/testing.md) and
 [test quality](../../../../../../../../docs/guides/test-quality.md).
+
+_Version: 1.0.0_

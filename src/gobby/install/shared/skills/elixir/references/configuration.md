@@ -39,3 +39,5 @@
   `mix test --only tag`, or `mix test apps/app_name/test/...` in umbrellas.
 - Compile after config/dependency changes and treat warnings as defects when the
   repo does.
+
+_Version: 1.0.0_

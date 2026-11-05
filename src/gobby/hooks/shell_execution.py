@@ -26,9 +26,15 @@ def literal_shell_workdir(command: str) -> str | None:
     # The command classifier uses this module's bounded script reader during import.
     from gobby.hooks._normalization_base_commands import unwrap_execution_command
 
+    # Directory proof is optional. Bound scanning and repeated wrapper unwrapping
+    # independently so oversized calls keep their original cwd without stalling hooks.
+    if len(command) > 16_384:
+        return None
     try:
         scan = scan_shell_command(command)
     except ValueError:
+        return None
+    if len(scan.tokens) > 512:
         return None
     segments = _split_shell_segments(scan.tokens)
     if scan.heredocs or len(segments) != 2 or segments[1].separator_before != "&&":

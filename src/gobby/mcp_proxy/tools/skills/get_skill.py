@@ -4,9 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.skills._batch import (
+    MAX_BATCH_NAMES,
+    BatchCursor,
+    batch_hash,
+    build_batch_page,
+    decode_batch_cursor,
+    is_batch_cursor,
+    marked_body,
+)
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.mcp_proxy.tools.skills._paging import (
     CursorError,
@@ -26,6 +37,19 @@ MAX_MANIFEST_DIRECTORY_ENTRIES = 20
 MAX_MANIFEST_RESPONSE_BYTES = 15_000
 MAX_EMBEDDED_MANIFEST_BYTES = 6_000
 MAX_BRIEF_REFERENCES_BYTES = 4_000
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchBody:
+    identity: str
+    content: str
+    skill: Skill
+    level: str | None
+    path: str | None
+
+
+def _unavailable(identity: str, error_code: str, message: str) -> dict[str, str]:
+    return {"identity": identity, "error_code": error_code, "message": message}
 
 
 def _encoded_size(value: dict[str, Any]) -> int:
@@ -282,11 +306,115 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 exc,
             )
 
+    async def resolve_batch(
+        names: Sequence[str], levels: dict[str, str]
+    ) -> tuple[list[_BatchBody], list[dict[str, str]], dict[str, Any] | None]:
+        """Resolve batch identities in order; unavailable ones are reported, not served."""
+        from gobby.skills.instruction_requirements import parse_instruction_requirement
+
+        bodies: list[_BatchBody] = []
+        unavailable: list[dict[str, str]] = []
+        for identity in dict.fromkeys(names):
+            try:
+                requirement = parse_instruction_requirement(identity)
+            except ValueError as exc:
+                unavailable.append(_unavailable(identity, "invalid_identity", str(exc)))
+                continue
+            skill = await ctx.run_db(
+                ctx.storage.get_by_name, requirement.skill, project_id=ctx.project_id
+            )
+            if skill is None:
+                unavailable.append(_unavailable(identity, "not_found", "Skill not found"))
+                continue
+            level: str | None = None
+            if requirement.path is None:
+                level, level_error = _resolve_level(skill, levels.get(identity))
+                if level_error is not None:
+                    return [], [], _error("invalid_level", f"{identity}: {level_error}")
+                content = skill.content
+                if level is not None:
+                    content = f"Active level: {level}\n\n{content}"
+                scan_path = "SKILL.md"
+            else:
+                skill_file = await ctx.run_db(
+                    ctx.storage.get_skill_file, skill.id, requirement.path
+                )
+                if skill_file is None:
+                    unavailable.append(_unavailable(identity, "not_found", "File not found"))
+                    continue
+                content, scan_path = skill_file.content, skill_file.path
+            scan_message = _serve_scan_error(skill.name, skill.source_type, content, scan_path)
+            if scan_message is not None:
+                unavailable.append(_unavailable(identity, "security_scan_failed", scan_message))
+                continue
+            bodies.append(
+                _BatchBody(identity, marked_body(identity, content), skill, level, requirement.path)
+            )
+        return bodies, unavailable, None
+
+    async def get_skill_batch(
+        names: list[str] | None,
+        levels: dict[str, str] | None,
+        cursor: str | None,
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        restart = "Call get_skill again with names and without cursor to restart."
+        try:
+            if cursor is not None:
+                if names is not None or levels is not None:
+                    return _error(
+                        "invalid_cursor",
+                        "Cursor continuation cannot include initial lookup arguments",
+                        restart=restart,
+                    )
+                state = decode_batch_cursor(cursor)
+                names, levels = list(state.names), dict(state.levels)
+            elif not names:
+                return _error("invalid_request", "names must list at least one identity")
+            elif len(names) > MAX_BATCH_NAMES:
+                return _error("invalid_request", f"names lists more than {MAX_BATCH_NAMES}")
+            levels = levels or {}
+            stray = sorted(set(levels) - set(names))
+            if stray:
+                return _error("invalid_request", f"levels names identities not requested: {stray}")
+            bodies, unavailable, failure = await resolve_batch(names, levels)
+            if failure is not None:
+                return failure
+            pairs = [(body.identity, body.content) for body in bodies]
+            digest = batch_hash(pairs)
+            if cursor is None:
+                state = BatchCursor(
+                    names=tuple(names),
+                    levels=tuple(sorted(levels.items())),
+                    index=0,
+                    offset=0,
+                    content_hash=digest,
+                )
+            elif state.content_hash != digest:
+                return _error(
+                    "stale_cursor",
+                    "Instruction content changed after the cursor was issued",
+                    restart=restart,
+                )
+            response = build_batch_page(pairs, state, unavailable)
+            by_identity = {body.identity: body for body in bodies}
+            for identity in response["page"]["completed"]:
+                body = by_identity[identity]
+                await record_completed_load(body.skill, body.level, session_id, body.path)
+            return response
+        except CursorError as exc:
+            return _error("invalid_cursor", str(exc), restart=restart)
+        except Exception as exc:
+            return _error("internal_error", str(exc))
+
     @registry.tool(
         name="get_skill",
         description=(
             "Get exact skill instructions using a brief projection by default. "
-            "Follow next_cursor until null before treating the skill as loaded."
+            "Follow next_cursor until null before treating the skill as loaded. "
+            "names=[...] loads several skills and skill:references/<path>.md references in "
+            "one call, in order; levels maps a leveled skill to its level. Each batch page "
+            "lists in page.completed the identities whose final bytes it delivered."
         ),
     )
     async def get_skill(
@@ -296,7 +424,16 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         level: str | None = None,
         cursor: str | None = None,
         brief: bool = True,
+        names: list[str] | None = None,
+        levels: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        if names is not None or levels is not None or (cursor and is_batch_cursor(cursor)):
+            if name is not None or skill_id is not None or level is not None:
+                return _error(
+                    "invalid_request",
+                    "names and levels cannot be combined with name, skill_id or level",
+                )
+            return await get_skill_batch(names, levels, cursor, session_id)
         try:
             continuation = cursor is not None
             state: CursorState | None = None

@@ -52,3 +52,5 @@ resources, generated code, or source-set changes require it.
   compatibility, and boundary failures.
 - Keep tests deterministic: fake clocks, controlled dispatchers, temporary
   directories, stable ports, and isolated state.
+
+_Version: 1.0.0_

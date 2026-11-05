@@ -40,3 +40,5 @@ Would a fluent Android user trust this app, or trip on off-spec components? The 
 - **One FAB, one primary action.** Never stack FABs or spend one on a secondary task.
 - **Snackbars for transient feedback** (actionable when useful, never a toast for that); dialogs only for decisions that must interrupt.
 - **Material motion patterns.** Container transform, shared-axis, fade-through, with standard easing and durations; honor the system Remove animations setting with a crossfade or instant cut.
+
+_Version: 1.0.0_

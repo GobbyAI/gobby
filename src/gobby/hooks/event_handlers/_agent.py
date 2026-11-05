@@ -8,7 +8,6 @@ from typing import Any, Literal, cast
 
 import psycopg
 
-from gobby.agents.agent_workspaces import schedule_workspace_commit
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
@@ -23,6 +22,7 @@ from gobby.skills.capability_routing import (
     standalone_menu,
 )
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.agent_resolver import resolve_cold_start_command
@@ -184,6 +184,14 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     )
                 except (psycopg.Error, KeyError, TypeError, ValueError) as e:
                     self.logger.warning("Failed to reset subagent count on BEFORE_AGENT: %s", e)
+                # The next parent prompt is the provider's completion notification for
+                # a background task the session yielded on, or the operator taking over.
+                try:
+                    CoordinationWaitManager(self._session_manager.db).clear_background_waits(
+                        session_id
+                    )
+                except psycopg.Error as e:
+                    self.logger.warning("Failed to clear background task waits: %s", e)
             elif self._session_manager:
                 self._ensure_bound_grok_native_subagent(event, session_id)
 
@@ -682,11 +690,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         is_handoff_trigger = trigger in {"manual", "user", "compact"}
-        workspace_project_id = event.project_id or self._resolve_project_id(
-            event.project_id, event.cwd
-        )
-        schedule_workspace_commit(workspace_project_id, "pre_compact", loop=self._event_loop)
-
         if session_id:
             self.logger.debug("PRE_COMPACT (%s): session %s", trigger, session_id)
             # A manual compaction was submitted from the composer; auto compaction typed nothing.

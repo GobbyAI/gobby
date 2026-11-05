@@ -46,9 +46,11 @@ async def execute_mcp_step(
     # helper. Resolves external_id refs to the platform UUID and propagates
     # it to tool_proxy so target tools and metrics receive canonical attribution.
     from gobby.utils.session_context import (
+        reset_pipeline_execution,
         reset_seeded_contexts,
         resolve_and_seed_contexts,
         set_daemon_execution,
+        set_pipeline_execution,
         set_request_principal,
     )
 
@@ -66,6 +68,8 @@ async def execute_mcp_step(
     tokens.principal_token = set_request_principal(_pipeline_principal)
     # The step is daemon-owned execution, so its sends are admitted as the daemon's.
     tokens.daemon_execution_token = set_daemon_execution()
+    # Nested runs share this session, so the step's operator grant comes from its own execution.
+    pipeline_execution_token = set_pipeline_execution(context.get("_pipeline_execution_id"))
     # Lightweight executors without a SessionManager cannot canonicalize the
     # already-bound caller ID. Production executors still fail closed when a
     # configured manager cannot resolve the supplied reference.
@@ -105,6 +109,7 @@ async def execute_mcp_step(
         )
     finally:
         reset_seeded_contexts(tokens)
+        reset_pipeline_execution(pipeline_execution_token)
 
     # Downstream (external) servers answer with the SDK CallToolResult; it
     # fails closed on is_error before anything flows to later steps.

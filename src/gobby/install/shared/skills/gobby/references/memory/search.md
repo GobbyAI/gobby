@@ -34,4 +34,6 @@ consume its pages. Judge search hits by reading their content and rationale.
 
 Guide: [Search](../../../../../../../../docs/guides/memory.md#search).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-27_

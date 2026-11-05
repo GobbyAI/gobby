@@ -142,6 +142,38 @@ def test_cli_task_diff_with_no_commits_is_invalid(temp_db: Any, tmp_path: Path) 
     assert "link at least one commit" in bundle.rows[0].detail
 
 
+@pytest.mark.parametrize("family", ["worktree", "clone"])
+def test_cli_artifacts_carry_the_isolation_base_branch(
+    temp_db: Any, tmp_path: Path, family: str
+) -> None:
+    from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project.id, "Isolated", validation_criteria="Test task completion is observable."
+    )
+    path = str(tmp_path / family)
+    rows = LocalWorktreeManager if family == "worktree" else LocalCloneManager
+    row = rows(temp_db).create(
+        project.id, "task-branch", path, base_branch="trunk", task_id=task.id
+    )
+    manager.artifacts.set_artifacts_atomic(
+        task.id,
+        **{f"{family}_path": path, f"{family}_id": row.id, "base_commit_sha": "a" * 40},
+    )
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=project.id)
+    ctx.__dict__["task_manager"] = manager
+
+    artifacts = ctx.get_artifacts(f"#{task.seq_num}")
+
+    assert artifacts is not None
+    assert artifacts["base_branch"] == "trunk"
+
+
 def test_cli_task_diff_missing_project_is_invalid(tmp_path: Path) -> None:
     bundle = resolve_evidence(
         "task-diff:#13250",

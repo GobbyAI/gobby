@@ -68,3 +68,5 @@ For authored motion, load `animate.md` (via `get_skill_file(name="impeccable", p
 - The result feels like the selected world, not a generic “delight” treatment.
 
 When the personality feels earned, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.
+
+_Version: 1.0.0_

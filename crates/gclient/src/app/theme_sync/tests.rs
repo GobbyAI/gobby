@@ -114,28 +114,46 @@ fn relayed(ws: &Workspace<crate::daemon::ScriptedDaemon>) -> Vec<serde_json::Val
 }
 
 #[tokio::test]
-async fn a_proxied_pane_is_relayed_through_the_daemon_once_per_theme() {
+async fn a_proxied_pane_is_handed_its_relay_once_per_theme() {
     let mut ws = Workspace::scripted();
     let pane = proxied_pane(true);
     let attachment_id = pane.attachment_id().to_string();
     ws.panes.insert(PaneId(1), pane);
     let dark = declaration(ThemeKind::Dark);
 
-    ws.sync_terminal_themes(&dark).await;
-    ws.sync_terminal_themes(&dark).await;
-
+    // The sync hands the relay back for the live loop to send as a job, so the
+    // daemon hears it from there and never from the sync itself.
     assert_eq!(
-        relayed(&ws),
-        vec![json!({
+        ws.sync_terminal_themes(&dark),
+        vec![(PaneId(1), dark.clone())]
+    );
+    assert!(
+        relayed(&ws).is_empty(),
+        "the sync sends nothing to the daemon"
+    );
+    assert_eq!(
+        ws.panes[&PaneId(1)].theme_relay(&dark),
+        Some(json!({
             "type": "terminal_set_theme",
             "terminal_id": "terminal-1",
             "attachment_id": attachment_id,
             "theme": dark,
-        })]
+        }))
     );
     assert!(
         sent(&ws.panes[&PaneId(1)]).is_empty(),
         "nothing on the frame source"
+    );
+
+    // Once the relay lands, the pane's declared theme is the host's, and the
+    // same theme is not handed back again.
+    ws.panes
+        .get_mut(&PaneId(1))
+        .expect("pane exists")
+        .declared_theme = Some(dark.clone());
+    assert!(
+        ws.sync_terminal_themes(&dark).is_empty(),
+        "a declared theme is not relayed again"
     );
 }
 
@@ -144,7 +162,9 @@ async fn a_proxied_pane_without_the_relay_is_sent_nothing() {
     let mut ws = Workspace::scripted();
     ws.panes.insert(PaneId(1), proxied_pane(false));
 
-    ws.sync_terminal_themes(&declaration(ThemeKind::Dark)).await;
+    assert!(ws
+        .sync_terminal_themes(&declaration(ThemeKind::Dark))
+        .is_empty());
 
     assert!(relayed(&ws).is_empty());
 }

@@ -107,3 +107,5 @@ Match implementation complexity to the aesthetic vision. Maximalist designs need
 Interpret creatively and make unexpected choices that feel genuinely designed for the context. No design should be the same. Vary between light and dark themes, different fonts, different aesthetics — converging on common choices across generations is the monoculture this skill exists to break.
 
 Remember: you are capable of extraordinary creative work. Don't hold back. Show what can truly be created when thinking outside the box and committing fully to a distinctive vision.
+
+_Version: 1.0.0_

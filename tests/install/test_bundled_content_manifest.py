@@ -7,10 +7,14 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from gobby.install.manifest import build_bundled_content_manifest
 from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 
+# Two uv builds, each bounded at 300s, plus copying the tracked tree.
+@pytest.mark.timeout(660)
 def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     source_root = tmp_path / "source"

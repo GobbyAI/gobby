@@ -10,6 +10,11 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.mcp_proxy.caller_principal_support import (
+    bound_principal,
+    operator_caller,
+    session_claims,
+)
 
 
 @pytest.mark.asyncio
@@ -38,6 +43,7 @@ async def test_protocol_schema_lease(
     with (
         patch.object(tools.tool_proxy, "get_tool_schema", AsyncMock(return_value=response)),
         session_context_for_test(session.id),
+        bound_principal(session_claims(session.id)),
     ):
         for _ in range(2):
             result = await tools.get_tool_schema(
@@ -78,6 +84,8 @@ async def test_schema_lease_follows_explicit_session(
     with (
         patch.object(tools.tool_proxy, "get_tool_schema", AsyncMock(return_value=response)),
         session_context_for_test(caller.id) if authenticated else nullcontext(),
+        # Only the operator may name another session; a managed caller is refused.
+        operator_caller(),
     ):
         await tools.get_tool_schema("gobby-tasks", "get_task", session_id=other.id)
     variables = SessionVariableManager(session_manager.db)

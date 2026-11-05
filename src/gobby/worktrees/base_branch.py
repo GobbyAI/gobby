@@ -6,9 +6,31 @@ import re
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from gobby.storage.worktrees import Worktree
+from gobby.storage.clones import LocalCloneManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 
 _SHA_BASE = re.compile(r"^[0-9a-fA-F]{10,40}$")
+
+
+def isolation_base_branch(
+    db: HubDatabase, worktree_id: str | None, clone_id: str | None
+) -> str | None:
+    """Return the base branch on a task's worktree row, else on its clone row.
+
+    A task diff starts at merge-base(HEAD, this branch): the fork moves forward
+    whenever the base is merged or rebased in, so the recorded base_commit_sha
+    is only the fallback.
+    """
+    if worktree_id:
+        worktree = LocalWorktreeManager(db).get(worktree_id)
+        if worktree is not None:
+            return worktree.base_branch
+    if clone_id:
+        clone = LocalCloneManager(db).get(clone_id)
+        if clone is not None:
+            return clone.base_branch
+    return None
 
 
 class WorktreeBaseError(RuntimeError):

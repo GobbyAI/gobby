@@ -115,3 +115,5 @@ let port: u16 = config
 let timeout = config.timeout.unwrap_or(Duration::from_secs(30));
 let name = user.display_name.unwrap_or_default();
 ```
+
+_Version: 1.0.0_

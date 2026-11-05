@@ -330,7 +330,8 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-recovered-fallback";
-    let host = DirectHost::start("epoch-1").await;
+    let mut host = DirectHost::start("epoch-1").await;
+    host.serve_gterm_control("control-token");
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
     let pane_id = workspace.pane_for_terminal(terminal_id).expect("pane");
 

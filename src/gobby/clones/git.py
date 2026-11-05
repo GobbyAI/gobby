@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 CLONES_ROOT = Path.home() / ".gobby" / "clones"
 
 
+def project_clone_directory(project_name: str) -> Path:
+    """The canonical directory whose immediate children are a project's managed clones."""
+    return (CLONES_ROOT.expanduser().resolve() / project_name).resolve()
+
+
 @dataclass
 class CloneStatus:
     """Status of a git clone including changes and sync state."""
@@ -166,7 +171,8 @@ class CloneGitManager:
         """
         return await self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
-    def resolve_managed_clone_path(self, clone_path: str | Path) -> Path | None:
+    @staticmethod
+    def resolve_managed_clone_path(clone_path: str | Path) -> Path | None:
         """Canonicalize a clone path and enforce containment under the managed root."""
         resolved_path = Path(clone_path).expanduser().resolve()
         clones_root = CLONES_ROOT.expanduser().resolve()

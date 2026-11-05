@@ -146,7 +146,6 @@ def claim_task(
     *,
     force: bool = False,
     expected_owner: str | None = None,
-    guard_selection: bool = False,
     select_claim: bool = True,
     handed: bool = False,
 ) -> Task:
@@ -156,8 +155,6 @@ def claim_task(
     """
     if force and expected_owner is not None:
         raise ValueError("force and expected_owner are mutually exclusive")
-    if guard_selection and not select_claim:
-        raise ValueError("guarded claims must select their task")
     if is_task_closed(get_task(db, task_id)):
         raise TaskClosedError(f"Cannot claim task {task_id}: task is closed")
 
@@ -206,16 +203,11 @@ def claim_task(
                 new_claim=prior_owner is None or str(prior_owner) != session_id,
             )
         if cursor.rowcount == 1:
-            from gobby.workflows.state_manager import SessionVariableManager
-            from gobby.workflows.task_tool_bindings import TaskToolBindings
-
             sessions = {session_id} if select_claim else set()
             if prior_owner is not None:
                 sessions.add(str(prior_owner))
             if sessions:
                 conn.acquire_additional_lock(SessionVariableTransfer(tuple(sessions)))
-            if guard_selection:
-                TaskToolBindings(SessionVariableManager(db), session_id).assert_can_select(task_id)
         if cursor.rowcount == 1 and prior_owner is not None and str(prior_owner) != session_id:
             from gobby.workflows.state_manager import SessionVariableManager
 
@@ -259,7 +251,6 @@ def claim_task_for_agent(
             session_id,
             force=force,
             expected_owner=expected_owner,
-            guard_selection=True,
             handed=handed,
         )
 

@@ -6,6 +6,13 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+# The daemon records a Codex /clear successor's rollout originator under this key. While
+# the rollout is unwritten it holds the pending marker, and later activity checks again.
+# Only the daemon writes it: hook payloads never carry it through. Once it holds anything
+# else, only a pending marker may be replaced, by a writer that saw the rollout.
+CODEX_CLEAR_ORIGIN_KEY = "gobby_codex_clear_origin"
+CODEX_CLEAR_ORIGIN_PENDING = "pending"
+
 
 def parse_terminal_context_value(
     terminal_context: Mapping[str, Any] | str | None,

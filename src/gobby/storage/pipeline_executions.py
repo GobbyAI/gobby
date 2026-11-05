@@ -43,6 +43,17 @@ class PipelineExecutionNotFoundError(RuntimeError):
     """Raised when an execution-scoped update matches no rows."""
 
 
+def pipeline_execution_definition_json(db: HubDatabase, execution_id: str) -> str | None:
+    """Definition snapshot of the pipeline run ``execution_id``, exactly that run."""
+    row = db.execute(
+        "SELECT definition_json FROM pipeline_executions WHERE id = %s",
+        (execution_id,),
+    ).fetchone()
+    if row is None or row["definition_json"] is None:
+        return None
+    return str(row["definition_json"])
+
+
 class PipelineExecutionStorageMixin:
     """Pipeline execution CRUD, queries, search, and recovery methods."""
 

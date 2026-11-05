@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [monolith-enforcement, enforcement, gobby, optional]
 
 rules:
@@ -54,7 +55,9 @@ rules:
     event: turn_end
     enabled: true
     priority: 20
-    when: "bool(outstanding_monolith_paths())"
+    # An announced hold (restart, cutover, coordination wait) idles the seat; the
+    # write and close gates still hold the decomposition duty when work resumes.
+    when: "bool(outstanding_monolith_paths()) and not has_durable_stop_wait()"
     effects:
       - type: block
         reason: |

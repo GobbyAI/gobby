@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
+from gobby.agents.model_defaults import model_defaults_from_policy
+from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -91,6 +93,49 @@ class TestFallbackAgent:
             assert call_kwargs["agent_body"].name == "dev-claude"
             assert call_kwargs["agent_body"].provider == "claude"
             assert call_kwargs["agent_body"].model == "opus"
+
+    @pytest.mark.asyncio
+    async def test_fallback_is_judged_on_the_provider_its_launch_takes(
+        self,
+        db: HubDatabase,
+        manager: AgentDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A policy map entry sends the fallback's launch to the provider that failed, so the
+        chain must skip it: the provider judged is the one the launch takes, not the definition's."""
+        self._create_agent(manager, "dev-codex", provider="codex", fallback_agent="dev-claude")
+        self._create_agent(manager, "dev-claude", provider="claude", model="opus")
+        policy = model_defaults_from_policy(
+            {"agent_model_defaults": {"dev-claude": {"provider": "codex", "model": "gpt-peer"}}}
+        )
+        monkeypatch.setattr(_factory, "load_model_defaults", lambda db, project_id: policy)
+
+        runner = MagicMock()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.agents.provider_rotation.get_failed_providers_for_task",
+                return_value=["codex"],
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True, "run_id": "run-1"},
+            ) as mock_impl,
+        ):
+            registry = _factory.create_spawn_agent_registry(
+                runner, db=db, detection_registry=DETECTION_REGISTRY
+            )
+            tool_fn = registry.get_tool("spawn_agent")
+            assert tool_fn is not None
+
+            await tool_fn(prompt="fix the bug", agent="dev-codex", task_id="task-123")
+
+            assert mock_impl.call_args.kwargs["agent_body"].name == "dev-codex"
 
     @pytest.mark.asyncio
     async def test_inherited_provider_rotation_uses_parent_session_source(

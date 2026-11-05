@@ -28,3 +28,5 @@ hub row counts do not measure those quantities.
 
 See [hub queries](../../../../../../../../docs/guides/shared-stack.md#hub-queries)
 and [project HTTP contract](../../../../../../../../docs/guides/http-endpoints.md#project-identity-and-checkouts).
+
+_Version: 1.0.0_

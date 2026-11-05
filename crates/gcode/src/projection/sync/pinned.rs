@@ -143,6 +143,39 @@ fn finish_attempt(
         .is_some())
 }
 
+/// Deletes the pin whose source left the checkout, fenced on the same attempt
+/// stamp as `finish_attempt`. Returns false when a newer pin or index won.
+fn retire_missing_source(
+    conn: &mut impl GenericClient,
+    overlay_project_id: &str,
+    file_path: &str,
+    attempt: &PinAttempt,
+) -> anyhow::Result<bool> {
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let overlay = db::id_param(overlay_project_id)?;
+    Ok(conn
+        .query_opt(
+            &format!(
+                "DELETE FROM code_overlay_pins p
+                 WHERE p.machine_id = $1 AND p.overlay_project_id = $2 AND p.file_path = $3
+                   AND p.content_hash = $4
+                   AND p.{at} IS NOT DISTINCT FROM $5
+                   AND {UNSHADOWED}
+                 RETURNING p.file_path",
+                at = Stage::Vector.attempted_at(),
+                UNSHADOWED = UNSHADOWED,
+            ),
+            &[
+                &machine_id,
+                &overlay,
+                &file_path,
+                &attempt.content_hash,
+                &attempt.attempted_at,
+            ],
+        )?
+        .is_some())
+}
+
 /// Outcome of one pinned vector sync attempt.
 pub(crate) enum PinnedVectorSync {
     Synced(CodeSymbolVectorLifecycleOutput),
@@ -151,6 +184,9 @@ pub(crate) enum PinnedVectorSync {
     /// The pinned source moved after indexing. The attempt stays unfinished, so
     /// the file stays pending for the newer index.
     SourceChanged,
+    /// The pinned source left the checkout. Its pin row is retired, so no
+    /// later pass retries it; content GC then drops the unreferenced rows.
+    SourceMissing,
 }
 
 /// Projects the pinned source version into this overlay's vector namespace.
@@ -171,6 +207,15 @@ pub(crate) fn sync_vector_attempt(
         Ok(output) => output,
         Err(VectorLifecycleError::IndexedSourceChanged { .. }) => {
             return Ok(PinnedVectorSync::SourceChanged);
+        }
+        Err(VectorLifecycleError::IndexedSourceMissing { .. }) => {
+            return Ok(
+                if retire_missing_source(conn, overlay_project_id, file_path, attempt)? {
+                    PinnedVectorSync::SourceMissing
+                } else {
+                    PinnedVectorSync::Superseded
+                },
+            );
         }
         Err(err) => return Err(err.into()),
     };

@@ -3338,3 +3338,98 @@ fn reply_waits_resolve_only_on_messages_committed_after_registration() -> anyhow
     );
     Ok(())
 }
+
+#[test]
+fn reply_waits_ignore_daemon_receipts_from_the_owner() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let user_id = Uuid::new_v4();
+    let machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let child_session_id = Uuid::new_v4();
+    let parent_session_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'receipt-wait@example.invalid', 'Receipt Wait', 'test-only')",
+        &[&user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'receipt-wait', $2)",
+        &[&machine_id, &user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'receipt-wait')",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) VALUES \
+             ($1, 'receipt-child', $3, 'test', $4), \
+             ($2, 'receipt-parent', $3, 'test', $4)",
+        &[
+            &child_session_id,
+            &parent_session_id,
+            &machine_id,
+            &project_id,
+        ],
+    )?;
+
+    // The parent waits for its child's answer.
+    let wait_id = "receipt-wait-1";
+    client.execute(
+        "INSERT INTO coordination_waits( \
+             id, waiter_session_id, owner_session_id, condition_key, reply, expires_at) \
+         VALUES ($1, $2, $3, '[null,null]', TRUE, clock_timestamp() + interval '900 seconds')",
+        &[&wait_id, &parent_session_id, &child_session_id],
+    )?;
+
+    // The daemon writes these child-to-parent receipts; the child never authored them.
+    for receipt_type in ["agent_started", "agent_recovery"] {
+        client.execute(
+            "INSERT INTO inter_session_messages( \
+                 id, from_session, to_session, content, message_type, sent_at) \
+             VALUES ($1, $2, $3, 'daemon receipt', $4, clock_timestamp())",
+            &[
+                &Uuid::new_v4(),
+                &child_session_id,
+                &parent_session_id,
+                &receipt_type,
+            ],
+        )?;
+        let outcome: String = client
+            .query_one(
+                "SELECT outcome FROM coordination_waits WHERE id = $1",
+                &[&wait_id],
+            )?
+            .get(0);
+        assert_eq!(
+            outcome, "waiting",
+            "a daemon {receipt_type} receipt is not the owner's reply"
+        );
+    }
+
+    let reply_message_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO inter_session_messages( \
+             id, from_session, to_session, content, message_type, sent_at) \
+         VALUES ($1, $2, $3, 'here is the answer', 'message', clock_timestamp())",
+        &[&reply_message_id, &child_session_id, &parent_session_id],
+    )?;
+    let resolved = client.query_one(
+        "SELECT outcome, message_id FROM coordination_waits WHERE id = $1",
+        &[&wait_id],
+    )?;
+    let outcome: String = resolved.get(0);
+    let message_id: String = resolved.get(1);
+    assert_eq!(
+        outcome, "replied",
+        "the owner's own message answers the wait"
+    );
+    assert_eq!(message_id, reply_message_id.to_string());
+    Ok(())
+}

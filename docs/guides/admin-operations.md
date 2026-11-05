@@ -139,8 +139,8 @@ to other nodes; enroll those nodes separately.
 The first activation of the API-key frame handshake requires a terminal-host
 cutover. The Orchestrator coordinates this procedure:
 
-1. Send a global BEFORE notice through `gobby-agents:send_message`, naming the
-   activation and its terminal interruption.
+1. Send a global notice through `gobby-agents:send_message` naming the terminal
+   interruption. The daemon's own restart hold notice does not mention terminals.
 2. Wait for a quiet window with no live spawned worker or close validator.
 3. Write an owner-only restore manifest under `~/.gobby/`. Record each native
    terminal's terminal id, cwd, launch command, bound session ref, and seat.
@@ -150,8 +150,8 @@ cutover. The Orchestrator coordinates this procedure:
    `stage_and_promote_binary_file`, then restart the daemon from the main checkout.
 6. Have each owner restore its terminal from the manifest and prove its restored
    session binding to the Orchestrator.
-7. Send a global DAEMON BACK notice after daemon health and restored bindings
-   are verified.
+7. Verify the restored bindings. The daemon sends DAEMON BACK itself once it is
+   healthy; do not send another.
 
 Later API-key rotations need no terminal drain: gterm reads the bootstrap key on
 every frame `Hello`. Spawned agents still need restarting because rotation

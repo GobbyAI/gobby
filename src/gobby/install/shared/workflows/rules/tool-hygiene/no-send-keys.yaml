@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [send-keys, gobby, default]
 
 # send_keys is withheld from every caller except the operator's own unspawned

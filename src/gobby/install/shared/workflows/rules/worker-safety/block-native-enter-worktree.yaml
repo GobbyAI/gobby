@@ -1,0 +1,13 @@
+version: "1.0.0"
+tags: [worker-safety, enforcement, default, gobby]
+
+rules:
+  block-native-enter-worktree:
+    description: "Route every agent checkout through managed Gobby worktrees instead of the native worktree tool."
+    event: before_tool
+    enabled: true
+    priority: 50
+    effects:
+      - type: block
+        tools: [EnterWorktree]
+        reason: "Use gobby-worktrees:create_worktree to create a managed worktree under ~/.gobby/worktrees, then work in its worktree_path."

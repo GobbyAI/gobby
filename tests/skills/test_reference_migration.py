@@ -44,7 +44,8 @@ def test_reference_contract_5_1_1(temp_db: HubDatabase) -> None:
                 {"type": "set_variable", "variable": "additional_skills", "value": ["merge"]},
                 {"type": "load_skill", "skill": "plan"},
             ],
-            "description": "merge tasks",
+            "event": "turn_start",
+            "when": "variables.get('merge') == 'tasks'",
         },
         tags=["gobby"],
     )
@@ -64,7 +65,7 @@ def test_reference_contract_5_1_1(temp_db: HubDatabase) -> None:
     migrated_rule = rules.get(rule.id).definition_json
     assert migrated_rule["effects"][0]["value"] == [catalog.folded_skills["merge"]]
     assert migrated_rule["effects"][1]["skill"] == catalog.folded_skills["plan"]
-    assert migrated_rule["description"] == "merge tasks"
+    assert migrated_rule["when"] == "variables.get('merge') == 'tasks'"
     repeated = migrate_instruction_requirements(temp_db, catalog)
     assert repeated.updated == 0
     assert repeated.errors == []

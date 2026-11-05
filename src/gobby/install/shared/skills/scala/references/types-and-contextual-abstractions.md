@@ -51,3 +51,5 @@
   provide `CanEqual` only for comparisons the domain permits.
 - Use `Option` for expected absence. Treat Java platform nulls and explicit-null
   unions as boundary data that must be normalized before entering domain logic.
+
+_Version: 1.0.0_

@@ -31,7 +31,20 @@ def stub_index_pin(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     return pin
 
 
+@pytest.fixture(autouse=True)
+def managed_worktree_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mocked-git tests place worktrees under /tmp/wt."""
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", Path("/tmp/wt"))
+
+
+@pytest.fixture
+def tmp_worktree_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real-directory tests place worktrees under tmp_path."""
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+
+
 @pytest.mark.parametrize("base", [None, "main"])
+@pytest.mark.usefixtures("tmp_worktree_root")
 async def test_omitted_base_uses_project_head_and_explicit_main_stays_main(
     registry: InternalToolRegistry,
     mock_worktree_storage: MagicMock,
@@ -216,6 +229,7 @@ async def test_create_worktree_missing_remote_ref_has_no_artifacts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("tmp_worktree_root")
 async def test_create_worktree_preserves_project_json_trailing_newline(
     registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock, tmp_path: Path
 ) -> None:
@@ -260,6 +274,7 @@ async def test_create_worktree_preserves_project_json_trailing_newline(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("tmp_worktree_root")
 async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_clean_status(
     mock_worktree_storage: MagicMock,
     tmp_path: Path,
@@ -454,6 +469,7 @@ async def test_create_worktree_installs_codex_hooks(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("tmp_worktree_root")
 async def test_create_worktree_failure(
     registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
@@ -468,6 +484,24 @@ async def test_create_worktree_failure(
     )
     assert result["success"] is False
     assert "Git error" in result["error"]
+    mock_worktree_storage.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_worktree_refuses_path_outside_managed_root(
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
+) -> None:
+    result = await registry.call(
+        "create_worktree",
+        {"branch_name": "scratch", "worktree_path": "/tmp/scratchpad/clean"},
+    )
+
+    assert result == {
+        "success": False,
+        "error": f"Worktree path must be under {Path('/tmp/wt').resolve()}",
+        "error_code": "worktree_path_outside_root",
+    }
+    mock_git_manager.create_worktree.assert_not_called()
     mock_worktree_storage.create.assert_not_called()
 
 
@@ -697,6 +731,7 @@ async def test_create_worktree_fails_closed_when_selected_commit_is_unavailable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("tmp_worktree_root")
 async def test_create_worktree_merge_and_delete_succeeds_with_one_committed_file(
     mock_worktree_storage: MagicMock,
     tmp_path: Path,

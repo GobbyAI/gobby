@@ -97,3 +97,5 @@ Don't use `will-change` preemptively—only when animation is imminent (`:hover`
 ---
 
 **Avoid**: Animating everything (animation fatigue is real). Using >500ms for UI feedback. Ignoring `prefers-reduced-motion`. Using animation to hide slow loading.
+
+_Version: 1.0.0_

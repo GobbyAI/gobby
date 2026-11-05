@@ -283,6 +283,24 @@ def test_duplicate_import_export_restore(
     assert restored.json()["definition"]["name"] == "source-pipe"
 
 
+def test_import_refuses_duplicate_mapping_key(
+    client: TestClient, pipe_manager: PipelineDefinitionManager
+) -> None:
+    imported = client.post(
+        "/api/pipelines/definitions/import",
+        json={
+            "yaml_content": (
+                "name: duplicated-pipe\ntype: pipeline\nsteps:\n  - id: s1\n    exec: echo hi\n"
+                "    exec: echo bye\n"
+            )
+        },
+    )
+
+    assert imported.status_code == 400
+    assert "duplicate mapping key" in imported.json()["detail"]
+    assert pipe_manager.get_by_name("duplicated-pipe") is None
+
+
 def test_restore_from_template_and_moves(
     isolated_checkout_factory: IsolatedCheckoutFactory,
     client: TestClient,

@@ -13,10 +13,8 @@ Features:
 """
 
 import logging
-import shlex
 import shutil
 import stat
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -78,18 +76,23 @@ exec 0</dev/null
 
 def _landing_guard_hook() -> str:
     """Render the reference-transaction guard that asks ghook for the update's verdict."""
-    return (
-        r"""
+    return r"""
 # Gobby protected-branch guard. The branch checked out in the main worktree
 # takes code through gobby-tasks-ops:land_commit unless its committed project
 # marker enables allow_direct_integration_commits. Otherwise the update needs the
 # committing session's grant: ghook asks the daemon, and only an allow verdict lands.
-# POSIX sh; JSON parsing uses the interpreter that installed this hook.
+# POSIX sh; JSON parsing uses the stdlib of the python3 on PATH when the hook runs.
+# The installing interpreter is never baked in: a managed run's environment is
+# removed with its cache, and the hook would then refuse every protected update.
 GOBBY_REF_LINES=$(cat)
 gobby_refuse() {
     echo "Gobby refused the update of ${GOBBY_PROTECTED_REF:-the protected branch}: $1." >&2
     echo "Code lands through gobby-tasks-ops:land_commit (operator override: GOBBY_LAND_COMMIT=1)." >&2
     exit 1
+}
+gobby_python() {
+    command -v python3 >/dev/null 2>&1 || gobby_refuse "python3 is not on PATH"
+    python3 "$@"
 }
 GOBBY_PROTECTED_REF=
 if [ "$1" = "prepared" ] && [ "${GOBBY_LAND_COMMIT:-}" != "1" ]; then
@@ -160,9 +163,7 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
             gobby_refuse "cannot locate the committed project policy"
         if [ -n "$gobby_marker" ]; then
             # Preserve the blob bytes: shell substitution would strip NULs.
-            """
-        + shlex.quote(sys.executable)
-        + r""" -I -S -c '
+            gobby_python -I -S -c '
 import json, subprocess, sys
 try:
     project = json.loads(subprocess.check_output([
@@ -193,9 +194,7 @@ sys.exit(0 if policy else 1)
         # ghook asks the daemon for the committing session's verdict. Only an allow lands.
         # A missing session or ghook, a failed run, or an unreadable verdict refuses.
         # The interpreter gets its own stdin, so the ref-line loop keeps its input.
-        """
-        + shlex.quote(sys.executable)
-        + r""" -I -S -c '
+        gobby_python -I -S -c '
 import json, os, subprocess, sys
 branch, joined = sys.argv[1], sys.argv[2]
 session = os.environ.get("GOBBY_SESSION_ID", "")
@@ -235,9 +234,7 @@ sys.exit(0 if granted else 1)
             gobby_refuse "the committing session's grant does not cover this update"
     done || exit 1
 fi
-"""
-        + _restore_stdin("GOBBY_REF_LINES")
-    )
+""" + _restore_stdin("GOBBY_REF_LINES")
 
 
 # Hook script templates - these get wrapped with markers

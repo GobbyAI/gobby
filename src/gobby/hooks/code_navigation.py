@@ -55,6 +55,9 @@ GCODE_SEARCH_COMMANDS = frozenset(
 )
 MAX_NARROW_SOURCE_LINES = 40
 MAX_NARROW_SOURCE_BYTES = 4096
+# Operands that name the reader's own stdin rather than a file.
+STDIN_OPERANDS = frozenset({"-", "/dev/stdin", "/dev/fd/0"})
+HEAD_TAIL_VALUE_OPTIONS = frozenset({"-n", "-c", "--lines", "--bytes"})
 _FIND_FILESYSTEM_ONLY_PREDICATES = frozenset(
     {
         "-amin",
@@ -149,21 +152,53 @@ def _literal_sed_window_line_count(token: str, quiet: bool) -> int | None:
     return None
 
 
-def count_option_line_count(parts: list[str]) -> int | None:
+_LONG_COUNT_OPTIONS = {"--lines": "n", "--bytes": "c"}
+
+
+def _last_count_option(parts: list[str]) -> tuple[str, str | None] | None:
+    """The last head/tail count option as ``("n" | "c", value)``; head obeys the last one."""
     if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
         return None
-    for index, part in enumerate(parts[1:], start=1):
-        if part in {"-n", "--lines"}:
-            if index + 1 < len(parts):
-                return _positive_int(parts[index + 1])
-            return None
-        if part.startswith("--lines="):
-            return _positive_int(part.split("=", maxsplit=1)[1])
-        if part.startswith("-n") and len(part) > 2:
-            return _positive_int(part[2:])
-        if re.fullmatch(r"-\d+", part):
-            return _positive_int(part[1:])
-    return None
+    last: tuple[str, str | None] | None = None
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        following = parts[index + 1] if index + 1 < len(parts) else None
+        index += 1
+        if part == "--":
+            break
+        name, equals, value = part.partition("=")
+        # getopt_long accepts any unambiguous abbreviation, such as `--l` or `--byt`.
+        mode = next(
+            (
+                short
+                for option, short in _LONG_COUNT_OPTIONS.items()
+                if len(name) > 2 and option.startswith(name)
+            ),
+            None,
+        )
+        if mode is not None:
+            if equals:
+                last = (mode, value)
+            else:
+                last, index = (mode, following), index + 1
+        elif re.fullmatch(r"-\d+", part):
+            last = ("n", part[1:])
+        elif part.startswith("-") and not part.startswith("--"):
+            # Short options bundle (`-qc`, `-qn5`); a count takes the rest or the next word.
+            for offset, flag in enumerate(part[1:], start=2):
+                if flag in "nc":
+                    if part[offset:]:
+                        last = (flag, part[offset:])
+                    else:
+                        last, index = (flag, following), index + 1
+                    break
+    return last
+
+
+def count_option_line_count(parts: list[str]) -> int | None:
+    option = _last_count_option(parts)
+    return _positive_int(option[1]) if option and option[0] == "n" else None
 
 
 def count_option_byte_count(parts: list[str]) -> int | None:
@@ -172,18 +207,8 @@ def count_option_byte_count(parts: list[str]) -> int | None:
     ``+N`` offset forms read to end of file and stay unbounded; ``K``/``M``
     suffix forms are not parsed.
     """
-    if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
-        return None
-    for index, part in enumerate(parts[1:], start=1):
-        if part in {"-c", "--bytes"}:
-            if index + 1 < len(parts):
-                return _positive_int(parts[index + 1])
-            return None
-        if part.startswith("--bytes="):
-            return _positive_int(part.split("=", maxsplit=1)[1])
-        if part.startswith("-c") and len(part) > 2:
-            return _positive_int(part[2:])
-    return None
+    option = _last_count_option(parts)
+    return _positive_int(option[1]) if option and option[0] == "c" else None
 
 
 def source_read_navigation_metadata(

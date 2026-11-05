@@ -27,7 +27,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
-from gobby.servers.routes.agents import (
+from gobby.servers.routes.agent_definition_requests import (
     CreateAgentDefinitionRequest,
     UpdateAgentDefinitionRequest,
 )
@@ -836,7 +836,7 @@ class TestCreateDefinition:
         "field, value",
         [
             ("mode", "interactive"),
-            ("default_workflow", "review"),
+            ("default_workflow", "synthetic-workflow"),
             ("sandbox_config", {"network": False}),
             ("lifecycle_variables", {"on_start": "hello"}),
             ("default_variables", {"key": "val"}),
@@ -863,7 +863,7 @@ class TestCreateDefinition:
 
         created = client.post(
             "/api/agents/definitions",
-            json=_agent_request("developer-copy", tags=["gobby", "default"]),
+            json=_agent_request("fixture-copy", tags=["gobby", "default"]),
         ).json()["definition"]
         assert created["tags"] == ["default"]
         updated = client.put(
@@ -875,7 +875,7 @@ class TestCreateDefinition:
         _delete_installed_definitions(agent_manager.db, {"agents"})
 
         kept = agent_manager.get(created["id"])
-        assert kept.name == "developer-copy"
+        assert kept.name == "fixture-copy"
         assert kept.tags == ["edited"]
 
     @pytest.mark.parametrize("tags", [["gobby", "default"], ["default"]])
@@ -1654,6 +1654,7 @@ class TestUpdateDefinitionNestedFields:
             "required_review_capabilities",
             "respect_task_protections",
             "resumable_team_agents",
+            "reviews",
             "send_message_targets",
             "spawnable_agents",
             "supplemental_review",
@@ -1764,7 +1765,7 @@ class TestUpdateDefinitionNestedFields:
         "field, value",
         [
             ("mode", "interactive"),
-            ("default_workflow", "review"),
+            ("default_workflow", "synthetic-workflow"),
             ("sandbox_config", {"network": False}),
             ("lifecycle_variables", {"on_start": "hello"}),
             ("default_variables", {"key": "val"}),

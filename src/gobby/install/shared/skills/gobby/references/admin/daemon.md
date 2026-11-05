@@ -69,3 +69,5 @@ Local native Windows operation refuses startup; run Gobby inside WSL 2.
 
 See [admin operations](../../../../../../../../docs/guides/admin-operations.md)
 and [lifecycle CLI](../../../../../../../../docs/guides/cli-commands.md).
+
+_Version: 1.0.0_

@@ -350,15 +350,21 @@ async def stop_agent_run(
     session_manager: Any | None,
     kill_agent_process: Any,
     cleanup_terminal_artifacts: Any,
+    run: Any | None = None,
 ) -> dict[str, Any]:
-    """Stop one agent run through the shared cancellation lifecycle."""
+    """Stop one agent run through the shared cancellation lifecycle.
+
+    ``run`` is an already-loaded row for ``run_id``; callers that authorized the run first
+    pass it so it is read once.
+    """
     from gobby.agents.terminal_delivery import (
         deliver_existing_terminal_run_in_scope,
         run_terminal_delivery_offload,
         shielded_terminal_delivery,
     )
 
-    run = runner.get_run(run_id)
+    if run is None:
+        run = runner.get_run(run_id)
     if not run:
         return {"success": False, "error": f"Agent run {run_id} not found"}
     if run.status not in ("pending", "running"):

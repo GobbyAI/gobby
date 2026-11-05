@@ -55,8 +55,9 @@ how the system behaves so you can work with it instead of being surprised by it.
       clean window for its blast radius (`clean-window`). State why in the
       description.
    Operational friction is never a deferral reason. Needing a daemon restart or
-   cutover means announcing it with a `global` `send_message` (every live session
-   on this machine, across projects) as a heads-up, then proceeding. Wait only
+   cutover means proceeding: the daemon itself sends every live session on this
+   machine a hold notice before it stops and DAEMON BACK once healthy, so
+   nobody composes those by hand. Wait only
    for quiet hours or for an operation that can kill agent panes (a plain
    restart does not); a crate change means rebuild + install via new inode
    (Architecture Facts below). Coordination is part of the fix. Never end a
@@ -89,14 +90,16 @@ how the system behaves so you can work with it instead of being surprised by it.
     the applicable `wait_for_*` primitive and yield the turn. Reserve sleeps,
     repeated status calls, and repeated `capture_output` for bounded diagnostics.
     Message text never wakes a session. Omitting `wake` requests immediate processing
-    for direct `session`, `parent`, and `agent` targets; `project` and `global`
-    fanout stays queued without live wakes. Set `wake=true` for immediate processing
-    of a fanout, or `wake=false` to queue any target without a live wake. A wake may
+    for direct `session`, `parent`, and `agent` targets. Fanout (`global`, and `project`
+    with `wake=true`) live-wakes only active recipients and recipients holding a claimed
+    task; an idle, paused, or waiting recipient with no claimed task keeps its message
+    queued for its next turn. Otherwise `project` fanout stays queued without live
+    wakes, and `wake=false` queues any target without a live wake. A wake may
     steer active work; interrupted, input/approval-waiting, and handoff-waiting
     sessions keep the durable message queued without daemon input.
     Use one targetless `project` send for repository coordination and `global` for
-    machine-local coordination across projects, which includes every daemon restart
-    or cutover announcement. Recipient admission follows installed definitions:
+    machine-local coordination across projects. The daemon sends restart and cutover
+    announcements itself. Recipient admission follows installed definitions:
     `message_sender_capabilities` requires any listed capability from the sender;
     the daemon and the operator's own unspawned terminal are exempt. Refused direct
     sends return `message_recipient_not_allowed`, and fanout withholds that recipient.

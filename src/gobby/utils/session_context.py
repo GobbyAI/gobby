@@ -69,6 +69,11 @@ _request_principal: contextvars.ContextVar[PrincipalResolver] = contextvars.Cont
 _daemon_execution: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "daemon_execution", default=False
 )
+# The pipeline execution whose MCP step is running, bound by the step runner. Nested runs share
+# the parent's session, so an action's authority keys on this execution, never on the session.
+_pipeline_execution: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "pipeline_execution", default=None
+)
 
 
 def set_session_context(ctx: SessionContext | None) -> contextvars.Token[SessionContext | None]:
@@ -139,6 +144,21 @@ def is_daemon_execution() -> bool:
 def reset_daemon_execution(token: contextvars.Token[bool]) -> None:
     """End the daemon-owned execution scope."""
     _daemon_execution.reset(token)
+
+
+def set_pipeline_execution(execution_id: str | None) -> contextvars.Token[str | None]:
+    """Bind the pipeline execution whose MCP step is running, for the step's duration."""
+    return _pipeline_execution.set(execution_id)
+
+
+def current_pipeline_execution() -> str | None:
+    """The pipeline execution bound to this step, or None outside a pipeline step."""
+    return _pipeline_execution.get()
+
+
+def reset_pipeline_execution(token: contextvars.Token[str | None]) -> None:
+    """Unbind the pipeline execution at the end of its step."""
+    _pipeline_execution.reset(token)
 
 
 def resolve_session_ref(

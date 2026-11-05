@@ -12,6 +12,7 @@ from gobby.agents import isolation_repair, spawn_timing
 from gobby.agents.isolation_clone import CloneIsolationHandler
 from gobby.agents.isolation_models import IsolationHandler, SpawnConfig
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.mcp_proxy.tools.spawn_agent import _worktree_reuse
 from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import prepare_spawn_isolation
 
@@ -107,6 +108,15 @@ def test_idle_baseline_breakdown_is_complete(clock: Clock) -> None:
     assert set(result) == set(spawn_timing.SPAWN_PHASES)
 
 
+def test_code_index_pin_is_attributed_to_top_level_phase(clock: Clock) -> None:
+    clock.now = 10.0
+    timings = {"code_index_pin": 4000.0, "code_index_index": 5000.0}
+    result = spawn_timing.complete_spawn_phase_timings(timings, started_at=0)
+    assert "code_index_pin" in spawn_timing.TOP_LEVEL_SPAWN_PHASES
+    assert result["code_index_pin"] == 4000
+    assert result["unattributed"] == 1000
+
+
 @pytest.mark.parametrize(
     ("kind", "fresh"),
     [
@@ -138,6 +148,7 @@ async def test_isolation_paths_share_spawn_timing_map(
         id="workspace",
         branch_name="timing",
         base_branch="main",
+        task_id=None,
     )
     storage.get_by_branch.return_value = None if fresh else existing
     storage.create.return_value = existing
@@ -149,7 +160,7 @@ async def test_isolation_paths_share_spawn_timing_map(
     git.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
     git.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True))
     git.create_clone = AsyncMock(return_value=SimpleNamespace(success=True))
-    sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha=None))
+    sync = AsyncMock(return_value=ReusedWorktreeSyncResult("already_current", "main", ""))
     handler: IsolationHandler
     if kind == "worktree":
         monkeypatch.setattr("gobby.agents.isolation_worktree.repair_isolation_environment", repair)

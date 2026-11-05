@@ -17,3 +17,5 @@ undeletes definitions nor resets sessions. Missing template/instance, reserved
 variable and scope errors need their specific recovery, not repeated blind writes.
 See [resets and recovery](../../../../../../../../docs/guides/variables.md#resets-and-recovery) and
 [internal state](../../../../../../../../docs/guides/variables.md#internal-variables-set-by-rulesengine).
+
+_Version: 1.0.0_

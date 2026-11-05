@@ -32,3 +32,5 @@
 - Do not log entire JSON payloads when they may contain credentials, PII, or
   internal endpoints.
 - Prefer path-specific validation errors and redacted summaries.
+
+_Version: 1.0.0_

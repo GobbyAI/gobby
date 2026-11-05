@@ -43,3 +43,5 @@ transforms.
   limit assumptions.
 - In long-running PHP runtimes such as Swoole, RoadRunner, or queue workers,
   avoid request-scoped state leaking across jobs or requests.
+
+_Version: 1.0.0_

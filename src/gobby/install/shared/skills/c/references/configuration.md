@@ -53,3 +53,5 @@ configuration path unless the project already supports it.
   deliberate platform or ABI tradeoff.
 - Do not silence analyzer findings by weakening types, casts, or ownership
   checks.
+
+_Version: 1.0.0_

@@ -248,7 +248,7 @@ and `stop` events are provider/runtime details, not the main authoring API.
 Agent termination is separate from those events and still requires
 `end_agent_run`.
 
-Docs-category leaf tasks route to `tech-writer` and may run inside the parent
+Docs-category leaf tasks route to `docs-writer` and may run inside the parent
 epic's isolation context.
 
 ## Validation

@@ -49,3 +49,5 @@ or ABI-visible code.
   helpers just to satisfy a local build error.
 - Maintain compatibility with the repo's compiler support matrix before
   introducing modules or changing module boundaries.
+
+_Version: 1.0.0_

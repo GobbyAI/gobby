@@ -37,4 +37,6 @@ its tools as instance tools; it does not make prompts/resources proxy-visible.
 
 Guide: [Templates and instances](../../../../../../../../docs/guides/mcp-tools.md#templates-and-instances).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

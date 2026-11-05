@@ -54,3 +54,5 @@ boundaries.
 - Avoid split packages in JPMS or multi-module builds.
 - Keep package-private types package-private when they are implementation
   details.
+
+_Version: 1.0.0_

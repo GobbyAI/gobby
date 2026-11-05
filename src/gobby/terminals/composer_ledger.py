@@ -57,6 +57,7 @@ __all__ = [
     "record_composer_drain",
     "record_composer_local_command",
     "record_composer_submit",
+    "record_composer_wipe",
     "record_composer_command_consumed",
     "release_composer",
     "write_ledger",
@@ -551,6 +552,15 @@ def record_composer_drain(terminal_id: str) -> None:
     """Record on the bound ledger that a drain sized to the held text emptied it."""
     if _bound is not None:
         _bound.record_drain(terminal_id)
+
+
+def record_composer_wipe(terminal_id: str) -> None:
+    """Start the composer clean after a wipe that left no draft on screen.
+
+    Only a composer owner that discards whatever it holds (set_handoff) may call this.
+    """
+    if _bound is not None:
+        _bound.release(terminal_id)
 
 
 def record_composer_submit(terminal_id: str) -> None:

@@ -251,7 +251,7 @@ explicit implementation approval and expansion-mode validation remain mandatory.
 sequenceDiagram
     participant U as User
     participant P as /gobby plan
-    participant N as plan-enhancer
+    participant N as plan-advocate
     participant R as plan-adversary
     participant E as /gobby expand
     participant EP as expand-task pipeline

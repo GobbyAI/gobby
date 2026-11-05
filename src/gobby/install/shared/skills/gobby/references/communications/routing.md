@@ -70,8 +70,7 @@ Use `set_channel_project(channel, project)` for an authorized persistent
 responder project change. Resolve the exact project name or UUID first. It
 preserves other channel configuration and affects future responder turns.
 MCP channel creation, removal and project switching require
-`communications_admin: true` in the caller's installed definition; the bundled
-`comms-agent` grants it. The grant defaults to false and is independent of
+`communications_admin: true` in the caller's installed definition; the responder definition's grant. The grant defaults to false and is independent of
 `operator_messaging`. Caller-supplied session variables do not grant access.
 The channel's `operator_project_id` is the stable seat operator-DM binding;
 `set_channel_project` changes only `responder.project_id` and preserves that binding.
@@ -84,4 +83,5 @@ discovery or service health, not inventing a path.
 See [destination resolution](../../../../../../../../docs/guides/comm-integrations.md#outbound-destination-resolution)
 and [responder projects](../../../../../../../../docs/guides/telegram.md#responder-projects-and-models).
 
-_Last verified: 2026-10-14_
+_Version: 1.0.1_
+_Last verified: 2026-11-04_

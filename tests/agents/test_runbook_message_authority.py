@@ -164,7 +164,7 @@ async def test_resolved_role_routing(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
-    orchestrator = _seat(
+    coordinator = _seat(
         session_manager,
         project,
         "fixture-coordinator",
@@ -172,16 +172,16 @@ async def test_resolved_role_routing(
         capabilities=("send_reports",),
         required_senders=("send_reports",),
     )
-    assistant = _seat(
+    helper = _seat(
         session_manager, project, "fixture-helper", "fixture-helper", capabilities=("send_reports",)
     )
     operator = _seat(session_manager, project, "operator", "default")
-    triage = _seat(
+    router = _seat(
         session_manager,
         project,
         "fixture-definition-0f916789",
         "fixture-definition-0f916789",
-        parent=orchestrator,
+        parent=coordinator,
         capabilities=("send_reports",),
     )
     manager = _seat(
@@ -189,14 +189,12 @@ async def test_resolved_role_routing(
         project,
         "fixture-definition-f0ad0fd9",
         "fixture-definition-f0ad0fd9",
-        parent=orchestrator,
+        parent=coordinator,
     )
-    developer = _seat(
-        session_manager, project, "fixture-worker", "fixture-worker", parent=orchestrator
-    )
-    worker = _seat(session_manager, project, "worker", "default", parent=orchestrator)
+    member = _seat(session_manager, project, "fixture-worker", "fixture-worker", parent=coordinator)
+    worker = _seat(session_manager, project, "worker", "default", parent=coordinator)
     pending = LocalAgentRunManager(temp_db).create(
-        parent_session_id=orchestrator, provider="codex", prompt="pending seat"
+        parent_session_id=coordinator, provider="codex", prompt="pending seat"
     )
     mailbox = _mailbox(temp_db, session_manager, _Wakes())
 
@@ -207,46 +205,46 @@ async def test_resolved_role_routing(
 
     # Team seats, spawned default workers and alternate direct selectors cannot reach it.
     for sender, target, target_id in (
-        (developer, "session", orchestrator),
-        (manager, "session", orchestrator),
-        (worker, "session", orchestrator),
-        (developer, "parent", None),
-        (developer, "agent", pending.id),
+        (member, "session", coordinator),
+        (manager, "session", coordinator),
+        (worker, "session", coordinator),
+        (member, "parent", None),
+        (member, "agent", pending.id),
     ):
         refused = await send(sender, target, target_id)
         assert (refused.error_code, refused.recipient_session_ids) == (REFUSED, [])
         assert refused.success is False
         assert "report_to" in (refused.error or "")
-        assert "Triage" in (refused.error or "")
+        assert "report route" in (refused.error or "")
     assert temp_db.fetchone(
         "SELECT count(*) AS n FROM inter_session_messages WHERE to_session = %s",
-        (orchestrator,),
+        (coordinator,),
     ) == {"n": 0}
 
-    # Assistant, Triage, the operator's bare terminal and the daemon reach it.
-    for sender in (assistant, triage, operator, orchestrator):
-        delivered = await send(sender, "session", orchestrator)
-        assert delivered.recipient_session_ids == [orchestrator]
+    # The helper, the router, the operator's bare terminal and the daemon reach it.
+    for sender in (helper, router, operator, coordinator):
+        delivered = await send(sender, "session", coordinator)
+        assert delivered.recipient_session_ids == [coordinator]
     notice = await mailbox.send(
         from_session_id=system_session_id(),
         target="session",
-        target_id=orchestrator,
+        target_id=coordinator,
         project_id=project,
         content="daemon notice",
     )
-    assert notice.recipient_session_ids == [orchestrator]
+    assert notice.recipient_session_ids == [coordinator]
 
-    # Every seat reports to Triage and its Dev Team Lead; peer coordination stays open.
-    for sender, recipient in ((developer, triage), (developer, manager), (manager, developer)):
+    # Every seat reports to its router and its team lead; peer coordination stays open.
+    for sender, recipient in ((member, router), (member, manager), (manager, member)):
         assert (await send(sender, "session", recipient)).recipient_session_ids == [recipient]
 
-    # Fanout withholds only the Orchestrator, and only from senders that may not address it.
+    # Fanout withholds only the coordinator, and only from senders that may not address it.
     for target in ("project", "global"):
-        fanout = await send(developer, target)
+        fanout = await send(member, target)
         assert fanout.success is True
-        assert orchestrator not in fanout.recipient_session_ids
-        assert {triage, manager, assistant}.issubset(fanout.recipient_session_ids)
-        assert orchestrator in (await send(triage, target)).recipient_session_ids
+        assert coordinator not in fanout.recipient_session_ids
+        assert {router, manager, helper}.issubset(fanout.recipient_session_ids)
+        assert coordinator in (await send(router, target)).recipient_session_ids
 
 
 @pytest.mark.asyncio
@@ -254,99 +252,99 @@ async def test_declared_standing_seats_relaunch_and_direct_messages_wake(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
-    stale_orchestrator = _seat(
+    stale_coordinator = _seat(
         session_manager,
         project,
-        "orchestrator-old",
+        "coordinator-old",
         "fixture-coordinator",
         capabilities=("follow_relaunch",),
         required_senders=("send_reports",),
     )
-    session_manager.update_status(stale_orchestrator, "expired")
-    orchestrator = _seat(session_manager, project, "orchestrator-new", "fixture-coordinator")
-    stale_triage = _seat(
+    session_manager.update_status(stale_coordinator, "expired")
+    coordinator = _seat(session_manager, project, "coordinator-new", "fixture-coordinator")
+    stale_router = _seat(
         session_manager,
         project,
-        "triage-old",
+        "router-old",
         "fixture-definition-0f916789",
-        parent=orchestrator,
+        parent=coordinator,
         capabilities=("follow_relaunch", "send_reports"),
     )
-    session_manager.update_status(stale_triage, "expired")
-    triage = _seat(
-        session_manager, project, "triage-new", "fixture-definition-0f916789", parent=orchestrator
+    session_manager.update_status(stale_router, "expired")
+    router = _seat(
+        session_manager, project, "router-new", "fixture-definition-0f916789", parent=coordinator
     )
-    stale_developer = _seat(
-        session_manager, project, "developer-old", "fixture-worker", parent=orchestrator
+    stale_member = _seat(
+        session_manager, project, "member-old", "fixture-worker", parent=coordinator
     )
-    session_manager.update_status(stale_developer, "expired")
-    developer = _seat(
-        session_manager, project, "developer-other-team", "fixture-worker", parent=orchestrator
+    session_manager.update_status(stale_member, "expired")
+    member = _seat(
+        session_manager, project, "member-other-team", "fixture-worker", parent=coordinator
     )
     wakes = _Wakes()
     mailbox = _mailbox(temp_db, session_manager, wakes)
 
-    # wake=None is a sender that omitted wake. The digest to a stale Orchestrator ref
-    # reaches the relaunched Orchestrator and wakes it.
+    # wake=None is a sender that omitted wake. The digest to a stale coordinator ref
+    # reaches the relaunched coordinator and wakes it.
     digest = await mailbox.send(
-        from_session_id=triage,
+        from_session_id=router,
         target="session",
-        target_id=stale_orchestrator,
+        target_id=stale_coordinator,
         content="digest",
         wake=None,
     )
-    assert digest.recipient_session_ids == [orchestrator]
+    assert digest.recipient_session_ids == [coordinator]
     assert digest.wake_results[0]["delivered"] is True
-    assert wakes.calls == [orchestrator]
+    assert wakes.calls == [coordinator]
     metadata = _metadata(temp_db, digest)
     assert (metadata["redirected_from"], metadata["wake_requested"]) == (
-        stale_orchestrator,
+        stale_coordinator,
         True,
     )
 
     # An operator-requested immediate wake is honoured.
     urgent = await mailbox.send(
-        from_session_id=triage,
+        from_session_id=router,
         target="session",
-        target_id=orchestrator,
+        target_id=coordinator,
         content="operator asked for an immediate wake",
         wake=True,
     )
-    assert urgent.recipient_session_ids == [orchestrator]
-    assert wakes.calls == [orchestrator, orchestrator]
+    assert urgent.recipient_session_ids == [coordinator]
+    assert wakes.calls == [coordinator, coordinator]
 
-    # A seat's report to a stale Triage ref follows the relaunch and keeps the direct wake.
+    # A seat's report to a stale router ref follows the relaunch and keeps the direct wake.
     report = await mailbox.send(
-        from_session_id=developer,
+        from_session_id=member,
         target="session",
-        target_id=stale_triage,
+        target_id=stale_router,
         content="blocked",
         wake=None,
     )
-    assert report.recipient_session_ids == [triage]
-    assert wakes.calls == [orchestrator, orchestrator, triage]
+    assert report.recipient_session_ids == [router]
+    assert wakes.calls == [coordinator, coordinator, router]
 
-    # Team roles have no project-wide binding: a stale developer ref never lands on
-    # another team's developer.
+    # Team roles have no project-wide binding: a stale member ref never lands on
+    # another team's member.
     other_team = await mailbox.send(
-        from_session_id=triage,
+        from_session_id=router,
         target="session",
-        target_id=stale_developer,
+        target_id=stale_member,
         content="stale seat",
         wake=False,
     )
-    assert other_team.recipient_session_ids == [stale_developer]
+    assert other_team.recipient_session_ids == [stale_member]
 
-    # Two live Orchestrators make the binding ambiguous, so the stale ref is kept.
-    _seat(session_manager, project, "orchestrator-second", "fixture-coordinator")
+    # Two live coordinators make the binding ambiguous, so the stale ref is kept.
+    _seat(session_manager, project, "coordinator-second", "fixture-coordinator")
     ambiguous = await mailbox.send(
-        from_session_id=triage,
+        from_session_id=router,
         target="session",
-        target_id=stale_orchestrator,
+        target_id=stale_coordinator,
         content="digest",
         wake=None,
     )
-    assert ambiguous.recipient_session_ids == [stale_orchestrator]
+    assert ambiguous.recipient_session_ids == [stale_coordinator]
 
 
 @pytest.mark.asyncio
@@ -361,7 +359,7 @@ async def test_recipient_permissions_follow_definitions_not_names(
         session_manager,
         project,
         "fixture-definition-41d6d532",
-        "custom-reporter",
+        "custom-sender",
         capabilities=("send_reports",),
     )
     refused = _seat(
@@ -393,7 +391,7 @@ async def test_recipient_permissions_follow_definitions_not_names(
     assert admitted in fanout.recipient_session_ids
 
     definitions = AgentDefinitionManager(temp_db)
-    definition = definitions.get_by_name("custom-reporter", project)
+    definition = definitions.get_by_name("custom-sender", project)
     assert definition is not None
     definitions.toggle_enabled(definition.id)
     disabled = await mailbox.send(

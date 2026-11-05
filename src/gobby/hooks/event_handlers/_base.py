@@ -5,7 +5,7 @@ import logging
 import threading
 from collections.abc import Callable, Coroutine
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
@@ -124,17 +124,27 @@ class EventHandlersBase:
         except Exception:
             self.logger.warning("Failed to begin turn lifecycle", exc_info=True)
 
-    def _resume_turn_lifecycle(self, event: HookEvent) -> None:
+    def _resume_turn_lifecycle(
+        self, event: HookEvent, tool: Literal["start", "finish"] | None = None
+    ) -> None:
         session_id = event.metadata.get("_platform_session_id")
         if not isinstance(session_id, str) or not session_id or self._turn_lifecycle is None:
             return
         try:
-            result = self._turn_lifecycle.resumed_work(session_id, self._turn_evidence(event))
+            result = self._turn_lifecycle.resumed_work(
+                session_id, self._turn_evidence(event), tool=tool
+            )
             if result.queued_prompt_adopted:
                 self._record_queued_composer_submit(session_id, result.lifecycle.started_at)
         except Exception:
             self.logger.warning("Failed to resume turn lifecycle", exc_info=True)
         self._close_composer_wait(session_id, "resumed")
+
+    def _refuse_started_tool(self, event: HookEvent, response: HookResponse) -> HookResponse:
+        """A call refused after its start was recorded gets no after-tool hook; close it."""
+        if response.decision == "block":
+            self._resume_turn_lifecycle(event, tool="finish")
+        return response
 
     def _end_turn_lifecycle(self, event: HookEvent, disposition: TurnDisposition) -> None:
         session_id = event.metadata.get("_platform_session_id")

@@ -1,7 +1,7 @@
 ---
 name: gobby
 description: "Router contract for provider-aware Gobby help and installed skill dispatch."
-version: "3.2.0"
+version: "4.1.0"
 category: core
 triggers: help
 metadata:

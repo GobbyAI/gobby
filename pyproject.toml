@@ -194,6 +194,10 @@ addopts = [
     "-v",
     "-p", "no:faulthandler",  # Disable faulthandler - gitingest closes FDs during logging config
 ]
+# A hung test fails with every thread's stack instead of stalling the run.
+# A legitimately slow test takes @pytest.mark.timeout(N); never raise this default.
+timeout = 300
+timeout_method = "thread"
 # Coverage is enabled explicitly in CI and pre-push scripts, not here.
 # To run locally with coverage: uv run pytest --cov=gobby --cov-report=term-missing --cov-fail-under=80
 markers = [

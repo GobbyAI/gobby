@@ -10,12 +10,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from gobby.cli.installers import git_hooks
 from gobby.cli.installers.git_hooks import GOBBY_HOOK_END, HOOK_TEMPLATES, install_git_hooks
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -655,3 +657,16 @@ async def test_land_commit_passes_installed_guard(
     _assert_refused(direct)
     assert landed["landed"] is True, landed
     assert repo.ok(repo.root, "rev-parse", "main") == sha
+
+
+def test_guard_never_renders_the_installing_interpreter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A managed run's environment is removed with its cache; a hook that baked its
+    # interpreter in would then refuse every protected update.
+    transient = "/home/u/.gobby/runtime/managed-executions/run-1/cache/env/bin/python"
+    monkeypatch.setattr(sys, "executable", transient)
+
+    rendered = git_hooks._landing_guard_hook()
+
+    assert transient not in rendered
+    assert "managed-executions" not in rendered
+    assert "command -v python3" in rendered

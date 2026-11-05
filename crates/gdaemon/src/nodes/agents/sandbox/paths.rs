@@ -881,6 +881,8 @@ pub(super) fn compute(
                 home,
             ))
             .chain(toolchain_credential_paths(home))
+            // Seats sharing this checkout run its .venv Python; only the pre-spawn seed writes it.
+            .chain(std::iter::once(text(&workspace.join(".venv"))))
             .chain(config.extra_deny_write_paths.iter().cloned()),
         Some(&workspace),
         home,

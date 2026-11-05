@@ -16,6 +16,11 @@ The [Plan-Coverage Contract](../../../../../../../../docs/contracts/plan-coverag
 Draft narrative first. The coordinator applies server-derived M1 only through [approval](approval.md). Preserve 1:1 deliverable/entry/leaf mapping and one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item.
 Automated categories are code, config, docs, refactor, test. Code requires backend/frontend/fullstack domain. TDD true is valid for code/config only and adds one leaf's skill, label and evidence obligations; no duplicate test wrappers. Research/planning/manual belong to direct tasks.
 A deferral records task_ref, reason, owner, original_acceptance_items and deferred-from provenance. Open targets or targets closed as done can satisfy ownership; other closure reasons require a valid replacement. External prerequisites belong in typed deferrals, not sibling manifest edges. Placeholder refs are resolved through expansion's deferral_task_map, then replaced in the canonical plan with validation and hash refresh.
+The target must reach the recovery epic (the registered root) by one of two routes:
+- Dependency closure: the target is in the epic's blocked-by closure, usually through the edge root-blocked-by-target.
+- Cited parent: use it when that edge would cycle or would block an earlier stage on a later one. Label the target `cited-parent:<P>`, where P is open, outside the epic's blocked-by closure, and labeled `out-of-scope-for:<epic>`. Both refs take the `#N` form, for example `cited-parent:#21542`, because the out-of-scope label is matched exactly against `#N`. P is usually the target's own parent epic.
+
+Without either route the deferral row reports `missing_dependency_or_cited_parent`. Expansion-mode `gobby plans validate` runs before the root is registered and does not check deferral ownership. Expansion coverage QA is the first deferral gate, so after editing a deferral, regenerate coverage and rerun QA.
 
 ## Coverage and recovery
 Operator CLI `gobby plan coverage` requires --plan, --plan-id, --plan-hash and --task-tree. DB mode also needs --root-task and --project-id; matrix-file mode needs --matrix-file and no DB-only scope flags. It writes a managed manifest. Task JSONL is not coverage input.
@@ -23,4 +28,6 @@ Check exact plan hash, root/project identity, structured labels and artifact evi
 
 See [Coverage CLI](../../../../../../../../docs/contracts/plan-coverage.md#coverage-cli).
 
-_Last verified: 2026-10-06_
+_Version: 1.1.0_
+
+_Last verified: 2026-11-03_
