@@ -156,3 +156,53 @@ async fn one_deadline_spans_send_and_body() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn session_fetch_requests_every_live_daemon_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut request = vec![0_u8; 8192];
+        let read = stream.read(&mut request).await.expect("read request");
+        let body = r#"{"sessions":[],"count":0,"next_cursor":null}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("write response");
+        String::from_utf8_lossy(&request[..read]).into_owned()
+    });
+    let base = Url::parse(&format!("http://{address}/")).expect("base url");
+    let client = RestClient::new(base, "token".to_string()).expect("client");
+    client.sessions("project-1").await.expect("sessions");
+    let request = server.await.expect("server task");
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .expect("request target");
+    let url = Url::parse(&format!("http://{address}{target}")).expect("request url");
+    let statuses: Vec<String> = url
+        .query_pairs()
+        .filter(|(key, _)| key == "status_in")
+        .map(|(_, value)| value.into_owned())
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            "active",
+            "paused",
+            "waiting",
+            "idle",
+            "interrupted",
+            "awaiting_input",
+            "awaiting_approval",
+            "awaiting_handoff",
+        ],
+        "the sessions fetch must request every daemon live status"
+    );
+}

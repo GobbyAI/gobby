@@ -265,9 +265,11 @@ impl RestClient {
 }
 
 /// `LIVE_SESSION_STATUS_ORDER` in the daemon's session constants.
-const LIVE_SESSION_STATUSES: [&str; 6] = [
+const LIVE_SESSION_STATUSES: [&str; 8] = [
     "active",
     "paused",
+    "waiting",
+    "idle",
     "interrupted",
     "awaiting_input",
     "awaiting_approval",
