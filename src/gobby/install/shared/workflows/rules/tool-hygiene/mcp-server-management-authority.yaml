@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 tags: [gobby, default, tool-hygiene]
 
 # Adding, importing, editing or removing an MCP server changes what every seat can
@@ -43,7 +43,7 @@ rules:
       - type: block
         tools: [Bash]
         mask_quoted: true
-        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*mcp-proxy\s+(?:add-server|import-server|remove-server|auth)\b'
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|sudo\s+|command\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env(?:\s+(?:-u|--unset|-C|--chdir)\s+\S+|\s+-[^\s;&|]*|\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*mcp-proxy\s+(?:add-server|import-server|remove-server|auth)\b'
         reason: >-
           CLI MCP server changes, including OAuth authorization, require manage_mcp_servers
           or the operator's terminal.
@@ -62,7 +62,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?curl\b(?=[^\n;&|]*/api/mcp/servers)(?=[^\n;&|]*(?:(?:\s-[sSfLvkigN]*X|\s--request)(?:\s*|=)["'']?(?!(?:GET|HEAD)\b)[A-Za-z]|\s-[sSfLvkigN]*[dFT]|\s--data|\s--json|\s--form|\s--upload-file))'
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|sudo\s+|command\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env(?:\s+(?:-u|--unset|-C|--chdir)\s+\S+|\s+-[^\s;&|]*|\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:[^\s;&|]*/)?curl\b(?=[^\n;&|]*/api/mcp/servers)(?=[^\n;&|]*(?:(?:\s-[sSfLvkigN]*X|\s--request)(?:\s*|=)["'']?(?!(?:GET|HEAD)\b)[A-Za-z]|\s-[sSfLvkigN]*[dFT]|\s--data|\s--json|\s--form|\s--upload-file))'
         reason: >-
           HTTP MCP server changes require manage_mcp_servers or the operator's terminal.
           Send the Orchestrator the request through your report route.
