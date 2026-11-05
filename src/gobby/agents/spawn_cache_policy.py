@@ -95,7 +95,9 @@ def build_spawn_cache_env(session_id: str) -> dict[str, str]:
     # Kept out of SPAWN_CACHE_POLICY: sandboxed spawns turn that policy into write grants.
     # The socket sits beside the cache to stay within the socket path limit.
     sccache_dir = ensure_agent_sccache_dir()
-    env.update(cargo_environment(sccache_dir, sccache_dir.with_name("sccache.sock")))
+    env.update(
+        cargo_environment(sccache_dir, sccache_dir.with_name("sccache.sock"), sccache_dir.parent)
+    )
     return env
 
 
