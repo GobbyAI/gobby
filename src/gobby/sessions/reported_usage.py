@@ -86,7 +86,6 @@ def _claude_run(record: Mapping[str, Any], start_ms: int, cost: int | float) -> 
     except OverflowError:
         # A duration that places the reading beyond the calendar is no duration; the cost stands.
         wall, observed = None, started
-    usage = record.get("modelUsage")
     return ReportedRun(
         run_key=f"{CLAUDE_SOURCE}:{start_ms}",
         source=CLAUDE_SOURCE,
@@ -97,7 +96,7 @@ def _claude_run(record: Mapping[str, Any], start_ms: int, cost: int | float) -> 
         wall_duration_ms=wall,
         started_at=started,
         observed_at=observed,
-        model_usage=usage if isinstance(usage, dict) else {},
+        model_usage=_model_usage(record.get("modelUsage")),
     )
 
 
@@ -115,7 +114,6 @@ def grok_turn_runs(records: Iterable[object]) -> list[ReportedRun]:
             continue
         ticks = _cost(usage.get("costUsdTicks"))
         amount = None if ticks is None else Decimal(str(ticks)) / _GROK_TICKS_PER_USD
-        model_usage = usage.get("modelUsage")
         runs.append(
             ReportedRun(
                 run_key=f"{GROK_SOURCE}:{record.message_id}",
@@ -127,7 +125,7 @@ def grok_turn_runs(records: Iterable[object]) -> list[ReportedRun]:
                 wall_duration_ms=None,
                 started_at=record.timestamp,
                 observed_at=record.timestamp,
-                model_usage=model_usage if isinstance(model_usage, dict) else {},
+                model_usage=_model_usage(usage.get("modelUsage")),
             )
         )
     return runs
@@ -205,3 +203,20 @@ def _duration_ms(value: object) -> int | None:
     if number is None or number < 0 or number > _MAX_BIGINT:
         return None
     return int(number)
+
+
+def _model_usage(value: object) -> dict[str, Any]:
+    """modelUsage as jsonb-safe metadata: NaN and Infinity, which jsonb rejects, are dropped."""
+    return _finite_json(value) if isinstance(value, dict) else {}
+
+
+def _finite_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _finite_json(item) for key, item in value.items() if not _non_finite(item)}
+    if isinstance(value, list):
+        return [_finite_json(item) for item in value if not _non_finite(item)]
+    return value
+
+
+def _non_finite(value: object) -> bool:
+    return isinstance(value, float) and not math.isfinite(value)
