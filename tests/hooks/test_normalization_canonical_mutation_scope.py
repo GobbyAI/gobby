@@ -1017,6 +1017,83 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
+    "template",
+    [
+        "cd {scratch} && ./synthetic-daemon schema apply",
+        "cd {scratch} && ./synthetic-daemon schema apply && ./synthetic-daemon serve",
+    ],
+)
+def test_native_program_run_from_a_literal_directory_needs_no_claim(
+    tmp_path: Path, template: str
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+    project.mkdir()
+    scratch.mkdir()
+    (scratch / "synthetic-daemon").write_bytes(b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
+
+    data = _shell_write_metadata(template.format(scratch=scratch), project)
+
+    assert not data.get("canonical_script_execution")
+    assert not data.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        # An unknown command may change the directory before the relative program runs.
+        "cd {scratch} && make-helper && ./synthetic-daemon schema apply",
+        "cd {scratch} && ./synthetic-daemon schema apply; make-helper; ./synthetic-daemon serve",
+        "cd {scratch} && ./missing-daemon schema apply",
+        'cd "$SYNTHETIC_TARGET" && ./synthetic-daemon schema apply',
+        # A nested shell starts from its caller's cwd, which the proof does not cover.
+        "(cd {scratch} && ./synthetic-daemon serve)",
+        "cd {scratch} && make-helper && (cd {scratch} && ./synthetic-daemon serve)",
+    ],
+)
+def test_program_run_after_an_unproven_directory_still_requires_a_claim(
+    tmp_path: Path, template: str
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+    project.mkdir()
+    scratch.mkdir()
+    (scratch / "synthetic-daemon").write_bytes(b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
+
+    data = _shell_write_metadata(template.format(scratch=scratch), project)
+
+    assert data.get("canonical_script_execution") is True
+
+
+def test_program_run_after_a_literal_directory_writing_into_the_worktree_is_a_mutation(
+    tmp_path: Path,
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+    project.mkdir()
+    scratch.mkdir()
+    (scratch / "synthetic-daemon").write_bytes(b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
+    command = f"cd {scratch} && ./synthetic-daemon schema apply > {project}/tracked.txt"
+
+    data = _shell_write_metadata(command, project)
+
+    assert data.get("canonical_repo_mutation") is True
+
+
+def test_program_run_after_a_literal_directory_running_a_writing_script_is_a_mutation(
+    tmp_path: Path,
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+    project.mkdir()
+    scratch.mkdir()
+    script = scratch / "synthetic-script"
+    script.write_text(f"#!/bin/sh\ntouch {project}/tracked.txt\n")
+    script.chmod(0o755)
+    command = f"cd {scratch} && ./synthetic-script"
+
+    data = _shell_write_metadata(command, project)
+
+    assert data.get("canonical_repo_mutation") is True
+
+
+@pytest.mark.parametrize(
     "command, expected",
     [
         ("{ cd sub; touch x.py; }; touch y.py", ["sub/x.py", "sub/y.py"]),
