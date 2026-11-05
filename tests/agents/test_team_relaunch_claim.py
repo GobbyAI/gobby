@@ -23,6 +23,7 @@ from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_models import ClaimStage
 from gobby.workflows.pipeline_state import StepStatus
+from tests.agents.test_team_epic_dispatch import epic_team, new_task
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import (
     TITLE,
@@ -30,6 +31,7 @@ from tests.fixtures.team_case import (
     execution_id,
     make_team_world,
     running_seat,
+    synthetic_manager_body,
 )
 
 pytestmark = pytest.mark.unit
@@ -38,6 +40,7 @@ pytestmark = pytest.mark.unit
 _REAL_AGENT_BODY = _factory._load_agent_body
 DEVELOPER = "fixture-worker"
 REVIEWER = "fixture-definition-3d77e16a"
+MANAGER = "fixture-coordinator"
 
 
 def _spawn_step(step_id: str, agent: str) -> PipelineStep:
@@ -61,6 +64,20 @@ RUNBOOK = PipelineDefinition(
     claim_flow={
         "implement": ClaimStage(seat=DEVELOPER, done_when=["recipe", "checks"], next="review"),
         "review": ClaimStage(seat=REVIEWER, done_when=["verdict"]),
+    },
+)
+
+
+LEAF_RUNBOOK = PipelineDefinition(
+    name="fixture-leaf-runbook",
+    steps=[
+        PipelineStep(id=ADMISSION_STEP, exec="true"),
+        _spawn_step(MANAGER, MANAGER),
+        _spawn_step(REVIEWER, REVIEWER),
+    ],
+    claim_flow={
+        "review": ClaimStage(seat=REVIEWER, done_when=["independent-review"], next="validate"),
+        "validate": ClaimStage(seat=MANAGER, done_when=["validation"]),
     },
 )
 
@@ -89,6 +106,8 @@ def world(
             },
             project_id=world.case.project_id,
         )
+    manager_body = {**synthetic_manager_body(), "name": MANAGER}
+    AgentDefinitionManager(temp_db).create(MANAGER, manager_body, project_id=world.case.project_id)
     monkeypatch.setattr(_factory, "_load_agent_body", _REAL_AGENT_BODY)
     return world
 
@@ -214,3 +233,47 @@ async def test_seat_spawns_bind_the_team_record_on_admit_and_relaunch(world: Tea
     assert bound is not None
     assert bound.primaries == {"fullstack": relaunched_developer}
     assert bound.reviewers == {REVIEWER: relaunched_reviewer}
+
+
+async def _pod_awaiting_validation(world: TeamWorld) -> tuple[Any, Any, str]:
+    """A leaf pod whose manager step names an ended session, under a live epic manager.
+
+    Returns the leaf, the pod's reviewer holding its claim, and the parent team's manager.
+    """
+    db = world.case.db
+    epic = new_task(world, "Parent epic", epic=True)
+    parent = await epic_team(world, epic, manager_name=MANAGER)
+    leaf = new_task(world, "Leaf under the epic", parent=epic)
+    pod_run = world.child(leaf, LEAF_RUNBOOK, parent=parent.manager)
+    await world.admit(pod_run, leaf, parent_team_id=parent.binding.team_id)
+    ended = world.case.session(MANAGER, parent=pod_run.id)
+    db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (ended,))
+    step = world.executions.create_step_execution(execution_id(pod_run), MANAGER)
+    world.executions.update_step_execution(
+        step.id,
+        status=StepStatus.COMPLETED,
+        output_json=json.dumps({"child_session_id": ended}),
+    )
+    reviewer = running_seat(world, pod_run, REVIEWER)
+    LocalTaskManager(db).claim_task(leaf.id, reviewer.id)
+    return leaf, reviewer, parent.manager
+
+
+async def test_pod_validation_moves_the_claim_to_the_live_parent_manager(
+    world: TeamWorld,
+) -> None:
+    leaf, reviewer, manager = await _pod_awaiting_validation(world)
+    _attest(world, leaf, reviewer, "independent-review")
+    assert LocalTaskManager(world.case.db).get_task(leaf.id).claimed_by_session_id == manager
+
+
+async def test_pod_validation_is_refused_without_a_live_manager_on_either_team(
+    world: TeamWorld,
+) -> None:
+    leaf, reviewer, manager = await _pod_awaiting_validation(world)
+    db = world.case.db
+    db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (manager,))
+    db.execute("UPDATE agent_runs SET status = 'completed' WHERE child_session_id = %s", (manager,))
+    with pytest.raises(ValueError, match="needs its live pipeline seat"):
+        _attest(world, leaf, reviewer, "independent-review")
+    assert LocalTaskManager(world.case.db).get_task(leaf.id).claimed_by_session_id == reviewer.id

@@ -28,6 +28,14 @@ def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
     )
 
 
+def _session_ended(db: HubDatabase, session_id: str | None) -> bool:
+    """Whether ``session_id`` names no live session: none recorded, or a session that ended."""
+    if session_id is None:
+        return True
+    session = SessionManager(db).get(session_id)
+    return session is None or session.status not in LIVE_SESSION_STATUSES
+
+
 def _dead_team_seat(db: HubDatabase, session_id: str, team_id: str) -> bool:
     """Whether ``session_id`` is a seat of team ``team_id`` whose session has ended."""
     from gobby.agents.team_lifecycle import seat_team
@@ -117,8 +125,13 @@ def advance_claim_flow(
                 for row in rows
             }
             live = {sid for sid, seat in seated.items() if seat and seat.team_id == team.team_id}
-            # A pod launches no manager seat; its parent team's manager holds that stage.
-            if not live and child is None and _is_team_manager(db, agent, task.project_id):
+            # A pod launches no manager seat, and a relaunched team's manager output can name an
+            # ended session; the parent team's live manager holds that stage in both cases.
+            if (
+                not live
+                and _session_ended(db, child)
+                and _is_team_manager(db, agent, task.project_id)
+            ):
                 from gobby.agents.team_admission_records import team_binding
 
                 binding = team_binding(db, team.team_id)
