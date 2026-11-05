@@ -7,7 +7,7 @@ import ipaddress
 import logging
 import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -95,6 +95,9 @@ class NativePublisher:
         self._background: set[asyncio.Task[None]] = set()
         self._stopped = False
         self._closed = False
+        # The place the latest publish or subscribe took in the queue order. Each call enqueues
+        # after the place before it, so ops keep the order their calls were made in.
+        self._turn: asyncio.Future[None] | None = None
 
     @property
     def front_door_secret(self) -> str:
@@ -166,16 +169,41 @@ class NativePublisher:
         # Frames are encoded exactly as BroadcastMixin.broadcast encodes them. The filter
         # repeats in every op this call splits into, so callers pass routing fields only.
         # Every op is encoded before any is queued, so a frame that fails to encode queues none.
-        ops = _publish_ops(json_dumps(message), frames or (message,))
-        futures = [self._enqueue(op) for op in ops]
-        if len(futures) == 1:
-            return futures[0]
-        return asyncio.ensure_future(_settle_all(futures))
+        return self._sequence(_publish_ops(json_dumps(message), frames or (message,)))
 
     def subscribe(self, leg: int, events: Iterable[str]) -> asyncio.Future[None]:
-        return self._enqueue(
-            json_dumps({"op": "subscribe", "leg": leg, "events": list(events)}).encode()
-        )
+        encoded = json_dumps({"op": "subscribe", "leg": leg, "events": list(events)}).encode()
+        return self._sequence(_ready([encoded]))
+
+    def _sequence(self, ops: Awaitable[list[bytes]]) -> asyncio.Future[None]:
+        """Take this call's place in the queue order now, and queue its ops when they are ready.
+
+        Encoding yields to the loop, so a later call can finish encoding first. Each call
+        still enqueues after every call made before it.
+        """
+        previous = self._turn
+        turn: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._turn = turn
+        task = asyncio.ensure_future(self._queue_turn(previous, turn, self._generation, ops))
+        # A task that ends without reaching its release, such as one cancelled before it
+        # starts, must not hold up the calls queued behind it.
+        task.add_done_callback(lambda _: _release(turn))
+        return task
+
+    async def _queue_turn(
+        self,
+        previous: asyncio.Future[None] | None,
+        turn: asyncio.Future[None],
+        generation: str | None,
+        ops: Awaitable[list[bytes]],
+    ) -> None:
+        try:
+            if previous is not None:
+                await previous
+            futures = [self._enqueue(op, generation) for op in await ops]
+        finally:
+            _release(turn)
+        await _settle_all(futures)
 
     def fail_generation(self, generation: str | None) -> None:
         """Retire the current generation without retrying its work, then rebind."""
@@ -219,10 +247,11 @@ class NativePublisher:
             await asyncio.sleep(TOKEN_POLL_INTERVAL)
         return token
 
-    def _enqueue(self, encoded: bytes) -> asyncio.Future[None]:
+    def _enqueue(self, encoded: bytes, generation: str | None) -> asyncio.Future[None]:
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        generation = self._generation
-        if generation is None:
+        # An op belongs to the generation that was current when its call was made. If that
+        # generation has ended since, the op is dropped, as queued ops of an ended one are.
+        if generation is None or generation != self._generation:
             future.set_result(None)
             return future
         # Each operation holds exactly one waiting future, so the op count is the future count.
@@ -391,11 +420,12 @@ def _publish_op(filter_json: str, frames: list[bytes]) -> bytes:
     return b"".join(pieces)
 
 
-def _publish_ops(filter_json: str, sources: Sequence[dict[str, Any]]) -> list[bytes]:
+async def _publish_ops(filter_json: str, sources: Sequence[dict[str, Any]]) -> list[bytes]:
     """Encodes the frames in order into publish ops, each within PUBLISH_CHUNK bytes.
 
     A frame is encoded as JSON and then as the JSON string literal its op carries. Each
     literal is dropped once its op is built, so no whole-payload list of frames is held.
+    The loop is yielded after each frame, so one frame's encoding is the longest stall.
     """
     empty = len(_publish_op(filter_json, []))
     ops: list[bytes] = []
@@ -412,12 +442,22 @@ def _publish_ops(filter_json: str, sources: Sequence[dict[str, Any]]) -> list[by
             size = empty
         chunk.append(literal)
         size += cost
+        await asyncio.sleep(0)
     ops.append(_publish_op(filter_json, chunk))
     return ops
 
 
 async def _settle_all(futures: list[asyncio.Future[None]]) -> None:
     await asyncio.gather(*futures)
+
+
+async def _ready(ops: list[bytes]) -> list[bytes]:
+    return ops
+
+
+def _release(turn: asyncio.Future[None]) -> None:
+    if not turn.done():
+        turn.set_result(None)
 
 
 def native_publisher_from_environment(

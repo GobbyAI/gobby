@@ -583,8 +583,7 @@ async def test_publisher_binds_and_publishes_encoded_frames(
         # One operation whose request would exceed the bound fails its generation unsent.
         monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", op_size)
         oversized = publisher.publish(second)
-        assert oversized.done()
-        assert oversized.result() is None
+        await asyncio.wait_for(oversized, 1.0)
         await _turns()
         assert len(daemon.requests) == sent + 2
         assert publisher.generation != GEN1
@@ -1040,11 +1039,11 @@ async def test_publisher_admission_budgets_fail_generation_on_overflow(
             return publisher.publish(message("burst", n))
 
         futures.extend(await asyncio.gather(produce(1), produce(2)))
+        await _turns()
         assert (publisher.retained_bytes, publisher.retained_ops) == (3 * size, 3)
         [overflow] = await asyncio.gather(produce(3))
-        assert overflow.done()
-        assert overflow.result() is None
-        assert all(future.done() and future.result() is None for future in futures)
+        await asyncio.wait_for(overflow, 1.0)
+        assert await asyncio.wait_for(asyncio.gather(*futures), 1.0) == [None, None, None]
         assert publisher.generation != GEN1
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
         await _until(lambda: leg.closed == [1011], timeout=1.0)
@@ -1070,3 +1069,141 @@ async def test_publisher_admission_budgets_fail_generation_on_overflow(
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
     finally:
         await publisher.stop()
+
+
+async def test_frame_that_fails_to_encode_queues_no_op(supervisor_token: str) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        # The first frame encodes; the second cannot. Neither op may be queued.
+        bad = publisher.publish({"type": "burst"}, [{"seq": 1}, {"seq": 2, "data": object()}])
+        with pytest.raises(TypeError):
+            await asyncio.wait_for(bad, 1.0)
+        assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
+        await _turns()
+        assert daemon.requests == []
+
+        # The failed call leaves the queue order intact for the calls after it.
+        await asyncio.wait_for(publisher.publish({"type": "ok"}), 1.0)
+        assert [op["filter"]["type"] for op in daemon.ops(GEN1)] == ["ok"]
+    finally:
+        await publisher.stop()
+
+
+async def test_canonical_json_async_bytes_match_canonical_json() -> None:
+    event = {
+        "type": "workspace_event",
+        "seq": 7,
+        "flag": True,
+        "none": None,
+        "ratio": 0.1,
+        "big": 2**40,
+        "empty": {"list": [], "dict": {}},
+        "text": 'quote " slash \\ tab \t nul \x00 unit   é 😀',
+        "huge": "é" * (2 * 1024 * 1024),
+        "nested": {"b": [1, {"d": "x", "c": "y"}], "a": ("t", None)},
+    }
+    assert await ws_protocol.canonical_json_async(event) == canonical_json(event)
+
+
+@pytest.mark.parametrize("bad", [{"seq": 2**53}, {"outer": [{"message_seq": -1}]}])
+async def test_canonical_json_async_rejects_unsafe_integers_as_canonical_json_does(
+    bad: dict[str, Any],
+) -> None:
+    with pytest.raises(ws_protocol.SafeIntegerOverflowError):
+        canonical_json(bad)
+    with pytest.raises(ws_protocol.SafeIntegerOverflowError):
+        await ws_protocol.canonical_json_async(bad)
+
+
+def test_iter_fragment_event_frames_match_fragment_event() -> None:
+    raw = canonical_json({"type": "workspace_event", "seq": 42, "text": "é" * 1_000_000})
+    expected = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert len(expected) > 1
+    frames = ws_protocol.iter_fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert list(frames) == expected
+
+
+async def test_canonical_json_async_pauses_once_per_piece_budget() -> None:
+    value = {"text": "é" * (4 * ws_protocol.CANONICAL_PIECE_CHARS)}
+    pieces = list(ws_protocol._canonical_pieces(value))
+    assert max(len(piece) for piece in pieces) <= ws_protocol.CANONICAL_PIECE_CHARS
+    pauses: list[int] = []
+
+    async def counting_pause() -> None:
+        pauses.append(1)
+        await asyncio.sleep(0)
+
+    encoded = await ws_protocol.canonical_json_async(value, pause=counting_pause)
+    assert encoded == canonical_json(value)
+    total_chars = sum(len(piece) for piece in pieces)
+    assert len(pauses) >= total_chars // ws_protocol.CANONICAL_PIECE_CHARS
+
+
+async def test_large_publish_keeps_its_place_before_later_calls(supervisor_token: str) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        big = publisher.publish(
+            {"type": "big"},
+            [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+        )
+        subscribed = publisher.subscribe(7, ["terminal.output"])
+        small = publisher.publish({"type": "small"})
+        # The big encode yields to the loop, so the later calls are made while it is pending.
+        assert not big.done()
+        await asyncio.wait_for(asyncio.gather(big, subscribed, small), 2.0)
+        labels = [op.get("filter", {}).get("type", op.get("op")) for op in daemon.ops(GEN1)]
+        assert labels == ["big", "subscribe", "small"]
+    finally:
+        await publisher.stop()
+
+
+async def test_bind_token_poll_stays_inside_token_wait_while_large_events_encode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A publish's encode runs on the same loop as the rebind poll: the poll must still give up
+    # at TOKEN_WAIT, with one poll per TOKEN_POLL_INTERVAL and no extra polls.
+    monkeypatch.setattr(native_publish, "TOKEN_WAIT", 0.5)
+    monkeypatch.setattr(native_publish, "TOKEN_POLL_INTERVAL", 0.05)
+    runner_backend._token.reset()
+    polls = _count_token_polls(monkeypatch)
+    event = {"type": "workspace_event", "text": "é" * (2 * 1024 * 1024)}
+    stop = asyncio.Event()
+    encodes = 0
+
+    async def encode_until_stopped() -> None:
+        nonlocal encodes
+        while not stop.is_set():
+            await ws_protocol.canonical_json_async(event)
+            encodes += 1
+
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    encoder = asyncio.create_task(encode_until_stopped())
+    try:
+        with pytest.raises(native_publish._BindFailed):
+            await asyncio.wait_for(publisher.bind(), native_publish.TOKEN_WAIT + 1.0)
+    finally:
+        stop.set()
+        await encoder
+        await publisher.stop()
+    budget = native_publish.TOKEN_WAIT / native_publish.TOKEN_POLL_INTERVAL + 1
+    assert encodes >= 1
+    assert set(polls) == {None}
+    assert 2 <= len(polls) <= budget
+    assert daemon.binds == []

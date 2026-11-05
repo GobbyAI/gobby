@@ -223,6 +223,22 @@ When a publisher is attached:
   records it as a subsystem failure.
 - `BroadcastMixin.broadcast` hands the encoded frames to `publisher.publish` and
   skips local fanout. gdaemon's broker owns fanout and subscription filtering.
+- `publish` and `subscribe` are synchronous and return a future. Each call takes its
+  place in the queue order when it is made, and its operations enqueue after every
+  earlier call's, even when encoding yields to the loop. The future resolves to `None`
+  when its operations are settled or dropped.
+- A call captures the publisher's generation when it is made. An operation whose
+  generation has ended by the time it enqueues is dropped, and its future resolves to
+  `None`.
+- A frame that fails to encode fails its call with the encoding error. No operation of
+  that call is queued.
+- A workspace event is encoded by `canonical_json_async`, which yields to the loop about
+  every 64 Ki characters of output (`CANONICAL_PIECE_CHARS`). Its bytes equal
+  `canonical_json`'s, and its fragment frames equal `fragment_event`'s over those bytes,
+  so subscribers see the same frame bytes as before.
+- Ordering caveat: a workspace event is encoded before its publish takes its place. A
+  direct broadcast that starts during that encode can enqueue ahead of it. Lifecycle
+  publications are serialized by the lifecycle worker, so their order is unchanged.
 - `broadcast_session_event` does not return early for an empty client set in this
   mode, because the broker may still have subscribers.
 - `WebSocketServer.stop()` drains terminals before `publisher.stop()`, so no fanout

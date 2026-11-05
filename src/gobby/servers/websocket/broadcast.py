@@ -18,8 +18,8 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_MAX_ENCODED_BYTES,
     TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
-    canonical_json,
-    fragment_event,
+    canonical_json_async,
+    iter_fragment_event,
 )
 from gobby.utils.datetime import to_json_safe_dict
 from gobby.utils.json_helpers import json_dumps
@@ -470,7 +470,9 @@ class BroadcastMixin:
         return await self.lease_registry.publish_lifecycle(message, self._publish_workspace_event)
 
     async def _publish_workspace_event(self, message: dict[str, Any]) -> None:
-        raw = canonical_json(message)
+        # The event is encoded once. Encoding and fragmenting pause for the loop in pieces, so
+        # a large event never holds it for the whole encode.
+        raw = await canonical_json_async(message)
         # Subscriptions select on the event's scalar fields. The routing copy carries those
         # alone, so a native publish never repeats the rows in each op it sends.
         route = {
@@ -482,13 +484,16 @@ class BroadcastMixin:
             await self.broadcast(route, frames=[message])
         elif len(raw) <= TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
             workspace_id = message["workspace_id"]
-            frames = fragment_event(
+            frames: list[dict[str, Any]] = []
+            for fragment in iter_fragment_event(
                 event="workspace_event",
                 terminal_id=workspace_id,
                 attachment_id=workspace_id,
                 message_seq=message["seq"],
                 complete_json=raw,
-            )
+            ):
+                frames.append(fragment)
+                await asyncio.sleep(0)
             await self.broadcast(route, frames=frames)
         else:
             # No client can reassemble these rows. Raising here would stop every
