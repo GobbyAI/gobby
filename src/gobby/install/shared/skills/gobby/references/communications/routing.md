@@ -56,8 +56,10 @@ there route to that session instead of the responder, and its sends default to
 that conversation. A conversation has one holder and a session holds one
 conversation; attaching elsewhere fails until you detach. Group bindings are
 in-process; DM/topic bindings persist until detach, replacement, or permanent end.
-In an authorized private Telegram chat, `/agent` can select a live root agent.
-That selection persists across daemon restarts. When its session permanently ends, the chat
+In an authorized private Telegram chat, `/agent` can select a live root agent or a live
+spawned terminal whose definition grants `auto_attach_operator_conversations`. Spawned
+terminals without that grant are never offered, and a stale `/agent` button cannot select
+them. That selection persists across daemon restarts. When its session permanently ends, the chat
 targets an eligible live terminal with `auto_attach_operator_conversations`
 if one is available; otherwise the bot clears the
 selection and prompts for `/agent`.
@@ -83,5 +85,5 @@ discovery or service health, not inventing a path.
 See [destination resolution](../../../../../../../../docs/guides/comm-integrations.md#outbound-destination-resolution)
 and [responder projects](../../../../../../../../docs/guides/telegram.md#responder-projects-and-models).
 
-_Version: 1.0.1_
-_Last verified: 2026-11-04_
+_Version: 1.1.0_
+_Last verified: 2026-11-05_
