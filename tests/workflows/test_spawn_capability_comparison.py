@@ -571,7 +571,12 @@ def _create_spawn_guard_rule(db: HubDatabase) -> None:
     )
 
 
-async def _spawn_decision(db: HubDatabase, caller: str, target: str) -> tuple[str, str]:
+async def _spawn_decision(
+    db: HubDatabase, caller: str, target: str, project_path: str | None = None
+) -> tuple[str, str]:
+    tool_input: dict[str, Any] = {"agent": target}
+    if project_path is not None:
+        tool_input["project_path"] = project_path
     response = await RuleEngine(db).evaluate(
         HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -582,7 +587,7 @@ async def _spawn_decision(db: HubDatabase, caller: str, target: str) -> tuple[st
             data={
                 "mcp_server": "gobby-agents",
                 "mcp_tool": "spawn_agent",
-                "tool_input": {"agent": target},
+                "tool_input": tool_input,
             },
         ),
         session_id=caller,
@@ -692,3 +697,48 @@ def test_fallback_cycle_checks_each_hop_before_revisiting(
         second["spawner_capabilities"] = guard
     _define(manager, "fixture-cycle-b", second, project_id=project_id)
     assert spawn_capabilities_allowed(sessions, caller, "fixture-cycle-a", None, caller) is expected
+
+
+@pytest.mark.parametrize(
+    ("unregistered_path", "guard", "expected"),
+    [
+        # An unregistered project resolves its hops globally, as the launch does, so a
+        # global guarded target binds the unspawned default caller.
+        (True, ["spawn_any_definition"], "block"),
+        # The same guarded target with no project path is refused as well.
+        (False, ["spawn_any_definition"], "block"),
+        # A global target with no spawner requirement stays admitted on that path.
+        (True, None, "allow"),
+    ],
+)
+async def test_global_guarded_target_binds_unregistered_project_path(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    unregistered_path: bool,
+    guard: list[str] | None,
+    expected: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    body: dict[str, Any] = {
+        "prompts": {"agent": "Synthetic global fixture."},
+        "workflows": {"rule_selectors": {"include": []}},
+        "capabilities": ["fixture_child_permission"],
+    }
+    if guard is not None:
+        body["spawner_capabilities"] = guard
+    AgentDefinitionManager(temp_db).create("fixture-global-target", body, project_id=None)
+    _create_spawn_guard_rule(temp_db)
+    caller = (
+        SessionManager(temp_db)
+        .register("fixture-unspawned-global", None, "claude", project_id=project_id)
+        .id
+    )
+    project_path = None
+    if unregistered_path:
+        project_path = str(tmp_path / "unregistered-project")
+        Path(project_path).mkdir()
+    decision, reason = await _spawn_decision(temp_db, caller, "fixture-global-target", project_path)
+    assert decision == expected
+    if expected == "block":
+        assert "fixture spawn boundary" in reason

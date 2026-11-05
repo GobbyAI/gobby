@@ -55,7 +55,7 @@ def _target_project_id(
 
 
 def _resolve_hop(
-    session_manager: SessionManager, target: str, project_id: str
+    session_manager: SessionManager, target: str, project_id: str | None
 ) -> tuple[AgentDefinitionBody, bool] | None:
     """One launch hop's definition and whether its stored row is enabled; None when unresolved."""
     found = resolve_agent_with_row(target, session_manager.db, project_id=project_id)
@@ -136,8 +136,9 @@ def spawner_admitted(
 
     A target's spawner_capabilities binds every caller, including the unspawned
     operator and default sessions that the rule's operator exemption otherwise admits.
-    A caller with no stored definition holds no capabilities. A hop that cannot be
-    resolved declares no requirement here; spawn_capabilities_allowed refuses it for
+    A caller with no stored definition holds no capabilities. An unresolved project
+    resolves its hops against global definitions, as the launch does. A hop that cannot
+    be resolved declares no requirement here; spawn_capabilities_allowed refuses it for
     every caller it does not exempt. A chain too long to finish walking fails closed.
     """
     from gobby.workflows.condition_helpers_sessions import _FALLBACK_CHAIN_MAX_HOPS, _spawn_caller
@@ -151,7 +152,7 @@ def spawner_admitted(
         session_manager, project_path, parent_session_id, caller.project_id
     )
     target = "default" if agent is None else agent
-    if project_id is None or not isinstance(target, str) or not target:
+    if not isinstance(target, str) or not target:
         return True
     visited: set[str] = set()
     for _ in range(_FALLBACK_CHAIN_MAX_HOPS + 1):
