@@ -414,3 +414,49 @@ def read_managed_api_token(env: Mapping[str, str] | None = None) -> str | None:
         if value and principal.get(key) != value:
             raise RuntimeError("managed capability envelope identity does not match")
     return token.strip()
+
+
+_CHALLENGE_CLAIM_NAMES = (
+    "agent_run_id",
+    "exp",
+    "iat",
+    "kind",
+    "machine_id",
+    "managed_execution_id",
+    "project_id",
+    "session_id",
+)
+
+
+def managed_token_challenge_claims(token: str) -> dict[str, object] | None:
+    """Return the token's own payload fields for a daemon challenge, without verifying them.
+
+    The daemon recomputes the signature from these fields and answers only when they reproduce
+    it, so a payload that does not match the signed token earns no proof.
+    """
+    parts = token.split(".", maxsplit=2)
+    if len(parts) != 3 or parts[0] != _AGENT_TOKEN_VERSION:
+        return None
+    try:
+        raw = json.loads(_urlsafe_decode(parts[1]))
+    except ValueError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return {name: raw[name] for name in _CHALLENGE_CLAIM_NAMES if name in raw}
+
+
+def managed_token_proof(token: str, nonce: bytes) -> str | None:
+    """Return the proof the issuing daemon answers for ``nonce``: HMAC keyed by the token signature.
+
+    Only a daemon that recomputed this token's signature from its managed key can produce the
+    same answer, so the caller checks it before it presents the bearer.
+    """
+    parts = token.split(".", maxsplit=2)
+    if len(parts) != 3 or parts[0] != _AGENT_TOKEN_VERSION:
+        return None
+    try:
+        signature = _urlsafe_decode(parts[2])
+    except ValueError:
+        return None
+    return hmac.new(signature, nonce, hashlib.sha256).hexdigest()

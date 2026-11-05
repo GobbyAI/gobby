@@ -37,6 +37,7 @@ from gobby.utils.status import fetch_rich_status, format_status_message
 
 from ._daemon_handoffs import protect_pending_handoffs
 from ._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
+from ._managed_destination import daemon_proves_managed_capability
 from .daemon import _services_stop
 from .installers.service import (
     get_service_status,
@@ -580,7 +581,11 @@ def _restart_from_spawned_seat(
 
 
 def _spawned_daemon_port() -> int:
-    """The port of the daemon URL a spawned seat was started with, read without the bootstrap."""
+    """The port of the daemon URL a spawned seat was started with, read without the bootstrap.
+
+    The port is only a dial target. Nothing authenticated goes to it until
+    ``daemon_proves_managed_capability`` passes for that port.
+    """
     url = validate_daemon_url(os.environ.get("GOBBY_DAEMON_URL", ""), source="GOBBY_DAEMON_URL")
     return urlsplit(url).port or 0
 
@@ -596,8 +601,9 @@ def _restart_backend(
 ) -> bool | None:
     """Restart a serving backend; None requires a full lifecycle replacement.
 
-    A spawned seat has no runtime: it takes the port from the URL it was spawned with, and the
-    daemon route owns the handoff admission that the CLI owns for an operator.
+    A spawned seat has no runtime: it takes the port from the URL it was spawned with, presents
+    its bearer only after that daemon proves the capability, and leaves the handoff admission to
+    the daemon route that the CLI owns for an operator.
     """
     from gobby.cli.runtime import get_cli_runtime
 
@@ -613,6 +619,13 @@ def _restart_backend(
         return None
     if not _is_daemon_healthy(port):
         return None
+    if spawned and not daemon_proves_managed_capability(port):
+        _step(
+            "The daemon at the spawned URL did not prove it holds this seat's managed capability; "
+            "no bearer was sent",
+            error=True,
+        )
+        return False
     if not clear_protected_runs(
         port, force=force, wait=wait, step=_step, fetch=fetch_protected_runs
     ):
