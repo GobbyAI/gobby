@@ -236,7 +236,10 @@ async def test_sandbox_cache_grants_keep_the_trust_split(
             if cached:
                 cargo_home = Path(child_env["CARGO_HOME"])
                 wrapper, cache_dir, socket = _sccache_values(child_env)
-                assert (wrapper, cache_dir) == (str(fake_sccache), str(cargo_home / "sccache"))
+                assert (wrapper, cache_dir) == (
+                    str(cargo_home / "rustc-wrapper"),
+                    str(cargo_home / "sccache"),
+                )
                 assert cargo_home.resolve() in writes
                 assert Path(socket or "") == run_tmp / "sccache.sock"
                 assert run_tmp.resolve() in sockets
