@@ -5,7 +5,9 @@ launches do: pytest's tmp_path exceeds macOS's 103-byte socket path limit.
 """
 
 import json
+import os
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -14,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from gobby.agents import srt_runtime
+from gobby.agents.cargo_environment import cargo_environment
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.agents.spawn_cache_policy import build_spawn_cache_env, sandbox_config_for_spawn
@@ -41,7 +44,7 @@ def _sccache_values(env: Mapping[str, str]) -> tuple[str | None, ...]:
     return tuple(env.get(key) for key in SCCACHE_KEYS)
 
 
-def _run_paths(root: Path) -> SandboxRunPaths:
+def _run_paths(root: Path, shared: Path = Path("/shared")) -> SandboxRunPaths:
     return SandboxRunPaths(
         root=root,
         assets=root / "assets",
@@ -49,19 +52,21 @@ def _run_paths(root: Path) -> SandboxRunPaths:
         hooks=root / "hooks",
         logs=root / "logs",
         cache=root / "cache",
-        shared_cache=Path("/shared"),
-        cargo_target=Path("/shared/cargo-target/checkout"),
+        shared_cache=shared,
+        cargo_target=shared / "cargo-target" / "checkout",
     )
 
 
+@pytest.mark.usefixtures("fake_sccache")
 def test_launch_paths_share_one_cargo_environment(
-    fake_sccache: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    sandboxed = _run_paths(Path("/run"))
+    shared = tmp_path / "shared"
+    sandboxed = _run_paths(Path("/run"), shared)
     granted = sandboxed.environment("codex", run_sockets=True)
     assert _sccache_values(granted) == (
-        str(fake_sccache),
-        "/shared/cargo-home/sccache",
+        str(shared / "cargo-home" / "rustc-wrapper"),
+        str(shared / "cargo-home" / "sccache"),
         "/run/tmp/sccache.sock",
     )
     assert granted["CARGO_BUILD_JOBS"] == "4"
@@ -78,7 +83,7 @@ def test_launch_paths_share_one_cargo_environment(
         unsandboxed = build_spawn_cache_env("session")
         cache = home / "cache" / "sccache"
         assert _sccache_values(unsandboxed) == (
-            str(fake_sccache),
+            str(home / "cache" / "rustc-wrapper"),
             str(cache),
             str(home / "cache" / "sccache.sock"),
         )
@@ -94,6 +99,66 @@ def test_launch_paths_share_one_cargo_environment(
         monkeypatch.setenv("PATH", "")
         assert _sccache_values(build_spawn_cache_env("session")) == BLANK
         assert _sccache_values(sandboxed.environment("codex", run_sockets=True)) == BLANK
+
+
+def test_rustc_wrapper_shim_hides_target_dirs_from_sccache(fake_sccache: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
+        root = Path(short)
+        argv_record = root / "argv.txt"
+        env_record = root / "env.txt"
+        fake_sccache.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_record}"\n/usr/bin/env > "{env_record}"\n',
+            encoding="utf-8",
+        )
+        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock")
+        wrapper = env["RUSTC_WRAPPER"]
+        assert wrapper == str(root / "cache" / "rustc-wrapper")
+        assert os.access(wrapper, os.X_OK)
+
+        rustc_args = [
+            "/toolchain/bin/rustc",
+            "--crate-name",
+            "gobby_core",
+            "-L",
+            "dependency=/checkout/target/debug/deps",
+        ]
+        launch_env = {
+            **os.environ,
+            **env,
+            "CARGO_TARGET_DIR": "/checkout/target",
+            "CARGO_BUILD_TARGET_DIR": "/checkout/build-target",
+            "CARGO_HOME": "/cargo-home",
+            "CARGO_PKG_NAME": "gobby-core",
+        }
+        subprocess.run([wrapper, *rustc_args], env=launch_env, check=True)
+
+        assert argv_record.read_text(encoding="utf-8").splitlines() == rustc_args
+        seen = dict(
+            line.split("=", 1) for line in env_record.read_text(encoding="utf-8").splitlines()
+        )
+        assert "CARGO_TARGET_DIR" not in seen
+        assert "CARGO_BUILD_TARGET_DIR" not in seen
+        assert seen["CARGO_HOME"] == "/cargo-home"
+        assert seen["CARGO_PKG_NAME"] == "gobby-core"
+
+
+@pytest.mark.usefixtures("fake_sccache")
+def test_cache_cap_is_pinned_when_sccache_is_enabled() -> None:
+    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
+        root = Path(short)
+        enabled = cargo_environment(root / "cache" / "sccache", root / "sccache.sock")
+        assert enabled.get("SCCACHE_CACHE_SIZE") == "10G"
+        disabled = cargo_environment(root / "cache" / "sccache", None)
+        assert disabled.get("SCCACHE_CACHE_SIZE") == ""
+
+
+def test_unwritable_shim_fails_open_to_blank_sccache(fake_sccache: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
+        root = Path(short)
+        (root / "cache").write_text("not a directory", encoding="utf-8")
+        env = cargo_environment(root / "cache" / "sccache", root / "sccache.sock")
+        assert _sccache_values(env) == BLANK
+        assert env["CARGO_BUILD_JOBS"] == "4"
 
 
 @pytest.mark.parametrize(
