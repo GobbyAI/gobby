@@ -6,6 +6,7 @@ Parent transcripts are real files. The rule engine is covered by test_compaction
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -219,29 +220,33 @@ def test_merge_without_replayed_context_leaves_the_response_unchanged() -> None:
     )
 
 
-def test_manual_tails_verify_their_boundary_so_no_later_settle_counts_it(parent: Path) -> None:
+def test_a_manual_boundary_settles_once_at_the_next_main_event(parent: Path) -> None:
     ownership = CompactionOwnership()
-    ownership.route(_event(PRE, parent, trigger="auto"))
-    ownership.route(_event(START, parent, source="compact"))
     assert ownership.route(_event(PRE, parent, trigger="manual")) == ([], False)
     _append(parent, _boundary("manual-boundary"))
+    assert ownership.route(_event(START, parent, source="compact")) == ([], True)
 
-    assert ownership.route(_event(START, parent, source="compact")) == ([], False)
-    ownership.route(_event(PRE, parent, trigger="auto"))
+    replays, held = ownership.route(_event(BEFORE, parent, prompt="continue"))
 
-    assert ownership.route(_event(BEFORE, parent, prompt="continue")) == ([], False)
+    assert held is False
+    assert [replay.event_type for replay in replays] == [START]
+    assert ownership.route(_event(BEFORE, parent, prompt="again")) == ([], False)
 
 
-def test_held_parent_lifecycle_settles_before_a_manual_pre_compact(parent: Path) -> None:
+def test_a_manual_pre_compact_leaves_the_held_lifecycle_for_the_next_main_event(
+    parent: Path,
+) -> None:
     ownership = CompactionOwnership()
     ownership.route(_event(PRE, parent, trigger="auto"))
     _append(parent, _boundary("auto-boundary"))
     ownership.route(_event(START, parent, source="compact"))
 
-    replays, held = ownership.route(_event(PRE, parent, trigger="manual"))
+    assert ownership.route(_event(PRE, parent, trigger="manual")) == ([], False)
+
+    replays, held = ownership.route(_event(BEFORE, parent, prompt="continue"))
 
     assert held is False
-    assert [replay.event_type for replay in replays] == [PRE, START]
+    assert [replay.event_type for replay in replays] == [START]
 
 
 def test_held_pre_compact_is_not_replayed_when_a_manual_boundary_settles(parent: Path) -> None:
@@ -258,3 +263,62 @@ def test_held_pre_compact_is_not_replayed_when_a_manual_boundary_settles(parent:
 
     assert held is False
     assert [replay.event_type for replay in replays] == [START, POST]
+
+
+def _unreadable(*_args: object) -> Any:
+    raise OSError("transient read failure")
+
+
+def test_each_route_decision_is_logged_with_its_hook_trigger_source_and_signal(
+    parent: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caplog.set_level(logging.INFO, logger=compaction_ownership.logger.name)
+    ownership = CompactionOwnership()
+
+    ownership.route(_event(PRE, parent, trigger="auto"))
+    ownership.route(_event(PRE, parent, trigger="manual"))
+    ownership.route(_event(BEFORE, parent, prompt="batch"))
+    _append(parent, _boundary("manual-boundary"))
+    ownership.route(_event(START, parent, source="compact"))
+    ownership.route(_event(BEFORE, parent, prompt="continue"))
+    ownership.route(_event(START, None, source="compact"))
+    ownership.route(_event(BEFORE, None, prompt="no transcript"))
+    monkeypatch.setattr(compaction_ownership, "_lines_newest_first", _unreadable)
+    ownership.route(_event(BEFORE, parent, prompt="unreadable"))
+
+    routes = [message for message in caplog.messages if message.startswith("compaction route ")]
+    assert routes == [
+        (
+            "compaction route held: hook=pre_compact trigger=auto source=- "
+            "signal=awaiting_main_event session=session-under-test"
+        ),
+        (
+            "compaction route manual: hook=pre_compact trigger=manual source=- "
+            "signal=manual_pre_compact session=session-under-test"
+        ),
+        (
+            "compaction route dropped: hook=before_agent trigger=- source=- "
+            "signal=no_parent_boundary held=pre_compact session=session-under-test"
+        ),
+        (
+            "compaction route held: hook=session_start trigger=- source=compact "
+            "signal=awaiting_main_event session=session-under-test"
+        ),
+        (
+            "compaction route settled: hook=before_agent trigger=- source=- "
+            "signal=parent_boundary boundaries=1 held=session_start replays=1 "
+            "session=session-under-test"
+        ),
+        (
+            "compaction route held: hook=session_start trigger=- source=compact "
+            "signal=awaiting_main_event session=session-under-test"
+        ),
+        (
+            "compaction route kept: hook=before_agent trigger=- source=- "
+            "signal=no_transcript session=session-under-test"
+        ),
+        (
+            "compaction route kept: hook=before_agent trigger=- source=- "
+            "signal=unreadable_transcript session=session-under-test"
+        ),
+    ]
