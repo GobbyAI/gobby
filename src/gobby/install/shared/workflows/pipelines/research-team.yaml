@@ -1,6 +1,6 @@
 name: research-team
 type: pipeline
-version: "4.0.1"
+version: "4.1.0"
 description: |
   Research runbook: admits a treeless team for the task and launches a Researcher, a Research
   Reviewer and a Research Team Lead into one 'Research Team - #<task>' tab in the shared checkout.

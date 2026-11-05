@@ -1,6 +1,6 @@
 name: plan-team
 type: pipeline
-version: "4.0.1"
+version: "4.1.0"
 description: |
   Planning runbook: launches the plan writer, plan advocate, plan adversary and plan team lead
   into one 'Plan Team - #<task>' tab in the shared checkout. Each seat runs its own agent

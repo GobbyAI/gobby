@@ -59,6 +59,6 @@ Wait on your seats with `wait_for_coordination` and re-arm after each interim re
 sleep. Compact with `gobby-sessions:set_handoff(clear_session=false)` under context pressure; never
 `/clear`.
 
-_Version: 2.0.1_
+_Version: 2.1.0_
 
 _Last verified: 2026-11-04_
