@@ -16,6 +16,7 @@ from gobby.tasks.close_receipts import (
     LANDING,
     CloseReceipt,
     CloseReceiptError,
+    latest_landed_tip,
     list_close_receipts,
     record_close_receipt,
 )
@@ -181,6 +182,53 @@ def test_retired_receipt_kinds_read_as_nothing(
 
     assert created is True
     assert list_close_receipts(temp_db, task.id) == [landing]
+
+
+def test_latest_landed_tip_is_the_newest_landing_on_the_branch_in_its_project(
+    temp_db: HubDatabase, sample_project: dict[str, Any], task: Task, roles: dict[str, str]
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+
+    other_project = LocalProjectManager(temp_db).create("other project")
+    other_task = LocalTaskManager(temp_db).create_task(
+        other_project.id,
+        "Landed elsewhere",
+        validation_criteria="The landing stays in its project.",
+        created_in_session_id=roles["creator"],
+        claimed_by_session_id=roles["claimant"],
+    )
+    _record(
+        temp_db,
+        task,
+        roles["creator"],
+        sha="a" * 40,
+        facts={"branch": "main", "landed_tip": "b" * 40},
+    )
+    _record(
+        temp_db,
+        task,
+        roles["creator"],
+        sha="c" * 40,
+        facts={"branch": "main", "landed_tip": "d" * 40},
+    )
+    _record(
+        temp_db,
+        task,
+        roles["creator"],
+        sha="e" * 40,
+        facts={"branch": "epic/1", "landed_tip": "f" * 40},
+    )
+    _record(
+        temp_db,
+        other_task,
+        roles["creator"],
+        sha="9" * 40,
+        facts={"branch": "main", "landed_tip": "8" * 40},
+    )
+
+    assert latest_landed_tip(temp_db, sample_project["id"], "main") == "d" * 40
+    assert latest_landed_tip(temp_db, sample_project["id"], "epic/1") == "f" * 40
+    assert latest_landed_tip(temp_db, sample_project["id"], "absent") is None
 
 
 def test_receipt_and_authority_transfer_tools_are_retired(temp_db: HubDatabase) -> None:

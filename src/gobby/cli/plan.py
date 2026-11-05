@@ -35,6 +35,7 @@ from gobby.plans.evidence import (
 )
 from gobby.plans.parser import PlanParseError
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+from gobby.tasks.close_receipts import latest_landed_tip
 from gobby.tasks.commits import collect_task_diff_text
 from gobby.worktrees.base_branch import isolation_base_branch
 
@@ -211,6 +212,12 @@ class _CliEvidenceContext:
             self.task_manager.db, artifacts.worktree_id, artifacts.clone_id
         )
         return raw
+
+    def landed_base_tip(self, task_ref: str, branch: str) -> str | None:
+        self._resolve_task_id(task_ref)
+        if self.project_id is None:
+            raise InvalidEvidenceError(f"Evidence spec requires --project-id for {task_ref}")
+        return latest_landed_tip(self.task_manager.db, self.project_id, branch)
 
     def get_commit_range_diff(self, range_: str) -> str:
         validate_evidence_ref(range_)
