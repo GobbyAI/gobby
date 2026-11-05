@@ -194,6 +194,8 @@ async fn recovered_held_stream_regrants_and_flushes_input_during_daemon_outage()
     let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
     let mut workspace = Workspace::live(daemon);
     workspace.daemon_ready = false;
+    // The keypress targets the focused pane, which is the pane the grant answers.
+    workspace.focus = Some(PaneId(1));
     let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
     pane.install_frame_source(crate::frame_source::PaneFrameSource::Direct(source));
     pane.remember_host_locator(&AttachLocator {

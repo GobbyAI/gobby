@@ -238,22 +238,24 @@ pub(super) fn release_live_control(workspace: &mut Workspace<LiveDaemon>, pane_i
     // A pane whose grant is still in flight holds a lease the daemon is about
     // to give it, so leaving without releasing would leak it. The release verb
     // is idempotent, which is what makes this safe to send either way.
-    if !pane.is_live() || !(pane.is_held() || pane.control_request.is_some()) {
-        return;
+    if pane.is_live() && (pane.is_held() || pane.control_request.is_some()) {
+        // With the daemon away there is no release to send. The pane lets go
+        // here, and the host keeps its grant until the next grant replaces it
+        // (#24815).
+        if daemon_ready {
+            pane.release_pending = true;
+        }
+        pane.control = ControlState::Observe;
+        pane.take_back = false;
+        // A grant still in flight for a pane we just left must not move it.
+        pane.control_request = None;
     }
-    // With the daemon away there is no release to send. The pane lets go here,
-    // and the host keeps its grant until the next grant replaces it (#24815).
-    if daemon_ready {
-        pane.release_pending = true;
-    }
-    pane.control = ControlState::Observe;
-    pane.take_back = false;
-    // A grant still in flight for a pane we just left must not move it.
-    pane.control_request = None;
-    // The queue bridges the gap between asking for a grant and getting it. This
-    // pane gave the grant up instead, so the gap closed: replaying those keys
-    // whenever it next wins control would run a command long after it was
-    // typed, which is worse than the words never landing (#22573).
+    // A pane that only waits on a host grant has no daemon lease to release,
+    // but its queue still goes. The queue bridges the gap between asking for a
+    // grant and getting it. This pane gave the grant up instead, so the gap
+    // closed: replaying those keys whenever it next wins control would run a
+    // command long after it was typed, which is worse than the words never
+    // landing (#22573).
     pane.clear_pending_input();
 }
 
@@ -514,6 +516,9 @@ pub(super) fn apply_outage_grant(
             }
         }
     }
+    // A grant answers keys typed to the focused pane. A pane that lost focus
+    // has let go since, and a late answer must not give it control back.
+    let focused = workspace.focus == Some(pane_id);
     let Some(pane) = workspace.panes.get_mut(&pane_id) else {
         return;
     };
@@ -522,11 +527,14 @@ pub(super) fn apply_outage_grant(
         return;
     }
     match grant {
-        Ok(GrantOutcome::Granted) => {
+        Ok(GrantOutcome::Granted) if focused => {
             pane.restore_host_control();
             let pending = pane.take_pending_input();
             flush_pending_input(workspace, chrome, jobs, pane_id, pending);
         }
+        // The pane let go before this answer arrived, so its keys are dropped
+        // rather than typed into a pane that no longer has focus.
+        Ok(GrantOutcome::Granted) => pane.clear_pending_input(),
         // A peer holds the host's grant. The key is dropped visibly, and the
         // pane keeps its daemon control: nothing here displaces the peer
         // (#25653).

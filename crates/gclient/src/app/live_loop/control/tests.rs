@@ -6,7 +6,7 @@ use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
 use super::super::outage_grant::GrantOutcome;
-use super::{apply_control_outcome, apply_outage_grant};
+use super::{apply_control_outcome, apply_outage_grant, release_live_control};
 use crate::app::live_control::ControlOutcome;
 use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
 use crate::daemon::LiveDaemon;
@@ -73,6 +73,8 @@ async fn a_failed_grant_flush_reports_every_key_it_could_not_write() {
     let pane = cut_pane_with_keys().await;
     let attachment = pane.attachment_id().to_owned();
     workspace.panes.insert(PaneId(1), pane);
+    // The keys were typed into the focused pane, so its grant still flushes them.
+    workspace.focus = Some(PaneId(1));
     let jobs = LoopJobs::new(&workspace);
     let mut chrome = Chrome::dark();
 
@@ -153,6 +155,55 @@ async fn a_failed_host_ask_keeps_the_lease_a_pane_already_holds() {
     assert!(
         workspace.pane(PaneId(1)).is_held(),
         "a failed redundant host ask must not drop the lease the pane holds, or its release is never sent"
+    );
+}
+
+#[tokio::test]
+async fn releasing_a_pane_that_only_waits_on_a_grant_drops_its_queued_keys() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    workspace
+        .panes
+        .insert(PaneId(1), cut_pane_with_keys().await);
+
+    release_live_control(&mut workspace, PaneId(1));
+
+    assert!(
+        workspace.pane(PaneId(1)).pending_input.is_empty(),
+        "keys queued for a grant the pane gave up must not run once it wins control later"
+    );
+}
+
+#[tokio::test]
+async fn a_late_grant_does_not_restore_control_to_a_pane_that_lost_focus() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let pane = cut_pane_with_keys().await;
+    let attachment = pane.attachment_id().to_owned();
+    workspace.panes.insert(PaneId(1), pane);
+    workspace.focus = Some(PaneId(2));
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        PaneId(1),
+        &attachment,
+        Ok(GrantOutcome::Granted),
+        Vec::new(),
+    );
+
+    assert!(
+        !workspace.pane(PaneId(1)).is_held(),
+        "a grant that arrives after focus left must not put the pane back in control"
+    );
+    assert!(
+        chrome.alert_log.is_empty(),
+        "keys queued for a pane that lost focus are dropped, not flushed to it"
     );
 }
 
