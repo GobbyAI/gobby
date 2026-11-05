@@ -211,8 +211,7 @@ fn discover_project_scoped_records(
             reason: project.reason,
         })
         .collect();
-    let content_gc_candidates =
-        discover_content_gc(&ctx.database_url, retention_days, Some(&ctx.project_id))?;
+    let content_gc_candidates = discover_content_gc(ctx, retention_days)?;
     Ok(GlobalPruneDiscovery {
         services: ctx.clone(),
         machine_states: stale_projects,
