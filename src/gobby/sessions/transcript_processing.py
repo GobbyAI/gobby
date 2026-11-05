@@ -27,7 +27,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.message_stats import compute_message_stats
-from gobby.sessions.subagent_usage import read_subagent_events
+from gobby.sessions.subagent_usage import read_all_subagent_events
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
@@ -398,10 +398,8 @@ class TranscriptProcessingMixin:
         running_totals = self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
-        # Subagent calls join the parent ledger through the same reader as the live path.
-        subagent_events, _ = read_subagent_events(
-            session_id, session_project_id, transcript_path, {}
-        )
+        # Subagent calls join the parent ledger through the live reader, drained to each file's end.
+        subagent_events = read_all_subagent_events(session_id, session_project_id, transcript_path)
         session_source = session_source or "unknown"
         session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None

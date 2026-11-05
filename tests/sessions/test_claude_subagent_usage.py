@@ -449,3 +449,57 @@ def test_subagent_reader_reads_at_most_one_chunk_per_pass(
         events, cursors = read_subagent_events("ledger-bounds", PROJECT_ID, str(parent), cursors)
         passes.append([event.message_id for event in events])
     assert passes == [["sub-1"], ["sub-2"], ["sub-3"]]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_rebuild_drains_every_subagent_chunk(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    lifecycle_manager: SessionLifecycleManager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # A one-byte chunk takes one line per pass. The user line between the usage lines
+    # yields no events, so the drain must continue past a pass that produces none.
+    monkeypatch.setattr(subagent_usage, "SUBAGENT_CHUNK_BYTES", 1)
+    parent = tmp_path / "rebuild-drain.jsonl"
+    _write(parent, [_user_line()])
+    subagent_lines = [_usage_line("sub-1", 100, 10), _user_line(), _usage_line("sub-2", 200, 20)]
+    _write(_subagent_file(parent, "a1"), subagent_lines)
+    session = _register(session_manager, "rebuild-drain", parent)
+
+    await lifecycle_manager._process_session_transcript(session.id, str(parent))
+    assert _ids(db, session.id) == ["sub-1", "sub-2"]
+    assert _totals(session_manager, session.id) == (300, 30)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_drains_every_subagent_chunk(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(subagent_usage, "SUBAGENT_CHUNK_BYTES", 1)
+    parent = tmp_path / "audit-drain.jsonl"
+    _write(parent, [_user_line()])
+    subagent_lines = [_usage_line("sub-1", 100, 10), _user_line(), _usage_line("sub-2", 200, 20)]
+    _write(_subagent_file(parent, "a1"), subagent_lines)
+    session = _register(session_manager, "audit-drain", parent)
+    processor = _processor(db, session_manager)
+
+    # One chunk per live pass: three passes ingest the three subagent lines.
+    for _ in range(3):
+        await _pass(processor, session, parent)
+    assert _ids(db, session.id) == ["sub-1", "sub-2"]
+
+    # The audit reads the whole subagent file, so both stored rows match and nothing drifts.
+    clean = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (clean.stale_rows, clean.missing_rows, clean.usage_mismatch) == (0, 0, False)
+
+    # --fix must not delete a valid row that a one-chunk read would miss.
+    repaired = tokens_cli._audit_session(db, session.id, fix=True)
+    assert not repaired.repaired
+    assert _ids(db, session.id) == ["sub-1", "sub-2"]

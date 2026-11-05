@@ -1,9 +1,10 @@
 """Claude subagent calls as token events of the parent session (plan 2.2).
 
 A Claude parent transcript keeps its subagents' calls in sibling files at
-``<transcript>/subagents/agent-*.jsonl``. The live processor, the rebuild, and the
-audit all read them through :func:`read_subagent_events`, so each path assigns the
-same message ids and the same totals.
+``<transcript>/subagents/agent-*.jsonl``. The live processor reads them one chunk per
+pass through :func:`read_subagent_events`. The rebuild and the audit drain every chunk
+through :func:`read_all_subagent_events`, so each path assigns the same message ids and
+the same totals.
 """
 
 from __future__ import annotations
@@ -118,6 +119,40 @@ def read_subagent_events(
             parser_state=dict(parser.snapshot_state()),
         )
     return events, next_cursors
+
+
+def read_all_subagent_events(
+    session_id: str,
+    project_id: str | None,
+    transcript_path: str,
+) -> list[TokenEvent]:
+    """Return the usage events of every subagent line present now.
+
+    The rebuild and the audit compare the whole file, so this drains
+    :func:`read_subagent_events` one chunk per pass until no file's cursor moves. A pass
+    that yields no usage events still moves its cursor, so the drain continues past it.
+    """
+    events: list[TokenEvent] = []
+    cursors: dict[str, SubagentCursor] = {}
+    while True:
+        batch, next_cursors = read_subagent_events(session_id, project_id, transcript_path, cursors)
+        events.extend(batch)
+        if not _advanced(cursors, next_cursors):
+            return events
+        cursors = next_cursors
+
+
+def _advanced(prior: Mapping[str, SubagentCursor], current: Mapping[str, SubagentCursor]) -> bool:
+    """Return True when a file's offset moved, or a file was read under a new identity."""
+    for path, cursor in current.items():
+        before = prior.get(path)
+        if (
+            before is None
+            or cursor.offset != before.offset
+            or (cursor.dev, cursor.ino) != (before.dev, before.ino)
+        ):
+            return True
+    return False
 
 
 def _cursor_stale(cursor: SubagentCursor, stat: os.stat_result) -> bool:
