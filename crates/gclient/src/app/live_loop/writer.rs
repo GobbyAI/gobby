@@ -4,19 +4,90 @@
 //! `terminal_input` reply never sits between two frames. `client_write_seq`
 //! is still assigned on the loop; the writer only carries the body.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 use crate::copy_mode::PASTE_MAX_BYTES;
-use crate::daemon::{Daemon, Generation, LiveDaemon};
+use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, WriteReceipt};
 
 use super::super::PaneId;
 use super::jobs::{JobKey, JobOutcome, JobResult, JobTag};
+
+/// A write sent to the daemon whose reply has not settled yet. Writes settle
+/// in the order they were sent.
+struct InFlight {
+    client_write_seq: u64,
+    generation: Generation,
+    attachment: String,
+    bytes: usize,
+    reply: JoinHandle<Result<Value, DaemonError>>,
+}
+
+/// The outcome of the oldest in-flight write, and whether it went unconfirmed.
+struct Settled {
+    outcome: JobOutcome,
+    unconfirmed: bool,
+    bytes: usize,
+}
+
+/// Waits for the oldest in-flight write's reply. A reply that never arrives (a
+/// deadline, a lost connection, a failed task) leaves that write unconfirmed.
+async fn settle_front(inflight: &mut VecDeque<InFlight>, pane: PaneId) -> Settled {
+    let front = inflight
+        .front_mut()
+        .expect("settled only while a write is in flight");
+    let joined = (&mut front.reply).await;
+    let front = inflight
+        .pop_front()
+        .expect("the front write stays queued until it settles");
+    let (result, unconfirmed) = match joined {
+        Ok(Ok(reply)) => (
+            JobResult::Write {
+                pane,
+                bytes: front.bytes,
+                reply,
+            },
+            false,
+        ),
+        Ok(Err(_)) | Err(_) => (
+            JobResult::WriteUnconfirmed {
+                pane,
+                attachment: front.attachment,
+            },
+            true,
+        ),
+    };
+    Settled {
+        outcome: JobOutcome {
+            tag: JobTag {
+                id: front.client_write_seq,
+                generation: front.generation,
+                key: JobKey::Write(pane),
+            },
+            result,
+        },
+        unconfirmed,
+        bytes: front.bytes,
+    }
+}
+
+/// Frees a settled write's backlog slot, stops the writer on an unconfirmed
+/// write, and sends its outcome. False once the outcomes channel has closed.
+fn deliver(settled: Settled, backlog: &Backlog, outcomes: &UnboundedSender<JobOutcome>) -> bool {
+    backlog.messages.fetch_sub(1, Ordering::AcqRel);
+    backlog.bytes.fetch_sub(settled.bytes, Ordering::AcqRel);
+    if settled.unconfirmed {
+        backlog.stopped.store(true, Ordering::Release);
+    }
+    outcomes.send(settled.outcome).is_ok()
+}
 
 /// Writes a pane may have queued behind the one being sent. The cap counts
 /// writes only: the channel itself is unbounded so a barrier always fits
@@ -123,7 +194,23 @@ impl PaneWriter {
         let drained = Arc::clone(&backlog);
         tokio::spawn(async move {
             let mut abandoned = Abandoned::default();
-            while let Some(queued) = rx.recv().await {
+            let mut inflight = VecDeque::new();
+            loop {
+                // A settled reply goes out before the next queued write, so the
+                // outcomes come back in the order the writes were sent.
+                let queued = tokio::select! {
+                    biased;
+                    settled = settle_front(&mut inflight, pane), if !inflight.is_empty() => {
+                        if !deliver(settled, &drained, &outcomes) {
+                            return;
+                        }
+                        continue;
+                    }
+                    queued = rx.recv() => queued,
+                };
+                let Some(queued) = queued else {
+                    break;
+                };
                 match queued {
                     QueuedWrite::Write {
                         generation,
@@ -131,8 +218,6 @@ impl PaneWriter {
                         body,
                         bytes,
                     } => {
-                        drained.messages.fetch_sub(1, Ordering::AcqRel);
-                        drained.bytes.fetch_sub(bytes, Ordering::AcqRel);
                         // The body names the attachment the write was typed
                         // for; its outcome speaks only for that attachment.
                         let attachment = body["attachment_id"]
@@ -146,30 +231,34 @@ impl PaneWriter {
                         if drained.stopped.load(Ordering::Acquire)
                             || generation != daemon.generation()
                         {
+                            // An abandoned write never settles, so its slot frees here.
+                            drained.messages.fetch_sub(1, Ordering::AcqRel);
+                            drained.bytes.fetch_sub(bytes, Ordering::AcqRel);
                             abandoned.add(generation, client_write_seq, attachment, bytes);
                             if rx.is_empty() && !abandoned.report(&outcomes, pane) {
                                 return;
                             }
                             continue;
                         }
-                        let result = match daemon.send(body).await {
-                            Ok(reply) => JobResult::Write { pane, bytes, reply },
-                            Err(_) => {
-                                drained.stopped.store(true, Ordering::Release);
-                                JobResult::WriteUnconfirmed { pane, attachment }
-                            }
-                        };
-                        let outcome = JobOutcome {
-                            tag: JobTag {
-                                id: client_write_seq,
-                                generation,
-                                key: JobKey::Write(pane),
-                            },
-                            result,
-                        };
-                        if outcomes.send(outcome).is_err() {
-                            return;
+                        // The next write waits only for this one's frame to reach
+                        // the socket, never for the daemon's reply.
+                        let (written_tx, mut written_rx) = watch::channel(false);
+                        let reply = tokio::spawn({
+                            let daemon = daemon.clone();
+                            async move { daemon.send_marking_written(body, written_tx).await }
+                        });
+                        if written_rx.wait_for(|written| *written).await.is_err() {
+                            // The frame never reached the socket, so nothing
+                            // queued behind it may go out under that.
+                            drained.stopped.store(true, Ordering::Release);
                         }
+                        inflight.push_back(InFlight {
+                            client_write_seq,
+                            generation,
+                            attachment,
+                            bytes,
+                            reply,
+                        });
                     }
                     QueuedWrite::Barrier {
                         message,
@@ -178,6 +267,14 @@ impl PaneWriter {
                         attachment,
                         done,
                     } => {
+                        // A detach fences the attachment's waiters, so every
+                        // write sent before it settles first.
+                        while !inflight.is_empty() {
+                            let settled = settle_front(&mut inflight, pane).await;
+                            if !deliver(settled, &drained, &outcomes) {
+                                return;
+                            }
+                        }
                         if !abandoned.report(&outcomes, pane) {
                             return;
                         }
@@ -211,6 +308,12 @@ impl PaneWriter {
                         }
                         let _ = done.send(true);
                     }
+                }
+            }
+            while !inflight.is_empty() {
+                let settled = settle_front(&mut inflight, pane).await;
+                if !deliver(settled, &drained, &outcomes) {
+                    return;
                 }
             }
             abandoned.report(&outcomes, pane);

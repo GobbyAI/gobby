@@ -709,6 +709,63 @@ impl Daemon for ReconnectDaemon {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_refused_write_outcome_is_reported_on_the_scripted_loop() {
+    let mut ws = Workspace::scripted();
+    ws.open_terminal("term-refused", "native", "epoch-refused")
+        .expect("open terminal");
+    let mut chrome = Chrome::dark();
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let daemon = ws.daemon().clone();
+    let (guard, _restore_hits) = TerminalGuard::recording();
+
+    let driver = async move {
+        tokio::task::yield_now().await;
+        daemon.publish_event(gobby_client::daemon::DaemonEvent::Message(json!({
+            "type": "terminal_write_outcome",
+            "outcome": "refused",
+            "reason": "write_seq_conflict",
+            "attachment_id": "attachment-refused",
+            "client_write_seq": 1
+        })));
+        tokio::time::advance(RENDER_TICK * 2).await;
+        tokio::task::yield_now().await;
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )))
+            .await
+            .expect("prefix");
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('Q'),
+                KeyModifiers::SHIFT,
+            )))
+            .await
+            .expect("quit");
+    };
+
+    let (result, ()) = tokio::join!(
+        run_scripted_loop(&mut ws, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("loop exits cleanly");
+    drop(guard);
+
+    let titles: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        ["Input refused: write_seq_conflict."],
+        "a refused write outcome is reported, not dropped"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn loop_routes_input_and_frames() {
     let mut ws = Workspace::scripted();
     let pane = ws
@@ -13108,7 +13165,7 @@ async fn a_relist_older_than_a_pane_opened_here_does_not_reap_it() {
 /// still queued for the old attachment are reported unsent and never go out
 /// under it; the next key goes out under the new one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
+async fn a_reattach_never_moves_typed_writes_to_the_new_attachment() {
     const TERMINAL_ID: &str = "terminal-reattached";
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
@@ -13161,12 +13218,15 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
         })
         .await
         .expect("x is answered");
-        // 'y' is held on the wire; 'z' and 'w' queue behind it.
-        let release = mock.hold_ws("terminal_input", |_| true);
+        // y, z and w are each held on the wire, so all three stay unsettled
+        // when the attachment changes.
+        let releases: Vec<_> = (0..3)
+            .map(|_| mock.hold_ws("terminal_input", |_| true))
+            .collect();
         for key in ['y', 'z', 'w'] {
             send_key(&input_tx, KeyCode::Char(key), KeyModifiers::NONE).await;
         }
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
         settle_before_lag(&mock).await;
         lag_the_loop_receiver(&mock, &daemon);
         wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
@@ -13182,7 +13242,9 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
         })
         .await
         .expect("attachment-2 installed");
-        release.notify_one();
+        for release in releases {
+            release.notify_one();
+        }
         // The new attachment is writable at once; the loop reports it focused.
         send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
         wait_for_focus_reports(&mock, 2).await;
@@ -13211,22 +13273,22 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
     let data: Vec<&str> = sent.iter().map(|(data, _)| data.as_str()).collect();
     assert_eq!(
         data,
-        ["x", "y", "q"],
-        "z and w were queued for the retired attachment and never sent"
+        ["x", "y", "z", "w", "q"],
+        "y, z and w went out before the reattach; q is the first write after it"
     );
-    assert_ne!(sent[2].1, sent[0].1, "q goes out under the new attachment");
+    let old = sent[1].1.clone();
+    assert!(
+        sent[1..4].iter().all(|(_, attachment)| *attachment == old),
+        "y, z and w stay on the attachment they were typed for: {sent:?}"
+    );
+    assert_ne!(sent[4].1, old, "q goes out under the new attachment");
     let titles: Vec<&str> = chrome
         .alert_log
         .iter()
         .map(|toast| toast.title.as_str())
         .collect();
-    // y was on the wire when its attachment went away: an unconfirmed write
-    // raises no toast. z and w never left, so they are reported unsent.
-    assert_eq!(
-        titles,
-        ["Input not sent: 2 bytes."],
-        "z and w are reported unsent; y's unconfirmed write is silent"
-    );
+    // Every write reached the wire before the reattach, so none is abandoned.
+    assert!(titles.is_empty(), "no write is reported unsent: {titles:?}");
     mock.shutdown().await;
 }
 

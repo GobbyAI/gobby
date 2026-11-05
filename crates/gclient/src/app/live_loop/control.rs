@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 
+use crate::app::apply::refused_write_toast;
 use crate::daemon::LiveDaemon;
 use crate::frame_source::{FrameError, PaneFrameSource};
 use crate::ui::status::Toast;
@@ -304,14 +305,8 @@ pub(super) fn apply_write_result(
     bytes: usize,
     reply: &Value,
 ) {
-    if reply.get("outcome").and_then(Value::as_str) == Some("refused") {
-        let reason = reply
-            .get("reason")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        chrome.notify(
-            Toast::warning(format!("Input refused: {reason}.")).with_body(format!("{bytes} bytes")),
-        );
+    if let Some(toast) = refused_write_toast(reply) {
+        chrome.notify(toast.with_body(format!("{bytes} bytes")));
     }
     apply_live_write_outcome(workspace, reply);
 }

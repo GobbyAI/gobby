@@ -2,7 +2,20 @@
 
 use super::Workspace;
 use crate::daemon::DaemonError;
+use crate::ui::status::Toast;
 use serde_json::Value;
+
+/// The warning for a write the daemon refused, or none for any other outcome.
+pub(super) fn refused_write_toast(outcome: &Value) -> Option<Toast> {
+    if outcome.get("outcome").and_then(Value::as_str) != Some("refused") {
+        return None;
+    }
+    let reason = outcome
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    Some(Toast::warning(format!("Input refused: {reason}.")))
+}
 
 pub(super) fn apply(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
     let ty = message.get("type").and_then(Value::as_str).unwrap_or("");
@@ -69,8 +82,12 @@ fn apply_write_outcome(ws: &mut Workspace, message: &Value) -> Result<(), Daemon
     let Some(attachment) = message.get("attachment_id").and_then(Value::as_str) else {
         return Ok(());
     };
+    // A late outcome for an earlier write leaves the newer one in flight.
+    let seq = message.get("client_write_seq").and_then(Value::as_u64);
     if let Some(pane) = ws.pane_for_attachment_mut(attachment) {
-        pane.in_flight_write = None;
+        if seq.is_none_or(|seq| pane.in_flight_write == Some(seq)) {
+            pane.in_flight_write = None;
+        }
     }
     Ok(())
 }

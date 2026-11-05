@@ -103,6 +103,17 @@ async def test_gclient_pane_never_takes_the_writer_lease() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_attach_without_a_viewer_is_a_web_viewer_and_takes_the_lease() -> None:
+    # The wire default is web (terminal_ws._attach_viewer), so an omitted viewer
+    # is held to the writer lease like any web viewer.
+    registry = TerminalLeaseRegistry()
+    unlabelled = await registry.attach("term-2", frame_delivery="direct")
+    granted = await registry.take_control("term-2", unlabelled.attachment_id, takeover=True)
+    assert granted.granted is True
+    assert registry.holder("term-2") == unlabelled.attachment_id
+
+
+@pytest.mark.asyncio
 async def test_focus_held_requires_a_focused_web_holder() -> None:
     registry = TerminalLeaseRegistry()
     holder = await registry.attach("focus-held-web", viewer="web")

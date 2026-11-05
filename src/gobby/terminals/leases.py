@@ -125,7 +125,7 @@ class _Attachment:
     attachment_id: str
     terminal_id: str
     frame_delivery: str
-    viewer: Viewer = "gclient"
+    viewer: Viewer = "web"
     backend: str = "native"
     geometry: tuple[int, int] | None = None
     resize_seq: int = 0
@@ -367,7 +367,7 @@ class TerminalLeaseRegistry:
         *,
         websocket: object | None = None,
         attachment_id: str | None = None,
-        viewer: Viewer = "gclient",
+        viewer: Viewer = "web",
         backend: str = "native",
         terminal: Terminal | None = None,
     ) -> _Attachment:

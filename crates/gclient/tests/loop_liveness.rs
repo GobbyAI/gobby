@@ -2410,25 +2410,21 @@ async fn typing_into_a_tmux_pane_while_terminal_input_is_held_keeps_frames_flowi
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
         probe.key_reaches("terminal-b", 'x').await;
 
-        // The daemon holds terminal-b's next write. Keys typed behind it
-        // wait their turn, and the loop keeps drawing both panes meanwhile.
+        // The daemon holds terminal-b's write. A key typed behind it is sent
+        // without waiting for that reply, and the loop keeps drawing both
+        // panes meanwhile.
         let release = mock.hold_ws("terminal_input", for_terminal("terminal-b"));
         probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
         wait_until("the held write", || written(&mock, "terminal-b").len() == 2).await;
         probe.key(KeyCode::Char('z'), KeyModifiers::NONE).await;
-        probe.frames_render("terminal-a").await;
-        probe.frames_render("terminal-b").await;
-        assert_eq!(
-            written(&mock, "terminal-b"),
-            ["x", "y"],
-            "a key typed behind a held write waits for it"
-        );
-
-        release.notify_one();
-        wait_until("the queued key after the held write", || {
+        wait_within(KEY_BOUND, "the key typed behind the held write", || {
             written(&mock, "terminal-b") == ["x", "y", "z"]
         })
         .await;
+        probe.frames_render("terminal-a").await;
+        probe.frames_render("terminal-b").await;
+
+        release.notify_one();
         probe.frames_render("terminal-a").await;
         drop(input_tx);
     };
@@ -2454,6 +2450,60 @@ async fn typing_into_a_tmux_pane_while_terminal_input_is_held_keeps_frames_flowi
         "the held write's delivery keeps the pane writable"
     );
     assert_eq!(written(&mock, "terminal-b"), ["x", "y", "z"]);
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_lost_write_reply_does_not_stop_the_keys_typed_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.set_attach_backend("terminal-b", "tmux");
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        probe.key_reaches("terminal-b", 'x').await;
+
+        // The daemon receives terminal-b's write and never answers it. Once
+        // the request deadline passes, the write is unconfirmed and the key
+        // typed after that still goes out.
+        mock.suppress_ws("terminal_input");
+        probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
+        wait_until("the unanswered write", || {
+            written(&mock, "terminal-b").len() == 2
+        })
+        .await;
+        tokio::time::sleep(gobby_client::daemon::REQUEST_DEADLINE + Duration::from_millis(500))
+            .await;
+        mock.allow_ws("terminal_input");
+        probe.key_reaches("terminal-b", 'k').await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane_b = workspace
+        .pane_for_terminal("terminal-b")
+        .expect("terminal-b pane");
+    assert!(
+        workspace.pane(pane_b).writable(),
+        "a lost reply leaves the pane writable"
+    );
+    assert_eq!(written(&mock, "terminal-b"), ["x", "y", "k"]);
     mock.shutdown().await;
 }
 
@@ -2610,6 +2660,9 @@ async fn a_stale_attention_response_is_never_retried_and_leaves_the_prompt_answe
 async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
     const PASTE: usize = 700 * 1024;
     const KEYS: usize = 300;
+    // The backlog holds 256 unsettled writes. x, y and the first paste are
+    // held, so 256 - 3 keys fit and the rest are dropped.
+    const ACCEPTED_KEYS: usize = 256 - 3;
     let mock = MockDaemon::start("local-token").await;
     mock.set_attach_backend("terminal-b", "tmux");
     let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
@@ -2632,15 +2685,15 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
     let driver = async {
         let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        // 'x' and 'y' are held in flight, so each stays unsettled.
+        let x_release = mock.hold_ws("terminal_input", for_terminal("terminal-b"));
         probe.key_reaches("terminal-b", 'x').await;
-
-        // 'y' is held in flight; everything after it queues behind it.
         let release = mock.hold_ws("terminal_input", for_terminal("terminal-b"));
         probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
         wait_until("the held write", || written(&mock, "terminal-b").len() == 2).await;
         // Acknowledge each accepted key by its request, rather than requiring
-        // 255 serialized WebSocket round trips to finish in ten wall-clock seconds.
-        let accepted_keys: Vec<_> = (0..255)
+        // 253 serialized WebSocket round trips to finish in ten wall-clock seconds.
+        let accepted_keys: Vec<_> = (0..ACCEPTED_KEYS)
             .map(|_| {
                 let received = Arc::new(Notify::new());
                 let signal = Arc::clone(&received);
@@ -2663,16 +2716,22 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
             }
             matches
         });
-        // The second paste would take the queue past 1 MiB.
+        // The first paste stays in flight too, so it holds a backlog slot.
+        let paste_release = mock.hold_ws("terminal_paste", for_terminal("terminal-b"));
+        // The second paste would take the backlog past 1 MiB.
         probe.paste("p".repeat(PASTE)).await;
         probe.paste("q".repeat(PASTE)).await;
-        // The first paste plus 255 keys fill the 256-message queue.
         for key in &keys {
             let key = key.chars().next().expect("one char");
             probe.key(KeyCode::Char(key), KeyModifiers::NONE).await;
         }
         probe.frames_render("terminal-b").await;
-        assert_eq!(written(&mock, "terminal-b"), ["x", "y"], "the flood waits");
+        // Keys past the bound are dropped; the accepted ones are all on the
+        // wire before any release.
+        wait_until("the accepted keys reach the wire", || {
+            written(&mock, "terminal-b").len() == 2 + ACCEPTED_KEYS
+        })
+        .await;
 
         // The other pane types and draws while terminal-b is held: each pane
         // writes on its own queue, so terminal-b's flood never blocks it.
@@ -2686,7 +2745,9 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
             "terminal-a's key is not queued behind terminal-b's held flood"
         );
 
+        x_release.notify_one();
         release.notify_one();
+        paste_release.notify_one();
         for (received, release) in accepted_keys {
             received.notified().await;
             release.notify_one();
@@ -2710,7 +2771,7 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
     );
     result.expect("live loop exits cleanly");
     let mut accepted = vec!["x".to_string(), "y".to_string()];
-    accepted.extend(keys[..255].iter().cloned());
+    accepted.extend(keys[..ACCEPTED_KEYS].iter().cloned());
     assert_eq!(
         written(&mock, "terminal-b"),
         accepted,
@@ -2802,6 +2863,10 @@ async fn drop_a_held_write() -> (MockDaemon, Chrome) {
         wait_until("the held write", || written(&mock, "terminal-b").len() == 3).await;
         probe.key(KeyCode::Char('z'), KeyModifiers::NONE).await;
         probe.key(KeyCode::Char('w'), KeyModifiers::NONE).await;
+        wait_until("z and w reach the wire", || {
+            written(&mock, "terminal-b").len() == 5
+        })
+        .await;
         let old_attachment = focused_attachment(&mock, "terminal-b");
         mock.drop_websockets();
         wait_until("the reconnect", || mock.websocket_handshakes() >= 2).await;
@@ -2913,14 +2978,92 @@ async fn close_and_generation_change_never_replay_queued_input() {
         attachment("y"),
         "k goes out under the new attachment"
     );
-    assert!(
-        writes.iter().all(|(data, _)| data != "z" && data != "w"),
-        "the queued writes are never sent: {writes:?}"
-    );
+    // z and w left the wire before the change, under y's attachment; the
+    // change never replays them.
+    for data in ["z", "w"] {
+        let sent: Vec<_> = writes.iter().filter(|(sent, _)| sent == data).collect();
+        assert_eq!(
+            sent.len(),
+            1,
+            "{data} is sent once, never replayed: {writes:?}"
+        );
+        assert_eq!(
+            sent[0].1,
+            attachment("y"),
+            "{data} went out under the attachment it was typed for"
+        );
+    }
 }
 
 /// Holds b's write 'y' with 'z' and 'w' queued behind it, then closes b
 /// with the prefix and `close`.
+#[tokio::test]
+async fn a_refused_write_leaves_the_daemon_routed_pane_writable_and_direct_keys_prompt() {
+    let mock = MockDaemon::start("local-token").await;
+    let mut host = StallingHost::start().await;
+    // terminal-a is daemon-routed; terminal-b is native direct to its host.
+    let (mut workspace, _home) = two_pane_workspace(&mock, Some(&host)).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+    // The daemon refuses x, and only when its reply is released.
+    mock.enqueue_write_outcome("refused", Some("write_seq_conflict"));
+    let refusal = mock.hold_ws("terminal_input", for_terminal("terminal-a"));
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        probe.next_pane().await;
+        probe.key_reaches("terminal-a", 'x').await;
+        // The next key is still written while x's refusal is pending.
+        probe.key_reaches("terminal-a", 'y').await;
+        probe.next_pane().await;
+        let started = std::time::Instant::now();
+        probe.key(KeyCode::Char('z'), KeyModifiers::NONE).await;
+        host.wait_for_input(b"z").await;
+        let direct = started.elapsed();
+        refusal.notify_one();
+        probe.next_pane().await;
+        probe.key_reaches("terminal-a", 'w').await;
+        drop(input_tx);
+        direct
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, direct) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        direct < KEY_BOUND,
+        "the direct key took {direct:?} to reach the host while the daemon refused a write"
+    );
+    assert_eq!(
+        written(&mock, "terminal-a"),
+        ["x", "y", "w"],
+        "the pane stays writable after its refusal"
+    );
+    let titles: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        ["Input refused: write_seq_conflict."],
+        "the refused write is reported"
+    );
+    mock.shutdown().await;
+}
+
 async fn close_behind_held_writes(close: (KeyCode, KeyModifiers)) -> Vec<String> {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home, mut chrome) = closing_workspace(&mock, false).await;
@@ -2937,13 +3080,21 @@ async fn close_behind_held_writes(close: (KeyCode, KeyModifiers)) -> Vec<String>
         wait_until("the held write", || written(&mock, "terminal-b").len() == 2).await;
         probe.key(KeyCode::Char('z'), KeyModifiers::NONE).await;
         probe.key(KeyCode::Char('w'), KeyModifiers::NONE).await;
+        wait_until("z and w reach the wire", || {
+            written(&mock, "terminal-b").len() == 4
+        })
+        .await;
         probe.key(KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         probe.key(close.0, close.1).await;
         probe.draws_continue().await;
         assert_eq!(
             wire_after_x(&mock),
-            ["input terminal-b y"],
-            "the kill waits for b's queued writes ({close:?})"
+            [
+                "input terminal-b y",
+                "input terminal-b z",
+                "input terminal-b w",
+            ],
+            "b's writes leave before the kill, which waits for them to settle ({close:?})"
         );
         release.notify_one();
         wait_until("the kill", || {

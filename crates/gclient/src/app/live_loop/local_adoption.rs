@@ -171,7 +171,23 @@ pub(super) fn spawn_in_adopted_local_tab(
     let node = workspace.attach_target().node.clone();
     let daemon = workspace.daemon().clone();
     spawn_job(outcomes, op_tag(&daemon), async move {
-        let adopted = adopt_chain(&daemon, node, plan, axis, cwd, roster).await;
+        // The chain runs in its own task. A panic in it would otherwise leave
+        // the old tab adopting for good, so it reports as a failed adoption.
+        let chain_daemon = daemon.clone();
+        let chain =
+            tokio::spawn(
+                async move { adopt_chain(&chain_daemon, node, plan, axis, cwd, roster).await },
+            );
+        let adopted = chain.await.unwrap_or_else(|_| AdoptedShell {
+            new_tab: None,
+            rolled_back: false,
+            terminal_id: Err(DaemonError::Protocol {
+                detail: "local tab adoption panicked".into(),
+            }),
+            snapshot: None,
+            tab_order_warning: None,
+            roster: None,
+        });
         JobResult::Adopted {
             project,
             old_tab,

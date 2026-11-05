@@ -21,6 +21,7 @@ use crate::frame_source::{FrameError, FrameSource, PaneFrameSource};
 use gobby_terminal::protocol::ClientMessage;
 use serde_json::{json, Value};
 
+use super::apply::refused_write_toast;
 use super::live_loop::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::live_loop::modal_input::apply_rename;
 use super::{route_modal_key, route_mouse, ModalOutcome, MouseOutcome};
@@ -74,7 +75,16 @@ pub async fn run_scripted_loop<B: Backend>(
             }
             event = events.recv() => {
                 match event {
-                    Ok(DaemonEvent::Message(message)) => workspace.apply_ws(&message)?,
+                    Ok(DaemonEvent::Message(message)) => {
+                        workspace.apply_ws(&message)?;
+                        if message.get("type").and_then(Value::as_str)
+                            == Some("terminal_write_outcome")
+                        {
+                            if let Some(toast) = refused_write_toast(&message) {
+                                chrome.notify(toast);
+                            }
+                        }
+                    }
                     Ok(DaemonEvent::Disconnected { generation, error }) => {
                         workspace.observe_daemon_disconnect(generation, error);
                     }
