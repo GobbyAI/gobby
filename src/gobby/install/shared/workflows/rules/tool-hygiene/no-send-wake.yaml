@@ -1,0 +1,25 @@
+version: "1.0.0"
+tags: [send-wake, gobby, default]
+
+# send_wake is withheld from every caller except the operator's own unspawned
+# terminal and a definition that grants the send_wake capability. The tool guard
+# comes first, so an evaluation error, which fails closed, refuses the call. The
+# target's admission, composer and foreground checks run in the send_wake handler.
+rules:
+  no-send-wake:
+    description: "Block send_wake for callers other than the operator terminal and definitions granting the send_wake capability"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: >
+      tool_input.get('server_name') == 'gobby-sessions'
+      and tool_input.get('tool_name') == 'send_wake'
+      and not (
+        operator_session(event.metadata.get('_platform_session_id'))
+        or session_has_capability(event.metadata.get('_platform_session_id'), 'send_wake'))
+    effects:
+      - type: block
+        mcp_tools: ["gobby-sessions:send_wake"]
+        reason: >-
+          send_wake is reserved for the operator's terminal and definitions granting the
+          send_wake capability. Use gobby-agents:send_message for cross-session communication.

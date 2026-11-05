@@ -1,0 +1,68 @@
+version: "1.2.0"
+tags: [gobby, default, tool-hygiene]
+
+# Adding, importing, editing or removing an MCP server changes what every seat can
+# reach, so it needs a declared capability. The proxy tools, the CLI and the HTTP
+# routes are all covered. Read-only inspection stays open. The curl pattern reads
+# quoted text because URLs are usually quoted. The daemon already refuses a spawned
+# seat's managed credential on these write routes; these rules also cover seats
+# running in an operator terminal.
+rules:
+  mcp-server-management-authority:
+    description: Require a declared capability for the MCP server management tools
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_mcp_servers'))
+    effects:
+      - type: block
+        mcp_tools:
+          - gobby:add_mcp_server
+          - gobby:import_mcp_server
+          - gobby:remove_mcp_server
+        reason: >-
+          Adding, importing or removing an MCP server requires manage_mcp_servers or the
+          operator's terminal. Send the Orchestrator the request through your report route:
+          name, transport, URL or command, reason and secret names, never secret values.
+
+  mcp-server-management-cli-authority:
+    description: Require a declared capability for CLI MCP server changes
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_mcp_servers'))
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|sudo\s+|command\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env(?:\s+(?:-u|--unset|-C|--chdir)\s+\S+|\s+-[^\s;&|]*|\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*mcp-proxy\s+(?:add-server|import-server|remove-server|auth)\b'
+        reason: >-
+          CLI MCP server changes, including OAuth authorization, require manage_mcp_servers
+          or the operator's terminal.
+          Send the Orchestrator the request through your report route.
+
+  mcp-server-management-http-authority:
+    description: Require a declared capability for HTTP MCP server changes
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_mcp_servers'))
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|sudo\s+|command\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env(?:\s+(?:-u|--unset|-C|--chdir)\s+\S+|\s+-[^\s;&|]*|\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)*(?:[^\s;&|]*/)?curl\b(?=[^\n;&|]*/api/mcp/servers)(?=[^\n;&|]*(?:(?:\s-[sSfLvkigN]*X|\s--request)(?:\s*|=)["'']?(?!(?:GET|HEAD)\b)[A-Za-z]|\s-[sSfLvkigN]*[dFT]|\s--data|\s--json|\s--form|\s--upload-file))'
+        reason: >-
+          HTTP MCP server changes require manage_mcp_servers or the operator's terminal.
+          Send the Orchestrator the request through your report route.

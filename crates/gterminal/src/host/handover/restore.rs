@@ -318,7 +318,7 @@ impl PendingCommit {
             unsafe { libc::close(fd) };
         }
         for (identity, host_terminal_id, watch) in watches {
-            state.watch_leader_exit(identity, host_terminal_id, watch);
+            state.watch_leader_exit(identity, host_terminal_id, watch, false);
         }
         let inner = state.inner.lock().await;
         for slot in inner.terminals.values() {

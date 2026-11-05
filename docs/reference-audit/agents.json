@@ -353,7 +353,7 @@
         "source-audit",
         "focused-agents"
       ],
-      "audience": "operator pane; /gobby admin and /gobby assistant cold start",
+      "audience": "operator pane; /gobby admin cold start",
       "server": "gobby-agents",
       "tool": "cold_start_admin"
     },

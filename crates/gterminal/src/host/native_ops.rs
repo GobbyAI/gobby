@@ -48,6 +48,10 @@ pub(crate) fn kill_group(pgid: i32, signal: i32) -> Result<(), KillGroupError> {
 
 /// Bound on waiting for a SIGKILLed group to be reaped before reporting it alive.
 const KILL_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Bound on the PTY output drain before an exit settles. It outlasts the reader's
+/// own drain bound, so a slow reader still delivers its bytes first.
+#[cfg(any(feature = "vt-engine", test))]
+const EXIT_DRAIN_WAIT: Duration = Duration::from_secs(1);
 
 /// Whether `pgid` still has members; a permission refusal counts as alive.
 fn group_alive(pgid: i32) -> bool {
@@ -116,6 +120,17 @@ fn invalid_snapshot_mode() -> Value {
         "ok": false,
         "error": "invalid_mode",
         "valid_modes": SnapshotMode::VALID,
+    })
+}
+
+fn snapshot_reply(mode: SnapshotMode, body: SnapshotBody) -> Value {
+    json!({
+        "ok": true,
+        "mode": mode.as_wire(),
+        "text": body.text,
+        "truncated": body.truncated,
+        "dropped_bytes": body.dropped_bytes,
+        "total_bytes": body.total_bytes,
     })
 }
 
@@ -240,6 +255,11 @@ fn remove_terminal_slot(
         inner.by_host_id.remove(&slot.host_terminal_id);
         inner.reservations.remove(&slot.reservation_id);
         remove_slot_attachments(inner, &slot);
+        inner.exit_tails.record(
+            &slot.host_terminal_id,
+            super::exit_tails::final_text(&slot),
+            Instant::now(),
+        );
         if let Some(signal) = kill_signal {
             if let Err(err) = kill_group(slot.pgid, signal) {
                 tracing::debug!(%err, pgid = slot.pgid, "kill_group failed");
@@ -266,6 +286,17 @@ fn native_slot_alive(slot: &TerminalSlot) -> bool {
 #[cfg(any(feature = "vt-engine", test))]
 fn holds_live_group(slot: &TerminalSlot) -> bool {
     slot.killing || (slot.kill_unproven && group_alive(slot.pgid))
+}
+
+/// The PTY drain for a slot's leader. Only a vt-engine slot has a PTY child.
+#[cfg(feature = "vt-engine")]
+fn output_drain(slot: &TerminalSlot) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    slot.child.as_ref()?.runtime.request_output_drain()
+}
+
+#[cfg(all(test, not(feature = "vt-engine")))]
+fn output_drain(_slot: &TerminalSlot) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    None
 }
 
 #[cfg(not(feature = "vt-engine"))]
@@ -512,13 +543,14 @@ impl HostState {
                 "commit_state": "committed",
             }),
         };
+        // An exited leader has its exit watch (runtime.rs sets both), which settles this removal.
         if already_exited {
             remove_terminal_slot(&mut inner, &identity, None);
         }
         drop(inner);
         #[cfg(feature = "vt-engine")]
         if let Some(exit_watch) = exit_watch {
-            self.watch_leader_exit(identity, host_terminal_id, exit_watch);
+            self.watch_leader_exit(identity, host_terminal_id, exit_watch, already_exited);
         }
         response
     }
@@ -531,6 +563,7 @@ impl HostState {
         identity: Identity,
         host_terminal_id: String,
         exit_watch: crate::pane::ChildExitWatch,
+        exit_at_commit: bool,
     ) {
         let state = Arc::clone(self);
         #[cfg(unix)]
@@ -544,7 +577,7 @@ impl HostState {
                 until_write_owned(&state.mutation_gate).await;
             }
             state
-                .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code)
+                .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code, exit_at_commit)
                 .await;
         });
     }
@@ -678,7 +711,13 @@ impl HostState {
             .unwrap_or(SNAPSHOT_DEFAULT_MAX_LINES as u64) as usize;
         let inner = self.inner.lock().await;
         let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return err("not_found");
+            // A retired terminal answers from the text it printed last, in text mode.
+            return match inner.exit_tails.get(&host_terminal_id, Instant::now()) {
+                Some(text) if matches!(mode, SnapshotMode::Text) => {
+                    snapshot_reply(mode, truncate_snapshot(text, max_lines, max_bytes))
+                }
+                _ => err("not_found"),
+            };
         };
         let Some(slot) = inner.terminals.get(&identity) else {
             return err("not_found");
@@ -696,40 +735,54 @@ impl HostState {
         };
         #[cfg(not(feature = "vt-engine"))]
         let text = String::new();
-        let body = truncate_snapshot(&text, max_lines, max_bytes);
-        json!({
-            "ok": true,
-            "mode": mode.as_wire(),
-            "text": body.text,
-            "truncated": body.truncated,
-            "dropped_bytes": body.dropped_bytes,
-            "total_bytes": body.total_bytes,
-        })
+        snapshot_reply(mode, truncate_snapshot(&text, max_lines, max_bytes))
     }
 
     /// Removes a committed pane whose leader exited and emits its
     /// `terminal_exited`, under the `inner` lock and then the events lock.
-    /// The exit watcher is the only caller, so it alone removes a committed
-    /// pane for an exit. Returns `false`, doing nothing, when a kill owns
-    /// the slot: one in flight, or an unproven one whose group lives on.
+    /// `exit_at_commit` means commit removed the slot for this exit, so an
+    /// absent slot is ours to emit. Otherwise a kill owns the slot: returns
+    /// `false`, doing nothing, when it is absent or held by a live group.
     #[cfg(any(feature = "vt-engine", test))]
     async fn settle_leader_exit(
         &self,
         identity: &Identity,
         host_terminal_id: &str,
         exit_code: Option<u32>,
+        exit_at_commit: bool,
     ) -> bool {
         let _gate = self.mutation_gate.read().await;
+        // A slot that holds a live group belongs to its kill: leave it alone and
+        // do not drain. Otherwise the leader's last writes are already queued on
+        // its PTY, and the exit tail is read from the terminal the reader feeds.
+        // Wait for the reader to take them.
+        let drain = {
+            let inner = self.inner.lock().await;
+            match inner
+                .terminals
+                .get(identity)
+                .filter(|slot| slot.host_terminal_id == host_terminal_id)
+            {
+                Some(slot) if holds_live_group(slot) => return false,
+                Some(slot) => output_drain(slot),
+                None if exit_at_commit => None,
+                None => return false,
+            }
+        };
+        if let Some(drain) = drain {
+            let _ = tokio::time::timeout(EXIT_DRAIN_WAIT, drain).await;
+        }
         let mut inner = self.inner.lock().await;
-        if let Some(slot) = inner
+        match inner
             .terminals
             .get(identity)
             .filter(|slot| slot.host_terminal_id == host_terminal_id)
         {
-            if holds_live_group(slot) {
-                return false;
-            }
-            remove_terminal_slot(&mut inner, identity, None);
+            Some(slot) if holds_live_group(slot) => return false,
+            Some(_) => remove_terminal_slot(&mut inner, identity, None),
+            // Absent after the drain: a kill removed it while the drain ran.
+            None if !exit_at_commit => return false,
+            None => {}
         }
         // Emitted before the `inner` lock is released: no reader sees the
         // slot gone while its event is still unwritten.

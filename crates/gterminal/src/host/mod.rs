@@ -18,6 +18,7 @@ mod config;
 mod control;
 mod embed;
 mod events;
+mod exit_tails;
 mod frames;
 #[cfg(all(unix, feature = "vt-engine"))]
 pub(crate) mod gate;

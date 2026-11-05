@@ -92,8 +92,8 @@ def test_restore_persists_supported_fields_from_current_shape(
             "invalid follow_up_at timestamp",
         ),
         (
-            {"closed_at": "2026-10-22T12:00:00Z", "closed_reason": "completed"},
-            "Unknown task close reason",
+            {"closed_at": "2026-10-22T12:00:00Z", "closed_reason": "   "},
+            "Task close reason must be nonblank text of at most 120 characters",
         ),
     ],
 )
@@ -165,7 +165,7 @@ def test_backup_restore_preserves_label_derived_hold(
 
 
 def test_restore_ignores_top_level_legacy_keys(
-    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db, tmp_path: Path
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     project = isolated_checkout_factory(temp_db, "jsonl-legacy", root=tmp_path).project
     export_path = tmp_path / ".gobby" / "tasks.jsonl"

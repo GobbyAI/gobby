@@ -17,15 +17,12 @@ Admin is not a runbook. Type the cold start in any workspace pane:
 $gobby admin        Codex
 ```
 
-The typing pane becomes the Orchestrator. A split beside it in the same tab
-opens the Assistant with the same CLI, which runs `/gobby assistant`. To start
-from the Assistant's side, type `/gobby assistant` (`$gobby assistant` in
-Codex): the typing pane becomes the Assistant and the Orchestrator opens beside
-it.
+The typing pane becomes the Orchestrator. The Orchestrator then spawns the
+Assistant into its sandbox, so no Assistant pane is opened by hand and there is
+no `/gobby assistant` command.
 
-Both commands are re-runnable. A live counterpart session for the project on
-this machine, or a counterpart pane in the same tab, is reused instead of
-opened again. The router calls `gobby-agents:cold_start_admin`, which refuses
+The command only applies the Orchestrator definition to the typing pane and
+opens no second pane. The router calls `gobby-agents:cold_start_admin`, which refuses
 `pane_unavailable` outside a workspace pane and `unsupported_provider` for a CLI
 it cannot launch. Only the space forms cold start: `/gobby:admin` and
 `/gobby admin <request>` load the admin capability reference instead.

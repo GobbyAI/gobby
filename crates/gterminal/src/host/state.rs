@@ -149,6 +149,8 @@ pub(crate) struct Inner {
     pub(crate) next_attachment: u64,
     /// Sequence of the most recent theme declaration on this host.
     pub(crate) next_theme_seq: u64,
+    /// Final text of retired terminals; see `exit_tails`.
+    pub(crate) exit_tails: super::exit_tails::ExitTails,
     control_owners: HashSet<u64>,
 }
 
@@ -173,6 +175,7 @@ impl Inner {
             attachments: HashMap::new(),
             next_attachment,
             next_theme_seq: 0,
+            exit_tails: Default::default(),
             control_owners: HashSet::new(),
         }
     }

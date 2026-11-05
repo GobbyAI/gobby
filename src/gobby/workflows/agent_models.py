@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
@@ -261,6 +261,14 @@ class AgentDefinitionBody(BaseModel):
             "The daemon and the operator's own terminal are exempt."
         ),
     )
+    spawner_capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description=(
+            "Spawning this definition requires any listed capability of the caller, whatever "
+            "the caller's spawnable_agents list or capability containment says; empty allows all. "
+            "A fallback hop to this definition is checked the same way."
+        ),
+    )
     monitor_report_recipients: list[StrictStr] = Field(
         default_factory=list,
         description="Enabled definitions that must receive the same report to finish a monitor tick.",
@@ -384,6 +392,12 @@ class AgentDefinitionBody(BaseModel):
     def may_spawn(self, agent: str) -> bool:
         """Whether a spawned run of this definition may spawn ``agent``."""
         return self.spawnable_agents == [SPAWN_ANY_AGENT] or agent in self.spawnable_agents
+
+    def admits_spawner(self, capabilities: Iterable[str]) -> bool:
+        """Whether a caller holding ``capabilities`` may spawn this definition."""
+        if not self.spawner_capabilities:
+            return True
+        return not set(capabilities).isdisjoint(self.spawner_capabilities)
 
     def covers_direct_integration_paths(self, paths: Sequence[str]) -> bool:
         """Whether this definition's direct-commit grant covers every path.
