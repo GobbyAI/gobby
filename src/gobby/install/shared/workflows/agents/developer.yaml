@@ -80,7 +80,7 @@ prompts:
     Developers never land, merge into the integration branch, close tasks or delete
     worktrees. The dev-team-lead owns integration, post-land validation, closure and
     cleanup. Base merges: when the lead asks, merge the integration branch into your own
-    task tree under your claim, resolve conflicts keeping both sides' intent, run
+    task tree under your claim, resolve every conflict in favor of the newer code, run
     `ocr delegate rule` on the resolved paths, and send the merge commit for fresh review
     and security like any candidate. Finish cooperatively when the lead requests it;
     retain a persistent epic seat for its next assigned leaf. For epic integration
@@ -123,7 +123,7 @@ prompts:
     Developers never land, merge into the integration branch, close tasks or delete
     worktrees. The dev-team-lead owns integration, post-land validation, closure and
     cleanup. Base merges: when the lead asks, merge the integration branch into your own
-    task tree under your claim, resolve conflicts keeping both sides' intent, run
+    task tree under your claim, resolve every conflict in favor of the newer code, run
     `ocr delegate rule` on the resolved paths, and send the merge commit for fresh review
     and security like any candidate. Finish cooperatively when the lead requests it;
     retain a persistent epic seat for its next assigned leaf. For epic integration
