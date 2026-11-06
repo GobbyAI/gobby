@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -30,6 +31,12 @@ def installed_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[
         binary.write_text(script, encoding="utf-8")
         binary.chmod(0o755)
     (bin_dir / ".gdaemon-schema-identity.json").write_text("{}", encoding="utf-8")
+    # A freshly written executable can take longer than the 10s version probe on its first
+    # run on this host. Run it once here, under a longer bound, so the probe measures only
+    # the probe and the cache tests stop depending on first-run latency.
+    subprocess.run(
+        [str(bin_dir / "node"), "--version"], capture_output=True, check=True, timeout=120
+    )
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(bin_dir))
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setattr(srt_runtime, "srt_install_root", lambda: root)

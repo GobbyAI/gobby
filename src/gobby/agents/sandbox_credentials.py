@@ -24,8 +24,13 @@ def credential_roots() -> list[Path]:
         break_glass_staging_path(),
     ]
     canonical = operator_bootstrap_path()
-    if canonical is not None:
-        roots.append(canonical)
+    if canonical is None:
+        # Without the passwd home the operator's real bootstrap cannot be denied, so no
+        # sandbox may launch with a credential list that silently lacks it.
+        raise RuntimeError(
+            "the operator's passwd home is unknown; refusing to build sandbox credential roots"
+        )
+    roots.append(canonical)
     return roots
 
 

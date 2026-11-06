@@ -122,7 +122,7 @@ def test_passwd_home_is_refused_even_when_home_env_points_elsewhere(
 ) -> None:
     account = tmp_path / "account"
     account.mkdir()
-    monkeypatch.setattr("gobby.agents.build_root.account_home", lambda: account)
+    monkeypatch.setattr("gobby.config.agent_build.account_home", lambda: account)
     monkeypatch.setenv("HOME", str(tmp_path / "elsewhere"))
     with pytest.raises(ValueError, match="too broad"):
         configure_build_root(str(account))

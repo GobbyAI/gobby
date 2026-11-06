@@ -203,7 +203,7 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
 /// denies the bootstrap the daemon bound at startup. `PolicyInputs` carries no bound
 /// path, so the default `gobby_home/bootstrap.yaml` stands in for it. The operator's
 /// canonical bootstrap sits under the passwd home, and the oracle denies it too.
-fn credential_roots(gobby: &Path, account: Option<&Path>) -> Vec<PathBuf> {
+fn credential_roots(gobby: &Path, account: &Path) -> Vec<PathBuf> {
     let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
@@ -212,13 +212,15 @@ fn credential_roots(gobby: &Path, account: Option<&Path>) -> Vec<PathBuf> {
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
     ];
-    roots.extend(account.map(|home| home.join(".gobby").join("bootstrap.yaml")));
+    roots.push(account.join(".gobby").join("bootstrap.yaml"));
     roots
 }
 
 /// `account_home`: the passwd home of this UID, which the oracle reads through `pwd`. No
 /// environment variable selects it, so HOME and GOBBY_HOME cannot redirect the credential.
-fn passwd_home() -> Option<PathBuf> {
+/// A failed lookup is an error: without the passwd home the operator's bootstrap cannot be
+/// denied, so the policy refuses to compute rather than launch without it.
+fn passwd_home() -> Result<PathBuf> {
     // SAFETY: getuid cannot fail and takes no pointers.
     let uid = unsafe { libc::getuid() };
     // SAFETY: a zeroed passwd is a valid value, and getpwuid_r overwrites it on success.
@@ -236,11 +238,11 @@ fn passwd_home() -> Option<PathBuf> {
         )
     };
     if status != 0 || found.is_null() || entry.pw_dir.is_null() {
-        return None;
+        bail!("passwd home lookup failed for uid {uid} (status {status})");
     }
     // SAFETY: a successful getpwuid_r leaves `pw_dir` a NUL-terminated string inside `buffer`.
     let dir = unsafe { CStr::from_ptr(entry.pw_dir) };
-    Some(PathBuf::from(OsStr::from_bytes(dir.to_bytes())))
+    Ok(PathBuf::from(OsStr::from_bytes(dir.to_bytes())))
 }
 
 /// `private_srt_socket_roots`: the private SRT socket roots, including this UID's `/tmp` root.
@@ -266,7 +268,7 @@ pub(super) fn managed_execution_root(gobby: &Path) -> PathBuf {
 fn sensitive_roots(
     gobby: &Path,
     home: &Path,
-    account: Option<&Path>,
+    account: &Path,
     env: &BTreeMap<String, String>,
 ) -> Vec<String> {
     let mut roots = credential_roots(gobby, account);
@@ -280,7 +282,7 @@ fn sensitive_roots(
 fn sensitive_write_roots(
     gobby: &Path,
     home: &Path,
-    account: Option<&Path>,
+    account: &Path,
     env: &BTreeMap<String, String>,
 ) -> Vec<String> {
     let mut roots = vec![
@@ -728,7 +730,8 @@ pub(super) fn assert_sensitive_path_contract(
     env: &BTreeMap<String, String>,
 ) -> Result<()> {
     // The guard protects the operator's real passwd bootstrap, so it never follows a pinned account.
-    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, passwd_home().as_deref(), env)
+    let account = passwd_home()?;
+    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, &account, env)
         .into_iter()
         .map(PathBuf::from)
         .collect();
@@ -874,7 +877,10 @@ pub(super) fn compute(
     let provider_reads =
         provider_read_exceptions(provider, env, inputs.provider_executable.as_deref(), home);
     // The operator's canonical bootstrap follows the passwd home unless the caller pins it.
-    let account = inputs.account_home.clone().or_else(passwd_home);
+    let account = match inputs.account_home.clone() {
+        Some(pinned) => pinned,
+        None => passwd_home()?,
+    };
     let credential_denies = credential_read_roots(home);
     let git_paths = git_metadata_write_paths(&workspace, home)?;
     let rtk = rtk_sandbox_paths(env, home);
@@ -902,7 +908,7 @@ pub(super) fn compute(
         home,
     );
     let mut deny_read_paths = deny_paths(
-        sensitive_roots(gobby, home, account.as_deref(), env)
+        sensitive_roots(gobby, home, &account, env)
             .into_iter()
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
@@ -916,7 +922,7 @@ pub(super) fn compute(
         .map(|path| canonical_pathbuf(path, Some(&workspace), home))
         .collect();
     let deny_write_paths = deny_paths(
-        sensitive_write_roots(gobby, home, account.as_deref(), env)
+        sensitive_write_roots(gobby, home, &account, env)
             .into_iter()
             .chain(provider_control_write_paths(
                 &workspace,

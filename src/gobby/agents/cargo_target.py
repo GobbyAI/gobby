@@ -45,6 +45,8 @@ _TARGET_EXCLUDE_PATTERN = "/target"
 _PATH_HASH_LENGTH = 16
 _PROJECT_COMPONENT_LENGTH = 80
 _CHECKOUT_COMPONENT_LENGTH = 64
+# Written inside each operator target Gobby creates, naming the checkout it belongs to.
+_CHECKOUT_MARKER = ".gobby-checkout"
 
 
 def _safe_component(value: str, *, limit: int, fallback: str) -> str:
@@ -194,17 +196,34 @@ def _replace_target_symlink(target: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _is_gobby_checkout_target(destination: Path, desired: Path) -> bool:
-    """True when a link names this checkout's target under another build root.
+def _canonical_checkout(checkout: Path) -> str:
+    return str(checkout.expanduser().resolve(strict=False))
 
-    The root may differ, but the ``cargo-target-v2/<project>/<checkout>`` layout and
-    the checkout component must match, so a foreign link is never claimed.
+
+def _claim_target_dir(directory: Path, checkout: Path) -> None:
+    """Create a checkout's target directory and record that Gobby created it.
+
+    The marker is what proves ownership later: a directory's name cannot, because a
+    hand-made link can copy the layout Gobby uses.
     """
-    return (
-        destination.name == desired.name
-        and destination.parent.name == desired.parent.name
-        and destination.parent.parent.name == desired.parent.parent.name
-    )
+    directory.mkdir(parents=True, exist_ok=True)
+    marker = directory / _CHECKOUT_MARKER
+    if not marker.exists():
+        marker.write_text(_canonical_checkout(checkout), encoding="utf-8")
+
+
+def _is_gobby_checkout_target(destination: Path, checkout: Path) -> bool:
+    """True when a link names a target Gobby created for this checkout, under any root.
+
+    The root may differ from the configured one, so a target left under an earlier build
+    root is re-pointed. The marker inside the target names the checkout it was created
+    for; a link to a directory without a matching marker is foreign and never claimed.
+    """
+    try:
+        owner = (destination / _CHECKOUT_MARKER).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return owner == _canonical_checkout(checkout)
 
 
 def link_checkout_cargo_target(checkout: Path, project_id: str) -> bool:
@@ -223,9 +242,9 @@ def link_checkout_cargo_target(checkout: Path, project_id: str) -> bool:
         if target.is_symlink():
             destination = os.readlink(target)
             if destination == str(desired):
-                desired.mkdir(parents=True, exist_ok=True)
-            elif _is_gobby_checkout_target(Path(destination), desired):
-                desired.mkdir(parents=True, exist_ok=True)
+                _claim_target_dir(desired, checkout)
+            elif _is_gobby_checkout_target(Path(destination), checkout):
+                _claim_target_dir(desired, checkout)
                 _replace_target_symlink(target, desired)
             else:
                 logger.debug("Leaving foreign target symlink at %s", target)
@@ -234,7 +253,7 @@ def link_checkout_cargo_target(checkout: Path, project_id: str) -> bool:
             logger.debug("Leaving existing target directory at %s", target)
             return False
         else:
-            desired.mkdir(parents=True, exist_ok=True)
+            _claim_target_dir(desired, checkout)
             _replace_target_symlink(target, desired)
     except (OSError, ValueError):
         logger.warning("Failed to link Cargo target for %s", checkout, exc_info=True)

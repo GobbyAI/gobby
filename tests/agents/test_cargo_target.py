@@ -163,12 +163,12 @@ def test_link_from_an_earlier_build_root_is_atomically_migrated_without_artifact
     earlier_root = tmp_path / "earlier-root"
     earlier_root.mkdir()
     configure_build_root(str(earlier_root))
+    # Gobby links the checkout under the earlier root, which writes the ownership marker.
+    assert link_checkout_cargo_target(cargo_checkout, "proj-1") is True
     earlier = checkout_cargo_target_dir(cargo_checkout, "proj-1")
     configure_build_root(None)
-    earlier.mkdir(parents=True)
     (earlier / "contaminated").write_text("old", encoding="utf-8")
     target = cargo_checkout / "target"
-    os.symlink(earlier, target, target_is_directory=True)
     replacements: list[tuple[Path, Path]] = []
     real_replace = os.replace
 
@@ -197,6 +197,21 @@ def test_legacy_shared_link_is_foreign_and_left_alone(
 
     assert link_checkout_cargo_target(cargo_checkout, "proj-1") is False
     assert os.readlink(target) == str(legacy)
+
+
+def test_hand_made_link_with_the_gobby_layout_is_left_alone(
+    gobby_home: Path, cargo_checkout: Path, tmp_path: Path
+) -> None:
+    # Same layout and checkout component as Gobby's own target, but no ownership marker.
+    component = checkout_cargo_target_dir(cargo_checkout, "proj-1").name
+    shaped = tmp_path / "hand-made" / "cargo-target-v2" / "proj-1" / component
+    shaped.mkdir(parents=True)
+    target = cargo_checkout / "target"
+    os.symlink(shaped, target, target_is_directory=True)
+
+    assert link_checkout_cargo_target(cargo_checkout, "proj-1") is False
+
+    assert os.readlink(target) == str(shaped)
 
 
 def test_non_cargo_checkout_untouched(gobby_home: Path, tmp_path: Path) -> None:

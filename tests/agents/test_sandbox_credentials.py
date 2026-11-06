@@ -22,13 +22,11 @@ def test_credential_roots_deny_the_canonical_operator_bootstrap_under_a_gobby_ho
     assert account / ".gobby" / "bootstrap.yaml" in credential_roots()
 
 
-def test_credential_roots_survive_an_account_without_a_passwd_entry(
+def test_credential_roots_refuse_an_account_without_a_passwd_entry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(local_token, "account_home", lambda: None)
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "override-home"))
 
-    roots = credential_roots()
-
-    assert tmp_path / "override-home" / "bootstrap.yaml" in roots
-    assert all(isinstance(root, Path) for root in roots)
+    with pytest.raises(RuntimeError, match="passwd home is unknown"):
+        credential_roots()
