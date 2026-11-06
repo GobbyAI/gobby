@@ -85,6 +85,10 @@ struct Gmcp {
 
 impl Gmcp {
     fn spawn(daemon_url: &str, home: &Path) -> Result<Self> {
+        Self::spawn_with_env(daemon_url, home, &[])
+    }
+
+    fn spawn_with_env(daemon_url: &str, home: &Path, environment: &[(&str, &str)]) -> Result<Self> {
         std::fs::write(home.join("bootstrap.yaml"), "api_key: test\n")?;
         let mut child = Command::new(env!("CARGO_BIN_EXE_gmcp"))
             .current_dir(home)
@@ -96,6 +100,10 @@ impl Gmcp {
             .env_remove("GOBBY_AGENT_RUN_ID")
             .env_remove("GOBBY_SESSION_ID")
             .env_remove("GOBBY_PROJECT_ID")
+            // A test runner inside tmux would otherwise pin caller identity to its pane.
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .envs(environment.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -642,6 +650,84 @@ fn shaping_get_tool_schema_reshapes_the_answer() -> Result<()> {
 #[test]
 fn shaping_get_tool_schema_keeps_only_the_error() -> Result<()> {
     shaping_case_matches_fixture("get_tool_schema_keeps_only_the_error")?;
+    Ok(())
+}
+
+#[test]
+fn variable_shortcuts_send_caller_identity_never_the_target() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true}));
+    let calls = |gmcp: &mut Gmcp| -> Result<()> {
+        let arguments = json!({"session_id": "target-session", "name": "x", "value": 1});
+        gmcp.call_tool("set_variable", arguments.clone())?;
+        gmcp.call_tool("get_variable", arguments)?;
+        Ok(())
+    };
+    let variable_requests = |daemon: &StubDaemon| {
+        daemon
+            .requests()
+            .into_iter()
+            .filter(|request| request.path.contains("/variables/"))
+            .collect::<Vec<_>>()
+    };
+
+    {
+        // Headless caller: no managed session and no tmux pane, so the header must stay
+        // empty and the daemon resolves the caller from terminal context.
+        let daemon = start_daemon((0..4).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
+        gmcp.initialize()?;
+        calls(&mut gmcp)?;
+        let requests = variable_requests(&daemon);
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for request in &requests {
+            assert!(
+                request
+                    .path
+                    .starts_with("/api/sessions/target-session/variables/"),
+                "{}",
+                request.path
+            );
+            assert!(
+                !request.headers.contains_key("x-gobby-session-id"),
+                "target leaked into caller identity: {:?}",
+                request.headers
+            );
+            assert!(
+                request.headers.contains_key("x-gobby-terminal-context"),
+                "{:?}",
+                request.headers
+            );
+        }
+    }
+
+    {
+        // Managed caller: the environment session is the caller and must not be replaced.
+        let daemon = start_daemon((0..4).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn_with_env(
+            &daemon.url(),
+            home.path(),
+            &[("GOBBY_SESSION_ID", "caller-session")],
+        )?;
+        daemon.wait_for_requests(1);
+        gmcp.initialize()?;
+        calls(&mut gmcp)?;
+        let requests = variable_requests(&daemon);
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for request in &requests {
+            assert_eq!(
+                request
+                    .headers
+                    .get("x-gobby-session-id")
+                    .map(String::as_str),
+                Some("caller-session"),
+                "{:?}",
+                request.headers
+            );
+        }
+    }
     Ok(())
 }
 
