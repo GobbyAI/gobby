@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+/// Backstop only: each wait returns as soon as its message or request arrives.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
 struct Client {
     child: Child,
     stdin: ChildStdin,
@@ -61,7 +64,7 @@ impl Client {
     }
 
     fn next(&self) -> Result<Value> {
-        Ok(self.messages.recv_timeout(Duration::from_secs(5))?)
+        Ok(self.messages.recv_timeout(RESPONSE_TIMEOUT)?)
     }
 }
 
@@ -155,7 +158,7 @@ fn ordinary_call_completes_during_wait() -> Result<()> {
                 )?;
             }
         }
-        released.recv_timeout(Duration::from_secs(5))?;
+        released.recv_timeout(RESPONSE_TIMEOUT)?;
         respond(
             &mut pending.context("held wait socket")?,
             json!({"success":true,"result":{"wait":true}}),
@@ -170,7 +173,7 @@ fn ordinary_call_completes_during_wait() -> Result<()> {
     client.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"call_tool",
         "arguments":{"server_name":"gobby-agents","tool_name":"wait_for_output","arguments":{"timeout":30},
         "session_id":"#wait","project_id":"wait-project","preflight_enabled":false}}}))?;
-    held.recv_timeout(Duration::from_secs(5))
+    held.recv_timeout(RESPONSE_TIMEOUT)
         .context("wait request did not arrive")?;
     client.send(
         json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"call_tool",
@@ -187,7 +190,7 @@ fn ordinary_call_completes_during_wait() -> Result<()> {
         true
     );
     let calls: Vec<_> = (0..3)
-        .map(|_| recorded.recv_timeout(Duration::from_secs(5)))
+        .map(|_| recorded.recv_timeout(RESPONSE_TIMEOUT))
         .collect::<std::result::Result<_, _>>()?;
     let ordinary_http = calls
         .iter()
