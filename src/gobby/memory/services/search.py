@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.memory import stage_timing
 from gobby.memory.services._search_access import SURFACED_CALLERS
 from gobby.memory.services._search_access import (
     update_surfaced_stats as update_memory_surfaced_stats,
@@ -142,7 +143,9 @@ class SearchService:
             # An empty `embed_text` means the caller had nothing to supply, so
             # fall back rather than embed "" and hand the vector leg a
             # meaningless vector while discarding the query we do have.
-            query_embedding = await self._embed_fn(embed_text or query, is_query=True)
+            query_embedding = await stage_timing.timed_await(
+                "embed", self._embed_fn(embed_text or query, is_query=True)
+            )
             half_life = float(self._config.temporal_decay_half_life_days)
             effective_min_score = min_score if min_score is not None else 0.0
             filters = memory_scope_filter(scope, memory_type)

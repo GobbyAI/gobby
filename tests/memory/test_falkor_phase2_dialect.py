@@ -139,6 +139,7 @@ async def test_ensure_unique_constraint_uses_redis_command_and_constraints_poll(
 
     await client.ensure_unique_constraint("_Entity", "entity_key")
 
+    assert execute_command.await_args is not None
     command_text = " ".join(str(part) for part in execute_command.await_args.args)
     assert "GRAPH.CONSTRAINT" in command_text
     assert "CREATE" in command_text
@@ -278,6 +279,35 @@ async def test_code_link_timestamps_use_unix_epoch_ms() -> None:
     cypher = _compact(client.query.await_args.args[0])
     assert "timestamp()" in cypher
     assert "datetime()" not in cypher
+
+
+@pytest.mark.asyncio
+async def test_code_link_materializes_rows_before_indexed_entity_match() -> None:
+    """RELATES_TO_CODE rows pass a WITH barrier before the indexed _Entity MATCH."""
+    client = AsyncMock()
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[("sym-1", 0.93)])
+    linker = KnowledgeGraphCodeLinker(
+        client,
+        vector_store,
+        code_link_min_score=0.8,
+        code_symbol_collection_prefix="code_symbols_",
+    )
+    entity = _GraphEntity(
+        entity_key="proj-1:python",
+        name="Python",
+        entity_type="tool",
+        project_id="proj-1",
+        is_global=False,
+        normalized_name="python",
+    )
+
+    await linker.link_entities_to_code([entity], {"proj-1:python": [0.1]}, project_id="proj-1")
+
+    cypher = _compact(client.query.await_args.args[0])
+    assert (
+        "UNWIND $links AS link WITH link MATCH (e:_Entity {entity_key: link.entity_key})"
+    ) in cypher
 
 
 def test_daemon_python_source_has_no_apoc_procedure_fragments() -> None:
