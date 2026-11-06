@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import click
+import httpx
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.tasks._utils.resolution import resolve_task_id
@@ -34,6 +35,7 @@ from gobby.storage.token_events import (
     token_event_retention_transaction,
 )
 from gobby.storage.usage_ledger import UsageLedgerStore
+from gobby.utils.daemon_client import DaemonAuthenticationError
 
 
 @click.group()
@@ -544,3 +546,56 @@ def token_ledger(
         return
     for line in _ledger_lines(page):
         click.echo(line)
+
+
+DEFAULT_QUOTA_PROVIDERS = ("claude", "codex", "grok", "droid", "qwen", "agy")
+
+
+def _flag(value: object) -> str:
+    return "true" if value else "false"
+
+
+def _used_percent(window: Mapping[str, Any]) -> str:
+    limit = window["limit"]
+    if not limit:
+        return "n/a"
+    return f"{window['used'] / limit * 100:.1f}%"
+
+
+def _quota_lines(snapshot: Mapping[str, Any]) -> list[str]:
+    lines = [
+        f"{snapshot['provider']}: state={snapshot['state']}"
+        f" supported={_flag(snapshot['supported'])} reason={_or_na(snapshot['reason'])}"
+    ]
+    for window in snapshot["windows"]:
+        lines.append(
+            f"  {window['label']}: {_used_percent(window)} used,"
+            f" resets {_or_na(window['resets_at'])}"
+        )
+    for key, component in snapshot["details"].get("components", {}).items():
+        stale = component["stale_reason"]
+        suffix = "" if stale is None else f" stale_reason={stale}"
+        lines.append(
+            f"  component {key}: state={component['state']} fresh={_flag(component['fresh'])}"
+            f" resets={_or_na(component['resets_at'])}{suffix}"
+        )
+    return lines
+
+
+@tokens.command("quota")
+@click.argument("providers", nargs=-1)
+def token_quota(providers: tuple[str, ...]) -> None:
+    """Show provider capacity from the running daemon.
+
+    With no PROVIDERS, prints every known provider.
+    """
+    client = get_daemon_client()
+    for provider in providers or DEFAULT_QUOTA_PROVIDERS:
+        try:
+            response = client.call_http_api(f"/api/providers/{provider}/usage", method="GET")
+        except (httpx.HTTPError, DaemonAuthenticationError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if response.status_code != 200:
+            raise click.ClickException(f"{provider}: daemon returned HTTP {response.status_code}")
+        for line in _quota_lines(response.json()):
+            click.echo(line)
