@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from gobby.sessions.background_notices import background_receipt
+from gobby.sessions.background_notices import BackgroundReceipt, background_receipt
 
 RECEIPT = (
     "Command running in background with ID: bq76hb30g. "
@@ -48,9 +48,44 @@ def test_foreground_result_yields_no_receipt() -> None:
         {"tool_output": f"tests/hooks/test_background_shell_receipts.py:13:    {RECEIPT}"},
     ],
 )
-def test_a_foreground_result_that_prints_a_receipt_yields_no_receipt(data: dict[str, Any]) -> None:
-    # A grep of this file prints the receipt sentence after a path prefix; the job never ran.
-    assert background_receipt(data) is None
+def test_a_result_that_prints_a_receipt_line_is_a_background_call(data: dict[str, Any]) -> None:
+    # A grep of this file prints the receipt sentence after a path prefix. A receipt-shaped line
+    # anywhere in unstructured stdout is a background call, so it never settles on the foreground
+    # path. It stays in flight: no notice can carry this call's tool-use id.
+    receipt = background_receipt(data)
+
+    assert receipt == BackgroundReceipt(
+        job_id="bq76hb30g", output_path="/scratch/tasks/bq76hb30g.output"
+    )
+
+
+PROBE_STDOUT = (
+    "build output\n"
+    "Command running in background with ID: job123. "
+    "Output is being written to: /tmp/job123.output."
+)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"tool_response": {"stdout": PROBE_STDOUT}},
+        {"tool_response": {"backgroundTaskId": "job123", "stdout": PROBE_STDOUT}},
+    ],
+    ids=["unstructured", "structured"],
+)
+def test_a_receipt_after_other_stdout_names_its_job_and_file(data: dict[str, Any]) -> None:
+    # The receipt is not the first line. Unstructured, it is still a background call, identified.
+    assert background_receipt(data) == BackgroundReceipt(
+        job_id="job123", output_path="/tmp/job123.output"
+    )
+
+
+def test_an_unstructured_receipt_that_names_no_job_or_file_stays_in_flight() -> None:
+    # The sentence names neither job nor file: the call is background, and stays unidentified.
+    data = {"tool_response": {"stdout": "build output\nCommand running in background with ID: ."}}
+
+    assert background_receipt(data) == BackgroundReceipt(job_id=None, output_path=None)
 
 
 @pytest.mark.parametrize("text", [RECEIPT, TIMED_OUT_RECEIPT])

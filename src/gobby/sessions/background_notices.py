@@ -22,8 +22,8 @@ NOTICE_TAG = "<task-notification>"
 NOTICE_FIELDS = ("task-id", "tool-use-id", "output-file", "status", "summary")
 _NOTICE_ORIGIN = "task-notification"
 _MAX_NOTICE_CHARS = 16_000
-_RECEIPT_START = re.compile(
-    r"\s*(?:Command running in background with ID: "
+_RECEIPT_SENTENCE = re.compile(
+    r"(?:Command running in background with ID: "
     r"|Command did not complete within its [0-9]+s timeout and was moved to the background \(ID: )"
 )
 _RECEIPT_JOB = re.compile(r"(?:running in background with ID: |\(ID: )([A-Za-z0-9_-]+)")
@@ -88,11 +88,11 @@ def background_receipt(data: Mapping[str, Any]) -> BackgroundReceipt | None:
     """Read the background receipt from a hook payload's tool response, when it has one.
 
     A structured response that names a background task is a background call, whatever its stdout
-    printed before the receipt: its receipt is searched in the whole response. When the output
-    file is not named, the call still counts, with no output path, so it stays in flight.
-    Other output is a background call only when the receipt is its first sentence. A foreground
-    command that prints the sentence after other text, such as a grep of a file that holds it,
-    started no job and has no receipt.
+    printed before the receipt: its receipt is searched in the whole response. Unstructured output
+    is a background call too when a receipt sentence appears anywhere in its stdout, so such a
+    result never takes the foreground path, even a grep that prints a file holding the sentence.
+    A job id or output file the sentence does not name is None. The call still counts and stays
+    in flight, since no notice can name it.
     """
     response = data.get("tool_output", data.get("tool_response", data.get("tool_result")))
     structured_job = _structured_job_id(response)
@@ -102,7 +102,7 @@ def background_receipt(data: Mapping[str, Any]) -> BackgroundReceipt | None:
             job_id=structured_job, output_path=output.group(1) if output else None
         )
     text = _stdout_of(response)
-    if text is None or _RECEIPT_START.match(text) is None:
+    if text is None or _RECEIPT_SENTENCE.search(text) is None:
         return None
     output = _RECEIPT_OUTPUT.search(text)
     job = _RECEIPT_JOB.search(text)
