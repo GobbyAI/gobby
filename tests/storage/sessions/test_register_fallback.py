@@ -241,12 +241,12 @@ def test_register_existing_session_backfills_terminal_context(
         source="codex",
         project_id=project_id,
         terminal_context=terminal_context,
-        workflow_name="developer",
+        workflow_name="fixture-worker",
     )
 
     assert updated.id == created.id
     assert updated.terminal_context == terminal_context
-    assert updated.workflow_name == "developer"
+    assert updated.workflow_name == "fixture-worker"
 
 
 def test_register_existing_session_merges_cwd_without_losing_tmux_context(
@@ -304,6 +304,116 @@ def test_backfill_terminal_context_merges_without_losing_tmux_context(
         "cwd": "/work/repos/gobby",
     }
     assert tmux_target_added is False
+
+
+@pytest.mark.parametrize(
+    ("stored", "settles"),
+    [
+        ({"marker": "pending"}, True),
+        ({"marker": "settled"}, False),
+        ({"marker": "pending", "parent_pid": 4242}, False),
+        ({}, False),
+    ],
+    ids=["pending", "already-settled", "process-recorded", "no-marker"],
+)
+def test_settle_terminal_context_replaces_only_a_pending_marker(
+    session_mgr: SessionManager,
+    project_id: str,
+    stored: dict[str, object],
+    settles: bool,
+) -> None:
+    created = session_mgr.register(
+        external_id="settle-terminal-session",
+        machine_id="20000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby", **stored},
+    )
+
+    settled, tmux_target_added = session_mgr.settle_terminal_context(
+        created.id,
+        {"marker": "won", "tmux_pane": "%3"},
+        marker_key="marker",
+        pending="pending",
+    )
+
+    row = session_mgr.get(created.id)
+    assert row is not None
+    if not settles:
+        # Another writer settled it first: its stored result stands.
+        assert settled is None
+        assert tmux_target_added is False
+        assert row.terminal_context == {"cwd": "/work/repos/gobby", **stored}
+        return
+    assert settled is not None
+    assert tmux_target_added is True
+    assert settled.terminal_context == {
+        "cwd": "/work/repos/gobby",
+        "marker": "won",
+        "tmux_pane": "%3",
+    }
+    assert row.terminal_context == settled.terminal_context
+
+
+@pytest.mark.parametrize(
+    ("stored", "incoming", "applies"),
+    [
+        (
+            {"gobby_codex_clear_origin": "codex_vscode"},
+            {"gobby_codex_clear_origin": "pending"},
+            False,
+        ),
+        (
+            {"gobby_codex_clear_origin": "codex-tui", "parent_pid": 4242},
+            {"gobby_codex_clear_origin": "pending"},
+            False,
+        ),
+        (
+            {"gobby_codex_clear_origin": "codex-tui"},
+            {
+                "gobby_codex_clear_origin": "codex-tui",
+                "parent_pid": 4242,
+                "gobby_terminal_id": "seat-pane",
+            },
+            False,
+        ),
+        ({"gobby_codex_clear_origin": "pending"}, {"gobby_codex_clear_origin": "codex-tui"}, True),
+        ({}, {"gobby_codex_clear_origin": "pending"}, True),
+    ],
+    ids=["settled", "adopted", "refused-then-enriched", "pending-settles", "first-write"],
+)
+def test_register_never_unsettles_a_clear_origin(
+    session_mgr: SessionManager,
+    project_id: str,
+    stored: dict[str, object],
+    incoming: dict[str, object],
+    applies: bool,
+) -> None:
+    """A clear-start that registers late applies only over a pending origin or none.
+
+    One that loses to a settled origin writes nothing: no seat identity either.
+    """
+    created = session_mgr.register(
+        external_id="late-clear-start",
+        machine_id="20000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby", **stored},
+    )
+
+    updated = session_mgr.register(
+        external_id="late-clear-start",
+        machine_id="20000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby/sub", **incoming},
+    )
+
+    assert updated.id == created.id
+    if applies:
+        assert updated.terminal_context == {"cwd": "/work/repos/gobby/sub", **stored, **incoming}
+    else:
+        assert updated.terminal_context == {"cwd": "/work/repos/gobby", **stored}
 
 
 def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(

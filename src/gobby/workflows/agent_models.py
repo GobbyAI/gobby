@@ -100,6 +100,19 @@ class AttestationKind(BaseModel):
     guidance: StrictStr = Field(min_length=1)
 
 
+class AgentModelFallback(BaseModel):
+    """One ordered launch fallback after a definition's primary model.
+
+    A fallback without ``reasoning_effort`` takes the primary's effort.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: StrictStr = Field(min_length=1)
+    model: StrictStr = Field(min_length=1)
+    reasoning_effort: StrictStr | None = Field(default=None, min_length=1)
+
+
 class AgentTaskScope(BaseModel):
     """Optional task constraints for a definition's evidence or lifecycle authority."""
 
@@ -156,6 +169,12 @@ class AgentDefinitionBody(BaseModel):
     reasoning_effort: StrictStr | None = None
     reasoning_required: StrictBool | None = None
     fallback_agent: StrictStr | None = None
+    # Ordered launch fallbacks after ``model``. A policy map entry that supplies the primary
+    # replaces this list; a spawn's explicit model takes none.
+    fallbacks: list[AgentModelFallback] = Field(
+        default_factory=list,
+        description="Ordered model fallbacks a launch may take after the primary model.",
+    )
     api_base: StrictStr | None = Field(
         default=None,
         description="API base URL for the model endpoint (e.g., http://localhost:1234/v1 for LM Studio)",
@@ -185,18 +204,24 @@ class AgentDefinitionBody(BaseModel):
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True
-    # Agents a spawned run of this definition may spawn, enforced by the bundled
-    # limit-spawnable-agents rule: [SPAWN_ANY_AGENT] for any, named agents, or
+    # Definitions a spawned run may spawn, enforced by configured rules:
+    # [SPAWN_ANY_AGENT] for any, named definitions, or
     # empty (the default) for none.
     spawnable_agents: list[str] = Field(default_factory=list)
     # Existing seats this definition may resume within its admitted team. Fresh
     # spawns still require spawnable_agents; team membership and stored type are checked.
     resumable_team_agents: list[str] = Field(default_factory=list)
+    # Author seats this reviewer checks. The reviewer's provider must differ from each
+    # author's, and its model tier must be at least the author's.
+    reviews: list[StrictStr] = Field(
+        default_factory=list,
+        description="Author seats this definition reviews; pairing is checked by tests.",
+    )
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
     # send_message target modes a spawned agent of this type may use, enforced by
-    # the bundled rule scope-spawned-agent-send-message
+    # the selected messaging policy
     send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False

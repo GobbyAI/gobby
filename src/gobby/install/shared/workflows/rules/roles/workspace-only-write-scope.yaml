@@ -1,0 +1,19 @@
+version: "2.0.0"
+tags: [roles, enforcement, gobby]
+
+# Selected by name. A write with no resolvable target path fails closed.
+rules:
+  workspace-only-write-scope:
+    description: "Keep a seat's file writes in its own agent workspace folders"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          This seat writes files only under its agent workspace folders (named in your
+          Agent Workspace section). Project files stay read-only to you. Name the target
+          with a literal absolute path inside your workspace folder.

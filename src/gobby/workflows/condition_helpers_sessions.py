@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import re
-import shlex
 from collections.abc import Callable, Mapping
-from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks._normalization_shell import scan_shell_command
-from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
+from gobby.hooks._path_scope import resolve_tool_path
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.session_resolution import is_session_uuid
@@ -31,6 +26,11 @@ from gobby.workflows.condition_helpers_paths import (
     workspace_contains,
 )
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.workspace_read_targets import (
+    _placeholder_folder,
+    _workspace_read_boundary,
+    _workspace_read_targets,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -67,7 +67,7 @@ def send_keys_target_in_scope(
     the caller's own session, its project, and its agent tree in either direction.
     A missing or unresolvable caller, and an unresolvable target, pass here.
     ``send_keys`` refuses each with its own error. A spawned agent's calls are
-    scoped like any other caller's: the ``no-send-keys`` rule decides
+    scoped like any other caller's. The active definition's capabilities decide
     whether it may use these tools at all. For ``capture_output``, a request with
     no caller is the operator's, and the target lookup takes a session UUID, which
     resolves here by primary key. Any other failure raises, and a raising block
@@ -143,6 +143,36 @@ def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
             break
         chain.append(candidate)
     return chain
+
+
+# A launcher walk crosses at most this many pipeline sessions (the agent depth limit).
+_PIPELINE_LAUNCHER_MAX_HOPS = 5
+
+
+def spawn_authority_session(session_manager: SessionManager, caller_ref: Any) -> str:
+    """The session whose spawn authority ``caller_ref`` exercises.
+
+    A pipeline executor session acts for whoever launched it, so it resolves to its
+    first non-pipeline ancestor. Any other session is its own authority. A missing
+    parent, a cycle or a chain past the depth limit raises, failing closed.
+    """
+    if not isinstance(caller_ref, str) or not caller_ref:
+        raise ValueError("spawn scope needs the caller session")
+    session_id = session_manager.resolve_session_reference(caller_ref)
+    crossed: set[str] = set()
+    for _ in range(_PIPELINE_LAUNCHER_MAX_HOPS + 1):
+        session = session_manager.get(session_id)
+        if session is None:
+            raise ValueError(f"Caller session {session_id} not found")
+        if session.source != "pipeline" or session.agent_run_id is not None:
+            return session.id
+        if session.id in crossed:
+            raise ValueError(f"Pipeline session {session.id} is in a launcher cycle")
+        crossed.add(session.id)
+        if not session.parent_session_id:
+            raise ValueError(f"Pipeline session {session.id} has no launching session")
+        session_id = session.parent_session_id
+    raise ValueError(f"Pipeline launcher chain from {caller_ref} exceeds the depth limit")
 
 
 def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Session, str | None]:
@@ -307,20 +337,29 @@ def spawn_target_allowed(
 ) -> bool:
     """Whether the caller may start every agent the gobby-agents ``tool_name`` call can.
 
-    A root session (no agent run, depth 0) spawns anything. A spawned caller's
-    definition comes from its agent run record, and its ``spawnable_agents``
-    decides: any agent, the listed agents, or none. Every effective target must
+    An unseated operator session spawns anything. Every seated caller's stored
+    ``spawnable_agents`` decides: any agent, the listed agents, or none.
+    Spawned callers are verified against their agent run. Every effective target must
     be allowed. Without a resolved target project, a before_tool rule checks
     only requested names. Admission passes the launch's target project to check
     its fallback chain as well. A team manager may also resume an existing seat of
-    its own team, which is the one spawn its definition does not list. Anything
-    unresolvable raises and fails closed.
+    its own team, which is the one spawn its definition does not list. A pipeline
+    session spawns with its launcher's authority. Anything unresolvable raises and
+    fails closed.
     """
     if session_manager is None:
         raise RuntimeError("spawn target scope needs a session manager")
+    from gobby.workflows.agent_resolver import session_agent_definition
+
+    caller_ref = spawn_authority_session(session_manager, caller_ref)
     caller, agent_name = _spawn_caller(session_manager, caller_ref)
     if agent_name is None:
-        return True
+        if operator_session(session_manager, caller_ref):
+            return True
+        stored = session_agent_definition(session_manager.db, caller)
+        if stored is None:
+            return False
+        agent_name = stored[0].name
     if tool_name != "spawn_agent":
         raise ValueError(f"spawn target scope does not cover tool {tool_name!r}")
     if _manager_resumes_own_seat(session_manager, caller, agent_name, agent, resume_session_id):
@@ -360,438 +399,8 @@ def network_override_allowed(session_manager: SessionManager | None, caller_ref:
     )
 
 
-_SHELL_OPERATORS = re.compile(r"[<>|;&()]")
-# One lexical unit of shell text. Quoted spans, comments and escapes are consumed whole, so a
-# heredoc-looking fragment inside any of them opens nothing.
-_SHELL_UNIT = re.compile(
-    r"\$'(?:\\.|[^'\\])*'"  # ANSI-C quoted
-    r"|'[^']*'"
-    r'|"(?:\\.|[^"\\])*"'
-    r"|`(?:\\.|[^`\\])*`"
-    r"|\\."
-    r"|(?<![^\s;&|()])#[^\n]*"  # a comment starts a word
-    r"|(?<!<)<<(?P<dash>-?)[ \t]*(?P<quote>['\"])(?P<tag>\w+)(?P=quote)"  # quoted heredoc header
-    r"|.",
-    re.DOTALL,
-)
-# A `<name>` segment is documentation placeholder text: seats write only inside their own
-# folders, and no folder is named that way.
-_PLACEHOLDER_SEGMENT = re.compile(r"<[A-Za-z_][\w-]*>")
-
-
-def _skip_heredoc_bodies(command: str, pos: int, pending: list[tuple[str, bool]]) -> int:
-    """Position just past the last delimiter line, reading the bodies in header order."""
-    for tag, strip_tabs in pending:
-        while pos < len(command):
-            end = command.find("\n", pos)
-            line_end = len(command) if end == -1 else end
-            line = command[pos:line_end]
-            pos = len(command) if end == -1 else end + 1
-            if (line.lstrip("\t") if strip_tabs else line) == tag:
-                break
-    return pos
-
-
-def _split_heredoc_bodies(command: str) -> tuple[str, list[str]]:
-    """Split each quoted-delimiter heredoc body out of the command text.
-
-    The shell reads a quoted-delimiter body as literal text, so it is returned apart from the
-    command. The caller judges a body as shell code when a shell reads it, and as text otherwise.
-    A body starts after the unquoted newline that ends its header line and runs to the
-    delimiter line, matched exactly as the shell matches it.
-    """
-    kept: list[str] = []
-    bodies: list[str] = []
-    pending: list[tuple[str, bool]] = []
-    pos = 0
-    while pos < len(command):
-        unit = _SHELL_UNIT.match(command, pos)
-        if unit is None:  # unreachable: the final alternative matches any character
-            return command, []
-        text = unit.group(0)
-        pos = unit.end()
-        if unit.group("tag") is not None:
-            pending.append((unit.group("tag"), unit.group("dash") == "-"))
-        elif text == "\n" and pending:
-            start = pos
-            pos = _skip_heredoc_bodies(command, pos, pending)
-            bodies.append(command[start:pos])
-            pending = []
-        kept.append(text)
-    return "".join(kept), bodies
-
-
-def _shell_tokens(command: str) -> list[str]:
-    """Shell words with operators split off only outside quotes, so quoted text stays whole."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    return list(lexer)
-
-
-_SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
-# Commands that run their input as shell code, so a quoted heredoc body they read is shell code.
-_BODY_CONSUMERS = _SHELL_WRAPPERS | {"eval", "source", "."}
-_SHELL_COMMAND_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
-
-
-def _wrapped_commands(tokens: list[str]) -> list[str]:
-    """Command strings a shell runs with `-c`, or `eval` runs, such as `bash -c "cat <path>"`.
-
-    The flag may follow options that take values, so every later token is searched. Reading
-    past the real flag only judges one more word.
-    """
-    commands: list[str] = []
-    for index, token in enumerate(tokens):
-        name = os.path.basename(os.path.expandvars(token))
-        if name == "eval":
-            commands.append(" ".join(tokens[index + 1 :]))
-        elif name in _SHELL_WRAPPERS:
-            for flag_index in range(index + 1, len(tokens)):
-                if _SHELL_COMMAND_FLAG.fullmatch(tokens[flag_index]):
-                    commands.extend(tokens[flag_index + 1 : flag_index + 2])
-                    break
-    return commands
-
-
-def _path_words(tokens: list[str]) -> list[str]:
-    """Words that look like paths. A quoted token holding several words is judged word by word."""
-    expanded = (part for token in tokens for part in os.path.expandvars(token).split())
-    return [
-        part
-        for part in expanded
-        if "/" in part
-        or part.startswith("~")
-        or _READ_PATTERN.search(part)
-        or _EXTGLOB.search(part)
-        or ("{" in part and ("," in part or ".." in part))
-    ]
-
-
-def _mask_regex_operands(command: str) -> str:
-    """Mask literal grep/rg regexes and non-executing sed substitutions, keeping paths."""
-    scan = scan_shell_command(command)
-    head = ""
-    seen = False
-    expression = False
-    value = False
-    options = True
-    masked = list(command)
-    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
-        word = token.value
-        if not token.quoted and word in {"|", "||", "&&", ";", "&", "\n"}:
-            head, seen, expression, value, options = "", False, False, False, True
-            continue
-        if not head:
-            head = os.path.basename(word)
-            continue
-        if head not in {"grep", "egrep", "fgrep", "rg", "sed"}:
-            continue
-        if value:
-            value = False
-            continue
-        if options and not expression and word == "--":
-            options = False
-            continue
-        if options and not expression and word in {"-e", "--regexp", "--expression"}:
-            expression = True
-            continue
-        if (
-            options
-            and not expression
-            and word in {"-f", "--file", "-g", "--glob", "-A", "-B", "-C", "-m"}
-        ):
-            value = True
-            seen = seen or word in {"-f", "--file"}
-            continue
-        if options and not expression and word.startswith("-") and word != "-":
-            # Unknown or attached options may already supply the pattern. Never
-            # mistake the next file for regex data (e.g. -efoo, -nefoo, --file=x).
-            if not re.fullmatch(r"-[EFGINPRUabcHhIiLlnoqrsSVvwxz0-9]+", word):
-                seen = True
-            continue
-        pattern = expression or not seen
-        seen, expression = True, False
-        raw = command[start:end]
-        literal = len(raw) >= 2 and (
-            (raw[0] == raw[-1] == "'" and "'" not in raw[1:-1])
-            or (raw[0] == raw[-1] == '"' and not any(c in raw[1:-1] for c in '$`"'))
-        )
-        if head == "sed":
-            delimiter = re.escape(word[1:2])
-            pattern = (
-                pattern
-                and bool(delimiter)
-                and bool(
-                    re.fullmatch(
-                        rf"s{delimiter}(?:\\.|[^{delimiter}])*{delimiter}"
-                        rf"(?:\\.|[^{delimiter}])*{delimiter}[gIp0-9]*",
-                        word,
-                    )
-                )
-            )
-        if pattern and literal:
-            masked[start:end] = " " * (end - start)
-    return "".join(masked)
-
-
-def _shell_path_words(command: Any) -> list[str]:
-    """Shell words that look like paths: operators split outside quotes, env vars expanded.
-
-    Only known data consumers may omit literal heredoc bodies. Interpreters and
-    unknown consumers still need path checks. Shell wrappers and `eval` recurse.
-    """
-    if not isinstance(command, str):
-        return []
-    text, bodies = _split_heredoc_bodies(command)
-    text = _mask_regex_operands(text)
-    try:
-        tokens = _shell_tokens(text)
-    except ValueError:
-        tokens = _SHELL_OPERATORS.sub(" ", text).split()
-    shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
-    words = _path_words(tokens)
-    # The operator-aware lexer splits extglob parentheses and alternatives. Keep
-    # an additional whole-word view so their literal path prefix is not lost.
-    try:
-        whole_words = shlex.split(text)
-    except ValueError:
-        whole_words = []
-    words.extend(word for word in _path_words(whole_words) if _EXTGLOB.search(word))
-    command_name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
-    data_consumer = command_name in {"cat", "tee"} or (
-        command_name == "git" and tokens[1:2] == ["commit"]
-    )
-    compound = "\n" in text.strip() or any(
-        token in {"|", "||", "&", "&&", ";", "(", ")"} for token in tokens
-    )
-    if shell_reads or compound or not data_consumer:
-        for body in bodies:
-            words.extend(_shell_path_words(body))
-    for wrapped in _wrapped_commands(tokens):
-        words.extend(_shell_path_words(wrapped))
-    return words
-
-
-_READ_PATTERN = re.compile(r"[*?\[]")
-_EXTGLOB = re.compile(r"[@+?!*]\(")
-_BRACE_RANGE = re.compile(r"(?:-?\d+\.\.-?\d+|[a-zA-Z]\.\.[a-zA-Z])(?:\.\.-?\d+)?")
-_READ_EXPANSION_LIMIT = 256
-
-
-def _brace_read_words(raw: str) -> list[str] | None:
-    """Expand bounded comma alternatives; approximate ranges with a filename glob.
-
-    Non-expanding braces remain literal, including awk/sed program data. Work on
-    complete words before path normalization because alternatives can contain '/'
-    or combine separate dot fragments into '..'. None means the bound was exceeded.
-    """
-    pending = [raw]
-    expanded: list[str] = []
-    budget = _READ_EXPANSION_LIMIT
-    while pending:
-        word = pending.pop()
-        budget -= 1
-        if budget < 0:
-            return None
-        groups: list[list[int]] = []
-        for end, char in enumerate(word):
-            if char == "{":
-                groups.append([end])
-            elif char == "," and groups:
-                groups[-1].append(end)
-            elif char == "}" and groups:
-                positions = groups.pop()
-                start = positions[0]
-                if len(positions) > 1:
-                    bounds = [*positions, end]
-                    alternatives = [
-                        word[a + 1 : b] for a, b in zip(bounds, bounds[1:], strict=False)
-                    ]
-                elif _BRACE_RANGE.fullmatch(word[start + 1 : end]):
-                    alternatives = ["*"]
-                else:
-                    continue
-                if len(pending) + len(alternatives) > budget:
-                    return None
-                pending.extend(word[:start] + choice + word[end + 1 :] for choice in alternatives)
-                break
-        else:
-            expanded.append(word)
-    return expanded
-
-
-def _extglob_read_word(word: str) -> str | None:
-    """Overapproximate filename extglobs without executing a shell.
-
-    Slash-bearing groups change path structure and cannot be inspected as one
-    component. Refuse those rather than silently matching only part of a group.
-    """
-    while match := _EXTGLOB.search(word):
-        depth = 1
-        end = match.end()
-        while end < len(word) and depth:
-            depth += (word[end] == "(") - (word[end] == ")")
-            end += 1
-        if depth or "/" in word[match.end() : end]:
-            return None
-        word = word[: match.start()] + "*" + word[end:]
-    return word
-
-
-def _resolve_read_target(raw: Any, base: Path | None) -> tuple[Path, int | None] | None:
-    """Resolve a pattern and retain where expansion starts; base paths stay literal."""
-    if not isinstance(raw, str) or not raw:
-        return None
-    parts = Path(os.path.expandvars(os.path.expanduser(raw))).parts
-    for index, part in enumerate(parts):
-        if _READ_PATTERN.search(part):
-            prefix = resolve_tool_path(str(Path(*parts[:index])), base)
-            return (
-                (prefix.joinpath(*parts[index:]), len(prefix.parts)) if prefix is not None else None
-            )
-    literal = resolve_tool_path(raw, base)
-    return (literal, None) if literal is not None else None
-
-
-def _shell_dot_read_words(word: str, pattern: str) -> list[str] | None:
-    """Include shell dot/parent matches without enumerating filesystem entries."""
-    originals = Path(word).parts
-    variants = [Path(pattern).parts]
-    for index, part in enumerate(originals):
-        if not (part.startswith(".") or re.search(r"[|(]\.", part)):
-            continue
-        for name in (".", ".."):
-            if part == name or not _read_pattern_matches(name, variants[0][index]):
-                continue
-            variants.extend(parts[:index] + (name,) + parts[index + 1 :] for parts in variants[:])
-            if len(variants) > _READ_EXPANSION_LIMIT:
-                return None
-    return [os.path.join(*parts) for parts in variants]
-
-
-def _workspace_read_targets(
-    event_data: Mapping[str, Any] | None, tool_input: Any
-) -> list[tuple[Path, int | None]] | None:
-    """Resolved paths a tool reads: path-like Bash words, or the path fields of a file tool."""
-    if not isinstance(tool_input, Mapping):
-        return []
-    data = event_data or {}
-    base = current_tool_cwd(data) or current_project_root(data)
-    raws: list[Any]
-    if data.get("tool_name") == "Bash":
-        raws = list(_shell_path_words(tool_input.get("command")))
-    else:
-        raws = [tool_input.get("file_path"), tool_input.get("path")]
-    inputs = [(raw, base, data.get("tool_name") == "Bash") for raw in raws]
-    if data.get("tool_name") == "Glob":
-        pattern_base = resolve_tool_path(tool_input.get("path"), base) or base
-        inputs.append((tool_input.get("pattern"), pattern_base, True))
-    paths: list[tuple[Path, int | None]] = []
-    for raw, directory, expand in inputs:
-        if not isinstance(raw, str) or not raw:
-            continue
-        # A quoted or structured path can contain literal glob/brace characters.
-        # Check that actual filename too, before inspecting possible expansions.
-        if (literal := resolve_tool_path(raw, directory)) is not None:
-            paths.append((literal, None))
-        if not expand:
-            continue
-        words = _brace_read_words(os.path.expandvars(os.path.expanduser(raw)))
-        if words is None:
-            return None
-        for word in words:
-            pattern = _extglob_read_word(word)
-            if pattern is None:
-                return None
-            patterns = (
-                _shell_dot_read_words(word, pattern)
-                if data.get("tool_name") == "Bash"
-                else [pattern]
-            )
-            if patterns is None:
-                return None
-            for item in patterns:
-                if (path := _resolve_read_target(item, directory)) is not None:
-                    paths.append(path)
-    return list(dict.fromkeys(paths))
-
-
-def _read_pattern_matches(name: str, pattern: str) -> bool:
-    """Conservatively include shell bracket classes and Unicode/case variants."""
-    pattern = re.sub(r"\[.*\]", "*", pattern)
-    return fnmatchcase(name, pattern) or fnmatchcase(name.casefold(), pattern.casefold())
-
-
-def _pattern_reaches_root(parts: tuple[str, ...], root_parts: tuple[str, ...]) -> bool:
-    """Whether a pattern has enough matching components to enter the workspace root."""
-    pending = [(0, 0)]
-    visited: set[tuple[int, int]] = set()
-    while pending:
-        index, depth = pending.pop()
-        if depth == len(root_parts):
-            return True
-        if index == len(parts) or (index, depth) in visited:
-            continue
-        visited.add((index, depth))
-        if parts[index] == "**":
-            pending.extend(((index + 1, depth), (index, depth + 1)))
-        elif _read_pattern_matches(root_parts[depth], parts[index]):
-            pending.append((index + 1, depth + 1))
-    return False
-
-
-def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | None:
-    """Require a literal authorized folder before patterns; never enumerate the fleet.
-
-    An expansion above the workspace can reach other seats, so judge the root itself.
-    Fold lexical parents and resolve the literal prefix. Symlinks selected by a
-    wildcard require kernel enforcement; #25307 tracks that pending policy decision.
-    """
-    parts: list[tuple[str, bool]] = []
-    for index, part in enumerate(target.parts):
-        if part == ".." and len(parts) > 1:
-            parts.pop()
-        else:
-            parts.append((part, index >= start))
-    target = Path(*(part for part, _ in parts))
-    for index, (part, expandable) in enumerate(parts):
-        if not expandable:
-            continue
-        match = _READ_PATTERN.search(part)
-        if match is None:
-            continue
-        prefix = Path(*target.parts[:index])
-        within = workspace_contains(prefix, root)
-        if within is None:
-            return root
-        if within:
-            target = prefix
-            break
-        ancestor = workspace_contains(root, prefix)
-        if ancestor is None:
-            return root
-        if ancestor and _pattern_reaches_root(target.parts[index:], root.parts[index:]):
-            return root
-        return None
-    within = workspace_contains(target, root)
-    if within is None:
-        return root
-    return root.joinpath(*target.parts[len(root.parts) :]) if within else None
-
-
 def _variable_folder(value: Any) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
-
-
-def _placeholder_folder(target: Path, root: Path) -> bool:
-    """Whether a path names a ``<placeholder>`` folder directly under the workspace root.
-
-    No folder is named that way, so the path is documentation text. A traversal through a
-    placeholder still resolves to a real folder and is judged there.
-    """
-    first = target.relative_to(root).parts[:1]
-    return bool(first) and _PLACEHOLDER_SEGMENT.fullmatch(first[0]) is not None
 
 
 def _workspace_path_readable(
@@ -906,11 +515,19 @@ def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
-    from gobby.workflows.condition_helpers_pods import dev_pod_launch_allowed
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
+    from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
         "operator_session": lambda caller_id: operator_session(session_manager, caller_id),
+        "spawn_capabilities_allowed": lambda caller_id,
+        agent,
+        project_path=None,
+        parent_session_id=None,
+        authority_capability=None: spawn_capabilities_allowed(
+            session_manager, caller_id, agent, project_path, parent_session_id, authority_capability
+        ),
         "session_has_capability": lambda caller_id, capability: (
             session_manager is not None
             and isinstance(caller_id, str)
@@ -926,8 +543,8 @@ def session_condition_helpers(
             and all(isinstance(path, str) for path in paths)
             and session_declared_paths_cover(session_manager.db, caller_id, paths)
         ),
-        "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments, pod_pipelines: (
-            dev_pod_launch_allowed(session_manager, caller_id, tool_name, arguments, pod_pipelines)
+        "dev_pod_launch_refusal": lambda caller_id, tool_name, arguments, pod_pipelines: (
+            dev_pod_launch_refusal(session_manager, caller_id, tool_name, arguments, pod_pipelines)
         ),
         "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
             session_manager, caller_id, output

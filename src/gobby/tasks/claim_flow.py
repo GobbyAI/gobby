@@ -16,6 +16,18 @@ if TYPE_CHECKING:
     from gobby.tasks.attestations import TaskAttestation
 
 
+def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
+    from gobby.workflows.agent_resolver import resolve_agent_with_row
+
+    resolved = resolve_agent_with_row(agent, db, project_id=project_id)
+    return (
+        resolved is not None
+        and resolved[0].enabled
+        and resolved[1].enabled
+        and resolved[0].workflows.variables.get("team_manager") is True
+    )
+
+
 def advance_claim_flow(
     db: HubDatabase,
     conn: Transaction,
@@ -84,11 +96,19 @@ def advance_claim_flow(
                     list(LIVE_SESSION_STATUSES),
                 ),
             ).fetchall()
-            for row in rows:
-                child_id = str(row["child_session_id"])
-                child_team = seat_team(db, child_id)
-                if child_team is not None and child_team.team_id == team.team_id:
-                    live.add(child_id)
+            seated = {
+                str(row["child_session_id"]): seat_team(db, str(row["child_session_id"]))
+                for row in rows
+            }
+            live = {sid for sid, seat in seated.items() if seat and seat.team_id == team.team_id}
+            # A pod launches no manager seat; its parent team's manager holds that stage.
+            if not live and child is None and _is_team_manager(db, agent, task.project_id):
+                from gobby.agents.team_admission_records import team_binding
+
+                binding = team_binding(db, team.team_id)
+                parent = binding.parent_team_id if binding is not None else None
+                if parent is not None:
+                    live = {sid for sid, seat in seated.items() if seat and seat.team_id == parent}
         if len(live) > 1:
             raise ValueError(f"claim flow stage {stage_name!r} has ambiguous live pipeline seats")
         return next(iter(live)) if live else child
@@ -111,14 +131,27 @@ def advance_claim_flow(
     }
     if record.kind in stage.done_when and record.result == stage.rejected_result:
         target = stage.on_rejected
-    elif (
-        stage.done_when
-        and len(references) <= 1
-        and all(
-            kind in active and active[kind].result == stage.approved_result
-            for kind in stage.done_when
-        )
+    elif stage.done_when and all(
+        kind in active and active[kind].result == stage.approved_result for kind in stage.done_when
     ):
+        if stage.next is not None and len(references) > 1:
+            latest = max(
+                (active[kind] for kind in stage.done_when if active[kind].reference is not None),
+                key=lambda item: item.sequence,
+            )
+            reference = latest.reference
+            if reference is None:
+                raise ValueError("claim_flow reference is unavailable")
+            conflicting = ", ".join(
+                f"{kind}={item.reference.scheme}:{item.reference.value}"
+                for kind, item in active.items()
+                if kind in stage.done_when and item.reference is not None
+            )
+            raise ValueError(
+                f"claim_flow stage {name!r} requires one reference across done_when evidence. "
+                f"Accepted reference for this attempt: {reference.scheme}:{reference.value}. "
+                f"Supersede conflicting records or omit references for unrelated evidence: {conflicting}"
+            )
         target = stage.next
     if target is None:
         return

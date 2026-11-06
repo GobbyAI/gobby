@@ -23,3 +23,5 @@ Operator setup, authentication, webhooks, polling, and adapter diagnostics
 live in the [communications guide](../../../../../../../../docs/guides/comm-integrations.md).
 Telegram access and responder procedures live in the
 [Telegram guide](../../../../../../../../docs/guides/telegram.md).
+
+_Version: 1.0.0_

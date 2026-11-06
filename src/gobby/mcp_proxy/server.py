@@ -22,17 +22,22 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
+from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import (
+    SeededContextTokens,
     get_current_session_id,
+    get_request_principal,
+    is_daemon_execution,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
 )
@@ -61,6 +66,8 @@ class GobbyDaemonTools:
         memory_manager: Any | None = None,
         config_manager: Any | None = None,
         semantic_search: Any | None = None,
+        mcp_manager_resolver: Callable[[], Any] | None = None,
+        internal_manager_resolver: Callable[[], Any] | None = None,
         fallback_resolver: Any | None = None,
         hook_manager_resolver: Callable[[], Any | None] | None = None,
     ):
@@ -69,6 +76,11 @@ class GobbyDaemonTools:
         self.internal_manager = internal_manager
         self._mcp_manager = mcp_manager  # Store for project_id access
         self._semantic_search = semantic_search  # Store for direct search access
+        if isinstance(semantic_search, SemanticToolSearch):
+            semantic_search.configure_inventory(
+                mcp_manager_resolver or (lambda: self._mcp_manager),
+                internal_manager_resolver or (lambda: self.internal_manager),
+            )
         self._session_manager = session_manager  # Store for per-call project resolution
         self.daemon_port = daemon_port
         self.websocket_port = websocket_port
@@ -179,6 +191,9 @@ class GobbyDaemonTools:
         """List configured MCP servers visible to the caller."""
         from gobby.mcp_proxy.services.server_resolution import caller_project_id
 
+        resolved_session_id, refusal = await self._resolve_caller_session(session_id)
+        if refusal is not None:
+            return {"success": False, "error": refusal}
         scope_project = caller_project_id(
             self.tool_proxy,
             project_id=project_id or self._caller_project_ref(),
@@ -211,7 +226,7 @@ class GobbyDaemonTools:
                     }
                 )
             result["templates"] = templates
-        await asyncio.to_thread(self.tool_proxy.record_servers_listed, session_id)
+        await asyncio.to_thread(self.tool_proxy.record_servers_listed, resolved_session_id)
         return result
 
     # --- Tool Proxying ---
@@ -280,18 +295,7 @@ class GobbyDaemonTools:
                 is_error=True,
             )
 
-        db = self._session_manager.db if self._session_manager else None
-        session_scope_ref = (
-            self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
-        )
-        tokens = await resolve_and_seed_contexts(
-            session_ref=session_id,
-            session_manager=self._session_manager,
-            project_ref=project_id,
-            session_scope_ref=session_scope_ref,
-            session_ref_origin="ambient",
-            db=db,
-        )
+        tokens = await self._seed_call_context(session_id, project_id)
 
         # User-input error: caller passed project_id but it did not resolve.
         if project_id and tokens.resolved_project_id is None:
@@ -306,16 +310,11 @@ class GobbyDaemonTools:
                 ],
                 is_error=True,
             )
-        if session_id and tokens.resolved_session_id is None:
+        refusal = await self._caller_session_refusal(session_id, tokens)
+        if refusal is not None:
             reset_seeded_contexts(tokens)
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"Error: session_id '{session_id}' not found. "
-                        "Use a session UUID, <project>#N, or local #N reference.",
-                    )
-                ],
+                content=[TextContent(type="text", text=f"Error: {refusal}")],
                 is_error=True,
             )
         # Propagate only the resolved platform UUID. Falling back to the raw
@@ -389,9 +388,12 @@ class GobbyDaemonTools:
 
     async def list_tools(self, server_name: str, session_id: str | None = None) -> dict[str, Any]:
         """List tools for a specific server, optionally filtered by workflow phase restrictions."""
+        resolved_session_id, refusal = await self._resolve_caller_session(session_id)
+        if refusal is not None:
+            return {"success": False, "error": refusal}
         return await self.tool_proxy.list_tools(
             server_name,
-            session_id=session_id,
+            session_id=resolved_session_id,
             project_id=self._caller_project_ref(),
             enforce_workflow=True,
         )
@@ -402,18 +404,120 @@ class GobbyDaemonTools:
         tool_name: str,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Get tool schema."""
+        """Get tool schema; a successful lookup latches its lease for call_tool."""
+        resolved_session_id, refusal = await self._resolve_caller_session(session_id)
+        if refusal is not None:
+            return {"success": False, "error": refusal}
         result = await self.tool_proxy.get_tool_schema(
             server_name, tool_name, project_id=self._caller_project_ref()
         )
         if result.get("success") is True and isinstance(result.get("tool"), dict):
+            self._record_schema_lease(server_name, tool_name, resolved_session_id)
+        return result
+
+    async def _seed_call_context(
+        self, session_id: str | None, project_id: str | None = None
+    ) -> SeededContextTokens:
+        """Seed the session ref exactly as call_tool does, so leases and enforcement agree."""
+        db = self._session_manager.db if self._session_manager else None
+        session_scope_ref = (
+            self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
+        )
+        return await resolve_and_seed_contexts(
+            session_ref=session_id,
+            session_manager=self._session_manager,
+            project_ref=project_id,
+            session_scope_ref=session_scope_ref,
+            session_ref_origin="ambient",
+            db=db,
+        )
+
+    async def _caller_session_refusal(
+        self, session_id: str | None, tokens: SeededContextTokens
+    ) -> str | None:
+        """Why the caller may not act as the session ``tokens`` resolved, or None.
+
+        Every /mcp tool that takes a caller session_id goes through this one gate.
+        """
+        if session_id and tokens.resolved_session_id is None:
+            return (
+                f"session_id '{session_id}' not found. "
+                "Use a session UUID, <project>#N, or local #N reference."
+            )
+        resolved = tokens.resolved_session_id
+        if resolved and not await self._speaks_for_caller(resolved):
+            return (
+                f"session_id '{session_id or resolved}' is not the authenticated caller's "
+                "session. Pass your own session; call_tool takes a target session in "
+                "arguments.session_id."
+            )
+        return None
+
+    async def _resolve_caller_session(
+        self, session_id: str | None
+    ) -> tuple[str | None, str | None]:
+        """Resolve a caller session_id through the call_tool gate, leaving nothing seeded.
+
+        Returns ``(resolved UUID or None, refusal or None)``. Downstream code gets the
+        resolved UUID, never the raw ref, so it cannot resolve to a different session.
+        """
+        tokens = await self._seed_call_context(session_id)
+        try:
+            refusal = await self._caller_session_refusal(session_id, tokens)
+        finally:
+            reset_seeded_contexts(tokens)
+        return (tokens.resolved_session_id if session_id else None), refusal
+
+    async def _speaks_for_caller(self, session_id: str) -> bool:
+        """Whether the authenticated caller may act as ``session_id``.
+
+        The operator and daemon-run actions may delegate any session. A managed
+        capability speaks only for its own session or its run's /clear successor.
+        An unseeded or rejected principal speaks for no session.
+        """
+        if is_daemon_execution():
+            return True
+        try:
+            principal = await get_request_principal()
+        except LookupError:
+            return False
+        if principal is None:
+            return True
+        if principal is False:
+            return False
+        if session_id == principal.session_id:
+            return True
+        db = self._session_manager.db if self._session_manager else None
+        if db is None or principal.agent_run_id is None:
+            return False
+        successor = await asyncio.to_thread(
+            current_run_session_id,
+            db,
+            agent_run_id=principal.agent_run_id,
+            session_id=principal.session_id,
+            project_id=principal.project_id,
+        )
+        return session_id == successor
+
+    def _record_schema_lease(
+        self, server_name: str, tool_name: str, session_id: str | None
+    ) -> None:
+        """Latch the lease on the session call_tool enforces.
+
+        ``session_id`` is the gated caller session already resolved to its UUID, or
+        None when the caller named none; then the ambient session, which enforcement
+        also uses, holds the lease.
+        """
+        lease_session_id = session_id or get_current_session_id()
+        try:
             record_schema_shown(
                 self.tool_proxy,
-                get_current_session_id(),
+                lease_session_id,
                 server_name=server_name,
                 tool_name=tool_name,
             )
-        return result
+        except ValueError as exc:
+            logger.warning("Schema lease not recorded for %s:%s: %s", server_name, tool_name, exc)
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
@@ -581,19 +685,28 @@ class GobbyDaemonTools:
         from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
-        instance_manager = (
-            AgentStepInstanceManager(self._session_manager.db) if scope == "step" else None
-        )
-        return await asyncio.to_thread(
-            _set_var,
-            self._session_manager,
-            self._session_manager.db,
-            name,
-            value,
-            session_id,
-            scope=scope,
-            instance_manager=instance_manager,
-        )
+        # Keep the gated session seeded through the write: its authority check reads
+        # the calling session from context, and /mcp seeds none of its own.
+        tokens = await self._seed_call_context(session_id)
+        try:
+            refusal = await self._caller_session_refusal(session_id, tokens)
+            if refusal is not None:
+                return {"success": False, "error": refusal}
+            instance_manager = (
+                AgentStepInstanceManager(self._session_manager.db) if scope == "step" else None
+            )
+            return await asyncio.to_thread(
+                _set_var,
+                self._session_manager,
+                self._session_manager.db,
+                name,
+                value,
+                (tokens.resolved_session_id if session_id else None) or "",
+                scope=scope,
+                instance_manager=instance_manager,
+            )
+        finally:
+            reset_seeded_contexts(tokens)
 
     async def get_variable(
         self,
@@ -611,6 +724,9 @@ class GobbyDaemonTools:
         """Get a variable (or all variables). Session-scoped by default. Pass scope='step' for the session instance."""
         if not self._session_manager or not self._session_manager.db:
             return {"success": False, "error": "Session manager not available"}
+        resolved_session_id, refusal = await self._resolve_caller_session(session_id)
+        if refusal is not None:
+            return {"success": False, "error": refusal}
 
         from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
         from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -623,7 +739,7 @@ class GobbyDaemonTools:
             self._session_manager,
             self._session_manager.db,
             name,
-            session_id,
+            resolved_session_id or "",
             scope=scope,
             instance_manager=instance_manager,
             brief=brief,

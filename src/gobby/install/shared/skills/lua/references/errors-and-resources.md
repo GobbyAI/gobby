@@ -43,3 +43,5 @@
   shape. Convert Lua failures into stable host diagnostics without reading
   success values from a failed stack.
 - Keep secrets and oversized payloads out of error messages and tracebacks.
+
+_Version: 1.0.0_

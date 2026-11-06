@@ -66,15 +66,13 @@ steps:
     assert "deprecated" not in json.dumps(row.definition_json)
 
 
-def test_removed_clean_tree_rule_sync_soft_deletes_installed_row(
-    tmp_path: Path, temp_db: HubDatabase
-) -> None:
+def test_removed_rule_sync_soft_deletes_installed_row(tmp_path: Path, temp_db: HubDatabase) -> None:
     manager = RuleDefinitionManager(temp_db)
     manager.create(
         name="removed-rule",
         definition_json={
             "event": "before_tool",
-            "effects": [{"type": "block", "reason": "old clean-tree gate"}],
+            "effects": [{"type": "block", "reason": "synthetic retired entry"}],
         },
         source="installed",
         tags=["gobby"],

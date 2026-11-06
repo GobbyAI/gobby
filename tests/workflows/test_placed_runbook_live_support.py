@@ -229,8 +229,9 @@ def test_attempts_runs_every_step_and_raises_the_failures_together() -> None:
     assert [type(error) for error in raised.value.exceptions] == [ConnectionError]
     assert record == {"kill": {"error": "ConnectionError('runner is down')"}, "close": "closed"}
 
+    # Three synthetic seats for authoring, refinement and review.
 
-# The bundled seats: plan-writer, plan-enhancer and plan-adversary.
+
 SEATS = [
     ("codex", "gpt-5.6-sol", "medium"),
     ("codex", "gpt-5.6-sol", "xhigh"),

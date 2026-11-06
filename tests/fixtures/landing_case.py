@@ -32,7 +32,7 @@ from tests.fixtures.review_approvals import (
 
 DEV_TEAM_LEAD = "default"
 ORCHESTRATOR = "default"
-SECURITY_AUDITOR = "security-auditor"
+SECURITY_AUDITOR = "fixture-definition-fc0c281e"
 
 
 def bind_task_manager(
@@ -40,7 +40,11 @@ def bind_task_manager(
 ) -> None:
     """Give the fixture's completion caller declarative default authority, without a run binding."""
     grant_step_writes(
-        db, manager, project_id, "default", ("*",),
+        db,
+        manager,
+        project_id,
+        "default",
+        ("*",),
         capabilities=("manage_task_claims", "land_tasks", "direct_integration_commit"),
         integration_paths=("**",),
     )
@@ -49,8 +53,17 @@ def bind_task_manager(
 def grant_orchestrator(db: HubDatabase, session_id: str, project_id: str) -> None:
     """Give a registered session the fixture's self-completing default definition."""
     grant_step_writes(
-        db, session_id, project_id, "default", ("*",),
-        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks", "direct_integration_commit"),
+        db,
+        session_id,
+        project_id,
+        "default",
+        ("*",),
+        capabilities=(
+            "coordinate_tasks",
+            "manage_task_claims",
+            "land_tasks",
+            "direct_integration_commit",
+        ),
         integration_paths=("**",),
     )
 
@@ -148,9 +161,12 @@ class LandingCase:
     def implement(self, task: Task, sha: str) -> None:
         grant_orchestrator(self.db, self.claimant, self.project_id)
         record_attestation(
-            self.db, task_id=task.id, session_id=self.claimant,
+            self.db,
+            task_id=task.id,
+            session_id=self.claimant,
             submission=AttestationSubmission(
-                kind="implementation", result="approved",
+                kind="implementation",
+                result="approved",
                 summary="Candidate implementation is complete.",
                 reference=EvidenceReference(scheme="git", value=sha),
             ),
@@ -167,7 +183,7 @@ class LandingCase:
         granted: bool = True,
         supplemental: bool = True,
     ) -> str:
-        """A session running as the installed security-auditor definition, with no agent run."""
+        """A session using a synthetic approval definition, with no agent run."""
         session = self.session(name, parent=self.creator)
         grant_step_writes(
             self.db,

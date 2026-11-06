@@ -133,12 +133,6 @@ def set_variable(
     # Coerce value types
     value = _coerce_value(value)
 
-    if is_reserved_workflow_variable(name):
-        return {
-            "success": False,
-            "error": f"{name} is managed by the workflow runtime and cannot be set directly.",
-        }
-
     # Resolve session_task references (#N or N) to UUIDs upfront
     if name == "session_task" and isinstance(value, str):
         try:
@@ -208,7 +202,11 @@ def get_variable(
     if not session_id:
         return {
             "success": False,
-            "error": "session_id is required. Pass the session ID explicitly to prevent cross-session variable bleed.",
+            "error": (
+                "session_id is required: pass it as get_variable's own top-level parameter, "
+                "get_variable(session_id='<your Gobby Session ID>', name=...). "
+                "It is never inferred, so one session cannot read another's variables."
+            ),
         }
 
     # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
@@ -220,7 +218,7 @@ def get_variable(
     if scope == "step":
         if instance_manager is None:
             instance_manager = AgentStepInstanceManager(db)
-        instance = instance_manager.get_for_session(resolved_session_id)
+        instance = instance_manager.get_active_for_session(resolved_session_id)
         if instance is None:
             return {
                 "success": False,
@@ -384,6 +382,14 @@ def get_variable_definition(
     return {"success": True, "variable": _variable_summary(row)}
 
 
+def _reserved_authoring_error(name: str) -> str:
+    """Refuse a definition for a runtime-owned name; seeded defaults would reach sessions."""
+    return (
+        f"Variable '{name}' is a reserved runtime name and cannot be authored as a definition. "
+        "Choose a different name."
+    )
+
+
 def create_variable(
     def_manager: SessionVariableDefaultManager,
     name: str,
@@ -409,6 +415,9 @@ def create_variable(
     Returns:
         Dict with success and created variable, or error
     """
+    if is_reserved_workflow_variable(name):
+        return {"success": False, "error": _reserved_authoring_error(name)}
+
     try:
         VariableDefinitionBody(variable=name, value=value, description=description)
     except Exception as e:
@@ -482,6 +491,9 @@ def update_variable(
     Returns:
         Dict with success and updated variable, or error
     """
+    if is_reserved_workflow_variable(name):
+        return {"success": False, "error": _reserved_authoring_error(name)}
+
     row = def_manager.get_by_name(name)
     if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}

@@ -43,3 +43,5 @@
 - Avoid loading large files, making network calls, or connecting to external
   services at require time.
 - Keep migrations and code compatible across rolling deploys.
+
+_Version: 1.0.0_

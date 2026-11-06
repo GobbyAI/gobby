@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import psutil
 import pytest
 
 from gobby.sessions.status_events import SessionStatusTransition
@@ -126,7 +127,7 @@ class TestSessionManagerLifecycle:
         workflow_manager.save(
             make_step_instance(
                 session.id,
-                agent_name="developer",
+                agent_name="fixture-worker",
                 current_step="implement",
             )
         )
@@ -144,7 +145,7 @@ class TestSessionManagerLifecycle:
         assert reactivated.agent_run_id == run.id
         instance = workflow_manager.get_for_session(session.id)
         assert instance is not None
-        assert instance.agent_name == "developer"
+        assert instance.agent_name == "fixture-worker"
         preserved_run = run_manager.get(run.id)
         assert preserved_run is not None
         assert preserved_run.child_session_id == session.id
@@ -866,6 +867,38 @@ class TestSessionManagerLifecycle:
         assert transcript_row is not None
         assert transcript_row["transcript_processed"] is True
 
+    def test_registration_revives_a_row_past_the_activity_horizon(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """#25647: an explicit registration is not bound by the hook-activity horizon."""
+        session = session_manager.register(
+            external_id="registered-past-horizon",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "expired")
+        aged = datetime.now(UTC) - timedelta(hours=25)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = %s, last_activity = %s WHERE id = %s",
+            (aged, aged, session.id),
+        )
+        expired = session_manager.get(session.id)
+        assert expired is not None
+
+        by_activity = session_manager.revive_expired_terminal_session(session.id)
+        by_registration = session_manager.revive_registered_terminal_session(
+            expired, caller_session_id=session.id
+        )
+
+        assert by_activity is not None
+        assert by_activity.status == "expired"
+        assert by_registration.status == "active"
+        assert by_registration.last_activity is not None
+        assert by_registration.last_activity > datetime.now(UTC) - timedelta(minutes=1)
+
     def test_revive_expired_terminal_session_refuses_a_departed_seat(
         self,
         session_manager: SessionManager,
@@ -887,6 +920,63 @@ class TestSessionManagerLifecycle:
 
         assert revived is not None
         assert revived.status == "expired"
+
+    @pytest.mark.parametrize(
+        ("same_process", "revives"),
+        [(True, False), (False, True)],
+        ids=["native-clear-successor", "spawned-child"],
+    )
+    def test_revive_refuses_a_row_its_native_clear_successor_replaced(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        same_process: bool,
+        revives: bool,
+    ) -> None:
+        """#25647: a native /clear leaves no marker, only the successor's parent link.
+
+        The successor runs in the predecessor's CLI process, so a late hook for the old
+        thread must not revive it beside the successor. A spawned child also links its
+        parent but runs in its own process, so the parent still revives.
+        """
+        machine_id = "20000000-0000-4000-8000-000000000001"
+        cli = psutil.Process()
+        context = {
+            "tty": "/dev/ttys000",
+            "parent_pid": cli.pid,
+            "parent_create_time": cli.create_time(),
+        }
+        parent = session_manager.register(
+            external_id="cleared-thread",
+            machine_id=machine_id,
+            source="codex",
+            project_id=sample_project["id"],
+            terminal_context=dict(context),
+        )
+        child_process = psutil.Process(os.getppid())
+        child_context = (
+            dict(context)
+            if same_process
+            else {
+                **context,
+                "parent_pid": child_process.pid,
+                "parent_create_time": child_process.create_time(),
+            }
+        )
+        session_manager.register(
+            external_id="next-thread",
+            machine_id=machine_id,
+            source="codex",
+            project_id=sample_project["id"],
+            parent_session_id=parent.id,
+            terminal_context=child_context,
+        )
+        session_manager.update_status(parent.id, "expired")
+
+        revived = session_manager.revive_expired_terminal_session(parent.id)
+
+        assert revived is not None
+        assert revived.status == ("active" if revives else "expired")
 
     def test_revive_expired_foreground_owner_expires_newer_false_claim(
         self,

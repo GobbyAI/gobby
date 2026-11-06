@@ -1,5 +1,6 @@
 """Persist tool-start identity separately from provider result delivery."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.adapters.codex_impl.execution_chain import (
@@ -17,8 +18,11 @@ from gobby.adapters.codex_impl.execution_chain import (
     extract_functions_write_stdin_session_id,
     extract_wait_cell_id,
     extract_yielded_cell_id,
+    structured_exec_results,
 )
-from gobby.hooks.events import HookEvent, HookEventType, tool_execution_id
+from gobby.adapters.codex_impl.native_exec_failures import failed_native_outer_calls
+from gobby.hooks.checkout_reads import node_origin
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource, tool_execution_id
 from gobby.tasks.transcript_background import background_job_receipt
 from gobby.workflows.git_operation_ownership import OPERATIONS_VARIABLE, retire_operation_calls
 from gobby.workflows.state_manager import SessionVariableManager
@@ -35,6 +39,28 @@ def _bindings(variables: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         return {}
     return {key: dict(value) for key, value in raw.items() if isinstance(value, dict)}
+
+
+def pending_fencing_calls(variables: Mapping[str, Any], task_id: str | None) -> list[str]:
+    """Return running calls bound to a task other than ``task_id`` that fence a switch.
+
+    ``task_id`` None means the target is unknown, so every bound fencing call counts.
+    Rules decide whether these calls refuse a selection; this only reports them.
+    """
+    if task_id is not None and variables.get("active_task_id") == task_id:
+        return []
+    calls = variables.get("task_tool_bindings")
+    if not isinstance(calls, Mapping):
+        return []
+    return sorted(
+        str(key)
+        for key, call in calls.items()
+        if isinstance(call, Mapping)
+        and call.get("pending") is True
+        and call.get("task_id") is not None
+        and call.get("task_id") != task_id
+        and call.get("fences_switch") is True
+    )
 
 
 def _fences_switch(event: HookEvent) -> bool:
@@ -65,19 +91,45 @@ def _continuation_alias(event: HookEvent) -> str | None:
     return f"{event.source.value}:{kind}:{token}" if token is not None else None
 
 
+def _code_mode_call(event: HookEvent) -> bool:
+    name = event.data.get("_original_tool_name") or event.metadata.get("original_tool_name")
+    return (name or event.data.get("tool_name")) in FUNCTIONS_EXEC_NAMES | WAIT_NAMES
+
+
+def _exec_results(event: HookEvent, output: Any) -> list[dict[str, Any]]:
+    """Decode printed results only for code-mode cells; other output is command text."""
+    if _code_mode_call(event):
+        return decoded_exec_results(output)
+    return structured_exec_results(output)
+
+
+def _natively_exited(event: HookEvent) -> bool:
+    """A command whose own completion carries an exit code no longer runs.
+
+    Code-mode cells are excluded: a cell can exit while an exec it printed still runs.
+    """
+    canonical = event.data.get("tool_result")
+    return (
+        isinstance(canonical, dict)
+        and definitive_exit_code(canonical) is not None
+        and not _code_mode_call(event)
+    )
+
+
 def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
     output = event.data.get("tool_output", event.data.get("tool_response"))
     aliases: set[str] = set()
-    cell = extract_yielded_cell_id(event.data)
+    # Only a code-mode cell can yield one; other output is command text.
+    cell = extract_yielded_cell_id(event.data) if _code_mode_call(event) else None
     if cell is not None:
         aliases.add(f"{event.source.value}:cell:{cell}")
     # MCP results also carry session_id. Only a call that began as shell work
     # can return an execution session, including polls after reconstruction.
-    if shell_call:
+    if shell_call and not _natively_exited(event):
         session = extract_direct_exec_running_session_id(output)
         if session is not None:
             aliases.add(f"{event.source.value}:session:{session}")
-        for result in decoded_exec_results(output):
+        for result in _exec_results(event, output):
             session = exec_session_id(result)
             if session is not None and result.get("exit_code") is None:
                 aliases.add(f"{event.source.value}:session:{session}")
@@ -94,7 +146,7 @@ def _terminal_background_receipt(event: HookEvent) -> bool:
         return output is not None
     if extract_direct_exec_terminal_result(output) is not None:
         return True
-    results = decoded_exec_results(output)
+    results = _exec_results(event, output)
     canonical = event.data.get("tool_result")
     if isinstance(canonical, dict):
         results.append(canonical)
@@ -175,29 +227,6 @@ class TaskToolBindings:
 
         self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_turn",))
 
-    def assert_can_select(self, task_id: str | None) -> None:
-        """Fence an explicit own switch under the caller's claim transaction."""
-
-        def check(variables: dict[str, Any]) -> tuple[None, bool]:
-            if task_id is not None and variables.get("active_task_id") == task_id:
-                return None, False
-            pending = [
-                key
-                for key, call in _bindings(variables).items()
-                if call.get("pending") is True
-                and call.get("task_id") is not None
-                and call.get("task_id") != task_id
-                and call.get("fences_switch") is True
-            ]
-            if pending:
-                raise ValueError(
-                    f"Task selection is fenced by running calls {', '.join(sorted(pending))}; "
-                    "wait for completion or stop them before calling claim_task again."
-                )
-            return None, False
-
-        self.manager._mutate_variables(self.session_id, check, keys=("task_tool_bindings",))
-
     def start(self, event: HookEvent) -> None:
         key = _call_key(event)
         anonymous = key is None
@@ -244,6 +273,9 @@ class TaskToolBindings:
                 "anonymous": anonymous,
                 "source": event.source.value,
             }
+            outer = event.metadata.get("_native_shell_outer_call_id")
+            if event.source == SessionSource.CODEX and isinstance(outer, str) and outer:
+                calls[key]["native_outer_call_id"] = outer
             if anonymous:
                 calls[key]["selection_count"] = len(variables.get("task_selection_history", []))
             variables["task_tool_bindings"] = calls
@@ -252,6 +284,78 @@ class TaskToolBindings:
         self.manager._mutate_variables(
             self.session_id, mutate, keys=("task_tool_bindings", "claimed_tasks")
         )
+
+    def reconcile_native_failures(self, event: HookEvent) -> None:
+        """Drop uniquely proven abandoned native calls, preserving all edit ownership."""
+        if node_origin():
+            return
+        if event.source != SessionSource.CODEX or event.metadata.get("_native_hook_type") not in {
+            "PreToolUse",
+            "PostToolUse",
+        }:
+            return
+        path = event.data.get("transcript_path")
+        if not isinstance(path, str):
+            return
+        state = self.manager.get_variable_subset(self.session_id, ("task_tool_bindings",))
+        calls = _bindings(state)
+        current_key = _matching_key(event, state)
+        candidates = {
+            call["native_outer_call_id"]
+            for key, call in calls.items()
+            if key != current_key
+            and isinstance(call.get("native_outer_call_id"), str)
+            and call.get("pending") is True
+            and not call.get("background")
+            and not call.get("aliases")
+        }
+        if not candidates or not (failed := failed_native_outer_calls(path, candidates)):
+            return
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            current = _bindings(variables)
+            retired: set[str] = set()
+            for outer in failed:
+                matching = [
+                    key
+                    for key, call in current.items()
+                    if call.get("native_outer_call_id") == outer
+                ]
+                if len(matching) != 1:
+                    continue
+                key = matching[0]
+                call = current[key]
+                if call.get("pending") is not True or call.get("background") or call.get("aliases"):
+                    continue
+                call.update(pending=False, abandoned=True)
+                retired.add(key.partition(":")[2])
+            if not retired:
+                return None, False
+            variables["task_tool_bindings"] = current
+            for name in ("claimed_shell_snapshots", "worktree_shell_calls"):
+                snapshots = variables.get(name)
+                if isinstance(snapshots, dict):
+                    variables[name] = {k: v for k, v in snapshots.items() if k not in retired}
+            kept = {key.partition(":")[2] for key in current} - retired
+            retire_operation_calls(variables, kept)
+            return None, True
+
+        self.manager._mutate_variables(
+            self.session_id,
+            mutate,
+            keys=(
+                "task_tool_bindings",
+                "claimed_shell_snapshots",
+                "worktree_shell_calls",
+                OPERATIONS_VARIABLE,
+            ),
+        )
+
+    def is_abandoned(self, event: HookEvent) -> bool:
+        """A late post cannot re-adopt edits or credit an outcome we could not prove."""
+        state = self.manager.get_variable_subset(self.session_id, ("task_tool_bindings",))
+        key = _matching_key(event, state)
+        return key is not None and _bindings(state)[key].get("abandoned") is True
 
     def clear_pending(self, boundary: str) -> None:
         """Retire completed/abandoned calls; only live background work crosses turns.
@@ -267,9 +371,12 @@ class TaskToolBindings:
             kept = {
                 key: call
                 for key, call in calls.items()
-                if call.get("pending") is True
-                and call.get("background") is True
-                and boundary in {"prompt", "interrupt", "turn_end"}
+                if (
+                    call.get("pending") is True
+                    and call.get("background") is True
+                    and boundary in {"prompt", "interrupt", "turn_end"}
+                )
+                or (call.get("abandoned") is True and boundary not in {"session_end", "clear"})
             }
             ends_turn = boundary != "prompt"
             changed = kept != calls or (ends_turn and "task_tool_turn" in variables)
@@ -339,6 +446,8 @@ class TaskToolBindings:
             key = _matching_key(event, variables)
             calls = _bindings(variables)
             if key is None or key not in calls:
+                return None, False
+            if calls[key].get("abandoned") is True:
                 return None, False
             aliases = _returned_aliases(event, shell_call=calls[key].get("fences_switch") is True)
             calls[key]["aliases"] = sorted(set(calls[key].get("aliases", [])) | set(aliases))

@@ -28,7 +28,10 @@ async def test_explicit_reuse_records_selected_base(repo: Path, tmp_path: Path) 
     git(repo, "commit", "-m", "advance release")
     selected = git(repo, "rev-parse", "HEAD")
     storage = MagicMock()
-    existing = SimpleNamespace(worktree_path=str(child), branch_name="candidate", id="wt-id")
+    storage.is_claimed_by_live_session.return_value = False
+    existing = SimpleNamespace(
+        worktree_path=str(child), branch_name="candidate", id="wt-id", task_id=None
+    )
     context, _ = await prepare_reused_worktree(
         existing_worktree=existing,
         git_manager=WorktreeGitManager(repo),
@@ -149,8 +152,6 @@ async def test_detached_handler_refuses_before_storage_effects(
 
 
 async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) -> None:
-    from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
-
     child = tmp_path / "conflicted"
     git(repo, "worktree", "add", "-b", "candidate", str(child), "main")
     (child / "modified.txt").write_text("candidate bytes\n")
@@ -159,15 +160,18 @@ async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) ->
     (repo / "modified.txt").write_text("new base bytes\n")
     git(repo, "commit", "-am", "base changes")
     selected = git(repo, "rev-parse", "HEAD")
-    with pytest.raises(ReusedWorktreeSyncConflict) as error:
-        await sync_reused_worktree_to_base(
-            git_manager=WorktreeGitManager(repo),
-            worktree_path=str(child),
-            base_branch="main",
-            base_commit_sha=selected,
-        )
-    assert error.value.base_commit_sha == selected
-    assert error.value.worktree_path == str(child)
+    fork = git(repo, "merge-base", candidate, selected)
+    result = await sync_reused_worktree_to_base(
+        git_manager=WorktreeGitManager(repo),
+        worktree_path=str(child),
+        base_branch="main",
+        base_commit_sha=selected,
+    )
+    assert result.status == "deferred"
+    assert result.base_commit_sha == fork
+    assert result.deferred is not None
+    assert result.deferred.reason == "branch_diverged"
+    assert result.deferred.pending_base_sha == selected
     assert git(child, "rev-parse", "HEAD") == candidate
     assert (child / "modified.txt").read_text() == "candidate bytes\n"
     assert git(child, "status", "--porcelain") == ""
@@ -274,28 +278,34 @@ async def test_repair_refuses_provider_copy_when_tracked_files_are_unavailable(
     assert git(child, "status", "--porcelain", "--", ".codex") == ""
 
 
-async def test_refresh_preserves_workspace_ancestry(repo: Path, tmp_path: Path) -> None:
+async def test_reuse_never_merges_into_a_candidate_with_its_own_commits(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A clean merge would still write a commit the author never made."""
     child = tmp_path / "reuse"
     git(repo, "worktree", "add", "-b", "candidate", str(child))
     (child / "candidate.txt").write_text("candidate work")
     git(child, "add", ".")
     git(child, "commit", "-m", "candidate")
     candidate = git(child, "rev-parse", "HEAD")
+    fork = git(child, "rev-parse", "HEAD^")
     (repo / "base.txt").write_text("selected base")
     git(repo, "add", ".")
     git(repo, "commit", "-m", "base advances")
     selected = git(repo, "rev-parse", "HEAD")
-    git(repo, "commit", "--allow-empty", "-m", "base moves after selection")
     result = await sync_reused_worktree_to_base(
         git_manager=WorktreeGitManager(repo),
         worktree_path=str(child),
         base_branch="main",
         base_commit_sha=selected,
     )
-    assert result.base_commit_sha == selected
-    assert git(child, "rev-parse", "HEAD^1") == candidate
-    assert git(child, "rev-parse", "HEAD^2") == selected
-    assert (child / "candidate.txt").read_text() == "candidate work"
+    assert result.status == "deferred"
+    assert result.base_commit_sha == fork
+    assert result.deferred is not None
+    assert result.deferred.reason == "branch_diverged"
+    assert result.deferred.pending_base_sha == selected
+    assert git(child, "rev-parse", "HEAD") == candidate
+    assert not (child / "base.txt").exists()
 
 
 @pytest.mark.parametrize("base", [None, "main"])

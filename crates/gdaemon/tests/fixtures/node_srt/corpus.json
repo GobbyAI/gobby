@@ -29,7 +29,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -1399,7 +1399,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -1523,7 +1524,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -1658,10 +1659,10 @@
               "{gobby_home}/agents_workspaces"
             ],
             "denyWrite": [
-              1232,
               1233,
               1234,
               1235,
+              1236,
               10,
               11,
               12,
@@ -2883,7 +2884,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -3009,7 +3011,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -4376,7 +4378,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -4505,7 +4508,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -4641,7 +4644,6 @@
               "{gobby_home}/agents_workspaces"
             ],
             "denyWrite": [
-              1236,
               1237,
               1238,
               1239,
@@ -4651,6 +4653,7 @@
               1243,
               1244,
               1245,
+              1246,
               10,
               11,
               12,
@@ -5872,7 +5875,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -5997,7 +6001,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -7358,7 +7362,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -7489,7 +7494,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -7624,10 +7629,10 @@
               "{gobby_home}/agents_workspaces"
             ],
             "denyWrite": [
-              1232,
               1233,
               1234,
               1235,
+              1236,
               10,
               11,
               12,
@@ -8849,7 +8854,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -8986,7 +8992,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -9184,7 +9190,6 @@
               54,
               55,
               56,
-              1246,
               1247,
               1248,
               1249,
@@ -9231,6 +9236,7 @@
               1290,
               1291,
               1292,
+              1293,
               57,
               58,
               59,
@@ -10405,7 +10411,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -10534,7 +10541,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -10732,7 +10739,6 @@
               54,
               55,
               56,
-              1293,
               1294,
               1295,
               1296,
@@ -10779,6 +10785,7 @@
               1337,
               1338,
               1339,
+              1340,
               57,
               58,
               59,
@@ -11953,7 +11960,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -12084,7 +12092,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -13458,7 +13466,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -13584,7 +13593,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -13721,10 +13730,10 @@
               "{gobby_home}/agents_workspaces"
             ],
             "denyWrite": [
-              1232,
               1233,
               1234,
               1235,
+              1236,
               10,
               11,
               12,
@@ -13772,7 +13781,6 @@
               54,
               55,
               56,
-              1340,
               1341,
               1342,
               1343,
@@ -13819,6 +13827,7 @@
               1384,
               1385,
               1386,
+              1387,
               57,
               58,
               59,
@@ -14993,7 +15002,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -15124,7 +15134,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -15322,7 +15332,6 @@
               54,
               55,
               56,
-              1387,
               1388,
               1389,
               1390,
@@ -15369,6 +15378,7 @@
               1431,
               1432,
               1433,
+              1434,
               57,
               58,
               59,
@@ -16543,7 +16553,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -16672,7 +16683,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -16726,13 +16737,13 @@
               "{home}/.config/git",
               "{bin}/claude",
               "{home}/.ssh/known_hosts",
-              "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7",
+              "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7",
               "{gobby_home}/agents_workspaces/node-srt-project/epics/epic-3",
               "{gobby_home}/agents_workspaces/node-srt-project/README.md"
             ],
             "allowWrite": [
               "{workspace}",
-              "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7",
+              "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7",
               "{gobby_home}/agents_workspaces/node-srt-project/epics/epic-3",
               "{tmp}/gobby/uv-cache/node-srt-session-c2052f38f62c9a99",
               "{gobby_home}/cache/cargo-home",
@@ -16873,7 +16884,6 @@
               54,
               55,
               56,
-              1434,
               1435,
               1436,
               1437,
@@ -16967,6 +16977,7 @@
               1525,
               1526,
               1527,
+              1528,
               57,
               58,
               59,
@@ -18141,7 +18152,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -18192,7 +18204,7 @@
       },
       "inputs": {
         "daemon_port": 60887,
-        "definition": "developer",
+        "definition": "fixture-worker",
         "env": {
           "GOBBY_HOME": "{gobby_home}",
           "GOBBY_SESSION_ID": "node-srt-session",
@@ -18266,7 +18278,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -18464,7 +18476,6 @@
               54,
               55,
               56,
-              1528,
               1529,
               1530,
               1531,
@@ -18511,6 +18522,7 @@
               1572,
               1573,
               1574,
+              1575,
               57,
               58,
               59,
@@ -19685,7 +19697,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -19810,7 +19823,7 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
-          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
+          "UV_PROJECT_ENVIRONMENT": "",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
           "ZDOTDIR": "{run_root}/assets",
@@ -20010,7 +20023,6 @@
               54,
               55,
               56,
-              1575,
               1576,
               1577,
               1578,
@@ -20057,6 +20069,7 @@
               1619,
               1620,
               1621,
+              1622,
               57,
               58,
               59,
@@ -21231,7 +21244,8 @@
               1228,
               1229,
               1230,
-              1231
+              1231,
+              1232
             ]
           },
           "ignoreViolations": {
@@ -22563,6 +22577,7 @@
     "{gobby_home}/cache/sandbox/cargo-target/{checkout}/.config/gemini/trustedFolders.json",
     "{gobby_home}/cache/sandbox/cargo-target/{checkout}/.agents/plugins/marketplace.json",
     "{gobby_home}/cache/sandbox/cargo-target/{checkout}/.claude-plugin/marketplace.json",
+    "{workspace}/.venv",
     "{home}/.codex/hooks.json",
     "{home}/.codex/config.toml",
     "{home}/.codex/rules",
@@ -22765,53 +22780,53 @@
     "{home}/\ud83d\ude42/extra/.config/gemini/trustedFolders.json",
     "{home}/\ud83d\ude42/extra/.agents/plugins/marketplace.json",
     "{home}/\ud83d\ude42/extra/.claude-plugin/marketplace.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.mcp.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/settings.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/settings.local.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/agents",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/skills",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/commands",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/plugins/cache",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/plugins/marketplaces",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/plugins/synced",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/plugins/installed_plugins.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude/plugins/known_marketplaces.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.codex/hooks.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.codex/config.toml",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.codex/rules",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.codex/plugins/cache",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/hooks.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/settings.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/settings.local.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/mcp.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/droids",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/commands",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/plugins/cache",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/plugins/marketplaces",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/plugins/installed_plugins.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.factory/plugins/known_marketplaces.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/hooks",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/hooks-paths",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/config.toml",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/managed_config.toml",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/requirements.toml",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/trusted_folders.toml",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/trusted-hook-projects",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/trusted-plugins",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/sandbox.toml",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.grok/bin",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.cursor/hooks.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/settings.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/trustedFolders.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/config/hooks.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/agents",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/commands",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/policies",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.gemini/extensions",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.config/gemini/settings.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.config/gemini/trustedFolders.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.agents/plugins/marketplace.json",
-    "{gobby_home}/agents_workspaces/node-srt-project/developer/session-7/.claude-plugin/marketplace.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.mcp.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/settings.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/settings.local.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/agents",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/skills",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/commands",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/plugins/cache",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/plugins/marketplaces",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/plugins/synced",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/plugins/installed_plugins.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude/plugins/known_marketplaces.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.codex/hooks.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.codex/config.toml",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.codex/rules",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.codex/plugins/cache",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/hooks.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/settings.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/settings.local.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/mcp.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/droids",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/commands",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/plugins/cache",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/plugins/marketplaces",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/plugins/installed_plugins.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.factory/plugins/known_marketplaces.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/hooks",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/hooks-paths",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/config.toml",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/managed_config.toml",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/requirements.toml",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/trusted_folders.toml",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/trusted-hook-projects",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/trusted-plugins",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/sandbox.toml",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.grok/bin",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.cursor/hooks.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/settings.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/trustedFolders.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/config/hooks.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/agents",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/commands",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/policies",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.gemini/extensions",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.config/gemini/settings.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.config/gemini/trustedFolders.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.agents/plugins/marketplace.json",
+    "{gobby_home}/agents_workspaces/node-srt-project/fixture-worker/session-7/.claude-plugin/marketplace.json",
     "{gobby_home}/agents_workspaces/node-srt-project/epics/epic-3/.mcp.json",
     "{gobby_home}/agents_workspaces/node-srt-project/epics/epic-3/.claude/settings.json",
     "{gobby_home}/agents_workspaces/node-srt-project/epics/epic-3/.claude/settings.local.json",

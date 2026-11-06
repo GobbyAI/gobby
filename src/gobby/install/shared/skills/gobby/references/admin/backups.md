@@ -42,3 +42,5 @@ not evidence that the eventual restore will succeed.
 
 See [disaster recovery](../../../../../../../../docs/guides/cli-commands.md#hub-backup-disaster-recovery)
 and [admin operations](../../../../../../../../docs/guides/admin-operations.md).
+
+_Version: 1.0.0_

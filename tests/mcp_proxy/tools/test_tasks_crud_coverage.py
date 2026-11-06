@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.storage.tasks import Task
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -52,8 +53,7 @@ SUMMARY_TASK_KEYS = {
     "assigned_agent",
     "implementation_domain",
     "additional_skills",
-    "review_epoch",
-    "step_records",
+    "attestations",
 }
 
 NOISY_TASK_KEYS = {
@@ -271,6 +271,7 @@ class TestUpdateTaskTool:
             validation_criteria="The requested task metadata is stored.",
             implementation_domain=None,
             is_escalated=False,
+            labels=[],
         )
 
     @pytest.mark.asyncio
@@ -305,80 +306,78 @@ class TestUpdateTaskTool:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_code_category_without_criteria(
-        self, mock_task_manager: MagicMock
+    async def test_update_task_rejects_unknown_category(
+        self, temp_db: HubDatabase, sample_project: dict[str, str]
     ) -> None:
-        """A category flip must satisfy the effective code-task invariant."""
-        registry = create_task_registry(mock_task_manager)
-        mock_task_manager.get_task.return_value = SimpleNamespace(
-            task_type="task",
+        """The metadata API rejects values outside its category schema."""
+        manager = LocalTaskManager(temp_db)
+        task = manager.create_task(
+            project_id=sample_project["id"],
+            title="Synthetic manual task",
             category="manual",
-            validation_criteria=None,
-            implementation_domain=None,
+            validation_criteria="Manual acceptance is observable.",
         )
+        registry = create_task_registry(manager)
 
         result = await registry.call(
             "update_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "category": "code"},
+            {"task_id": task.id, "category": "fixture-invalid"},
         )
 
-        assert "Every non-epic task requires nonempty validation_criteria" in result["error"]
-        assert mock_task_manager.get_task.call_count == 2
-        mock_task_manager.update_task.assert_not_called()
+        assert "category" in result["error"]
+        assert manager.get_task(task.id).category == "manual"
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_code_category_without_domain(
-        self, mock_task_manager: MagicMock
+    async def test_update_task_rejects_unknown_domain(
+        self, temp_db: HubDatabase, sample_project: dict[str, str]
     ) -> None:
-        """A category flip with criteria must still provide an implementation domain."""
-        registry = create_task_registry(mock_task_manager)
-        mock_task_manager.get_task.return_value = SimpleNamespace(
-            task_type="task",
+        """The metadata API validates a supplied domain without deriving seat policy."""
+        manager = LocalTaskManager(temp_db)
+        task = manager.create_task(
+            project_id=sample_project["id"],
+            title="Synthetic manual task",
             category="manual",
-            validation_criteria=None,
-            implementation_domain=None,
+            validation_criteria="Manual acceptance is observable.",
         )
+        registry = create_task_registry(manager)
 
         result = await registry.call(
             "update_task",
             {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "category": "code",
-                "validation_criteria": "Focused tests pass",
+                "task_id": task.id,
+                "implementation_domain": "fixture-invalid",
             },
         )
 
-        assert result == {
-            "error": "Code tasks require implementation_domain "
-            "('backend', 'frontend', or 'fullstack')."
-        }
-        assert mock_task_manager.get_task.call_count == 2
-        mock_task_manager.update_task.assert_not_called()
+        assert "implementation_domain" in result["error"]
+        assert manager.get_task(task.id).category == "manual"
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_clearing_code_task_criteria(
-        self, mock_task_manager: MagicMock
+    async def test_update_task_rejects_unknown_task_type(
+        self, temp_db: HubDatabase, sample_project: dict[str, str]
     ) -> None:
-        """An existing code task cannot clear its validation criteria."""
-        registry = create_task_registry(mock_task_manager)
-        mock_task_manager.get_task.return_value = SimpleNamespace(
-            task_type="task",
+        """Invalid task types cannot change persisted metadata."""
+        manager = LocalTaskManager(temp_db)
+        task = manager.create_task(
+            project_id=sample_project["id"],
+            title="Synthetic implementation task",
             category="code",
             validation_criteria="Focused tests pass",
             implementation_domain="backend",
         )
+        registry = create_task_registry(manager)
 
         result = await registry.call(
             "update_task",
             {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "validation_criteria": "",
+                "task_id": task.id,
+                "task_type": "fixture-invalid",
             },
         )
 
-        assert "Every non-epic task requires nonempty validation_criteria" in result["error"]
-        assert mock_task_manager.get_task.call_count == 2
-        mock_task_manager.update_task.assert_not_called()
+        assert "task_type" in result["error"]
+        assert manager.get_task(task.id).task_type == "task"
+        assert manager.get_task(task.id).validation_criteria == "Focused tests pass"
 
     @pytest.mark.asyncio
     async def test_update_task_accepts_valid_code_category_flip(
@@ -564,12 +563,13 @@ class TestUpdateTaskTool:
             "update_task",
             {
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "additional_skills": ["tech-writer"],
+                "additional_skills": ["fixture-definition-76c4b50c"],
             },
         )
 
         mock_task_manager.update_task.assert_called_with(
-            "550e8400-e29b-41d4-a716-446655440000", additional_skills=["tech-writer"]
+            "550e8400-e29b-41d4-a716-446655440000",
+            additional_skills=["fixture-definition-76c4b50c"],
         )
         assert result == {}
 
@@ -588,14 +588,14 @@ class TestUpdateTaskTool:
             {
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
                 "assigned_agent": "backend-developer",
-                "additional_skills": ["tech-writer", "code-index"],
+                "additional_skills": ["fixture-definition-76c4b50c", "code-index"],
             },
         )
 
         mock_task_manager.update_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000",
             assigned_agent="backend-developer",
-            additional_skills=["tech-writer", "code-index"],
+            additional_skills=["fixture-definition-76c4b50c", "code-index"],
         )
         assert result == {}
 

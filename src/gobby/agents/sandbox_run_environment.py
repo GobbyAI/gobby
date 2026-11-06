@@ -63,8 +63,10 @@ class SandboxRunPaths:
         }
         values["CARGO_HOME"] = str(self.cargo_home)
         values["CARGO_TARGET_DIR"] = str(self.cargo_target)
-        # Validation may target a shared checkout; uv must lock and sync its own environment.
-        values["UV_PROJECT_ENVIRONMENT"] = str(self.cache / "uv-project-environment")
+        # uv uses the checkout's own .venv, which the pre-spawn seed syncs. Empty also
+        # clears an inherited value: a run-local environment starts empty, and building
+        # the editable install there writes egg-info into a read-only checkout.
+        values["UV_PROJECT_ENVIRONMENT"] = ""
         # Every provider child, and everything it spawns, must land temp files in
         # the run's writable tmp. Claude alone used to get only CLAUDE_CODE_TMPDIR,
         # so its children kept the ambient system temp, which is not a write grant:
@@ -87,9 +89,12 @@ class SandboxRunPaths:
             values["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(self.zig_system_dir)
         # The cache stays inside the Cargo home's trust domain. The server socket
         # needs the launch's run-tmp Unix socket grant, so without it builds run uncached.
+        # The shim sits beside the Cargo home, not in it: runs read and exec it, never write it.
         values.update(
             cargo_environment(
-                self.cargo_home / "sccache", self.tmp / "sccache.sock" if run_sockets else None
+                self.cargo_home / "sccache",
+                self.tmp / "sccache.sock" if run_sockets else None,
+                self.shared_cache / "bin",
             )
         )
         return values

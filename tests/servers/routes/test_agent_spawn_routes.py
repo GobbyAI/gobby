@@ -156,21 +156,6 @@ def client(server: HTTPServer) -> TestClient:
     return TestClient(server.app)
 
 
-def test_launch_defaults_startup_returns_retryable_503(
-    client: TestClient,
-    server: HTTPServer,
-) -> None:
-    runtime = MagicMock(spec=ConfigRuntime)
-    type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("runtime starting"))
-    server.services.config_runtime = runtime
-
-    response = client.get("/api/agents/launch-defaults", params={"project_id": "project-1"})
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "runtime_unavailable"
-    assert response.json()["detail"]["retryable"] is True
-
-
 # ---------------------------------------------------------------------------
 # POST /api/agents/spawn
 # ---------------------------------------------------------------------------
@@ -680,65 +665,6 @@ class TestBatchSpawn:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/agents/launch-defaults
-# ---------------------------------------------------------------------------
-
-
-class TestLaunchDefaults:
-    def test_get_defaults_empty(self, client: TestClient) -> None:
-        """Returns empty defaults for new project."""
-        response = client.get("/api/agents/launch-defaults?project_id=new-project")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["defaults"] == {}
-        assert "built_in" in data
-
-    def test_get_defaults_from_runtime_snapshot(
-        self, server: HTTPServer, client: TestClient
-    ) -> None:
-        """Registered launch defaults are projected from one runtime snapshot."""
-        runtime = server.services.config_runtime
-        assert isinstance(runtime, StubConfigRuntime)
-        snapshot = runtime.snapshot
-        runtime.current = ConfigSnapshot(
-            revision=snapshot.revision,
-            desired=snapshot.desired,
-            active=snapshot.active,
-            row_revisions={},
-            pending_restart_keys=frozenset(),
-            failed_live_keys={},
-            desired_values={},
-            active_values={
-                "launch_defaults.proj-1": {
-                    "code": {
-                        "agent_name": "developer",
-                        "checkout_mode": "worktree",
-                        "model": "sonnet",
-                    }
-                }
-            },
-        )
-
-        response = client.get("/api/agents/launch-defaults?project_id=proj-1")
-        assert response.status_code == 200
-        data = response.json()
-        assert "code" in data["defaults"]
-        code_defaults = data["defaults"]["code"]
-        assert code_defaults["agent_name"] == "developer"
-        assert code_defaults["checkout_mode"] == "worktree"
-        assert code_defaults["model"] == "sonnet"
-
-    def test_specialized_launch_defaults_writer_is_removed(self, client: TestClient) -> None:
-        response = client.put(
-            "/api/agents/launch-defaults",
-            json={"project_id": "proj-2", "category": "code", "agent_name": "developer"},
-        )
-
-        assert response.status_code == 405
-
-
-# ---------------------------------------------------------------------------
 # POST /api/agents/spawn/prompt-preview
 # ---------------------------------------------------------------------------
 
@@ -769,7 +695,7 @@ class TestPromptPreview:
     ) -> None:
         task = _create_task(task_manager, test_project.id, "Coordinate release")
         body = make_agent_definition(
-            name="comms-agent",
+            name="fixture-definition-d838ecc9",
             surfaces=["persona"],
             prompts={"persona": "Coordinate interactively."},
         )
@@ -779,7 +705,7 @@ class TestPromptPreview:
         )
 
         response = client.post(
-            f"/api/agents/spawn/prompt-preview?task_id={task.id}&agent_name=comms-agent"
+            f"/api/agents/spawn/prompt-preview?task_id={task.id}&agent_name=fixture-definition-d838ecc9"
         )
 
         assert response.status_code == 400

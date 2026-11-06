@@ -161,7 +161,11 @@ class EnforcementCheckMixin:
         mcp_key: str,
         tool_input: dict[str, Any],
     ) -> bool:
-        """Return whether claim_task targets the active run's already-owned task."""
+        """Return whether claim_task targets the active run's own task.
+
+        The run's task counts while it is unclaimed or claimed by this session, so a
+        seat's initial claim is not ordered behind its skill-loading step.
+        """
         if mcp_key != "gobby-tasks:claim_task":
             return False
         handler_input = self._step_handler_tool_input(tool_input)
@@ -189,7 +193,7 @@ class EnforcementCheckMixin:
             task = task_manager.get_task(bound_task_id)
         except TaskNotFoundError:
             return False
-        if get_claimed_session_id(task) != session_id:
+        if get_claimed_session_id(task) not in (None, session_id):
             return False
 
         task_refs = {str(task.id)}
@@ -407,7 +411,7 @@ class EnforcementCheckMixin:
 
         # Operator terminal channels bypass allow-lists, but a provider-native
         # subagent never drives them. A spawned Gobby agent is gated by the
-        # no-send-keys rule instead. The payload's agent id decides a native
+        # configured terminal admission rules instead. The payload's agent id decides a native
         # subagent; the session flag is only the fallback for a CLI that sends no
         # per-event identity.
         if (
@@ -784,7 +788,7 @@ class EnforcementCheckMixin:
                         step.name,
                         tool_name,
                         "allow",
-                        reason="claim_task targets the task already owned by this session",
+                        reason="claim_task targets this run's own task",
                         mcp_key=mcp_key,
                     )
                     return None

@@ -8,27 +8,39 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.codex_seat import codex_seat_available
+import psycopg
+
+from gobby.hooks.codex_seat import (
+    ClearSeatSearch,
+    codex_clear_activity_search,
+    codex_seat_available,
+)
+from gobby.hooks.event_handlers._session_start.terminal_runtime import bind_discovered_terminal
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
+    SeatAvailable,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
+    sync_codex_seat,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.terminal_binding import repair_native_terminal_binding
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
+from gobby.storage import session_startup_marks as startup_marks
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 from gobby.storage.sessions._registration_cache import session_matches_registration
+from gobby.storage.terminals import TerminalManager
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -344,12 +356,45 @@ class SessionLookupService:
         """
         raw_context = event.data.get("terminal_context")
         terminal_context = raw_context if isinstance(raw_context, dict) else None
+        clear_search = None
+        settling: ClearSeatSearch | None = None
+        if (
+            event.source.value == "codex"
+            and event.machine_id
+            and event.event_type != HookEventType.SESSION_END
+        ):
+            recorded = (
+                current
+                if current is not None and current.id == platform_session_id
+                else self._session_manager.get(platform_session_id)
+            )
+            if recorded is not None:
+                transcript_path = event.data.get("transcript_path")
+                clear_search = codex_clear_activity_search(
+                    self._session_manager.db,
+                    event.machine_id,
+                    recorded.terminal_context,
+                    transcript_path
+                    if isinstance(transcript_path, str)
+                    else recorded.transcript_path,
+                    event.session_id,
+                )
+                recorded_origin = (recorded.terminal_context or {}).get(CODEX_CLEAR_ORIGIN_KEY)
+                if (
+                    clear_search is not None
+                    and recorded_origin == CODEX_CLEAR_ORIGIN_PENDING
+                    and clear_search.origin != CODEX_CLEAR_ORIGIN_PENDING
+                ):
+                    settling = clear_search
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             hook_cwd(event.data, event.cwd),
-            external_id=event.session_id,
+            external_id=clear_search.thread_id if clear_search else event.session_id,
+            cleared_seat_owner=clear_search.owner if clear_search else None,
             machine_id=event.machine_id,
         )
+        if settling is not None:
+            return self._settle_clear_origin(platform_session_id, terminal_context, settling)
         if not terminal_context:
             return current
 
@@ -368,13 +413,67 @@ class SessionLookupService:
             return None
 
         if tmux_pane_added and updated_session is not None:
-            title = getattr(updated_session, "title", None) or ""
-            schedule_tmux_window_rename(
-                updated_session,
-                title,
-                loop=getattr(self._session_coordinator, "_event_loop", None),
-            )
+            self._rename_tmux_window(updated_session)
         return updated_session
+
+    def _settle_clear_origin(
+        self,
+        platform_session_id: str,
+        terminal_context: dict[str, Any] | None,
+        search: ClearSeatSearch,
+    ) -> Session | None:
+        """Record a /clear successor's origin, once its rollout names it.
+
+        Hooks of one session can overlap, so only the hook whose conditional write wins
+        settles the origin and may adopt the seat. A hook that loses returns the stored
+        row, which holds the winner's result.
+        """
+        try:
+            settled, tmux_pane_added = self._session_manager.settle_terminal_context(
+                platform_session_id,
+                {**(terminal_context or {}), CODEX_CLEAR_ORIGIN_KEY: search.origin},
+                marker_key=CODEX_CLEAR_ORIGIN_KEY,
+                pending=CODEX_CLEAR_ORIGIN_PENDING,
+            )
+        except Exception as exc:
+            self._logger.debug(
+                "Failed to settle /clear origin for session %s: %s", platform_session_id, exc
+            )
+            return None
+        if settled is None:
+            return self._session_manager.get(platform_session_id)
+        if tmux_pane_added:
+            self._rename_tmux_window(settled)
+        if search.owner is not None and (settled.terminal_context or {}).get("parent_pid"):
+            if search.thread_id:
+                sync_codex_seat(search.thread_id, settled.terminal_context)
+            settled = self._take_over_cleared_seat(settled)
+        return settled
+
+    def _rename_tmux_window(self, session: Session) -> None:
+        schedule_tmux_window_rename(
+            session,
+            getattr(session, "title", None) or "",
+            loop=getattr(self._session_coordinator, "_event_loop", None),
+        )
+
+    def _take_over_cleared_seat(self, successor: Session) -> Session:
+        """Hand a late-adopted /clear successor its predecessor's seat and pane.
+
+        SessionStart does the same when the rollout already exists at that time.
+        """
+        try:
+            self._session_manager.bind_native_clear_successor(successor.id)
+            bind_discovered_terminal(
+                TerminalManager(self._session_manager.db),
+                self._logger,
+                session_id=successor.id,
+                project_id=successor.project_id,
+                terminal_context=successor.terminal_context,
+            )
+        except Exception as exc:
+            self._logger.warning("Failed to hand cleared seat to session %s: %s", successor.id, exc)
+        return self._session_manager.get(successor.id) or successor
 
     def _resolve_session_id(
         self,
@@ -417,18 +516,42 @@ class SessionLookupService:
                 project_id=project_id,
             )
 
+    def _codex_startup_mark(
+        self, external_id: str, event: HookEvent, machine_id: str | None
+    ) -> dict[str, str] | None:
+        """The durable mark a Codex thread's deferred startup left, if still unconsumed."""
+        if event.source.value != "codex" or not machine_id:
+            return None
+        mark = {"machine_id": machine_id, "source": "codex", "external_id": external_id}
+        exists = startup_marks.startup_mark_exists(self._session_manager.db, **mark)
+        return mark if exists else None
+
+    def _startup_seat_available(
+        self, startup_thread: bool, machine_id: str | None
+    ) -> SeatAvailable | None:
+        """A startup's seat check, which may adopt a seat past the fresh window."""
+        if not startup_thread or not machine_id:
+            return None
+        return codex_seat_available(self._session_manager.db, machine_id)
+
     def _bind_inherited_tty_native_subagent(
         self,
         event: HookEvent,
         *,
         machine_id: str | None,
+        startup_thread: bool = False,
     ) -> str | None:
         """Bind child-conversation hooks to the live parent that owns this TTY."""
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
         terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context, cwd, external_id=event.session_id, machine_id=event.machine_id
+            terminal_context,
+            cwd,
+            external_id=event.session_id,
+            seat_available=self._startup_seat_available(startup_thread, machine_id),
+            machine_id=event.machine_id,
+            startup_thread=startup_thread,
         )
         owner = self._session_manager.find_live_interactive_pane_owner(
             terminal_context,
@@ -567,9 +690,13 @@ class SessionLookupService:
             )
             return None
 
+        # Only a thread whose own startup deferred its row may search for a seat, and
+        # the pane check below sees the same seat the registration records.
+        startup_mark = self._codex_startup_mark(external_id, event, machine_id)
         bound_parent_id = self._bind_inherited_tty_native_subagent(
             event,
             machine_id=machine_id,
+            startup_thread=startup_mark is not None,
         )
         if bound_parent_id is not None:
             return bound_parent_id
@@ -624,17 +751,14 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-        # A new Codex thread may start in a seat that waited past the fresh window.
+        # A startup's seat may have waited past the fresh window.
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             cwd,
             external_id=event.session_id,
-            seat_available=(
-                codex_seat_available(self._session_manager.db, machine_id)
-                if event.source.value == "codex" and machine_id
-                else None
-            ),
+            seat_available=self._startup_seat_available(startup_mark is not None, machine_id),
             machine_id=machine_id,
+            startup_thread=startup_mark is not None,
         )
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,
@@ -645,6 +769,16 @@ class SessionLookupService:
             project_path=cwd,
             terminal_context=terminal_context,
         )
+        if startup_mark is not None:
+            try:
+                startup_marks.delete_startup_mark(self._session_manager.db, **startup_mark)
+            except psycopg.Error as exc:
+                # The row is stored, so an unconsumed mark only waits for the prune.
+                self._logger.warning(
+                    "Could not consume the startup mark for Codex thread %s: %s",
+                    external_id,
+                    exc,
+                )
         event.metadata["_session_just_materialized"] = True
         return platform_session_id
 

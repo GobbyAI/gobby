@@ -9,10 +9,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
-from gobby.storage.tasks import (
-    TaskHasOpenChildrenError,
-    TaskStaleStateError,
-)
+from gobby.storage.tasks import TaskStaleStateError
 from gobby.tasks.closure_snapshot import TaskClosurePolicyError
 
 logger = logging.getLogger(__name__)
@@ -91,7 +88,7 @@ async def commit_close(
                 closed_ancestors=ancestors,
                 closing_note=closing_note,
             )
-    except (TaskStaleStateError, TaskHasOpenChildrenError) as exc:
+    except TaskStaleStateError as exc:
         return fresh.refuse("close_state_changed", str(exc)).response(preview=False)
     except TaskClosurePolicyError as exc:
         fresh.decision = exc.decision

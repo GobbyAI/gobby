@@ -8,6 +8,7 @@ from uuid import UUID
 from gobby.storage.definitions import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.read_scope import scoped_read
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 
 _SESSION_TABLES = frozenset({"sessions"})
 
@@ -48,7 +49,7 @@ def merge_unloaded_variable_defaults(
     defaults = {
         key: value
         for key, value in load_variable_defaults(db, project_id).items()
-        if key not in variables
+        if key not in variables and not is_reserved_workflow_variable(key)
     }
     defaults["_variable_defaults_loaded"] = True
     return defaults

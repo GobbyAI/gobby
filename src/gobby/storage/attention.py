@@ -186,6 +186,7 @@ class AttentionRosterRow:
     definition_title: str | None = None
     machine_id: str | None = None
     project_id: str | None = None
+    status_line: str | None = None
 
     @classmethod
     def from_row(cls, row: Row) -> AttentionRosterRow:
@@ -229,6 +230,7 @@ class AttentionRosterRow:
             ),
             machine_id=str(row["machine_id"]) if row.get("machine_id") is not None else None,
             project_id=str(row["project_id"]) if row.get("project_id") is not None else None,
+            status_line=(str(row["status_line"]) if row.get("status_line") is not None else None),
         )
 
 
@@ -324,6 +326,7 @@ class AttentionStateManager:
                 terminal.session_name AS terminal_session_name,
                 terminal.locator::text AS terminal_locator,
                 task.title AS task_title,
+                child.status_line AS status_line,
                 COALESCE(
                     CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
                          THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,
@@ -376,6 +379,7 @@ class AttentionStateManager:
                 terminal.session_name AS terminal_session_name,
                 terminal.locator::text AS terminal_locator,
                 claimed.title AS task_title,
+                session.status_line AS status_line,
                 COALESCE(
                     CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
                          THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,

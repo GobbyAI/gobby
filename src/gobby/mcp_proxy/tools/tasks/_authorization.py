@@ -88,12 +88,14 @@ def require_claim_authority(
     task_manager: "LocalTaskManager",
     task: "Task",
     action: str,
+    *,
+    allow_team_label_additions: bool = False,
 ) -> dict[str, Any] | None:
     """Refuse a mutation of a task claimed by another session.
 
     Returns None when authorized: the task is unclaimed, the caller is the
     claiming session, caller and owner share the task's agent-run
-    delegation lineage, or the caller is the Orchestrator. A claimed task
+    delegation lineage, or the caller has coordination authority. A claimed task
     with no session context is refused; unclaimed tasks stay open to
     operator and scripted flows that run without session context.
     """
@@ -121,6 +123,11 @@ def require_claim_authority(
         return None
     if can_manage_task_claims(task_manager, caller_session_id):
         return None
+    if allow_team_label_additions:
+        from gobby.tasks.lifecycle_access import can_add_team_task_labels
+
+        if can_add_team_task_labels(task_manager.db, caller_session_id, task):
+            return None
     return task_error(
         f"Cannot {action}: task {task_ref} is claimed by session '{owner_session_id}'.",
         TaskToolErrorCode.TASK_CLAIM_CONFLICT,

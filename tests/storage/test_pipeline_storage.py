@@ -496,7 +496,7 @@ class TestListExecutionsExtended:
         self, manager: LocalPipelineExecutionManager
     ) -> None:
         """Test filtering executions by parent_execution_id."""
-        parent = manager.create_execution(pipeline_name="orchestrator")
+        parent = manager.create_execution(pipeline_name="fixture-coordinator")
         manager.create_execution(pipeline_name="child-1", parent_execution_id=parent.id)
         manager.create_execution(pipeline_name="child-2", parent_execution_id=parent.id)
         manager.create_execution(pipeline_name="unrelated")
@@ -1430,7 +1430,7 @@ class TestPagination:
         self, manager: LocalPipelineExecutionManager
     ) -> None:
         """count_executions reflects parent_execution_id filter."""
-        parent = manager.create_execution(pipeline_name="orchestrator")
+        parent = manager.create_execution(pipeline_name="fixture-coordinator")
         manager.create_execution(pipeline_name="child-1", parent_execution_id=parent.id)
         manager.create_execution(pipeline_name="child-2", parent_execution_id=parent.id)
         manager.create_execution(pipeline_name="unrelated")

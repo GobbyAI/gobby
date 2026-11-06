@@ -25,7 +25,7 @@ from gobby.workflows.found_work_gate import unresolved_validation_failures
 
 def test_close_has_no_evidence_dependencies() -> None:
     source = Path(__file__).parents[2] / "src/gobby"
-    paths = [source / "tasks/close_invariants.py", source / "tasks/close_checklist.py"]
+    paths = [source / "tasks/closure_policy.py", source / "tasks/closure_snapshot.py"]
     paths.extend((source / "mcp_proxy/tools/tasks").glob("_lifecycle_close*.py"))
     forbidden = ("transcript", "validation", "acceptance", "criterion", "close_review")
     imports = [

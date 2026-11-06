@@ -20,6 +20,7 @@ from pydantic import JsonValue
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.review_history import read_review_row
+from gobby.storage.tasks._close import close_eligible_parent_chain
 from gobby.storage.tasks._models import (
     Task,
     TaskHasChildrenError,
@@ -443,15 +444,22 @@ def delete_task(
 
     # Check if task exists first; capture path_cache so we can detect ancestors
     # of the original deletion target during dependent cascade.
-    existing = db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (task_id,))
+    existing = db.fetchone(
+        "SELECT path_cache, parent_task_id, closed_at FROM tasks WHERE id = %s", (task_id,)
+    )
     if not existing:
         return False
 
     # Capture origin path_cache on the first call. Empty string is fine for
     # legacy rows missing path_cache — the ancestor check below treats those
     # as non-ancestors (no false positives).
+    vacated_parent_id: str | None = None
     if _origin_path_cache is None:
         _origin_path_cache = existing["path_cache"] or ""
+        # Only the origin's parent survives the delete; removing an open child
+        # can leave it with none, and no child close will arrive to close it.
+        if existing["closed_at"] is None:
+            vacated_parent_id = existing["parent_task_id"]
 
     if not cascade:
         # Check for children
@@ -532,4 +540,16 @@ def delete_task(
         )
         conn.execute("UPDATE tasks SET parent_task_id = NULL WHERE parent_task_id = %s", (task_id,))
         conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+    if vacated_parent_id is not None:
+        # Same walk a reparent runs, after the delete commits (see update_task).
+        with db.transaction() as conn:
+            close_eligible_parent_chain(
+                conn,
+                vacated_parent_id,
+                db=db,
+                reason=None,
+                closed_at=utc_now(),
+                closed_in_session_id=None,
+                closed_ancestors=None,
+            )
     return True

@@ -17,6 +17,7 @@ use super::control::{
 };
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
+use super::orphans::{apply_orphans_destroyed, show_orphan_inventory};
 
 #[cfg(test)]
 #[path = "jobs_apply_tests.rs"]
@@ -53,6 +54,14 @@ pub(super) fn apply_job_outcome(
         } => return apply_kills(workspace, chrome, killed, kept, result),
         // A host grant is real whichever generation asked for it, so it lands.
         result @ JobResult::HostGrant { .. } => result,
+        // A relayed theme and a focus report are real whichever generation
+        // sent them, as the host grant is.
+        result @ (JobResult::ThemeRelayed { .. } | JobResult::FocusReported { .. }) => result,
+        // The destroy's kills happened whichever generation issued them.
+        result @ JobResult::OrphansDestroyed { .. } => result,
+        // The inventory answers the request it is tagged with, so an earlier
+        // generation's answer still opens the dialog while that request is pending.
+        result @ JobResult::OrphanInventory { .. } => result,
         // A chain's committed answer lands or is orphaned whichever generation
         // issued it; the arms below decide which.
         result @ (JobResult::Spawned { .. }
@@ -119,6 +128,23 @@ pub(super) fn apply_job_outcome(
             grant,
             revoked,
         } => apply_outage_grant(workspace, chrome, jobs, pane, &attachment, grant, revoked),
+        JobResult::ThemeRelayed {
+            pane,
+            theme,
+            result,
+        } => {
+            // A failed relay leaves the pane undeclared, so the next tick relays it again.
+            if result.is_ok() {
+                if let Some(pane) = workspace.panes.get_mut(&pane) {
+                    pane.declared_theme = Some(theme);
+                }
+            }
+        }
+        JobResult::FocusReported { result } => {
+            if result.is_err() {
+                jobs.focus_report_refused();
+            }
+        }
         JobResult::Spawned {
             then,
             project,
@@ -142,6 +168,12 @@ pub(super) fn apply_job_outcome(
         }
         JobResult::Disposed { orphan, outcome } => {
             chain_apply::apply_disposed(workspace, chrome, jobs, orphan, outcome);
+        }
+        JobResult::OrphanInventory { request, result } => {
+            show_orphan_inventory(workspace, chrome, request, result);
+        }
+        JobResult::OrphansDestroyed { summary } => {
+            apply_orphans_destroyed(workspace, chrome, &summary);
         }
         JobResult::Responded { pending, result } => {
             apply_response(workspace, chrome, pending, result);

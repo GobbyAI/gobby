@@ -40,4 +40,6 @@ not direct database status repair.
 
 Guide: [Lifecycle](../../../../../../../../docs/guides/agents.md#lifecycle-model).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

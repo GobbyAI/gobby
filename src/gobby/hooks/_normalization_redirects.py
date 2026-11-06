@@ -51,8 +51,8 @@ def source_output_destinations(tokens: list[ShellToken]) -> dict[str, str]:
                 descriptors.get(target.lstrip("0") or "0", "unknown") if target != "-" else "closed"
             )
             continue
-        redirect = re.fullmatch(r"(\d*)(>|>>|>\||>&|<|<&)", token.value)
-        both = token.value in {"&>", "&>>", ">&"}
+        redirect = re.fullmatch(r"(\d*)(>>?\|?|>&|<|<&)", token.value)
+        both = token.value in {"&>", "&>>", ">&", "&>|", "&>>|", ">&|", ">>&", ">>&|"}
         if not redirect and not both:
             continue
         target = tokens[index + 1].value if index + 1 < len(tokens) else ""

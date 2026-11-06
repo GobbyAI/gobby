@@ -89,6 +89,9 @@ impl Pane {
         self.live = true;
         self.control = ControlState::Observe;
         self.take_back = false;
+        // A host grant names the attachment it was given to; this one waits
+        // for its own grant before it types on the host.
+        self.host_input_granted = false;
         // Input typed after begin_attaching belongs to the grant this new
         // attachment is waiting for. A refusal or focus loss still clears it.
         self.status_message = None;
@@ -116,6 +119,7 @@ impl Pane {
         self.live = true;
         self.control = ControlState::Observe;
         self.take_back = false;
+        self.host_input_granted = false;
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;

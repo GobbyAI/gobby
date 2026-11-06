@@ -40,6 +40,7 @@ from gobby.agents.isolation import (
     repair_isolation_environment,
 )
 from gobby.agents.isolation_models import spawn_state_key
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.clones.git import CloneGitManager
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.runtime_grants.service import DeploymentGrantContext
@@ -1362,7 +1363,9 @@ class TestWorktreeIsolationHandler:
             ) as repair,
             patch(
                 "gobby.agents.isolation_worktree.worktree_reuse.sync_reused_worktree_to_base",
-                new=AsyncMock(),
+                new=AsyncMock(
+                    return_value=ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
+                ),
             ) as sync,
         ):
             ctx = await handler.prepare_environment(config)

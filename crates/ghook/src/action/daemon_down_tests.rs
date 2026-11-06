@@ -57,7 +57,6 @@ spawned_config!(
     [
         "PreToolUse",
         "PostToolUse",
-        "UserPromptSubmit",
         "session-start",
         "session-end",
         "pre-compact"
@@ -69,7 +68,6 @@ spawned_config!(
     [
         "PreToolUse",
         "PostToolUse",
-        "UserPromptSubmit",
         "SessionStart",
         "SessionEnd",
         "PreCompact"
@@ -81,7 +79,6 @@ spawned_config!(
     [
         "PreToolUse",
         "PostToolUse",
-        "UserPromptSubmit",
         "SessionStart",
         "SessionEnd",
         "PreCompact"
@@ -93,7 +90,6 @@ spawned_config!(
     [
         "pre_tool_use",
         "post_tool_use",
-        "user_prompt_submit",
         "session_start",
         "session_end",
         "pre_compact"
@@ -105,7 +101,6 @@ spawned_config!(
     [
         "PreToolUse",
         "PostToolUse",
-        "UserPromptSubmit",
         "SessionStart",
         "SessionEnd",
         "PreCompact"
@@ -123,6 +118,95 @@ fn spawned_connect_stop_passes_for_every_cli() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn hold_call(server: &str, tool: &str) -> serde_json::Value {
+    serde_json::json!({
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {"server_name": server, "tool_name": tool},
+    })
+}
+
+#[test]
+fn spawned_outage_admits_recheck_and_hold_calls_for_every_cli() {
+    let wakeup = serde_json::json!({"tool_name": "ScheduleWakeup"});
+    let grok_wrapper = serde_json::json!({
+        "tool_name": "mcp_gobby_call_tool",
+        "tool_input": {"server_name": "gobby-agents", "tool_name": "send_message"},
+    });
+    let admitted = [
+        hold_call("gobby-sessions", "set_handoff"),
+        hold_call("gobby-sessions", "get_handoff"),
+        hold_call("gobby-sessions", "feedback"),
+        hold_call("gobby-agents", "send_message"),
+        hold_call("gobby-agents", "wait_for_coordination"),
+        grok_wrapper,
+        wakeup,
+    ];
+    let mut failures = Vec::new();
+    for (cli, pre, post, prompt) in [
+        (
+            "claude",
+            "pre-tool-use",
+            "post-tool-use-failure",
+            "user-prompt-submit",
+        ),
+        ("codex", "PreToolUse", "PostToolUse", "UserPromptSubmit"),
+        ("droid", "PreToolUse", "PostToolUse", "UserPromptSubmit"),
+        (
+            "grok",
+            "pre_tool_use",
+            "post_tool_use",
+            "user_prompt_submit",
+        ),
+        ("agy", "PreToolUse", "PostToolUse", "UserPromptSubmit"),
+    ] {
+        let cfg = CliConfig::for_cli(cli).unwrap().with_spawned_agent(true);
+        let kind = DeliveryFailureKind::Connect;
+        for input in &admitted {
+            for hook in [pre, post] {
+                let action = crate::daemon_down::action_for(hook, &cfg, kind, input);
+                if action.as_ref().is_none_or(|a| a.exit_code != 0) {
+                    failures.push(format!("{cli} {hook} {input}: {action:?}"));
+                }
+            }
+        }
+        let prompt_action =
+            crate::daemon_down::action_for(prompt, &cfg, kind, &serde_json::Value::Null);
+        if prompt_action.as_ref().is_none_or(|a| a.exit_code != 0) {
+            failures.push(format!("{cli} {prompt}: {prompt_action:?}"));
+        }
+        for input in [
+            serde_json::json!({"tool_name": "Bash"}),
+            hold_call("gobby-tasks", "claim_task"),
+            hold_call("gobby-agents", "spawn_agent"),
+            serde_json::Value::Null,
+        ] {
+            let action = crate::daemon_down::action_for(pre, &cfg, kind, &input);
+            if action.as_ref().is_none_or(|a| a.exit_code != 2) {
+                failures.push(format!("{cli} {pre} {input} should pause: {action:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn spawned_outage_admits_a_batch_of_admitted_calls() {
+    let cfg = CliConfig::for_cli("claude")
+        .unwrap()
+        .with_spawned_agent(true);
+    let admitted = serde_json::json!({"tool_calls": [
+        hold_call("gobby-agents", "wait_for_coordination"),
+        {"tool_name": "ScheduleWakeup"},
+    ]});
+    let action = crate::daemon_down::action_for(
+        "post-tool-batch",
+        &cfg,
+        DeliveryFailureKind::Connect,
+        &admitted,
+    );
+    assert_eq!(action.map(|a| a.exit_code), Some(0));
 }
 
 #[test]

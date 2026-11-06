@@ -1,9 +1,12 @@
 //! Effective pin: copies an ancestor checkout's clean selectors into an overlay's base rows.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use postgres::Client;
+use postgres::types::ToSql;
+use postgres::{Client, ToStatement, Transaction};
 use serde::Serialize;
 
 use crate::config::{Context, ProjectIndexScope};
@@ -167,6 +170,23 @@ fn write_cold(
     })
 }
 
+// Hub statements issued by `replace_pins`, counted in test builds only.
+#[cfg(test)]
+thread_local! {
+    static HUB_STATEMENTS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Runs one statement on the pin transaction, counting it as a hub round trip in test builds.
+fn execute_counted<T: ?Sized + ToStatement>(
+    tx: &mut Transaction<'_>,
+    query: &T,
+    params: &[&(dyn ToSql + Sync)],
+) -> Result<u64, postgres::Error> {
+    #[cfg(test)]
+    HUB_STATEMENTS.with(|count| count.set(count.get() + 1));
+    tx.execute(query, params)
+}
+
 fn replace_pins(
     conn: &mut Client,
     machine_id: &str,
@@ -176,41 +196,61 @@ fn replace_pins(
 ) -> anyhow::Result<()> {
     let machine_id = db::id_param(machine_id)?;
     let overlay_project_id = db::id_param(overlay_project_id)?;
+    let file_paths = pins
+        .iter()
+        .map(|pin| pin.file_path.as_str())
+        .collect::<Vec<_>>();
+    let source_project_ids = pins
+        .iter()
+        .map(|pin| db::id_param(&pin.source_project_id))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let content_hashes = pins
+        .iter()
+        .map(|pin| pin.content_hash.as_str())
+        .collect::<Vec<_>>();
+    let git_blob_ids = pins
+        .iter()
+        .map(|pin| pin.git_blob_id.as_deref())
+        .collect::<Vec<_>>();
+    // One DELETE and one unnest INSERT per table, whatever the row count.
     let mut tx = conn.transaction()?;
-    tx.execute(
+    execute_counted(
+        &mut tx,
         "DELETE FROM code_overlay_pins WHERE machine_id = $1 AND overlay_project_id = $2",
         &[&machine_id, &overlay_project_id],
     )?;
-    tx.execute(
+    execute_counted(
+        &mut tx,
         "DELETE FROM code_overlay_pin_gaps WHERE machine_id = $1 AND overlay_project_id = $2",
         &[&machine_id, &overlay_project_id],
     )?;
-    let insert = tx.prepare(
+    execute_counted(
+        &mut tx,
         "INSERT INTO code_overlay_pins (
             machine_id, overlay_project_id, file_path, source_project_id,
             content_hash, git_blob_id
-         ) VALUES ($1, $2, $3, $4, $5, $6)",
+         )
+         SELECT $1::uuid, $2::uuid, pins.file_path, pins.source_project_id,
+                pins.content_hash, pins.git_blob_id
+         FROM unnest(
+            $3::text[], $4::uuid[], $5::text[], $6::text[]
+         ) AS pins(file_path, source_project_id, content_hash, git_blob_id)",
+        &[
+            &machine_id,
+            &overlay_project_id,
+            &file_paths,
+            &source_project_ids,
+            &content_hashes,
+            &git_blob_ids,
+        ],
     )?;
-    for pin in pins {
-        tx.execute(
-            &insert,
-            &[
-                &machine_id,
-                &overlay_project_id,
-                &pin.file_path,
-                &db::id_param(&pin.source_project_id)?,
-                &pin.content_hash,
-                &pin.git_blob_id,
-            ],
-        )?;
-    }
-    let insert_gap = tx.prepare(
+    execute_counted(
+        &mut tx,
         "INSERT INTO code_overlay_pin_gaps (machine_id, overlay_project_id, file_path)
-         VALUES ($1, $2, $3)",
+         SELECT $1::uuid, $2::uuid, gaps.file_path
+         FROM unnest($3::text[]) AS gaps(file_path)",
+        &[&machine_id, &overlay_project_id, &gaps],
     )?;
-    for gap in gaps {
-        tx.execute(&insert_gap, &[&machine_id, &overlay_project_id, gap])?;
-    }
     tx.commit()?;
     Ok(())
 }

@@ -179,3 +179,5 @@ If `.impeccable.md` contains a `## Design Context` section (written by `impeccab
 ```
 
 Only generate project-specific personas when real Design Context data is available. Don't invent audience details; use the 5 predefined personas when no context exists.
+
+_Version: 1.0.0_

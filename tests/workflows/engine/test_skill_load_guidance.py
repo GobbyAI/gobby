@@ -70,8 +70,8 @@ def test_guidance_names_unloaded_required_skills() -> None:
     )
 
     assert "development-discipline" not in guidance
-    assert 'get_skill", {"name":"restraint"}' in guidance
-    assert 'get_skill", {"name":"tasks"}' in guidance
+    assert guidance.count("call_tool(") == 1
+    assert 'get_skill", {"names":["restraint","tasks"]}' in guidance
     assert "<skill-name>" not in guidance
 
 
@@ -118,8 +118,8 @@ def test_reference_guidance_extracts_explicit_file_target() -> None:
         }
     )
     guidance = skill_load_block_guidance(step, {"loaded_skills": ["gobby"]})
-    assert '"path":"references/tasks/closing.md"' in guidance
-    assert "get_tool_schema" in guidance
+    assert '{"names":["gobby:references/tasks/closing.md"]}' in guidance
+    assert "get_tool_schema" not in guidance
 
 
 def test_reference_guidance_pairs_names_and_paths_per_clause() -> None:
@@ -142,10 +142,11 @@ def test_reference_guidance_pairs_names_and_paths_per_clause() -> None:
 
     guidance = skill_load_block_guidance(step)
 
-    assert '{"name":"gobby","path":"references/tasks/closing.md"}' in guidance
-    assert '{"name":"python","path":"references/testing.md"}' in guidance
-    assert '"name":"gobby","path":"references/testing.md"' not in guidance
-    assert '"name":"python","path":"references/tasks/closing.md"' not in guidance
+    assert (
+        '{"names":["gobby:references/tasks/closing.md","python:references/testing.md"]}' in guidance
+    )
+    assert "gobby:references/testing.md" not in guidance
+    assert "python:references/tasks/closing.md" not in guidance
 
 
 def test_guidance_keeps_explicit_handler_target() -> None:
@@ -205,8 +206,8 @@ def test_call_lead_names_unloaded_targets_in_bare_call_form() -> None:
     )
 
     assert lead == (
-        'get_skill_file(name="gobby", path="references/development/obligations.md"); '
-        'get_skill_file(name="gobby", path="references/tasks/overview.md")\n'
+        'get_skill(names=["gobby:references/development/obligations.md", '
+        '"gobby:references/tasks/overview.md"])\n'
     )
 
 
@@ -218,6 +219,63 @@ def test_call_lead_is_empty_once_every_target_is_loaded() -> None:
     }
 
     assert skill_load_call_lead(step, variables) == ""
+    assert "All skills declared for this step are loaded" in skill_load_block_guidance(
+        step, variables
+    )
+
+
+def test_guidance_names_references_the_transition_still_requires() -> None:
+    # A skill handler names one skill; the references gate only the transition.
+    step = WorkflowStep.model_validate(
+        {
+            "name": "load_skill",
+            "allowed_mcp_tools": ["gobby-skills:get_skill", "gobby-skills:get_skill_file"],
+            "on_mcp_success": [
+                {
+                    "server": "gobby-skills",
+                    "tool": "get_skill_file",
+                    "when": "skill_loaded('gobby:references/plan/drafting.md')",
+                    "action": "set_variable",
+                    "variable": "skill_loaded",
+                    "value": True,
+                },
+                {
+                    "server": "gobby-skills",
+                    "tool": "get_skill",
+                    "when": "tool_input.name == 'restraint'",
+                    "action": "set_variable",
+                    "variable": "restraint_loaded",
+                    "value": True,
+                },
+            ],
+            "transitions": [
+                {
+                    "to": "write",
+                    "when": "all(skill_loaded(skill) for skill in vars.required_skills)",
+                }
+            ],
+        }
+    )
+    required = [
+        "restraint",
+        "gobby:references/plan/drafting.md",
+        "gobby:references/plan/coverage.md",
+    ]
+    variables: dict[str, object] = {"required_skills": required, "loaded_skills": ["restraint"]}
+
+    guidance = skill_load_block_guidance(step, variables)
+
+    assert "All skills declared for this step are loaded" not in guidance
+    assert (
+        '{"names":["gobby:references/plan/drafting.md","gobby:references/plan/coverage.md"]}'
+        in guidance
+    )
+    assert skill_load_call_lead(step, variables) == (
+        'get_skill(names=["gobby:references/plan/drafting.md", '
+        '"gobby:references/plan/coverage.md"])\n'
+    )
+    variables["loaded_skills"] = ["restraint", "gobby"]
+    variables["loaded_skill_references"] = required[1:]
     assert "All skills declared for this step are loaded" in skill_load_block_guidance(
         step, variables
     )

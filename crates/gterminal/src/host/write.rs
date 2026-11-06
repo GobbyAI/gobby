@@ -92,7 +92,8 @@ impl HostState {
     }
 
     /// Grants one daemon attachment id the right to type on `host_terminal_id`
-    /// over the frame stream. Replaces any previous holder; unledgered.
+    /// over the frame stream. Replaces any previous holder, unless `takeover`
+    /// is false and a peer holds the grant; unledgered.
     pub async fn grant_input(&self, extra: &Map<String, Value>) -> Value {
         let Ok(_gate) = self.mutation_gate.try_read() else {
             return err("host_upgrading");
@@ -106,16 +107,30 @@ impl HostState {
             return err("invalid_request");
         };
         let host_terminal_id = s(extra, "host_terminal_id");
+        // A grant with `takeover: false` is a keypress asking for input. It never
+        // displaces a peer holding the grant on a stream that is still attached,
+        // and the host refuses it before anything changes (#25653).
+        let takeover = !matches!(extra.get("takeover"), Some(Value::Bool(false)));
         let mut inner = self.inner.lock().await;
-        if let Err(code) = native_slot_mut(&mut inner, &host_terminal_id) {
-            return err(code);
-        }
+        let peer_holds = match native_slot_mut(&mut inner, &host_terminal_id) {
+            Ok(slot) => {
+                slot.input_grant_attachment.is_some()
+                    && slot
+                        .input_grant
+                        .as_deref()
+                        .is_some_and(|holder| holder != attachment_id.as_str())
+            }
+            Err(code) => return err(code),
+        };
         if !inner
             .attachments
             .get(&host_attachment_id)
             .is_some_and(|attachment| attachment.host_terminal_id == host_terminal_id)
         {
             return err("attachment_mismatch");
+        }
+        if !takeover && peer_holds {
+            return err("input_held_by_peer");
         }
         // The trusted grant wins even if another stream preclaimed the daemon
         // name. Reserve that name on the selected physical stream for themes.

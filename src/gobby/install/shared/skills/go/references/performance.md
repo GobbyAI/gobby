@@ -26,3 +26,5 @@ Optimize from measurements. Go makes allocation and CPU behavior visible enough 
 ## Dependency Cost
 
 New dependencies add compile time, binary size, transitive risk, and maintenance surface. For performance-sensitive work, verify that the dependency improves the measured path and does not make cold-start or memory behavior worse.
+
+_Version: 1.0.0_

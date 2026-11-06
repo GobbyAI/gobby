@@ -14,6 +14,7 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.blocked_tool_recovery import is_blocked_tool_recovery_remediation
 from gobby.workflows.engine.core import RuleEngine
 from tests.fixtures.agent_sessions import AgentSessions
+from tests.workflows.rule_arming import install_retry_limit_rule
 
 pytestmark = pytest.mark.unit
 
@@ -55,7 +56,7 @@ def _event(session_id: str, project_id: str, *, repair_ready: bool) -> HookEvent
     )
 
 
-@pytest.mark.parametrize("rule_name", ["fixture-recovery", "require-code-index-skill"])
+@pytest.mark.parametrize("rule_name", ["fixture-recovery", "fixture-definition-b0e4868c"])
 @pytest.mark.parametrize("declared", [False, True])
 @pytest.mark.parametrize("blocked_again", [False, True])
 @pytest.mark.asyncio
@@ -67,6 +68,7 @@ async def test_retry_recovery_uses_the_block_declaration_not_its_name(
     declared: bool,
     blocked_again: bool,
 ) -> None:
+    install_retry_limit_rule(temp_db)
     author = AgentSessions(temp_db, sample_project["id"]).add(
         "fixture-recovery-seat",
         definition_fields={"workflows": {"rule_selectors": {"include": ["tag:retry-policy"]}}},

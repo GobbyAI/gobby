@@ -45,7 +45,7 @@ def test_recompute_automatic_title_falls_back_to_provisional_after_close(
     claimed = update_title_for_claim(session_manager, session.id, task)
     assert claimed is not None and claimed.title_source == "task"
 
-    task_manager.close_task(task.id,  closed_in_session_id=session.id)
+    task_manager.close_task(task.id, closed_in_session_id=session.id)
     recomputed = recompute_automatic_title(session_manager, session.id)
 
     assert recomputed.title == f"test-project#{session.seq_num}: Codex"
@@ -81,7 +81,7 @@ def test_recompute_automatic_title_returns_to_the_applied_definition_title(
     assert claimed.title == "Dev Team Lead"
     assert claimed.title_source == "definition"
 
-    task_manager.close_task(task.id,  closed_in_session_id=session.id)
+    task_manager.close_task(task.id, closed_in_session_id=session.id)
     recomputed = recompute_automatic_title(session_manager, session.id)
 
     assert recomputed.title == "Dev Team Lead"

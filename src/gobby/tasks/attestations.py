@@ -8,9 +8,11 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
+from gobby.tasks.attestation_shapes import attestation_shape_refusal
 from gobby.tasks.claim_flow import advance_claim_flow
 from gobby.tasks.lifecycle_access import task_scope_refusal
 from gobby.utils.datetime import utc_now
@@ -251,6 +253,18 @@ def record_attestation(
             raise AttestationError(refusal)
         if task.closed_at is not None:
             raise AttestationError("closed tasks cannot receive new attestations")
+        reference = submission.reference
+        if shape_refusal := attestation_shape_refusal(
+            kind=submission.kind,
+            result=submission.result,
+            scheme=reference.scheme if reference is not None else None,
+            value=reference.value if reference is not None else None,
+            task=task.to_dict(),
+            agent=body,
+            declared=kind,
+            rules=RuleDefinitionManager(db).list_effective(task.project_id),
+        ):
+            raise AttestationError(shape_refusal)
         if submission.supersedes_id is not None:
             previous = next((r for r in records if r.id == submission.supersedes_id), None)
             if previous is None or previous.kind != submission.kind:

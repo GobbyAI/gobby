@@ -81,6 +81,9 @@ SYSTEM_SESSION_PROJECT_ID = PERSONAL_PROJECT_ID
 SYSTEM_SESSION_SOURCE = "system"
 SYSTEM_SESSION_TITLE = "_system"
 SESSION_REVIVAL_HORIZON_HOURS = 24
+# The one-line status a session shows about its work; the sessions.status_line CHECK
+# enforces the same cap.
+STATUS_LINE_MAX_LENGTH = 120
 
 
 def system_session_id(machine_id: str | None = None) -> str:

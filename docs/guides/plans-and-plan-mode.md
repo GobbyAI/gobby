@@ -32,9 +32,10 @@ mandatory; enhancement and adversarial review are recommended but
 optional.
 
 Planning has three roles: the **plan-writer** drafts and folds in changes, the
-optional **plan-enhancer** proposes constructive Better/Bigger improvements,
-and the optional **plan-adversary** reviews correctness and contract
-compliance. Neither reviewer edits the plan. Base validation and human approval
+optional **plan-advocate** sends the writer ranked Better/Bigger improvements
+and never edits the plan or approves or rejects it, and the optional
+**plan-adversary** reviews correctness and contract compliance. Neither
+reviewer edits the plan. Base validation and human approval
 remain the mandatory gates.
 
 Use plan records to track a plan artifact through validation, archival, review,
@@ -102,9 +103,9 @@ source of truth after daemon startup and sync.
 ## Optional Enhancement
 
 After materialization and base validation, `/gobby plan` offers an optional
-enhancement loop. When selected, the team-planning runbook's live `plan-enhancer`
-seat loads `gobby:references/plan/enhancement.md` and standalone
-`proportionality`, then sends ranked Better/Bigger suggestions to the Writer
+enhancement loop. When selected, the plan-team runbook's live `plan-advocate`
+seat loads standalone `restraint` and `proportionality` and
+`gobby:references/plan/enhancement.md`, then sends ranked Better/Bigger suggestions to the Writer
 through `send_message`. It never claims tasks, edits the plan file, or calls a
 review verdict.
 
@@ -164,20 +165,20 @@ review evidence. After user approval, offer manual expansion.
 `/gobby plan references expansion` loads manual expansion guidance for debugging and
 targeted reruns.
 
-## Team Planning Runbook Flow
+## Plan Team Runbook Flow
 
-Josh's plans run through the bundled `team-planning` [runbook](pipelines.md#runbooks),
+Josh's plans run through the bundled `plan-team` [runbook](pipelines.md#runbooks),
 one interactive flow per plan with no numbered review rounds. The runbook
 launches three live seats into one workspace: the Plan Writer (`plan-writer`),
-the Plan Enhancer (`plan-enhancer`) and the Plan Adversary (`plan-adversary`).
+the Plan Advocate (`plan-advocate`) and the Plan Adversary (`plan-adversary`).
 No seat spawns another; `plan-writer` blocks `gobby-agents:spawn_agent`. The
 coordinator session that owns the run, the Orchestrator, disposes edits and
 settles disagreements.
 
 1. The Plan Writer drafts the plan and passes base validation.
-2. The Plan Enhancer reads the plan and sends the Writer its ranked
+2. The Plan Advocate reads the plan and sends the Writer its ranked
    suggestions. The Writer presents them to the coordinator.
-3. The coordinator disposes each enhancer edit, or puts the product decision to
+3. The coordinator disposes each advocate edit, or puts the product decision to
    Josh through the Assistant.
 4. The Writer applies the dispositions and passes the plan to the Plan
    Adversary.

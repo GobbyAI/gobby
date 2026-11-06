@@ -52,7 +52,11 @@ async def test_reused_or_resumed_worktree_pin(
     git(source, "commit", "--allow-empty", "-m", "base B")
     base_b = git(source, "rev-parse", "HEAD")
     existing = SimpleNamespace(
-        id="worktree", worktree_path=str(child), branch_name="seat", base_branch="main"
+        id="worktree",
+        worktree_path=str(child),
+        branch_name="seat",
+        base_branch="main",
+        task_id=None,
     )
     config = SpawnConfig(
         prompt="pin",
@@ -73,10 +77,12 @@ async def test_reused_or_resumed_worktree_pin(
             existing_worktree=existing, spawn_config=config, main_repo_path=str(source)
         )
     else:
+        storage = MagicMock()
+        storage.is_claimed_by_live_session.return_value = False
         await prepare_reused_worktree(
             existing_worktree=existing,
             git_manager=WorktreeGitManager(source),
-            worktree_storage=MagicMock(),
+            worktree_storage=storage,
             spawn_config=config,
             main_repo_path=str(source),
         )

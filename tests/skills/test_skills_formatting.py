@@ -50,15 +50,28 @@ def test_block_notice_follows_leading_load_calls() -> None:
 def test_reference_contract_1_1_3() -> None:
     reference = "gobby:references/tasks/closing.md"
     directive = skill_fetch_batch_directive(["brevity", reference, reference])
-    assert directive.count('call_tool("gobby-skills", "get_skill_file"') == 1
-    assert directive.count('call_tool("gobby-skills", "get_skill", {"name":"brevity"})') == 1
-    assert directive.index('"name":"brevity"') < directive.index("get_tool_schema")
-    assert directive.index("get_tool_schema") < directive.index(
-        'call_tool("gobby-skills", "get_skill_file"'
-    )
-    assert '"name":"gobby","path":"references/tasks/closing.md"' in directive
+    assert directive.count("call_tool(") == 1
+    assert (
+        'call_tool("gobby-skills", "get_skill", '
+        '{"names":["brevity","gobby:references/tasks/closing.md"]})'
+    ) in directive
+    assert "get_tool_schema" not in directive
+    assert "get_skill_file" not in directive
     assert "page.next_cursor" in directive
     assert "only cursor until null" in directive
+    assert "page.completed" in directive
+
+
+def test_single_reference_directive_needs_no_schema_lease() -> None:
+    directive = skill_fetch_directive("gobby:references/tasks/closing.md")
+
+    assert directive == (
+        "Load and fully read the reference in its own outer tool result: "
+        'call_tool("gobby-skills", "get_skill", '
+        '{"names":["gobby:references/tasks/closing.md"]}). '
+        "Follow page.next_cursor with only cursor until null; it is loaded once a "
+        "page.completed lists it. Then continue."
+    )
 
 
 class TestSkillFetchDirectives:
@@ -83,7 +96,7 @@ class TestSkillFetchDirectives:
         ) in rendered
         assert "User arguments: draft auth flow" in rendered
 
-    def test_skill_fetch_batch_directive_calls_each_skill_directly(self) -> None:
+    def test_skill_fetch_batch_directive_names_every_skill_in_one_call(self) -> None:
         rendered = skill_fetch_batch_directive(
             ["loading-skills", "python", "python", "development-discipline"]
         )
@@ -91,17 +104,20 @@ class TestSkillFetchDirectives:
         assert "list_mcp_servers" not in rendered
         assert "list_tools" not in rendered
         assert "get_tool_schema" not in rendered
-        assert "in order" in rendered
-        assert "one sequential tool call" in rendered
-        assert "one separate outer tool result per skill" in rendered
-        assert "Promise.all" in rendered
-        assert "aggregate responses" in rendered
-        assert rendered.count('call_tool("gobby-skills", "get_skill"') == 3
-        assert rendered.index('{"name":"loading-skills"}') < rendered.index('{"name":"python"}')
-        assert rendered.index('{"name":"python"}') < rendered.index(
-            '{"name":"development-discipline"}'
-        )
+        assert rendered.count("call_tool(") == 1
+        assert (
+            'call_tool("gobby-skills", "get_skill", '
+            '{"names":["loading-skills","python","development-discipline"]})'
+        ) in rendered
         assert rendered.rstrip().endswith("Then continue.")
+
+    def test_invalid_batch_name_is_reported_beside_the_valid_call(self) -> None:
+        rendered = skill_fetch_batch_directive(["brevity", "bad:identity", "restraint"])
+
+        assert 'call_tool("gobby-skills", "get_skill", {"names":["brevity","restraint"]})' in (
+            rendered
+        )
+        assert "Invalid instruction requirement" in rendered
 
 
 class TestRecommendSkillsForTask:

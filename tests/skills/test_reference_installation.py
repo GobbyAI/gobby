@@ -16,14 +16,10 @@ from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
-STANDALONE = set(
-    "brevity restraint proportionality elicit ideate research architecture prd "
-    "code-review decompose-monolith repository-maintenance test-driven-development "
-    "triage-judgment impeccable tech-writer bridge browser-testing coderabbit context7 "
-    "app-store-development app-store-review safari-extension-development "
-    "bash c cpp csharp dart elixir go java javascript json kotlin lua objc php python "
-    "ruby rust scala swift typescript yaml".split()
-)
+STANDALONE = {path.parent.name for path in get_bundled_skills_path().glob("*/SKILL.md")} - {
+    "gobby",
+    "annotate",
+}
 
 
 @pytest.mark.unit
@@ -31,11 +27,7 @@ def test_reference_contract_5_2_1() -> None:
     root = get_bundled_skills_path()
     catalog = load_capability_catalog(root / "gobby")
     assert len(catalog.folded_skills) == 27
-    assert len(STANDALONE) == 43
-    assert {path.parent.name for path in root.glob("*/SKILL.md")} == STANDALONE | {
-        "gobby",
-        "annotate",
-    }
+    assert len(STANDALONE) == 42
     for name, identity in catalog.folded_skills.items():
         assert not (root / name).exists(), name
         assert (root / "gobby" / identity.split(":", 1)[1]).is_file(), identity

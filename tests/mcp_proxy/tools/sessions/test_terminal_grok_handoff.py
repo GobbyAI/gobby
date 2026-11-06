@@ -179,8 +179,8 @@ async def test_settled_grok_turn_is_compacted_without_an_interrupt_key(tmp_path:
     # Grok has no composer reader: the compact receipt, not the submit, proved it.
     assert result["submit_unverified"] is True
     assert result["command"] == "/compact"
-    # The ledger reads the settled seat's composer empty, so nothing is drained.
-    assert pane.keys == ["enter"]
+    # set_handoff wipes even a composer the ledger reads empty; each key is a no-op there.
+    assert pane.keys == [*_DRAIN, "enter"]
     assert pane.typed == ["/compact\n"]
 
 
@@ -205,8 +205,8 @@ async def test_live_grok_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    # The ledger reads the settled seat's composer empty, so nothing is drained.
-    assert pane.keys == ["enter"]
+    # set_handoff wipes even a composer the ledger reads empty; each key is a no-op there.
+    assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == ["/compact\n"]
 
@@ -278,7 +278,7 @@ async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == ["enter"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == ["/compact\n"]
 
@@ -359,7 +359,9 @@ def _close_reviewer_run(sandbox: dict[str, Any] | None) -> SimpleNamespace:
         (_close_reviewer_run({"backend": "none", "enforced": False}), False),
         (_close_reviewer_run(None), False),
         (
-            SimpleNamespace(provider="codex", agent_name="developer", resume_metadata_json=None),
+            SimpleNamespace(
+                provider="codex", agent_name="fixture-worker", resume_metadata_json=None
+            ),
             False,
         ),
         (SimpleNamespace(provider="grok", agent_name=None, resume_metadata_json=None), True),

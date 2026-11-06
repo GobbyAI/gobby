@@ -58,13 +58,13 @@ class TestSingleRuleYaml:
         (rules_dir / "simple.yaml").write_text(
             """
 rules:
-  no-push:
+  synthetic-sync-entry:
     event: before_tool
     effect:
       type: block
       tools: [Bash]
-      command_pattern: "git\\\\s+push"
-      reason: "No pushing allowed."
+      command_pattern: "fixture\\\\s+command"
+      reason: "Synthetic sync fixture."
 """
         )
         result = sync_bundled_rules(db, rules_dir)
@@ -74,7 +74,7 @@ rules:
 
         rows = manager.list_all()
         assert len(rows) == 1
-        assert rows[0].name == "no-push"
+        assert rows[0].name == "synthetic-sync-entry"
         assert rows[0].source == "installed"
 
     def test_rule_definition_json_is_valid(
@@ -626,6 +626,47 @@ rules:
         assert result["synced"] == 0
         assert len(result["errors"]) > 0
 
+    def test_runtime_variables_are_not_sync_warnings(
+        self, db: HubDatabase, rules_dir: Path
+    ) -> None:
+        """The context-free sync dry run treats runtime-only variables as expected."""
+        (rules_dir / "runtime.yaml").write_text(
+            """
+rules:
+  runtime-rule:
+    event: before_tool
+    when: "variables.get('flag') and event.data.get('x')"
+    effect:
+      type: block
+      reason: "Runtime only: {{ runtime_only_value }}"
+"""
+        )
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["synced"] == 1
+        assert result.get("warnings", []) == []
+        assert result["errors"] == []
+
+    def test_invalid_when_expression_still_fails_sync(
+        self, db: HubDatabase, rules_dir: Path
+    ) -> None:
+        """A genuinely invalid expression is still reported."""
+        (rules_dir / "broken.yaml").write_text(
+            """
+rules:
+  broken-rule:
+    event: before_tool
+    when: "variables.get('flag') and ("
+    effect:
+      type: block
+      reason: "Broken."
+"""
+        )
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["synced"] == 0
+        assert any("broken-rule" in error for error in result["errors"])
+
     def test_missing_effect_field_skipped(
         self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:
@@ -989,3 +1030,37 @@ class TestDispositionMigration:
             "on_receipt",
         ]
         assert result.get("disposition_updated", 0) >= 1
+
+
+class TestDuplicateKeyRefusal:
+    """A rule file with a duplicate mapping key is refused, never last-wins."""
+
+    def test_refused_file_keeps_installed_rows_while_other_files_sync(
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
+    ) -> None:
+        (rules_dir / "kept.yaml").write_text(_block_rule("kept-rule", "First."))
+        assert sync_bundled_rules(db, rules_dir)["synced"] == 1
+
+        (rules_dir / "kept.yaml").write_text(
+            _block_rule("kept-rule", "Changed.") + '      reason: "Second."\n'
+        )
+        (rules_dir / "fresh.yaml").write_text(_block_rule("fresh-rule", "New."))
+
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert any(
+            "kept.yaml" in error and "duplicate mapping key" in error for error in result["errors"]
+        ), result
+        assert result["synced"] == 1, result
+        assert result["orphaned"] == 0, result
+        kept = manager.get_by_name("kept-rule")
+        assert kept is not None
+        assert kept.definition_json["effects"][0]["reason"] == "First."
+        assert manager.get_by_name("fresh-rule") is not None
+
+
+def _block_rule(name: str, reason: str) -> str:
+    return (
+        f"rules:\n  {name}:\n    event: before_tool\n    effect:\n"
+        f'      type: block\n      tools: [Bash]\n      reason: "{reason}"\n'
+    )

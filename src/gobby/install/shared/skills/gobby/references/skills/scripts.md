@@ -29,4 +29,6 @@ keep returned environment settings, including browser-cache location.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#script-materialization).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

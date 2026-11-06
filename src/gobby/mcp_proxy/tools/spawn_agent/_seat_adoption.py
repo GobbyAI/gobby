@@ -103,7 +103,7 @@ def reconcile_pipeline_invocation(
         else None
     )
     # Carry the run and session ids a fresh launch returns, so later steps that
-    # address the seat (team-planning's notify-writer) work for an adopted seat too.
+    # address the seat through a configured notification step work for an adopted seat too.
     return {
         "success": True,
         "adopted": True,

@@ -1,12 +1,18 @@
 name: researcher
-capabilities: [accept_resume_retype, message_assistant]
+capabilities: [accept_resume_retype, message_assistant, direct_integration_commit]
+direct_integration_commit_paths: [".gobby/plans/research/**"]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "2.0.0"
+version: "2.4.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: medium
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
 execution_mode: interactive
 idle_ttl_seconds: 900
 checkout_mode: inherit
@@ -63,6 +69,7 @@ prompts:
     - Ask Triage for the Orchestrator's go before killing processes or touching other sessions' resources.
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `research-artifact-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
     - Create your research spike with `gobby-tasks:create_task` (`claim=true`, `category=research`, `task_type=research_spike`) under the domain root the Orchestrator names in `parent_task_id`. Claim and close only your own spike.
+    - Read your spike with `get_task(brief=false)` and answer every validation criterion in the report.
     - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
     Record approved implementation and closing attestations through `gobby-tasks:record_attestation`
       records for that SHA. Send Triage the spike's task and SHA: the Orchestrator reviews the report
@@ -92,7 +99,7 @@ workflows:
       - "name:researcher-close-completed-work"
       - "name:researcher-report-approval"
       - "name:research-artifact-write-scope"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
@@ -133,10 +140,14 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
+      # The seat's first act may be creating and claiming its own spike; that
+      # claim is not ordered behind the skill loads.
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:set_title"
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill

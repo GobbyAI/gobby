@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Buffer, Callable, Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
@@ -93,6 +94,86 @@ def canonical_json(message: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+# A long string is encoded in pieces of at most this many characters. The async encoder
+# pauses for the event loop after about this much output.
+CANONICAL_PIECE_CHARS: Final[int] = 64 * 1024
+_CANONICAL_ENCODER = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _canonical_pieces(value: Any) -> Iterator[str]:
+    """Yield text pieces whose concatenation is canonical_json's text for ``value``.
+
+    JSON escapes each character on its own, so a slice of a string encodes to the same
+    text as the whole string. Keys are sorted as json sorts them, and the safe-integer
+    fields are checked as _walk_safe_ints checks them.
+    """
+    if isinstance(value, str):
+        if len(value) <= CANONICAL_PIECE_CHARS:
+            yield _CANONICAL_ENCODER.encode(value)
+            return
+        yield '"'
+        for start in range(0, len(value), CANONICAL_PIECE_CHARS):
+            yield _CANONICAL_ENCODER.encode(value[start : start + CANONICAL_PIECE_CHARS])[1:-1]
+        yield '"'
+    elif isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            # json converts or rejects non-string keys itself, so the whole dict goes to it.
+            _walk_safe_ints(value)
+            yield _CANONICAL_ENCODER.encode(value)
+            return
+        yield "{"
+        for index, key in enumerate(sorted(value)):
+            if index:
+                yield ","
+            yield _CANONICAL_ENCODER.encode(key)
+            yield ":"
+            if key in SAFE_INTEGER_FIELDS:
+                _check_safe_int(value[key], key)
+            yield from _canonical_pieces(value[key])
+        yield "}"
+    elif isinstance(value, (list, tuple)):
+        yield "["
+        for index, item in enumerate(value):
+            if index:
+                yield ","
+            yield from _canonical_pieces(item)
+        yield "]"
+    elif value is None or isinstance(value, bool):
+        yield {None: "null", True: "true", False: "false"}[value]
+    elif type(value) is int:
+        yield int.__repr__(value)
+    else:
+        yield _CANONICAL_ENCODER.encode(value)
+
+
+async def _pause_for_loop() -> None:
+    await asyncio.sleep(0)
+
+
+async def canonical_json_async(
+    message: Mapping[str, Any],
+    *,
+    pause: Callable[[], Awaitable[None]] = _pause_for_loop,
+) -> bytearray:
+    """Encode like canonical_json, pausing for the event loop between pieces of the text.
+
+    The bytes equal canonical_json's. No single step holds the loop for more than about
+    CANONICAL_PIECE_CHARS characters of output, so a large event does not stall other tasks.
+    The buffer is returned as built, without a copy; it is never written to after this call.
+    """
+    if "mode" in message:
+        raise ValueError("terminal WS messages must not carry mode")
+    encoded = bytearray()
+    pending = 0
+    for piece in _canonical_pieces(dict(message)):
+        encoded += piece.encode("utf-8")
+        pending += len(piece)
+        if pending >= CANONICAL_PIECE_CHARS:
+            pending = 0
+            await pause()
+    return encoded
+
+
 def _fragment_dict(
     *,
     event: str,
@@ -101,7 +182,7 @@ def _fragment_dict(
     message_seq: int,
     index: int,
     more: bool,
-    chunk: bytes,
+    payload: str,
 ) -> dict[str, Any]:
     return {
         "type": "terminal_ws_fragment",
@@ -112,44 +193,199 @@ def _fragment_dict(
         "fragment_index": index,
         "more": more,
         "encoding": "utf8-b64",
-        "payload": base64.b64encode(chunk).decode("ascii"),
+        "payload": payload,
     }
 
 
-def _greedy_chunks(
-    complete_json: bytes,
+# Base64 is built from input blocks of this size. It is a multiple of 3, so each block encodes
+# to whole base64 groups and the blocks' text concatenates to the whole payload's base64.
+PAYLOAD_BLOCK_BYTES: Final[int] = 48 * 1024
+
+
+def _payload_blocks(chunk: Buffer) -> Iterator[str]:
+    """Yield the base64 text of ``chunk`` one block at a time."""
+    view = memoryview(chunk)
+    for start in range(0, len(view), PAYLOAD_BLOCK_BYTES):
+        yield base64.b64encode(view[start : start + PAYLOAD_BLOCK_BYTES]).decode("ascii")
+
+
+def _wrapped_size(
     *,
     event: str,
     terminal_id: str,
     attachment_id: str,
     message_seq: int,
-) -> list[bytes]:
-    chunks: list[bytes] = []
+    index: int,
+    more: bool,
+    size: int,
+) -> int:
+    """Return the wrapped length of a fragment with a `size`-byte slice, without encoding it.
+
+    The base64 alphabet needs no JSON escaping, so the payload adds 4 * ceil(size / 3) bytes.
+    """
+    envelope = _fragment_dict(
+        event=event,
+        terminal_id=terminal_id,
+        attachment_id=attachment_id,
+        message_seq=message_seq,
+        index=index,
+        more=more,
+        payload="",
+    )
+    return len(canonical_json(envelope)) + (size + 2) // 3 * 4
+
+
+def _greedy_chunks(
+    complete_json: memoryview,
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+) -> list[memoryview]:
+    chunks: list[memoryview] = []
     offset = 0
+    # A wrapped fragment holds its base64 payload, so a take above this bound never fits.
+    # Halving to the bound first skips only probes that cannot fit.
+    bound = TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES // 4 * 3
     while offset < len(complete_json):
         remaining = len(complete_json) - offset
         take = remaining
+        while take > bound:
+            take //= 2
         while take > 0:
-            chunk = complete_json[offset : offset + take]
-            probe = _fragment_dict(
+            size = _wrapped_size(
                 event=event,
                 terminal_id=terminal_id,
                 attachment_id=attachment_id,
                 message_seq=message_seq,
                 index=len(chunks),
                 more=offset + take < len(complete_json),
-                chunk=chunk,
+                size=take,
             )
-            if len(canonical_json(probe)) < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
-                chunks.append(chunk)
+            if size < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+                chunks.append(complete_json[offset : offset + take])
                 offset += take
                 break
             take = max(1, take // 2)
-            if take == 1 and len(canonical_json(probe)) >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+            if take == 1 and size >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
                 raise ValueError("fragment_too_large")
         else:
             raise ValueError("fragment_too_large")
     return chunks
+
+
+def _fragment_plan(
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+    complete_json: Buffer,
+) -> list[tuple[int, memoryview, bool]]:
+    """Return (index, slice, more) for each fragment of a complete JSON payload.
+
+    The slices are views of the payload, and sizes come from _wrapped_size, so planning
+    encodes no payload.
+    """
+    _check_safe_int(message_seq, "message_seq")
+    # Slices of a view copy none of the payload, so cutting a 16 MiB event costs no copy.
+    data = memoryview(complete_json)
+    if len(data) > TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
+        raise ValueError("fragment_too_large")
+    midpoint = max(1, len(data) // 2)
+    slices = [data[:midpoint], data[midpoint:]]
+    if any(
+        _wrapped_size(
+            event=event,
+            terminal_id=terminal_id,
+            attachment_id=attachment_id,
+            message_seq=message_seq,
+            index=index,
+            more=index < len(slices) - 1,
+            size=len(chunk),
+        )
+        >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES
+        for index, chunk in enumerate(slices)
+    ):
+        slices = _greedy_chunks(
+            data,
+            event=event,
+            terminal_id=terminal_id,
+            attachment_id=attachment_id,
+            message_seq=message_seq,
+        )
+    return [
+        (index, chunk, index < len(slices) - 1)
+        for index, chunk in enumerate(slices)
+        if chunk or index == 0
+    ]
+
+
+def iter_fragment_event(
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+    complete_json: Buffer,
+) -> Iterator[dict[str, Any]]:
+    """Yield the terminal_ws_fragment slices of a complete JSON payload, one at a time."""
+    for index, chunk, more in _fragment_plan(
+        event=event,
+        terminal_id=terminal_id,
+        attachment_id=attachment_id,
+        message_seq=message_seq,
+        complete_json=complete_json,
+    ):
+        yield _fragment_dict(
+            event=event,
+            terminal_id=terminal_id,
+            attachment_id=attachment_id,
+            message_seq=message_seq,
+            index=index,
+            more=more,
+            payload="".join(_payload_blocks(chunk)),
+        )
+
+
+async def fragment_event_async(
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+    complete_json: Buffer,
+) -> list[dict[str, Any]]:
+    """Return fragment_event's frames, pausing for the event loop between base64 blocks.
+
+    Each block encodes PAYLOAD_BLOCK_BYTES of input, so no single step holds the loop for
+    longer than one block's encode.
+    """
+    fragments: list[dict[str, Any]] = []
+    for index, chunk, more in _fragment_plan(
+        event=event,
+        terminal_id=terminal_id,
+        attachment_id=attachment_id,
+        message_seq=message_seq,
+        complete_json=complete_json,
+    ):
+        blocks: list[str] = []
+        for block in _payload_blocks(chunk):
+            blocks.append(block)
+            await _pause_for_loop()
+        fragments.append(
+            _fragment_dict(
+                event=event,
+                terminal_id=terminal_id,
+                attachment_id=attachment_id,
+                message_seq=message_seq,
+                index=index,
+                more=more,
+                payload="".join(blocks),
+            )
+        )
+    return fragments
 
 
 def fragment_event(
@@ -161,52 +397,15 @@ def fragment_event(
     complete_json: bytes,
 ) -> list[dict[str, Any]]:
     """Split a complete JSON payload into terminal_ws_fragment slices."""
-    _check_safe_int(message_seq, "message_seq")
-    if len(complete_json) > TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
-        raise ValueError("fragment_too_large")
-    midpoint = max(1, len(complete_json) // 2)
-    slices = [complete_json[:midpoint], complete_json[midpoint:]]
-    if any(
-        len(
-            canonical_json(
-                _fragment_dict(
-                    event=event,
-                    terminal_id=terminal_id,
-                    attachment_id=attachment_id,
-                    message_seq=message_seq,
-                    index=index,
-                    more=index < len(slices) - 1,
-                    chunk=chunk,
-                )
-            )
-        )
-        >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES
-        for index, chunk in enumerate(slices)
-        if chunk
-    ):
-        slices = _greedy_chunks(
-            complete_json,
+    return list(
+        iter_fragment_event(
             event=event,
             terminal_id=terminal_id,
             attachment_id=attachment_id,
             message_seq=message_seq,
+            complete_json=complete_json,
         )
-    fragments: list[dict[str, Any]] = []
-    for index, chunk in enumerate(slices):
-        if not chunk and index > 0:
-            continue
-        fragments.append(
-            _fragment_dict(
-                event=event,
-                terminal_id=terminal_id,
-                attachment_id=attachment_id,
-                message_seq=message_seq,
-                index=index,
-                more=index < len(slices) - 1,
-                chunk=chunk,
-            )
-        )
-    return fragments
+    )
 
 
 def emit_proxied_event(

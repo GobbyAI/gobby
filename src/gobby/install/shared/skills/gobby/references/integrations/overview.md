@@ -24,3 +24,5 @@ or unavailable connector is not evidence that no external work exists.
 
 See [integrations](../../../../../../../../docs/guides/integrations.md) and
 [extensions](../../../../../../../../docs/guides/webhooks-and-plugins.md).
+
+_Version: 1.0.0_

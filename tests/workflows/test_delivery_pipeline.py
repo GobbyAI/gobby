@@ -18,7 +18,6 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTrig
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.delivery_formatting import _is_empty_inject_payload
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -171,7 +170,23 @@ def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> N
 
 @pytest.mark.asyncio
 async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> None:
-    sync_bundled_rules(db, get_bundled_rules_path())
+    RuleDefinitionManager(db).create(
+        name="synthetic-formatter-dispatch",
+        definition_json={
+            "event": "before_tool",
+            "when": "event.data.get('canonical_tool_kind') == 'write'",
+            "effects": [
+                {
+                    "type": "mcp_call",
+                    "server": "gobby-review-learning",
+                    "tool": "recall_review_lessons_for_files",
+                    "arguments": {},
+                    "inject_result": True,
+                }
+            ],
+        },
+        tags=["default"],
+    )
     calls: list[tuple[str, str]] = []
     dispatch_finished = asyncio.Event()
 
@@ -202,6 +217,11 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
     event = _event()
     event.data.update(
         {
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": "src/gobby/workflows/engine/effects.py",
+                "content": "example",
+            },
             "canonical_tool_kind": "write",
             "canonical_file_paths": ["src/gobby/workflows/engine/effects.py"],
             "canonical_repo_mutation": True,
@@ -209,7 +229,7 @@ async def test_review_lessons_path_survives_orphan_removal(db: HubDatabase) -> N
     )
 
     variables = {
-        "_active_rule_names": ["inject-review-lessons-for-touched-files"],
+        "_active_rule_names": ["synthetic-formatter-dispatch"],
         "project": {"id": PROJECT_ID, "path": "/tmp/project"},
     }
     response = await rule_engine.evaluate(

@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import ValidationError
 
 from gobby.storage.definitions._shared import DefinitionSyncCandidate
@@ -18,6 +17,7 @@ from gobby.storage.definitions.variables import (
     SessionVariableDefaultRow,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.strict_yaml import load_strict_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def sync_bundled_variables(
     for yaml_file in variable_files:
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
-            data = yaml.safe_load(raw_content)
+            data = load_strict_yaml(raw_content)
 
             if not isinstance(data, dict):
                 logger.warning("Skipping non-dict YAML", extra={"file": str(yaml_file)})

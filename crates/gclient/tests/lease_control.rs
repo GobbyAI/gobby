@@ -58,14 +58,20 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
 }
 
 /// One live terminal pinned into a project, as `client_loop.rs` sets it up.
-async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+/// `backend` is the attach and roster backend: `tmux` relays keys through the
+/// daemon, `native` types on the direct path.
+async fn single_terminal_loop(
+    mock: &MockDaemon,
+    backend: &str,
+) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mock.use_unique_attachment_ids();
+    mock.set_attach_backend("terminal-a", backend);
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-a", "backend": "native", "state": "live"}],
+            "items": [{"terminal_id": "terminal-a", "backend": backend, "state": "live"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         }),
@@ -92,7 +98,7 @@ async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, temp
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn focus_claims_a_free_pane_in_one_gesture() {
     let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let (mut workspace, _home) = single_terminal_loop(&mock, "tmux").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::defaults(HERDR_PREFIX);
@@ -167,7 +173,7 @@ async fn settle(mut seen: impl FnMut() -> usize, count: usize) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_expiry_reports_focus_lost_and_activity_restores_it() {
     let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::defaults(HERDR_PREFIX);
@@ -223,7 +229,7 @@ async fn idle_expiry_reports_focus_lost_and_activity_restores_it() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_refused_take_keeps_take_back_and_names_the_holder() {
     let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let (mut workspace, _home) = single_terminal_loop(&mock, "tmux").await;
     mock.enqueue_take_control_reply(false, 1, Some("held"));
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
@@ -693,7 +699,7 @@ fn screen_text(terminal: &Terminal<TestBackend>) -> String {
 async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
     let mock = MockDaemon::start("local-token").await;
     mock.suppress_ws("terminal_attach");
-    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::defaults(HERDR_PREFIX);
@@ -776,7 +782,7 @@ async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
 async fn a_deferred_attach_retries_after_the_backoff() {
     let mock = MockDaemon::start("local-token").await;
     mock.suppress_ws("terminal_attach");
-    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::defaults(HERDR_PREFIX);
@@ -829,7 +835,7 @@ async fn a_deferred_attach_retries_after_the_backoff() {
 async fn take_control_timeout_then_finalized_reattaches_on_the_same_generation() {
     let mock = MockDaemon::start("local-token").await;
     mock.suppress_ws("terminal_take_control");
-    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let (mut workspace, _home) = single_terminal_loop(&mock, "tmux").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::defaults(HERDR_PREFIX);

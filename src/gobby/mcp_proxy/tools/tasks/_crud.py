@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import (
+    require_claim_authority,
     task_mutation_error,
 )
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
@@ -37,6 +38,7 @@ from gobby.storage.tasks import (
 from gobby.tasks.attestations import list_attestations
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.close_receipts import list_close_receipts
+from gobby.tasks.lifecycle_access import can_add_team_task_labels
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import datetime_to_iso
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
@@ -95,8 +97,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             depends_on: List of task IDs that this new task depends on (must complete first)
             labels: List of labels
             category: Task domain category (test, code, document, research, config, manual)
-            validation_criteria: Acceptance criteria for validating completion.
-                Required for every task_type except "epic".
+            validation_criteria: Outline the evaluation criteria an agent will use to
+                ensure a high-quality deliverable. Be precise.
             implementation_domain: Required code task implementation domain.
             claim: If True, auto-claim the task for the current session.
             additional_skills: Optional skills required to work on the task.
@@ -390,7 +392,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Optional acceptance criteria. Selected rules decide whether criteria or validation evidence are required for completion.",
+                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references join the task's declared file scope when its description declares targets. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "implementation_domain": {
@@ -535,15 +537,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 return {
                     "error": "Cannot update escalation_reason for a task that is not escalated."
                 }
-            if labels is not None:
-                label_error = live_session_label_change_error(
-                    ctx,
-                    getattr(current_task, "labels", ()),
-                    labels,
-                )
-                if label_error:
-                    return {"error": label_error}
-
             # Build kwargs only for non-None values to avoid overwriting with NULL
             kwargs: dict[str, Any] = {}
             if title is not None:
@@ -592,6 +585,30 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 kwargs["affected_files"] = affected_files
             if escalation_reason is not None:
                 kwargs["escalation_reason"] = escalation_reason
+
+            if labels is not None:
+                from gobby.utils.session_context import get_current_session_id
+
+                label_only = set(kwargs) == {"labels"}
+                denied = require_claim_authority(
+                    ctx.task_manager,
+                    current_task,
+                    "update_task labels",
+                    allow_team_label_additions=label_only,
+                )
+                if denied:
+                    return denied
+                caller = get_current_session_id()
+                if (
+                    label_only
+                    and caller
+                    and can_add_team_task_labels(ctx.task_manager.db, caller, current_task)
+                ):
+                    labels = list(dict.fromkeys([*(current_task.labels or ()), *labels]))
+                    kwargs["labels"] = labels
+                label_error = live_session_label_change_error(ctx, current_task.labels, labels)
+                if label_error:
+                    return {"error": label_error}
 
             target_check: list[str] = []
             if description is not None or affected_files is not None:
@@ -643,7 +660,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
+                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references join the task's declared file scope when its description declares targets. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "parent_task_id": {
@@ -687,7 +704,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "additional_skills": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
+                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['example-documentation']).",
                     "default": None,
                 },
                 "affected_files": {

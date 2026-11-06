@@ -12,7 +12,10 @@ metadata, not a filesystem grant. Use your assigned worktree; if it is unavailab
 coordinate a valid assignment. Do not create a private extracted source tree.
 
 Assess correctness, security, criteria, TDD sequence and test quality. Run the
-named tests and any focused checks needed to substantiate findings. Cite source
+named tests and any focused checks needed to substantiate findings. In a task
+worktree run Python checks with `uv run --no-sync`: a plain `uv run` rebuilds the
+author's package and fails on a read-only tree with "Cannot update time stamp of
+directory" for its egg-info. Cite source
 behavior through gcode evidence. For an unavailable foreign overlay, use exact
 candidate Git objects from your authorized checkout and the evidence fallback;
 do not substitute base-tree output for the candidate.
@@ -48,6 +51,6 @@ integration conflict is a request for updated proof; never invent review
 authority or silently change the candidate. Follow the repository found-work
 ladder and communicate findings with commands, diagnostics, paths and impact.
 
-_Version: 2.1.0_
+_Version: 2.2.0_
 
 _Last verified: 2026-11-01_

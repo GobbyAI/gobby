@@ -202,7 +202,7 @@ fn cell_mask(cells: &[Vec<(String, Color, Color)>]) -> Vec<Vec<(bool, bool)>> {
 
 #[test]
 fn every_goblin_variant_draws_the_same_cells() {
-    // Josh via the Assistant, PD ruling 15:44 (#23280 criterion 2): one
+    // Josh via the operator seat, PD ruling 15:44 (#23280 criterion 2): one
     // grid feeds every variant, and only the colours differ.
     let variants = goblin_variants();
     let reference = cell_mask(&draw_goblin(&variants[0].1));

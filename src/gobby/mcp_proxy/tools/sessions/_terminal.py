@@ -13,7 +13,6 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
-from gobby.agents.agent_workspaces import schedule_workspace_commit
 from gobby.agents.provider_capabilities import agent_run_is_headless
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hub.remote_runtime import resolve_terminal_runtime
@@ -200,7 +199,7 @@ async def _send_terminal_compaction_command(
     on_command_submitting: Callable[[], None] | None = None,
     seat_left: Callable[[], bool] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Persist continuation state, confirm interruption, drain the composer, then compact."""
+    """Persist continuation state, confirm interruption, wipe the composer, then compact."""
     return await _send_terminal_compaction_command_impl(
         pane,
         command,
@@ -473,7 +472,6 @@ def register_terminal_tools(
                 compact_target = session_id
             attempt_id = uuid4().hex
             attempt_state = None
-            schedule_workspace_commit(getattr(session, "project_id", None), "set_handoff")
             try:
                 conversation_id, _ = web_chat_session_registry.find_session(compact_target)
                 delivery_mode: Literal["in_process", "queued_in_process"] = (
@@ -628,7 +626,6 @@ def register_terminal_tools(
             }
 
         compact_attempt_id = uuid4().hex
-        schedule_workspace_commit(getattr(session, "project_id", None), "set_handoff")
         try:
             stage_handoff_attempt(
                 db,
@@ -758,8 +755,7 @@ def register_terminal_tools(
         session_id: str,
         lines: int = 50,
     ) -> dict[str, Any]:
-        # Whether the target is in the caller's scope is the bundled
-        # ``block-cross-project-send-keys`` rule's decision, made before dispatch.
+        # Configured rules decide target scope before dispatch.
         if terminal_manager is not None and terminal_runtime_registry is not None:
             terminal = terminal_manager.get_live_for_session(session_id)
             if terminal is not None:

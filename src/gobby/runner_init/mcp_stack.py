@@ -14,6 +14,7 @@ from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.oauth import automatic_oauth_authorization
 from gobby.mcp_proxy.oauth_keepalive import schedule_oauth_keepalive
 from gobby.mcp_proxy.templates import MCPServerTemplate, expand_template
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.mcp_models import MCPServer
 from gobby.storage.mcp_templates import MCPServerTemplateRow
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SCOPED_PAYLOAD_VERSION_KEY = MCP_SCOPED_PAYLOAD_VERSION_KEY
-SCOPED_PAYLOAD_VERSION = 2
+SCOPED_PAYLOAD_VERSION = 4
 
 __all__ = [
     "LocalMCPManager",
@@ -39,6 +40,7 @@ __all__ = [
     "init_mcp_stack",
     "maybe_backfill_scoped_tool_embeddings",
     "resolved_log_path",
+    "schedule_runner_scoped_backfill",
     "schedule_scoped_embedding_backfill",
 ]
 
@@ -194,6 +196,22 @@ def schedule_scoped_embedding_backfill(
         task = asyncio.create_task(_run())
         _BACKFILL_TASKS.add(task)
         task.add_done_callback(_BACKFILL_TASKS.discard)
+
+
+def schedule_runner_scoped_backfill(runner: GobbyRunner) -> None:
+    """Schedule the scoped backfill once the HTTP tools handler and internal registry exist."""
+    tools_handler = runner.http_server._tools_handler
+    if tools_handler is None:
+        return
+    if runner.bootstrap_config.run_mode() == "node":
+        logger.info("skipping hub-only scoped tool backfill in node mode")
+        return
+    schedule_scoped_embedding_backfill(
+        tools_handler._semantic_search,
+        runner.mcp_proxy,
+        config_store=ConfigStore(runner.database),
+        internal_manager=runner.http_server._internal_manager,
+    )
 
 
 def _expand_instance(

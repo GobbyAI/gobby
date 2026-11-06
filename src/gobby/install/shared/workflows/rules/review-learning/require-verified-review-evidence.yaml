@@ -1,0 +1,37 @@
+version: "2.1.0"
+tags: [review-learning, enforcement, gobby, default]
+
+rules:
+  require-verified-review-evidence:
+    description: "Require complete, verified findings for the epic review kind (qa_rejection), whichever seat reports them"
+    event: before_tool
+    enabled: true
+    priority: 20
+    when: >
+      tool_input.get('source_kind') == 'qa_rejection'
+      and (
+        not all(
+          str((tool_input.get('finding') or {}).get(field) or '').strip()
+          for field in ('check_key', 'lesson_type', 'prevention', 'path', 'finding_fingerprint')
+        )
+        or not any(
+          str((tool_input.get('finding') or {}).get(field) or '').strip()
+          for field in ('principle', 'root_cause')
+        )
+        or not str((tool_input.get('evidence') or {}).get('leaf_task_ref') or '').strip()
+        or not any(
+          (tool_input.get('evidence') or {}).get(field)
+          for field in (
+            'verified_fix', 'verified_fix_ref', 'confirmed_fix', 'fix_ref',
+            'commit', 'commit_sha', 'changes_id'
+          )
+        )
+      )
+    effects:
+      - type: block
+        mcp_tools: ["gobby-review-learning:record_review_lesson"]
+        reason: >-
+          Record a complete finding with check_key, lesson_type, prevention, path,
+          finding_fingerprint and principle or root_cause. Evidence must name the
+          leaf_task_ref and include a verified or confirmed fix reference before
+          this review source can record a reusable lesson.

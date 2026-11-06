@@ -54,3 +54,5 @@ Return to `new-work` by calling
 `get_skill_file(name="impeccable", path="references/new-work.md")` on
 `gobby-skills`, then resume its direction contract, implementation, and
 finishing pass.
+
+_Version: 1.0.0_

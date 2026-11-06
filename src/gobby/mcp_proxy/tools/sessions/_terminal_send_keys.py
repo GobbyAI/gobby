@@ -1,4 +1,4 @@
-"""Authorization, idempotency, and delivery for the sessions ``send_keys`` tool."""
+"""Authorization, idempotency, and delivery for the sessions ``send_keys`` and ``send_wake`` tools."""
 
 from __future__ import annotations
 
@@ -6,24 +6,34 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from gobby.agents.team_communications import RECIPIENT_REFUSED, REFUSAL, recipient_policy
 from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
-from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import send_keys_target_refusal
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import (
+    ComposerCleared,
+    send_keys_target_refusal,
+)
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
+from gobby.terminals.composer import COMPOSER_CLEAR_KEYS
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteRequest
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
 _FORBIDDEN_SPEED_COMMANDS = frozenset({"/fast"})
 _IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+# The only text send_wake ever types; callers cannot change it.
+WAKE_LINE = "continue: check your queued Gobby messages and proceed"
 
 __all__ = [
     "_FORBIDDEN_SPEED_COMMANDS",
     "_authorize_send_keys_target",
     "_is_speed_command",
+    "_wake_admission_refusal",
     "register_send_keys_tool",
 ]
 
@@ -40,15 +50,10 @@ def _is_speed_command(keys: str) -> bool:
     return bool(tokens) and tokens[0].casefold() in _FORBIDDEN_SPEED_COMMANDS
 
 
-def _authorize_send_keys_target(
-    session_ref: str,
+def _resolve_caller(
     session_manager: SessionManager,
-) -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve the send_keys caller and target.
-
-    Whether the target is in the caller's scope is the bundled
-    ``block-cross-project-send-keys`` rule's decision, made before dispatch.
-    """
+) -> tuple[Session | None, dict[str, Any] | None]:
+    """Resolve the terminal tool caller from the current MCP session context."""
     from gobby.utils.session_context import get_current_session_id
 
     caller_ref = get_current_session_id()
@@ -60,8 +65,7 @@ def _authorize_send_keys_target(
         }
 
     try:
-        # Whether the caller may use send_keys at all is the default ``no-send-keys``
-        # rule's decision, made before dispatch.
+        # Configured rules decide caller admission before dispatch.
         scope = resolve_actor_scope(
             session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}", allow_autonomous=True
         )
@@ -76,14 +80,21 @@ def _authorize_send_keys_target(
             "error": error,
             "error_code": "send_keys_caller_not_found",
         }
-    caller = scope.caller
-    if caller is None:
+    if scope.caller is None:
         return None, {
             "success": False,
             "error": f"Send_keys caller session {caller_ref} not found",
             "error_code": "send_keys_caller_not_found",
         }
+    return scope.caller, None
 
+
+def _resolve_target(
+    session_ref: str,
+    caller: Session,
+    session_manager: SessionManager,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a terminal tool target within the caller's project."""
     try:
         target_id = session_manager.resolve_session_reference(session_ref, caller.project_id)
     except ValueError as exc:
@@ -102,6 +113,35 @@ def _authorize_send_keys_target(
     return target_id, None
 
 
+def _authorize_send_keys_target(
+    session_ref: str,
+    session_manager: SessionManager,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve the send_keys caller and target.
+
+    Configured rules decide target scope before dispatch.
+    """
+    caller, error = _resolve_caller(session_manager)
+    if caller is None:
+        return None, error
+    return _resolve_target(session_ref, caller, session_manager)
+
+
+def _wake_admission_refusal(
+    caller_id: str,
+    target_id: str,
+    db: HubDatabase,
+) -> dict[str, Any] | None:
+    """Refuse a wake the target's definition does not admit from this caller.
+
+    Direct sends persist through the same recipient_policy, so a wake and a
+    send_message to the same seat are admitted or refused identically.
+    """
+    if target_id not in recipient_policy(db, caller_id, [target_id]).withheld:
+        return None
+    return {"success": False, "error": REFUSAL, "error_code": RECIPIENT_REFUSED}
+
+
 def register_send_keys_tool(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
@@ -112,60 +152,29 @@ def register_send_keys_tool(
 ) -> None:
     """Register coordinator-backed terminal input with the sessions tool registry."""
 
-    @registry.tool(
-        name="send_keys",
-        description=(
-            "Send keystrokes to a session's terminal. This is for terminal control; use "
-            "`gobby-agents:send_message` for direct cross-session agent communication. "
-            "Autonomous agent-run sessions cannot use this tool. Targets must be the caller, "
-            "in the same project, or in the same agent tree. Use literal=true (default) to "
-            "paste text — one or more trailing \\n characters produce exactly one Enter after "
-            "the literal paste settles. Use literal=false for internal named keys or tmux-style "
-            "aliases with native equivalents (for example ctrl_u or C-u); unsupported names "
-            "fail on managed panes instead of becoming text. An optional "
-            "idempotency_key is 1 to 128 characters from "
-            "[A-Za-z0-9._:-]; retries preserve indeterminate outcomes without redispatch."
-        ),
-    )
-    async def send_keys(
-        session_id: str,
+    async def _deliver(
+        resolved_session_id: str,
         keys: str,
-        literal: bool = True,
-        idempotency_key: str | None = None,
+        *,
+        literal: bool,
+        clear_held: bool,
+        resolved_key: str,
     ) -> dict[str, Any]:
-        if (
-            idempotency_key is not None
-            and _IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key) is None
-        ):
-            return {
-                "success": False,
-                "error": "idempotency_key must be 1 to 128 characters from [A-Za-z0-9._:-]",
-                "error_code": "invalid_idempotency_key",
-            }
-        resolved_key = idempotency_key or uuid4().hex
-        resolved_session_id, authorization_error = _authorize_send_keys_target(
-            session_id,
-            session_manager,
-        )
-        if authorization_error is not None:
-            return {**authorization_error, "idempotency_key": resolved_key}
-        if _is_speed_command(keys):
-            return {
-                "success": False,
-                "error": "send_keys cannot toggle provider speed mode; ask the user to run it",
-                "error_code": "send_keys_speed_command_forbidden",
-                "idempotency_key": resolved_key,
-            }
-
-        assert resolved_session_id is not None
+        """Gate the target's terminal, then write keys through the coordinator."""
         refusal = await send_keys_target_refusal(
-            resolved_session_id, terminal_manager, terminal_runtime_registry
+            resolved_session_id,
+            terminal_manager,
+            terminal_runtime_registry,
+            clear_held=clear_held,
         )
+        if isinstance(refusal, ComposerCleared):
+            return {"success": True, "cleared": True, "idempotency_key": resolved_key}
         if refusal is not None:
             return {
                 "success": False,
                 "error": refusal.message,
                 "error_code": refusal.code,
+                "recovery": refusal.recovery,
                 "idempotency_key": resolved_key,
             }
         target_session = session_manager.get(resolved_session_id)
@@ -245,3 +254,90 @@ def register_send_keys_tool(
             "error_code": "terminal_target_unavailable",
             "idempotency_key": resolved_key,
         }
+
+    @registry.tool(
+        name="send_keys",
+        description=(
+            "Send keystrokes to a session's terminal. This is for terminal control; use "
+            "`gobby-agents:send_message` for direct cross-session agent communication. "
+            "Autonomous agent-run sessions cannot use this tool. Targets must be the caller, "
+            "in the same project, or in the same agent tree. Use literal=true (default) to "
+            "paste text — one or more trailing \\n characters produce exactly one Enter after "
+            "the literal paste settles. Use literal=false for internal named keys or tmux-style "
+            "aliases with native equivalents (for example ctrl_u or C-u); unsupported names "
+            "fail on managed panes instead of becoming text. An optional "
+            "idempotency_key is 1 to 128 characters from "
+            "[A-Za-z0-9._:-]; retries preserve indeterminate outcomes without redispatch."
+        ),
+    )
+    async def send_keys(
+        session_id: str,
+        keys: str,
+        literal: bool = True,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        if (
+            idempotency_key is not None
+            and _IDEMPOTENCY_KEY_PATTERN.fullmatch(idempotency_key) is None
+        ):
+            return {
+                "success": False,
+                "error": "idempotency_key must be 1 to 128 characters from [A-Za-z0-9._:-]",
+                "error_code": "invalid_idempotency_key",
+            }
+        resolved_key = idempotency_key or uuid4().hex
+        resolved_session_id, authorization_error = _authorize_send_keys_target(
+            session_id,
+            session_manager,
+        )
+        if authorization_error is not None:
+            return {**authorization_error, "idempotency_key": resolved_key}
+        if _is_speed_command(keys):
+            return {
+                "success": False,
+                "error": "send_keys cannot toggle provider speed mode; ask the user to run it",
+                "error_code": "send_keys_speed_command_forbidden",
+                "idempotency_key": resolved_key,
+            }
+
+        assert resolved_session_id is not None
+        # Only a single clear key may drain a held daemon draft; text or Enter never does.
+        clear_held = not literal and normalize_named_key(keys) in COMPOSER_CLEAR_KEYS
+        return await _deliver(
+            resolved_session_id,
+            keys,
+            literal=literal,
+            clear_held=clear_held,
+            resolved_key=resolved_key,
+        )
+
+    @registry.tool(
+        name="send_wake",
+        description=(
+            "Wake a session whose agent is stuck at its prompt by typing one fixed line into "
+            f"its terminal: `{WAKE_LINE}`, then Enter. Takes only session_id; no text can be "
+            "supplied. The target must admit the caller under its message_sender_capabilities, "
+            "the same admission gobby-agents:send_message applies, and it passes the same "
+            "terminal checks as send_keys. Use gobby-agents:send_message for any other message."
+        ),
+    )
+    async def send_wake(session_id: str) -> dict[str, Any]:
+        resolved_key = uuid4().hex
+        caller, error = _resolve_caller(session_manager)
+        if error is not None:
+            return {**error, "idempotency_key": resolved_key}
+        assert caller is not None
+        target_id, error = _resolve_target(session_id, caller, session_manager)
+        if error is not None:
+            return {**error, "idempotency_key": resolved_key}
+        assert target_id is not None
+        refusal = _wake_admission_refusal(caller.id, target_id, session_manager.db)
+        if refusal is not None:
+            return {**refusal, "idempotency_key": resolved_key}
+        return await _deliver(
+            target_id,
+            f"{WAKE_LINE}\n",
+            literal=True,
+            clear_held=False,
+            resolved_key=resolved_key,
+        )

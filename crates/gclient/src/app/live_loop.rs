@@ -4,6 +4,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
+use crossterm::event::MouseEventKind;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::raw_input::RawInputEvent;
@@ -49,6 +50,10 @@ mod local_adoption;
 pub(super) mod menu;
 mod menu_bar;
 pub(super) mod menu_dispatch;
+// One copy of the daemon mock for every unit-test module that drives it.
+#[cfg(test)]
+#[path = "../../tests/mock_daemon/transport.rs"]
+mod mock_daemon;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
@@ -74,7 +79,7 @@ use control::{
 };
 use focus_hints::{offer_focus_hints, FocusMemo};
 use focus_hold::{is_activity, FocusHold};
-use jobs::{issue_response, stage_live_geometry, LoopJobs};
+use jobs::{issue_response, stage_live_geometry, JobKey, LoopJobs, Pending};
 use jobs_apply::apply_job_outcome;
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
@@ -568,18 +573,37 @@ pub async fn run_live_loop<B: Backend>(
                 // the same colours.
                 let terminal_theme = (&chrome.terminal_theme()).into();
                 workspace.daemon().set_terminal_theme(&terminal_theme);
-                workspace.sync_terminal_themes(&terminal_theme).await;
+                // Each proxied pane's theme relay is a job, so a slow daemon
+                // never holds up the tick (#25653).
+                for (pane_id, theme) in workspace.sync_terminal_themes(&terminal_theme) {
+                    jobs.offer(
+                        workspace,
+                        chrome,
+                        JobKey::ThemeRelay(pane_id),
+                        Pending::ThemeRelay(pane_id, theme),
+                    );
+                }
                 chrome.connection.now = std::time::Instant::now();
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 chrome.expire_toasts(std::time::Instant::now());
-                if let Some(message) = focus_hold.sync(
-                    workspace,
-                    chrome,
-                    std::time::Instant::now(),
-                    chrome.prefs.focus_hold_seconds,
-                ) {
-                    if daemon.notify(message).await.is_err() {
-                        focus_hold.unsent();
+                // The focus report is a job too. One in flight holds the next
+                // hint, and a refused report hands its hint back to be sent.
+                if jobs.take_focus_refused() {
+                    focus_hold.unsent();
+                }
+                if !jobs.focus_report_in_flight() {
+                    if let Some(message) = focus_hold.sync(
+                        workspace,
+                        chrome,
+                        std::time::Instant::now(),
+                        chrome.prefs.focus_hold_seconds,
+                    ) {
+                        jobs.offer(
+                            workspace,
+                            chrome,
+                            JobKey::FocusReport,
+                            Pending::FocusReport(message),
+                        );
                     }
                 }
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
@@ -720,6 +744,17 @@ async fn await_relist_job(job: &mut Option<RelistFuture>) -> Result<Relist, Daem
     }
 }
 
+/// Input the user gives cancels a destroy-orphans request still waiting on
+/// its inventory, so the list never opens over what they just did. Motion
+/// and scroll leave it pending, so hovering does not drop the list.
+fn cancels_orphan_request(event: &RawInputEvent) -> bool {
+    match event {
+        RawInputEvent::Key(_) | RawInputEvent::Text(_) | RawInputEvent::Paste(_) => true,
+        RawInputEvent::Mouse(mouse) => matches!(mouse.kind, MouseEventKind::Down(_)),
+        _ => false,
+    }
+}
+
 async fn route_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -730,6 +765,9 @@ async fn route_live_input(
     if let RawInputEvent::HostDefaultColor { kind, color } = event {
         chrome.record_host_color(*kind, *color);
         return Ok(false);
+    }
+    if cancels_orphan_request(event) {
+        chrome.orphan_pending = None;
     }
     if let RawInputEvent::Paste(text) = event {
         if let Some(pane_id) = chrome.focused_pane() {

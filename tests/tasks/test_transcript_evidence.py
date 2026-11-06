@@ -140,8 +140,8 @@ async def test_claude_background_validation_requires_matching_terminal_receipt(
         ),
     )
     failure = (
-        "E   AssertionError: plan-writer\n"
-        "tests/agents/test_plan_seat_definitions.py:57: AssertionError: plan-writer\n"
+        "E   AssertionError: fixture-author\n"
+        "tests/agents/test_fixture_definitions.py:57: AssertionError: fixture-author\n"
         "FAILED tests/agents/test_plan_seat_definitions.py::test_seat_definitions_sync_and_validate\n"
         "============================== 4 failed in 20.35s ==============================\n"
     )

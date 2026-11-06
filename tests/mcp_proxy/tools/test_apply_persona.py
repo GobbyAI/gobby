@@ -217,7 +217,7 @@ class TestApplyPersonaImpl:
                             "persona": "Interactive guidance.",
                             "agent": "Run the assigned task.",
                         },
-                        name="developer",
+                        name="fixture-worker",
                         surfaces=["persona"],
                     ),
                     MagicMock(step_workflow_id=None),
@@ -227,7 +227,7 @@ class TestApplyPersonaImpl:
                 "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
                 return_value=(
                     {
-                        "_persona_name": "developer",
+                        "_persona_name": "fixture-worker",
                         "_active_skill_names": [],
                         "_agent_context_injected": False,
                         "_agent_identity_reinject": True,
@@ -240,13 +240,13 @@ class TestApplyPersonaImpl:
             ) as mock_merge,
         ):
             result = await apply_persona_impl(
-                agent="developer",
+                agent="fixture-worker",
                 db=db,
                 session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
             )
 
         assert result["success"] is True
-        assert result["persona_applied"] == "developer"
+        assert result["persona_applied"] == "fixture-worker"
         mock_build.assert_called_once()
         mock_merge.assert_called_once()
 

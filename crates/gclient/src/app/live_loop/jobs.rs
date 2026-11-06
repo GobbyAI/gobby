@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gobby_terminal::protocol::ClientMessage;
+use gobby_terminal::terminal_theme::ThemeDeclaration;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use serde_json::{json, Value};
@@ -33,6 +34,7 @@ use super::super::{PaneId, Workspace};
 use super::chain_apply;
 use super::focus_hints::{self, FocusMemo, ShownFocus};
 use super::mouse::Placement;
+use super::orphans::DestroySummary;
 use super::outage_grant::{self, GrantOutcome};
 
 #[cfg(test)]
@@ -46,6 +48,10 @@ pub enum JobKey {
     Scroll(PaneId),
     /// A direct pane's host input grant, asked for while the daemon is away.
     HostGrant(PaneId),
+    /// A proxied pane's terminal theme relay; the latest theme wins.
+    ThemeRelay(PaneId),
+    /// The focus report; the latest one wins, and a report in flight holds the next.
+    FocusReport,
     FocusHints,
     /// A pane writer's outcomes; the tag id is the write's `client_write_seq`.
     Write(PaneId),
@@ -101,6 +107,16 @@ pub enum JobResult {
         grant: io::Result<GrantOutcome>,
         revoked: Vec<(PaneId, String, io::Result<()>)>,
     },
+    /// The daemon's answer to a proxied pane's theme relay. A failure leaves
+    /// the pane's theme undeclared, so the next tick relays it again.
+    ThemeRelayed {
+        pane: PaneId,
+        theme: ThemeDeclaration,
+        result: Result<(), DaemonError>,
+    },
+    /// The daemon's answer to the focus report; a failure hands it back to the
+    /// focus hold to send again.
+    FocusReported { result: Result<(), DaemonError> },
     /// The daemon's reply to one write of `bytes`.
     Write {
         pane: PaneId,
@@ -195,6 +211,15 @@ pub enum JobResult {
         orphan: Orphan,
         outcome: DisposalOutcome,
     },
+    /// The orphan inventory behind the destroy dialog, tagged with the request
+    /// that asked for it. It opens the dialog only while that request is still
+    /// pending.
+    OrphanInventory {
+        request: u64,
+        result: Result<Vec<TerminalRow>, DaemonError>,
+    },
+    /// The destroy dialog's kills, one result per requested orphan.
+    OrphansDestroyed { summary: DestroySummary },
 }
 
 /// What an owned shell's create chain committed.
@@ -418,6 +443,8 @@ pub(super) enum Pending {
     Geometry(PaneId, u16, u16),
     Scroll(PaneId, u32),
     HostGrant(PaneId),
+    ThemeRelay(PaneId, ThemeDeclaration),
+    FocusReport(Value),
     Open(String),
     Roster(String),
     Attention,
@@ -437,6 +464,8 @@ pub(super) struct LoopJobs {
     generation: Generation,
     pub(super) focus: FocusMemo,
     sent_geometry: Vec<ShownGeometry>,
+    /// Set when the focus report's send failed, so the focus hold sends it again.
+    focus_refused: bool,
 }
 
 impl LoopJobs {
@@ -449,7 +478,22 @@ impl LoopJobs {
             generation: workspace.daemon().generation(),
             focus: FocusMemo::new(workspace),
             sent_geometry: Vec::new(),
+            focus_refused: false,
         }
+    }
+
+    /// Whether a focus report is in flight; the next report waits for its answer.
+    pub(super) fn focus_report_in_flight(&self) -> bool {
+        self.ledger.in_flight(&JobKey::FocusReport).is_some()
+    }
+
+    /// Whether the focus report's send failed since this was last asked.
+    pub(super) fn take_focus_refused(&mut self) -> bool {
+        std::mem::take(&mut self.focus_refused)
+    }
+
+    pub(super) fn focus_report_refused(&mut self) {
+        self.focus_refused = true;
     }
 
     /// Follow the daemon connection: a new generation frees every key the
@@ -623,6 +667,33 @@ impl LoopJobs {
                         grant,
                         revoked,
                     }
+                });
+                true
+            }
+            Pending::ThemeRelay(pane_id, theme) => {
+                let Some(message) = workspace
+                    .panes
+                    .get(&pane_id)
+                    .and_then(|pane| pane.theme_relay(&theme))
+                else {
+                    return false;
+                };
+                let daemon = workspace.daemon().clone();
+                spawn_job(&self.tx, tag.clone(), async move {
+                    let result = daemon.notify(message).await;
+                    JobResult::ThemeRelayed {
+                        pane: pane_id,
+                        theme,
+                        result,
+                    }
+                });
+                true
+            }
+            Pending::FocusReport(message) => {
+                let daemon = workspace.daemon().clone();
+                spawn_job(&self.tx, tag.clone(), async move {
+                    let result = daemon.notify(message).await;
+                    JobResult::FocusReported { result }
                 });
                 true
             }

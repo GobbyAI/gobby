@@ -108,3 +108,5 @@ At any decision point, count the number of distinct options, actions, or pieces 
 **Fix**: Co-locate the information needed for each decision. Reduce back-and-forth.
 
 ---
+
+_Version: 1.0.0_

@@ -31,6 +31,8 @@ pytestmark = pytest.mark.integration
 
 RECENT_TIMESTAMP = datetime.fromisoformat("2026-01-02T03:04:05+00:00")
 STALE_TIMESTAMP = datetime.fromisoformat("2025-01-02T03:04:05+00:00")
+PROJECT_CLONES_DIR = Path("/tmp/clones/project")
+CREATE_PATH = str(PROJECT_CLONES_DIR / "test")
 
 
 async def _let_cancellation_propagate(operation: asyncio.Task[Any]) -> None:
@@ -126,6 +128,14 @@ def registry(
         "gobby.mcp_proxy.tools._clones_creation.ensure_project_json_for_isolation", AsyncMock()
     )
     monkeypatch.setattr(GcodeGateway, "pin_project", AsyncMock())
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", Path("/tmp/clones"))
+    project_manager = MagicMock()
+    project_manager.return_value.get.return_value = SimpleNamespace(
+        id="11111111-1111-4111-8111-111111110001", name=PROJECT_CLONES_DIR.name
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools._clones_creation.LocalProjectManager", project_manager
+    )
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,
@@ -214,7 +224,7 @@ class TestCreateClone:
 
         result = await registry.call(
             "create_clone",
-            {"branch_name": "main", "clone_path": "/tmp/clones/test"},
+            {"branch_name": "main", "clone_path": CREATE_PATH},
         )
 
         assert result["success"] is True
@@ -222,7 +232,7 @@ class TestCreateClone:
         assert result["base_commit_sha"] == "abc123"
         assert result["index_source"] == "local"
         mock_git_manager.create_clone.assert_awaited_once_with(
-            "/tmp/clones/test", "main", "main", base_commit_sha="abc123"
+            str(Path(CREATE_PATH).resolve()), "main", "main", base_commit_sha="abc123"
         )
         mock_git_manager.shallow_clone.assert_not_called()
 
@@ -236,7 +246,7 @@ class TestCreateClone:
 
         result = await registry.call(
             "create_clone",
-            {"branch_name": "main", "clone_path": "/tmp/clones/test"},
+            {"branch_name": "main", "clone_path": CREATE_PATH},
         )
 
         assert result["success"] is False
@@ -262,7 +272,7 @@ class TestCreateClone:
                 "create_clone",
                 {
                     "branch_name": "main",
-                    "clone_path": "/tmp/clones/test",
+                    "clone_path": CREATE_PATH,
                     "remote_url": "https://github.com/user/repo.git",
                 },
             )
@@ -312,7 +322,7 @@ class TestCreateClone:
                 "create_clone",
                 {
                     "branch_name": "feature",
-                    "clone_path": "/tmp/clones/test",
+                    "clone_path": CREATE_PATH,
                     "remote_url": "https://github.com/user/repo.git",
                 },
             )
@@ -354,7 +364,7 @@ class TestCreateClone:
 
         result = await registry.call(
             "create_clone",
-            {"branch_name": "main", "clone_path": "/tmp/clones/test", "task_id": "task-456"},
+            {"branch_name": "main", "clone_path": CREATE_PATH, "task_id": "task-456"},
         )
 
         assert result["success"] is True
@@ -378,7 +388,7 @@ class TestCreateClone:
             "create_clone",
             {
                 "branch_name": "main",
-                "clone_path": "/tmp/clones/test",
+                "clone_path": CREATE_PATH,
                 "remote_url": "https://github.com/user/repo.git",
                 "task_id": "#404",
             },
@@ -432,7 +442,7 @@ class TestCreateClone:
         ]
         arguments = {
             "branch_name": "main",
-            "clone_path": "/tmp/clones/retry",
+            "clone_path": str(PROJECT_CLONES_DIR / "retry"),
             "remote_url": "https://github.com/user/repo.git",
         }
 
@@ -444,7 +454,7 @@ class TestCreateClone:
         assert second_result["clone"]["id"] == "clone-retry"
         assert clone_exists is True
         mock_git_manager.delete_clone.assert_called_once_with(
-            "/tmp/clones/retry",
+            str((PROJECT_CLONES_DIR / "retry").resolve()),
             force=True,
         )
         assert mock_git_manager.shallow_clone.call_count == 2
@@ -468,7 +478,7 @@ class TestCreateClone:
 
         result = await registry.call(
             "create_clone",
-            {"branch_name": "feature", "clone_path": "/tmp/clones/local"},
+            {"branch_name": "feature", "clone_path": str(PROJECT_CLONES_DIR / "local")},
         )
 
         assert result == {
@@ -478,6 +488,89 @@ class TestCreateClone:
         }
         mock_git_manager.create_clone.assert_not_called()
         mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("remote_url", [None, "https://example.invalid/repo.git"])
+    @pytest.mark.parametrize(
+        "clone_path",
+        [
+            "/tmp/scratchpad/clean",
+            "/tmp/clones",
+            "/tmp/clones/stray",
+            "/tmp/clones/other-project/clone",
+            "/tmp/clones/project",
+            "/tmp/clones/project/nested/clone",
+            "/tmp/clones/project/../../scratchpad/clean",
+        ],
+    )
+    async def test_create_clone_refuses_path_outside_project_clone_dir(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        remote_url: str | None,
+        clone_path: str,
+    ) -> None:
+        """Only a direct child of <root>/<project> is accepted, before any git or task work."""
+        arguments = {"branch_name": "feature", "clone_path": clone_path}
+        if remote_url is not None:
+            arguments["remote_url"] = remote_url
+
+        result = await registry.call("create_clone", arguments)
+
+        assert result == {
+            "success": False,
+            "error": f"Clone path must be directly under {PROJECT_CLONES_DIR.resolve()}",
+            "error_code": "clone_path_outside_root",
+        }
+        mock_git_manager.create_clone.assert_not_called()
+        mock_git_manager.shallow_clone.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_clone_default_path_lands_under_managed_root(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Omitting clone_path places the clone at <root>/<project name>/<branch>."""
+        mock_git_manager.create_clone.return_value = MagicMock(success=True)
+        mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
+        mock_clone_storage.create.return_value = _merge_test_clone()
+
+        result = await registry.call("create_clone", {"branch_name": "feature/default-seat"})
+
+        assert result["success"] is True
+        expected = str((PROJECT_CLONES_DIR / "feature-default-seat").resolve())
+        mock_git_manager.create_clone.assert_awaited_once_with(
+            expected, "feature/default-seat", "main", base_commit_sha="abc123"
+        )
+        assert mock_clone_storage.create.call_args.kwargs["clone_path"] == expected
+
+    @pytest.mark.asyncio
+    async def test_create_clone_records_the_canonical_path(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A non-canonical spelling is stored and cloned at its resolved path."""
+        mock_git_manager.create_clone.return_value = MagicMock(success=True)
+        mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
+        mock_clone_storage.create.return_value = _merge_test_clone()
+
+        result = await registry.call(
+            "create_clone",
+            {"branch_name": "feature", "clone_path": "/tmp/clones/project/../project/./seat"},
+        )
+
+        assert result["success"] is True
+        expected = str((PROJECT_CLONES_DIR / "seat").resolve())
+        mock_git_manager.create_clone.assert_awaited_once_with(
+            expected, "feature", "main", base_commit_sha="abc123"
+        )
+        assert mock_clone_storage.create.call_args.kwargs["clone_path"] == expected
+
+    def test_create_clone_path_is_optional(self, registry: Any) -> None:
+        tool = registry.get_schema("create_clone")
+
+        assert tool is not None
+        assert tool["inputSchema"]["required"] == ["branch_name"]
 
 
 class TestGetClone:

@@ -783,7 +783,9 @@ class WakeDispatcher:
         reconciled idle earlier, so a turn that started since then would be
         steered or cancelled by this write.
 
-        An operator comms wake also waits while a focused holder of the terminal
+        An operator comms wake is the exception to the composer-state blocks: it
+        replaces a ``draft`` or ``unknown`` composer, delivering through
+        clear-before-submit. It only waits while a focused holder of the terminal
         is typing into it. The hold is recorded for ``release_focus_hold``, which
         re-dispatches it. The turn checks above run first, so a running turn is
         never steered, and the hold does not apply to other wakes.

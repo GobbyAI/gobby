@@ -16,3 +16,5 @@ Build the assigned direction, not a safer interpretation of it. The form supplie
 - **Author motion as material.** The form has native motion, what it does in life between states; give the page that motion once, orchestrated, rather than scattered hover effects. Bound expensive effects and keep content visible by default.
 
 Preserve semantics, accessibility, performance, responsiveness, project conventions, and working behavior.
+
+_Version: 1.0.0_

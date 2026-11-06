@@ -91,12 +91,12 @@ pub(super) async fn apply_live_mouse_outcome(
             spawn_live_terminal(workspace, chrome, outcomes, placement).await?;
         }
         MouseOutcome::Write { pane, bytes } => {
-            send_live_report(workspace, jobs, pane, &bytes)?;
+            send_live_report(workspace, chrome, jobs, pane, &bytes)?;
         }
         MouseOutcome::FocusWrite { pane, bytes } => {
             chrome.focus_pane(pane);
             focus_live_pane(workspace, pane);
-            send_live_report(workspace, jobs, pane, &bytes)?;
+            send_live_report(workspace, chrome, jobs, pane, &bytes)?;
         }
         MouseOutcome::Scroll { pane, rows } => {
             set_live_scroll_offset(workspace, chrome, jobs, pane, rows);
@@ -218,7 +218,7 @@ pub(super) async fn apply_live_modal_outcome(
         ModalOutcome::RemoveWorktree(worktree_id) => {
             remove_worktree(workspace, chrome, &worktree_id).await?;
         }
-        ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, chrome, rows).await?,
+        ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, outcomes, rows),
         ModalOutcome::Menu { kind, action } => {
             return apply_live_menu_action(workspace, chrome, outcomes, kind, action).await;
         }

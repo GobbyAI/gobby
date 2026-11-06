@@ -1,8 +1,9 @@
-tags: [tool-hygiene, default, enforcement, gobby]
+version: "3.0.0"
+tags: [tool-hygiene, runbook, enforcement, gobby]
 
 rules:
   no-comms-attach:
-    description: "Reserve the redacting stdin attachment CLI for the Reporter and monitors"
+    description: "Reserve the redacting stdin attachment CLI for definitions that exclude this rule by name"
     event: before_tool
     enabled: true
     priority: 50
@@ -13,5 +14,6 @@ rules:
           (^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby(?:\s+--config(?:=|\s+)(?:'[^']*'|"[^"]*"|[^\s;&|]+))*(?:\s+--)?\s+comms(?:\s+--)?\s+attach(?=$|[\s;&|<>()`])
         reason: >-
           Use gobby-communications:send_operator_attachment for whole files and plans.
-          Ask the Log Monitor through gobby-agents:send_message to send cited log excerpts
-          redacted. The Reporter and monitors alone are exempt from no-comms-attach.
+          Send operator reports that need attachments to the Assistant through
+          gobby-agents:send_message; the Assistant delivers them. The stdin attachment CLI
+          is reserved for definitions that exclude no-comms-attach by name.

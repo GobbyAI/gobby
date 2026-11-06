@@ -379,10 +379,8 @@ impl RunLayout {
             .collect();
         values.insert(CARGO_HOME.to_string(), text(&self.cargo_home()));
         values.insert(CARGO_TARGET_DIR.to_string(), text(&self.cargo_target));
-        values.insert(
-            "UV_PROJECT_ENVIRONMENT".to_string(),
-            text(&self.cache.join("uv-project-environment")),
-        );
+        // uv uses the checkout's seeded .venv; empty also clears an inherited value.
+        values.insert("UV_PROJECT_ENVIRONMENT".to_string(), String::new());
         values.insert("ZDOTDIR".to_string(), text(&self.root.join("assets")));
         values.insert("TMPDIR".to_string(), text(&self.tmp));
         if provider == "claude" {

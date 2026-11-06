@@ -87,7 +87,7 @@ def _definition(db: HubDatabase, role: str, *, granted: bool, enabled: bool = Tr
     )
 
 
-@pytest.mark.parametrize("role", ["assistant", "orchestrator", "custom-seat"])
+@pytest.mark.parametrize("role", ["fixture-helper", "fixture-coordinator", "custom-seat"])
 @pytest.mark.parametrize("granted", [False, True])
 def test_native_variable_authority_comes_from_definition(
     sessions: SessionManager, role: str, granted: bool
@@ -103,18 +103,18 @@ def test_native_variable_authority_comes_from_definition(
 def test_disabled_definition_cannot_grant_native_variable_authority(
     sessions: SessionManager,
 ) -> None:
-    _definition(sessions.db, "assistant", granted=True, enabled=False)
+    _definition(sessions.db, "fixture-helper", granted=True, enabled=False)
     manager = SessionVariableManager(sessions.db)
-    manager.set_variable(CALLER, "_agent_type", "assistant")
+    manager.set_variable(CALLER, "_agent_type", "fixture-helper")
     result = set_variable(sessions, sessions.db, "sample", "value", CALLER)
     assert result["success"] is False
     assert "sample" not in manager.get_variables(CALLER)
 
 
 _SYNTHETIC_SEAT_STEPS: dict[str, tuple[str, ...]] = {
-    "developer": ("load_skills", "claim", "implement", "submit"),
-    "code-reviewer": ("review", "verdict"),
-    "tech-writer": ("write",),
+    "fixture-worker": ("load_skills", "claim", "implement", "submit"),
+    "fixture-definition-e08ba693": ("review", "verdict"),
+    "fixture-definition-76c4b50c": ("write",),
 }
 
 
@@ -145,7 +145,9 @@ def test_every_seat_step_refuses_native_mutation(
         assert instance.variables["candidate_sent"] is True
 
 
-@pytest.mark.parametrize("role", ["assistant", "orchestrator", "custom-seat", "default"])
+@pytest.mark.parametrize(
+    "role", ["fixture-helper", "fixture-coordinator", "custom-seat", "default"]
+)
 @pytest.mark.parametrize("scope", ["session", "step"])
 def test_granted_definitions_keep_own_session_writes(
     sessions: SessionManager, role: str, scope: Literal["session", "step"]
@@ -166,15 +168,15 @@ def test_granted_definitions_keep_own_session_writes(
 @pytest.mark.parametrize(
     ("role", "allowed"),
     [
-        ("assistant", True),
-        ("assistant", False),
-        ("orchestrator", True),
-        ("orchestrator", False),
+        ("fixture-helper", True),
+        ("fixture-helper", False),
+        ("fixture-coordinator", True),
+        ("fixture-coordinator", False),
         ("default", True),
         ("custom-seat", True),
         ("custom-seat", False),
-        ("developer", False),
-        ("code-reviewer", False),
+        ("fixture-worker", False),
+        ("fixture-definition-e08ba693", False),
     ],
 )
 @pytest.mark.parametrize("scope", ["session", "step"])
@@ -203,6 +205,7 @@ async def test_foreign_non_idle_write_preserves_definition_authority(
                 source=SessionSource.CLAUDE,
                 timestamp=datetime.now(UTC),
                 metadata={},
+                project_id=PROJECT,
                 data={
                     "tool_name": SET_VARIABLE_TOOL,
                     "tool_input": {
@@ -235,7 +238,9 @@ async def test_foreign_non_idle_write_preserves_definition_authority(
     assert "sample" not in manager.get_variables(CALLER)
 
 
-@pytest.mark.parametrize("role", ["assistant", "orchestrator", "custom-seat", "default"])
+@pytest.mark.parametrize(
+    "role", ["fixture-helper", "fixture-coordinator", "custom-seat", "default"]
+)
 @pytest.mark.parametrize("target", [CALLER, OTHER])
 async def test_privileged_idle_declaration_keeps_own_session_gate(
     sessions: SessionManager, role: str, target: str
@@ -251,6 +256,7 @@ async def test_privileged_idle_declaration_keeps_own_session_gate(
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             metadata={},
+            project_id=PROJECT,
             data={
                 "tool_name": SET_VARIABLE_TOOL,
                 "tool_input": {
@@ -293,7 +299,7 @@ def test_standing_seat_refuses_native_idle_declaration(
 def test_absent_role_is_default_only_without_a_bound_seat(sessions: SessionManager) -> None:
     result = set_variable(sessions, sessions.db, "sample", 1, CALLER)
     assert result["success"] is True
-    _instance(sessions.db, "developer", "submit")
+    _instance(sessions.db, "fixture-worker", "submit")
     result = set_variable(sessions, sessions.db, "sample", 2, CALLER)
     assert result["success"] is False
     assert SessionVariableManager(sessions.db).get_variables(CALLER)["sample"] == 1
@@ -314,9 +320,9 @@ def test_malformed_present_role_never_becomes_default(
 def test_seat_missing_or_foreign_target_is_refused(
     sessions: SessionManager, tool_input: object
 ) -> None:
-    SessionVariableManager(sessions.db).set_variable(CALLER, "_agent_type", "developer")
+    SessionVariableManager(sessions.db).set_variable(CALLER, "_agent_type", "fixture-worker")
     error = native_variable_write_error(
-        SET_VARIABLE_TOOL, tool_input, CALLER, {"_agent_type": "developer"}, sessions
+        SET_VARIABLE_TOOL, tool_input, CALLER, {"_agent_type": "fixture-worker"}, sessions
     )
     assert error is not None and "[native-variable-authority]" in error
 
@@ -331,14 +337,19 @@ def test_missing_caller_does_not_borrow_target_identity(sessions: SessionManager
 def test_allowed_role_still_cannot_write_reserved_authority(sessions: SessionManager) -> None:
     manager = SessionVariableManager(sessions.db)
     manager.set_variable(CALLER, "_agent_type", "default")
-    result = set_variable(sessions, sessions.db, "_agent_type", "developer", CALLER)
+    result = set_variable(sessions, sessions.db, "_agent_type", "fixture-worker", CALLER)
     assert result["success"] is False
     assert manager.get_variables(CALLER)["_agent_type"] == "default"
 
 
 @pytest.mark.parametrize(
     ("role", "granted"),
-    [("developer", False), ("code-reviewer", False), ("assistant", True), ("custom-seat", True)],
+    [
+        ("fixture-worker", False),
+        ("fixture-definition-e08ba693", False),
+        ("fixture-helper", True),
+        ("custom-seat", True),
+    ],
 )
 async def test_hook_checks_native_authority_before_infrastructure_exemption(
     sessions: SessionManager, role: str, granted: bool
@@ -352,6 +363,7 @@ async def test_hook_checks_native_authority_before_infrastructure_exemption(
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         metadata={},
+        project_id=PROJECT,
         data={
             "tool_name": SET_VARIABLE_TOOL,
             "tool_input": {

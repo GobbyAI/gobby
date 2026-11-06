@@ -339,7 +339,11 @@ def _resolve_active_rule_names(
     from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.definitions import AgentDefinitionBody
-    from gobby.workflows.selectors import resolve_rules_for_agent
+    from gobby.workflows.selectors import (
+        binds_named_definition,
+        is_mandatory_rule,
+        resolve_rules_for_agent,
+    )
 
     cache_key = (agent_name, project_id)
     revisions = (get_definitions_revision("agents"), get_definitions_revision("rules"))
@@ -351,7 +355,10 @@ def _resolve_active_rule_names(
     agent_manager = AgentDefinitionManager(db)
     row = agent_manager.get_by_name(agent_name, project_id=project_id)
     rules = RuleDefinitionManager(db).list_all(project_id=project_id, enabled=True)
-    if row is None or not row.enabled:
+    if (row is None or not row.enabled) and binds_named_definition(agent_name):
+        # A named seat whose definition is gone fails closed: mandatory rules only.
+        active_rules = {rule.name for rule in rules if is_mandatory_rule(rule)}
+    elif row is None or not row.enabled:
         active_rules = {rule.name for rule in rules if "default" in (rule.tags or [])}
     else:
         try:

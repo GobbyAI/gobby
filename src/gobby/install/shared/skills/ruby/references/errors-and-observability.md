@@ -47,3 +47,5 @@
 - Do not leak exception messages from database, HTTP clients, shell commands, or
   internal services to users.
 - For APIs, preserve status codes, error keys, JSON shape, and localization.
+
+_Version: 1.0.0_

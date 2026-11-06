@@ -356,10 +356,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
         "src/gobby/storage/tasks/_transitions_facade.py",
         "TaskTransitionsMixin.close_task_with_commit",
     ),
-    # _run_step_handlers offloads advance_seat, which reaches the commit-link git check
-    # through _submit_return_rejection and _candidate_rejection
-    # (test_developer_proof_request_matches_linked_candidate_off_the_loop).
-    ("src/gobby/workflows/engine/seat_transitions.py", "_commit_linked_to_claimant"),
     # Plan validation runs on MCP/coverage workers and the compile offload;
     # offline validation remains synchronous (test_expansion_service_compile).
     ("src/gobby/tasks/expansion/_validate.py", "_task_has_landed_commit"),
@@ -369,13 +365,17 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commit_workspace runs ensure_workspace, the only caller of _init_git_dir, through
     # asyncio.to_thread before it commits, so the git init never runs on the loop.
     ("src/gobby/agents/agent_workspaces.py", "_init_git_dir"),
-    # spawn_workspace_write_paths runs through asyncio.to_thread in the spawn and resume
-    # executors and through run_db in the websocket launch; the workflow condition helper
-    # reaches it through the evaluator's offload, so the task checkout lookup never runs on the loop.
-    ("src/gobby/agents/agent_workspaces.py", "assigned_task_worktree"),
-    # sync_epic_review runs only inside dispatch_for_caller, which the spawn tool runs through
-    # asyncio.to_thread, so the epic tip merge check never runs on the loop.
-    ("src/gobby/agents/team_review.py", "_merged_tips"),
+    # _checkout_root is reached through assigned_run_checkout and _team_checkout from
+    # spawn_workspace_write_paths, which grant_seat_workspace_paths calls through
+    # asyncio.to_thread in the spawn and resume executors and through run_db in the
+    # websocket launch, and from assigned_task_worktree, which only the workflow condition
+    # helper calls under the evaluator's offload, so the checkout lookup never runs on the loop.
+    ("src/gobby/agents/agent_workspaces.py", "_checkout_root"),
+    # Built-in observers run through asyncio.to_thread in WorkflowHookHandler._evaluate_rules
+    # (tests/workflows/test_hooks.py
+    # test_sync_hook_collaborators_run_outside_event_loop_thread), so the authored-merge
+    # HEAD read never runs on the loop.
+    ("src/gobby/workflows/observer_commits.py", "_record_authored_merge"),
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {

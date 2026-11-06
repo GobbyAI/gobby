@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -19,6 +19,7 @@ from gobby.agents.runbook_seats import (
     RunbookSeatStores,
     check_runbook_seats,
 )
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.mcp_proxy.tools import runbook_seat_tools
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
@@ -59,6 +60,7 @@ def _install_agent(
     enabled: bool = True,
     capabilities: tuple[str, ...] = (),
     message_sender_capabilities: tuple[str, ...] = (),
+    variables: dict[str, Any] | None = None,
 ) -> None:
     AgentDefinitionManager(db).create(
         name=name,
@@ -67,7 +69,7 @@ def _install_agent(
             "version": "1.0",
             "enabled": enabled,
             "prompts": {"agent": "Coordinate the assigned work."},
-            "workflows": {"rule_selectors": {"include": []}},
+            "workflows": {"rule_selectors": {"include": []}, "variables": variables or {}},
             "capabilities": list(capabilities),
             "message_sender_capabilities": list(message_sender_capabilities),
         },
@@ -239,7 +241,7 @@ def test_inferred_sibling_uses_completed_guard_workspace(env: _Env, same_workspa
     execution_id = session.external_id.removeprefix("pipeline-")
     env.db.execute(
         "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
-        (json.dumps({"seats": "developer"}), execution_id),
+        (json.dumps({"seats": "fixture-worker"}), execution_id),
     )
     workspace = (
         env.workspace_id
@@ -278,7 +280,7 @@ def test_inferred_sibling_without_successful_guard_refuses(
     execution_id = session.external_id.removeprefix("pipeline-")
     env.db.execute(
         "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
-        (json.dumps({"seats": "developer"}), execution_id),
+        (json.dumps({"seats": "fixture-worker"}), execution_id),
     )
     if isinstance(output, dict):
         output = {**output, "workspace": env.workspace_id}
@@ -475,17 +477,21 @@ def test_seats_sharing_a_title_admit(env: _Env) -> None:
     assert [seat.name for seat in seats] == ["researcher-1", "researcher-2"]
 
 
-def _seat_session(env: _Env, agent: str) -> tuple[str, str]:
-    """Run ``agent`` with its own live child session; return the session and run ids."""
+def _seat_session(env: _Env, agent: str, *, parent: str | None = None) -> tuple[str, str]:
+    """Run ``agent`` with its own live child session; return the session and run ids.
+
+    ``parent`` is the session that launched the run, a pipeline child for a runbook seat.
+    """
+    launcher = parent or env.parent_session_id
     child = SessionManager(env.db).register(
         external_id=f"seat-{uuid.uuid4()}",
         machine_id=AGENT_TEST_MACHINE_ID,
         source="claude",
         project_id=env.project_id,
-        parent_session_id=env.parent_session_id,
+        parent_session_id=launcher,
     )
     run = LocalAgentRunManager(env.db).create(
-        parent_session_id=env.parent_session_id,
+        parent_session_id=launcher,
         provider="claude",
         prompt="seat",
         agent_name=agent,
@@ -523,6 +529,67 @@ def test_live_seats_are_skipped_only_when_opted_in(env: _Env) -> None:
     assert (skipped.launch, dict(skipped.live)) == (("dev",), {"lead": lead})
     assert [seat.name for seat in skipped.seats] == ["lead", "dev"]
     assert (plain.launch, dict(plain.live)) == (("lead", "dev"), {})
+
+
+def test_the_newest_same_task_run_is_the_one_mapped(env: _Env) -> None:
+    """Two live runs of one seat for one task map the newer run, whatever the listing order."""
+    mine = _team_task(env, "Mine")
+    my_run = _pipeline_child(env, inputs={"task": f"#{mine.seq_num}"})
+    _, older_run = _seat_session(env, "lead-agent", parent=my_run)
+    newer, newer_run = _seat_session(env, "lead-agent", parent=my_run)
+    for run_id, stamp in ((older_run, "2026-01-01"), (newer_run, "2026-02-01")):
+        env.db.execute(
+            "UPDATE agent_runs SET created_at = %s, started_at = %s WHERE id = %s",
+            (f"{stamp}T00:00:00+00:00", f"{stamp}T00:00:00+00:00", run_id),
+        )
+
+    partial = check_runbook_seats(
+        env.stores,
+        caller_session_id=my_run,
+        workspace=env.workspace_id,
+        requested="dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert dict(partial.live) == {"lead": newer}
+
+
+def test_a_taskless_run_reports_live_only_for_its_requested_seats(env: _Env) -> None:
+    """Without a task, live covers only the requested seats, never the whole catalogue."""
+    caller = _pipeline_child(env)
+    _seat_session(env, "lead-agent")
+
+    partial = check_runbook_seats(
+        env.stores,
+        caller_session_id=caller,
+        workspace=env.workspace_id,
+        requested="dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert (partial.launch, dict(partial.live)) == (("dev",), {})
+
+
+def test_a_partial_run_sees_only_its_own_tasks_live_seats(env: _Env) -> None:
+    """Live seats count only for the run's task, and a seat not requested still reports live."""
+    mine, theirs = _team_task(env, "Mine"), _team_task(env, "Theirs")
+    their_run = _pipeline_child(env, inputs={"task": f"#{theirs.seq_num}"})
+    _seat_session(env, "lead-agent", parent=their_run)
+    my_run = _pipeline_child(env, inputs={"task": f"#{mine.seq_num}"})
+    my_lead, _ = _seat_session(env, "lead-agent", parent=my_run)
+
+    partial = check_runbook_seats(
+        env.stores,
+        caller_session_id=my_run,
+        workspace=env.workspace_id,
+        requested="dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert (partial.launch, dict(partial.live)) == (("dev",), {"lead": my_lead})
 
 
 def _finished_run(env: _Env, session_id: str, run_id: str) -> None:
@@ -768,13 +835,18 @@ def test_report_to_admits_a_seat_whose_capabilities_it_admits(env: _Env) -> None
         env.db, "report-agent", env.project_id, message_sender_capabilities=MESSAGE_RESTRICTED
     )
     _install_agent(env.db, "reporter-agent", env.project_id, capabilities=MESSAGE_RESTRICTED)
-    catalogue = [{"name": "reporter", "title": "Reporter", "agent": "reporter-agent"}]
+    catalogue = [
+        {"name": "fixture-definition-41d6d532", "title": "Reporter", "agent": "reporter-agent"}
+    ]
 
     admitted = _report_check(
-        env, _report_session(env, "report-agent"), requested="reporter", catalogue=catalogue
+        env,
+        _report_session(env, "report-agent"),
+        requested="fixture-definition-41d6d532",
+        catalogue=catalogue,
     )
 
-    assert admitted.launch == ("reporter",)
+    assert admitted.launch == ("fixture-definition-41d6d532",)
 
 
 def test_report_to_refuses_only_the_seats_it_does_not_admit(env: _Env) -> None:
@@ -783,17 +855,19 @@ def test_report_to_refuses_only_the_seats_it_does_not_admit(env: _Env) -> None:
     )
     _install_agent(env.db, "reporter-agent", env.project_id, capabilities=MESSAGE_RESTRICTED)
     catalogue = [
-        {"name": "reporter", "title": "Reporter", "agent": "reporter-agent"},
+        {"name": "fixture-definition-41d6d532", "title": "Reporter", "agent": "reporter-agent"},
         {"name": "lead", "title": "Lead", "agent": "lead-agent"},
     ]
     report = _report_session(env, "report-agent")
 
     with pytest.raises(RunbookSeatRefusal) as refused:
-        _report_check(env, report, requested="reporter,lead", catalogue=catalogue)
+        _report_check(
+            env, report, requested="fixture-definition-41d6d532,lead", catalogue=catalogue
+        )
 
     message = str(refused.value)
     assert f"report_to {report} does not admit seat 'lead'" in message
-    assert "seat 'reporter'" not in message
+    assert "seat 'fixture-definition-41d6d532'" not in message
 
 
 def test_report_to_session_ref_resolves_before_the_guard(
@@ -826,3 +900,87 @@ def test_report_to_session_ref_resolves_before_the_guard(
     assert result["success"] is False
     assert result["error_code"] == "runbook_seat_refused"
     assert f"report_to {report} does not admit seat 'lead'" in result["error"]
+
+
+MANAGED_CATALOGUE: list[dict[str, Any]] = [
+    {"name": "fixture-definition-f0ad0fd9", "title": "Dev Team Lead", "agent": "manager-agent"},
+    {"name": "dev", "title": "Dev", "agent": "dev-agent"},
+]
+
+
+def _epic_team(env: _Env, task: Task) -> tuple[str, str]:
+    """Admit an epic team with a live manager seat under its runbook; return its id and lead."""
+    _install_agent(env.db, "manager-agent", env.project_id, variables={"team_manager": True})
+    executions = LocalPipelineExecutionManager(env.db, env.project_id)
+    epic = executions.create_execution(
+        "epic-runbook",
+        definition_json=json.dumps(
+            {"name": "epic-runbook", "steps": [{"id": "admit", "exec": "true"}]}
+        ),
+        inputs_json=json.dumps({"workspace": env.workspace_id}),
+        project_id=env.project_id,
+    )
+    binding = TeamBinding(epic.id, task.id, env.project_id, "epic", "main", None, None)
+    step = executions.create_step_execution(epic.id, "admit")
+    executions.update_step_execution(
+        step.id, status=StepStatus.COMPLETED, output_json=json.dumps({"team": asdict(binding)})
+    )
+    runbook = SessionManager(env.db).register(
+        external_id=f"pipeline-{epic.id}",
+        machine_id=AGENT_TEST_MACHINE_ID,
+        source="pipeline",
+        project_id=env.project_id,
+        parent_session_id=env.parent_session_id,
+    )
+    executions.update_execution_session(epic.id, runbook.id)
+    executions.update_execution_status(epic.id, ExecutionStatus.RUNNING)
+    lead, _ = _seat_session(env, "manager-agent")
+    env.db.execute("UPDATE sessions SET parent_session_id = %s WHERE id = %s", (runbook.id, lead))
+    return epic.id, lead
+
+
+def _pod_check(env: _Env, parent_team_id: str | None) -> AdmittedSeats:
+    return check_runbook_seats(
+        env.stores,
+        caller_session_id=_pipeline_child(env),
+        workspace=env.workspace_id,
+        requested="fixture-definition-f0ad0fd9,dev",
+        catalogue=MANAGED_CATALOGUE,
+        parent_team_id=parent_team_id,
+    )
+
+
+def test_a_pod_launches_no_manager_and_maps_its_epic_lead(env: _Env) -> None:
+    """A leaf run under an epic team launches no lead; the epic's live lead holds that seat."""
+    epic_id, lead = _epic_team(env, _team_task(env, "Epic"))
+
+    pod = _pod_check(env, epic_id)
+
+    assert (pod.launch, dict(pod.live)) == (("dev",), {"fixture-definition-f0ad0fd9": lead})
+    assert [seat.name for seat in pod.seats] == ["dev"]
+
+
+def test_a_standalone_run_launches_its_own_manager(env: _Env) -> None:
+    """Without a parent team, the manager seat launches like any other seat."""
+    _epic_team(env, _team_task(env, "Epic"))
+
+    standalone = _pod_check(env, None)
+
+    assert (standalone.launch, dict(standalone.live)) == (
+        ("fixture-definition-f0ad0fd9", "dev"),
+        {},
+    )
+
+
+def test_a_pod_under_a_team_with_no_live_lead_is_refused(env: _Env) -> None:
+    """A leaf run never starts leaderless: no live parent lead refuses the launch."""
+    epic_id, lead = _epic_team(env, _team_task(env, "Epic"))
+    env.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (lead,))
+
+    with pytest.raises(RunbookSeatRefusal, match="no live fixture-definition-f0ad0fd9 seat"):
+        _pod_check(env, epic_id)
+
+
+def test_a_partial_parent_team_id_is_refused(env: _Env) -> None:
+    with pytest.raises(RunbookSeatRefusal, match="full execution UUID for parent_team_id"):
+        _pod_check(env, "abc123")

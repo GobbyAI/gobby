@@ -1,26 +1,29 @@
-version: "2.0.0"
-tags: [roles, seat, enforcement, gobby]
+version: "4.1.0"
+tags: [roles, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
 rules:
   reviewer-write-scope:
-    description: Keep independent review read-only while permitting workspace notes and audits.
+    description: Keep read-only seats read-only while permitting workspace notes and audits.
     event: before_tool
     enabled: true
     priority: 15
+    # A Git-mutating MCP tool names no write path, so the workspace exception never covers it.
     when: >-
-      (event.data.get('canonical_tool_kind') == 'write'
+      git_mutating_mcp_call(event.data)
+      or ((event.data.get('canonical_tool_kind') == 'write'
        or event.data.get('canonical_repo_mutation')
        or event.data.get('canonical_git_mutation')
        or event.data.get('canonical_formatter_mutation')
        or event.data.get('canonical_unresolved_execution'))
-      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables)))
     effects:
       - type: block
         reason: >-
-          Independent review permits repository reads and validation. Put notes in
-          your session workspace and send implementation findings to the author.
+          This seat is read-only in the repository: reads and validation are allowed.
+          It cannot merge, sync, resolve or push a branch, from the shell or through MCP.
+          Put notes in your session workspace and send needed changes to their author.
           Integrate approved work through the managed landing tool.
 
   submitted-candidate-write-scope:
@@ -61,6 +64,22 @@ rules:
           agent workspace folder (named in your Agent Workspace section). Name the target
           with a literal path inside one of them. Source code remains read-only.
 
+  plan-artifact-write-scope:
+    description: "Restrict writes to plan output paths and the session workspace, shell included"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, ['.gobby/plans/', 'docs/'])
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          The Plan Writer writes only under `<project>/.gobby/plans/`, `<project>/docs/` or its
+          agent workspace folder (named in your Agent Workspace section). Name the target
+          with a literal path inside one of them. Source code remains read-only.
+
   documentation-write-scope:
     description: "Restrict writes to docs/ and the session workspace"
     event: before_tool
@@ -96,3 +115,19 @@ rules:
           `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, or its `.tmp.<pid>.<12 lowercase hex>`
           staging sibling, or files in its agent workspace folder (named in your Agent
           Workspace section). Name the target with a literal absolute path.
+
+  team-lead-write-scope:
+    description: "Keep the Dev Team Lead's file writes in its session and epic workspace folders"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          The Dev Team Lead writes only under its agent workspace folders (session and
+          epic, named in your Agent Workspace section). Implementation belongs to the
+          developers' task worktrees; the main checkout stays read-only to you. Name the
+          target with a literal path inside one of them.

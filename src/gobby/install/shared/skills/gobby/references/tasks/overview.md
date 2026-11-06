@@ -38,4 +38,6 @@ to bypass a gate.
 
 Guide: [Task Management](../../../../../../../../docs/guides/tasks.md#agent-workflow).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-16_

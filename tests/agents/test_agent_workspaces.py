@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 import os
 import subprocess
 from pathlib import Path
@@ -12,18 +11,17 @@ from typing import Any
 
 import pytest
 
-from gobby.agents import agent_workspaces
+from gobby.agents import agent_workspaces, team_teardown
 from gobby.agents.agent_workspaces import (
     bind_session_workspace,
     commit_workspace,
-    drain_workspace_commits,
     ensure_workspace,
     register_agent_workspace_cron,
-    schedule_workspace_commit,
     workspace_anchor,
     workspace_git_dir,
 )
 from gobby.hooks.event_handlers import _agent, _session_end
+from gobby.hooks.event_handlers._session_start import materialize
 from gobby.mcp_proxy.tools.sessions import _terminal
 from gobby.runner_init import orchestration
 from gobby.storage.cron import CronJobStorage
@@ -116,7 +114,7 @@ async def test_commit_only_when_dirty_with_guards(gobby_home: Path) -> None:
     await commit_workspace(PROJECT, "timer")
     assert await commit_workspace(PROJECT, "timer") is None, "a clean tree makes no commit"
 
-    folder = anchor / "developer" / "session-12"
+    folder = anchor / "fixture-worker" / "session-12"
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("one finding\n")
     (folder / "huge.bin").write_bytes(b"x" * (ONE_MIB + 1))
@@ -128,10 +126,10 @@ async def test_commit_only_when_dirty_with_guards(gobby_home: Path) -> None:
     assert sha is not None
     assert _ws_git(PROJECT, "rev-parse", "HEAD") == sha
     tracked = _tracked(PROJECT)
-    assert {"developer/session-12/notes.md", "developer/session-12/limit.bin"} <= tracked
-    assert "developer/session-12/huge.bin" not in tracked
-    assert "developer/session-12/link.md" not in tracked
-    assert _subjects(PROJECT)[0] == "agents-ws: set_handoff developer"
+    assert {"fixture-worker/session-12/notes.md", "fixture-worker/session-12/limit.bin"} <= tracked
+    assert "fixture-worker/session-12/huge.bin" not in tracked
+    assert "fixture-worker/session-12/link.md" not in tracked
+    assert _subjects(PROJECT)[0] == "agents-ws: set_handoff fixture-worker"
     author = _ws_git(PROJECT, "log", "-1", "--format=%an <%ae>")
     assert author == "Gobby Coordinator <gobby-coordinator@localhost>"
 
@@ -142,7 +140,9 @@ async def test_commit_only_when_dirty_with_guards(gobby_home: Path) -> None:
         *(commit_workspace(PROJECT, "pre_compact") for _ in range(5)), return_exceptions=True
     )
     assert not [result for result in results if isinstance(result, BaseException)], results
-    assert {f"developer/session-12/burst-{index}.md" for index in range(5)} <= _tracked(PROJECT)
+    assert {f"fixture-worker/session-12/burst-{index}.md" for index in range(5)} <= _tracked(
+        PROJECT
+    )
 
 
 class _Executor:
@@ -153,30 +153,17 @@ class _Executor:
         self.handlers[name] = handler
 
 
-async def test_trigger_failures_are_non_blocking(
+async def test_backup_runs_only_from_the_nightly_cron(
     gobby_home: Path,
     temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    async def broken(project_id: str, trigger: str) -> str | None:
-        raise RuntimeError(f"disk full during {trigger}")
-
-    monkeypatch.setattr(agent_workspaces, "commit_workspace", broken)
-    caplog.set_level(logging.WARNING)
-
-    schedule_workspace_commit(PROJECT, "session_end")
-    await drain_workspace_commits()
-    assert "disk full during session_end" in caplog.text
-    monkeypatch.setattr(agent_workspaces, "commit_workspace", commit_workspace)
-
-    # Each trigger site schedules the commit and returns; none awaits or raises it.
-    for trigger_site in (
-        _terminal.register_terminal_tools,
-        _agent.AgentEventHandlerMixin.handle_pre_compact,
-        _session_end.SessionEndMixin.handle_session_end,
-    ):
-        assert "schedule_workspace_commit(" in inspect.getsource(trigger_site), trigger_site
+    # No lifecycle event backs up the workspace: the event scheduler is gone and no
+    # handoff, compaction, session start or end, or team teardown site commits.
+    assert not hasattr(agent_workspaces, "schedule_workspace_commit")
+    assert not hasattr(agent_workspaces, "drain_workspace_commits")
+    for lifecycle_module in (_terminal, _agent, _session_end, materialize, team_teardown):
+        source = inspect.getsource(lifecycle_module)
+        assert "commit_workspace" not in source, lifecycle_module.__name__
     assert "register_agent_workspace_cron(" in inspect.getsource(orchestration.init_orchestration)
 
     # The nightly cron commits a dirty tree.
@@ -196,11 +183,11 @@ async def test_trigger_failures_are_non_blocking(
         "handler",
     )
     anchor = ensure_workspace(PROJECT)
-    (anchor / "orchestrator").mkdir()
-    (anchor / "orchestrator" / "log.md").write_text("timer entry\n")
+    (anchor / "fixture-coordinator").mkdir()
+    (anchor / "fixture-coordinator" / "log.md").write_text("timer entry\n")
     await handler(job)
-    assert "orchestrator/log.md" in _tracked(PROJECT)
-    assert _subjects(PROJECT)[0] == "agents-ws: timer orchestrator"
+    assert "fixture-coordinator/log.md" in _tracked(PROJECT)
+    assert _subjects(PROJECT)[0] == "agents-ws: timer fixture-coordinator"
 
 
 @pytest.mark.asyncio

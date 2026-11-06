@@ -7,10 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from gobby.storage.definitions.rules import RuleDefinitionManager
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.safe_evaluator import build_condition_helpers
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from gobby.workflows.sync_rules import get_bundled_rules_path
 
 
 def test_retained_tdd_metadata_defaults() -> None:
@@ -18,26 +16,6 @@ def test_retained_tdd_metadata_defaults() -> None:
     variables = yaml.safe_load(variables_path.read_text())["variables"]
 
     assert variables["claimed_task_requires_tdd"]["value"] is False
-    assert variables["claimed_task_acceptance_test_paths"]["value"] == []
-
-
-def test_retired_tdd_rules_are_not_installed(temp_db: HubDatabase) -> None:
-    manager = RuleDefinitionManager(temp_db)
-    for name in ("enforce-tdd-block", "enforce-tdd-track-tests"):
-        manager.create(
-            name=name,
-            source="installed",
-            tags=["gobby", "tdd-enforcement"],
-            definition_json={
-                "event": "before_tool",
-                "when": "True",
-                "effects": [{"type": "block", "reason": "retired"}],
-            },
-        )
-    result = sync_bundled_rules(temp_db)
-    assert result["success"] is True, result
-    assert manager.get_by_name("enforce-tdd-block") is None
-    assert manager.get_by_name("enforce-tdd-track-tests") is None
 
 
 def test_tdd_proof_functions_are_not_registered() -> None:

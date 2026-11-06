@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
@@ -210,7 +211,7 @@ class RuleEffect(BaseModel):
     # backtick stay visible: command substitution in them still executes.
     mask_quoted: bool = False
     # Match command_pattern against the command `uv run …` executes. A rule
-    # whose required form is `uv run` (require-uv) turns this off.
+    # whose required form is `uv run` turns this off.
     resolve_uv_run: bool = True
 
     # set_variable — update session/workflow state
@@ -474,6 +475,54 @@ class RuleEffect(BaseModel):
                     )
 
 
+class AttestationReferenceShape(BaseModel):
+    """The evidence reference a closure rule can accept."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scheme: str = Field(min_length=1)
+    value_pattern: str = Field(min_length=1)
+
+    @field_validator("value_pattern")
+    @classmethod
+    def _compiles(cls, value: str) -> str:
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"value_pattern is not a valid regex: {exc}") from exc
+        return value
+
+
+class AttestationShape(BaseModel):
+    """What a closure rule can accept for these kinds, enforced when evidence is recorded."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kinds: list[str] = Field(min_length=1)
+    result: str | None = Field(default=None, min_length=1)
+    reference: AttestationReferenceShape | None = None
+    # Expression over `task` alone; the shape applies to every task when omitted.
+    applies_when: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _constrains(self) -> AttestationShape:
+        if self.result is None and self.reference is None:
+            raise ValueError("attestation_shape must declare a result or reference")
+        if self.applies_when is not None:
+            from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
+            try:
+                SafeExpressionEvaluator.validate_syntax(
+                    self.applies_when, set(ATTESTATION_SHAPE_FUNCTIONS)
+                )
+            except (SyntaxError, ValueError) as exc:
+                raise ValueError(f"applies_when is not a valid expression: {exc}") from exc
+        return self
+
+
+ATTESTATION_SHAPE_FUNCTIONS: dict[str, Callable[..., Any]] = {"len": len, "any": any, "all": all}
+
+
 class RuleDefinitionBody(BaseModel):
     """Stored as definition_json on rule_definitions."""
 
@@ -489,11 +538,24 @@ class RuleDefinitionBody(BaseModel):
     agent_scope: list[str] | None = None  # Only active for these agent types
     # Active for every definition; no rule_selectors include or exclude removes it.
     mandatory: bool = False
+    # Seats cannot toggle, edit or delete a protected rule; the operator principal still can.
+    protected: bool = False
+    # Same-tool retry escalation: evaluated first on before_tool; its block preempts the rest.
+    retry_limit: bool = False
+    # Closure rules only: record_attestation refuses evidence this shape can never accept.
+    attestation_shape: AttestationShape | None = None
 
     @model_validator(mode="after")
     def _validate_effects(self) -> RuleDefinitionBody:
         if not self.effects or len(self.effects) == 0:
             raise ValueError("'effects' is required and must be non-empty")
+        if self.attestation_shape is not None and self.event not in {
+            RuleTriggerEvent.TASK_CLOSE,
+            RuleTriggerEvent.TASK_LAND,
+        }:
+            raise ValueError("attestation_shape is restricted to task_close and task_land rules")
+        if self.retry_limit and self.event != RuleTriggerEvent.BEFORE_TOOL:
+            raise ValueError("retry_limit is restricted to before_tool rules")
         block_count = sum(e.type == "block" for e in self.effects)
         if block_count > 1:
             raise ValueError("At most one 'block' effect is allowed per rule")
@@ -615,6 +677,47 @@ class WorkflowTransition(BaseModel):
     on_transition: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SeatMessageProtocol(BaseModel):
+    """YAML-owned message syntax and step routing for receipt-driven handlers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    report_prefixes: list[str] | None = None
+    report_step: str | None = None
+    consensus_pattern: str | None = None
+    consensus_step: str | None = None
+    withdrawal_step: str | None = None
+    consensus_event: str | None = None
+    withdrawal_event: str | None = None
+
+    @model_validator(mode="after")
+    def validate_protocol(self) -> SeatMessageProtocol:
+        reporting = self.report_prefixes is not None or self.report_step is not None
+        if reporting and (
+            not self.report_prefixes or not all(self.report_prefixes) or not self.report_step
+        ):
+            raise ValueError("Reporting requires nonempty report_prefixes and report_step")
+        consensus = (
+            self.consensus_pattern,
+            self.consensus_step,
+            self.withdrawal_step,
+            self.consensus_event,
+            self.withdrawal_event,
+        )
+        if any(value is not None for value in consensus):
+            if not all(consensus):
+                raise ValueError("Consensus requires a pattern, steps and event identifiers")
+            try:
+                pattern = re.compile(self.consensus_pattern or "")
+            except re.error as exc:
+                raise ValueError(f"Invalid consensus_pattern: {exc}") from exc
+            if pattern.groups < 2:
+                raise ValueError("consensus_pattern must capture an event and a commit SHA")
+        elif not reporting:
+            raise ValueError("A message protocol must declare reporting or consensus behavior")
+        return self
+
+
 class WorkflowStep(BaseModel):
     """A single step in a step workflow with tool enforcement."""
 
@@ -647,6 +750,14 @@ class WorkflowStep(BaseModel):
     on_mcp_error: list[dict[str, Any]] = Field(default_factory=list)
     # Explicit fallback: an unhandled MCP failure leaves the workflow on this step.
     mcp_error_policy: Literal["stay"] | None = None
+
+    @field_validator("on_mcp_before", "on_mcp_success", "on_mcp_error")
+    @classmethod
+    def validate_message_protocols(cls, handlers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for handler in handlers:
+            if handler.get("action") == "advance_seat":
+                SeatMessageProtocol.model_validate(handler.get("protocol"))
+        return handlers
 
 
 class WorkflowDefinition(BaseModel):

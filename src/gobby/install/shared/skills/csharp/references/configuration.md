@@ -46,3 +46,5 @@ dotnet restore path/to/Project.csproj
 dotnet format path/to/Project.csproj --include path/to/TouchedFile.cs
 dotnet build path/to/Project.csproj
 ```
+
+_Version: 1.0.0_

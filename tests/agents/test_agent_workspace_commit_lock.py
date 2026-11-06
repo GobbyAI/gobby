@@ -19,9 +19,7 @@ import pytest
 from gobby.agents import agent_workspaces
 from gobby.agents.agent_workspaces import (
     commit_workspace,
-    drain_workspace_commits,
     ensure_workspace,
-    schedule_workspace_commit,
     workspace_anchor,
     workspace_git_dir,
 )
@@ -33,12 +31,12 @@ pytestmark = pytest.mark.unit
 DAY_SECONDS = 24 * 60 * 60
 HOLDER_WAIT_SECONDS = 10.0
 ADD_TIMEOUT_SECONDS = 2.0
-NOTES = "developer/session-1/notes.md"
+NOTES = "fixture-worker/session-1/notes.md"
 SECRET_NAMES = ("bootstrap.yaml", "auth.json", ".secret_kek", "local_cli_token")
 SECRET_FOLDERS = (
-    "developer/session-1",
-    "code-reviewer/session-2/gobby-pytest-home-x",
-    "developer/session-3/evidence-probe/home/providers/codex",
+    "fixture-worker/session-1",
+    "fixture-reviewer/session-2/gobby-pytest-home-x",
+    "fixture-worker/session-3/evidence-probe/home/providers/codex",
 )
 # The first run parks inside the clean filter, and so inside `git add`'s index.lock, until the
 # test touches `release`; later runs pass straight through.
@@ -103,9 +101,11 @@ def _configure_filter(project_id: str, name: str, clean: str) -> None:
 
 
 async def _trigger(project_id: str, trigger: str) -> None:
-    """Fire one production commit trigger and wait for it; failures are logged, never raised."""
-    schedule_workspace_commit(project_id, trigger)
-    await drain_workspace_commits()
+    """Run one commit and log, never raise, its failure, as the nightly cron does."""
+    try:
+        await commit_workspace(project_id, trigger)
+    except Exception as exc:
+        agent_workspaces.logger.warning("Agent workspace commit failed (%s): %s", trigger, exc)
 
 
 @contextmanager
@@ -114,9 +114,9 @@ def _live_lock_holder(project_id: str, scratch: Path) -> Iterator[subprocess.Pop
     started, release = scratch / "holder-started", scratch / "holder-release"
     _configure_filter(project_id, "hold", HOLD_FILTER.format(started=started, release=release))
     anchor = workspace_anchor(project_id)
-    _write(anchor, "developer/session-1/held.hold", "held\n")
+    _write(anchor, "fixture-worker/session-1/held.hold", "held\n")
     holder = subprocess.Popen(
-        [*_ws_argv(project_id), "add", "--", "developer/session-1/held.hold"],
+        [*_ws_argv(project_id), "add", "--", "fixture-worker/session-1/held.hold"],
         cwd=anchor,
         env=_git_env(),
         stderr=subprocess.PIPE,
@@ -281,7 +281,7 @@ async def test_git_timeout_leaves_no_index_lock(
 ) -> None:
     anchor = ensure_workspace(project_id)
     _configure_filter(project_id, "slow", "sleep 30; cat")
-    _write(anchor, "developer/session-1/slow.slow", "slow\n")
+    _write(anchor, "fixture-worker/session-1/slow.slow", "slow\n")
     real_run = daemon_git.run
 
     async def short_add_timeout(args: Sequence[str], **kwargs: Any) -> GitResult:
@@ -328,7 +328,7 @@ async def test_git_timeout_keeps_original_failure_when_lock_inspection_fails(
 ) -> None:
     anchor = ensure_workspace(project_id)
     _configure_filter(project_id, "slow", "sleep 30; cat")
-    _write(anchor, "developer/session-1/slow.slow", "slow\n")
+    _write(anchor, "fixture-worker/session-1/slow.slow", "slow\n")
     real_git = daemon_git.run
     real_run = subprocess.run
 
@@ -376,7 +376,7 @@ async def test_secret_named_files_are_never_staged(project_id: str) -> None:
 @pytest.mark.parametrize("with_notes", [True, False])
 async def test_already_tracked_secret_is_not_restaged(project_id: str, with_notes: bool) -> None:
     anchor = ensure_workspace(project_id)
-    secret = "developer/session-3/evidence-probe/home/providers/codex/auth.json"
+    secret = "fixture-worker/session-3/evidence-probe/home/providers/codex/auth.json"
     _write(anchor, secret, "SECRET-SEEDED\n")
     _ws_git(project_id, "add", "--", secret, "README.md")
     _ws_git(

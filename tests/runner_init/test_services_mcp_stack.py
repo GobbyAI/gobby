@@ -111,67 +111,75 @@ class _MarkerStore:
         self.values[key] = value
 
 
-def _memory_bundle(search: Any) -> Any:
-    return services.MemoryServiceBundle(
-        vector_store=MagicMock(),
-        _memory_manager=MagicMock(),
-        memory_backup_manager=None,
-        semantic_search=search,
-    )
-
-
-async def _run_stateful_init(
-    bundle: Any,
-    proxy: Any,
-    store: Any,
-    bootstrap_config: BootstrapConfig | None = None,
-) -> set[Any]:
-    """Drive the real init_stateful_services with unrelated phases mocked."""
+async def _run_scoped_backfill(search: Any, proxy: Any, store: Any, internal: Any) -> set[Any]:
+    """Schedule the live backfill as init_servers does and await the task it spawns."""
     from gobby.runner_init import mcp_stack
 
-    runner = _fake_runner(
-        bootstrap_config=bootstrap_config or BootstrapConfig(),
-        config_runtime=SimpleNamespace(
-            capture=lambda: SimpleNamespace(services={"memory_services": bundle})
-        ),
-        mcp_proxy=proxy,
-        database=object(),
-        definition_revision_listener=None,
-    )
     before = set(mcp_stack._BACKFILL_TASKS)
-    with (
-        patch.object(services, "_init_stateful_dependencies") as deps,
-        patch.object(services, "_register_stateful_services", new=AsyncMock()) as register,
-        patch.object(services, "_apply_stateful_services") as apply_services,
-        patch.object(services, "_init_project_context") as project_context,
-        patch.object(services, "ConfigStore", return_value=store),
-    ):
-        await services.init_stateful_services(runner)
-    deps.assert_called_once_with(runner)
-    register.assert_awaited_once_with(runner)
-    apply_services.assert_called_once_with(runner)
-    project_context.assert_called_once_with(runner)
+    mcp_stack.schedule_scoped_embedding_backfill(
+        search, proxy, config_store=store, internal_manager=internal
+    )
     created = set(mcp_stack._BACKFILL_TASKS) - before
     await asyncio.gather(*created)
     return created
 
 
 @pytest.mark.asyncio
-async def test_stateful_init_schedules_scoped_backfill() -> None:
+async def test_scoped_backfill_embeds_and_records_marker() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
     store = _MarkerStore()
-    proxy = MagicMock()
+    proxy, internal = MagicMock(), object()
 
-    created = await _run_stateful_init(_memory_bundle(search), proxy, store)
+    created = await _run_scoped_backfill(search, proxy, store, internal)
 
     assert len(created) == 1
-    search.embed_all_tools.assert_awaited_once_with(GLOBAL_PROJECT_ID, proxy)
+    search.embed_all_tools.assert_awaited_once_with(
+        GLOBAL_PROJECT_ID, proxy, internal_manager=internal
+    )
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
 @pytest.mark.asyncio
+async def test_scoped_backfill_runs_once_across_restarts() -> None:
+    from gobby.runner_init import mcp_stack
+
+    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
+    store = _MarkerStore()
+    proxy, internal = MagicMock(), object()
+
+    await _run_scoped_backfill(search, proxy, store, internal)
+    await _run_scoped_backfill(search, proxy, store, internal)
+
+    search.embed_all_tools.assert_awaited_once()
+    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
+
+
+@pytest.mark.asyncio
+async def test_scoped_backfill_skips_when_marker_current() -> None:
+    from gobby.runner_init import mcp_stack
+
+    search = SimpleNamespace(embed_all_tools=AsyncMock())
+    store = _MarkerStore()
+    store.set(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY, mcp_stack.SCOPED_PAYLOAD_VERSION)
+
+    await _run_scoped_backfill(search, MagicMock(), store, object())
+
+    search.embed_all_tools.assert_not_awaited()
+    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
+
+
+@pytest.mark.asyncio
+async def test_scoped_backfill_skipped_without_search() -> None:
+    store = _MarkerStore()
+
+    created = await _run_scoped_backfill(None, MagicMock(), store, object())
+
+    assert created == set()
+    assert store.values == {}
+
+
 @pytest.mark.parametrize(
     ("bootstrap_config", "schedules"),
     [
@@ -181,89 +189,36 @@ async def test_stateful_init_schedules_scoped_backfill() -> None:
     ],
     ids=["standalone", "hub", "node"],
 )
-async def test_node_mode_skips_scoped_tool_backfill(
+def test_runner_scoped_backfill_skips_node_mode(
     bootstrap_config: BootstrapConfig,
     schedules: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from gobby.runner_init import mcp_stack
 
-    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
-    store = _MarkerStore()
-
-    with caplog.at_level(logging.INFO, logger=services.__name__):
-        created = await _run_stateful_init(
-            _memory_bundle(search), MagicMock(), store, bootstrap_config
-        )
-
-    skip = "skipping hub-only scoped tool backfill in node mode"
-    if schedules:
-        assert len(created) == 1
-        search.embed_all_tools.assert_awaited_once()
-        assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
-        assert skip not in caplog.messages
-    else:
-        assert created == set()
-        search.embed_all_tools.assert_not_awaited()
-        assert store.values == {}
-        assert caplog.messages.count(skip) == 1
-
-
-@pytest.mark.asyncio
-async def test_stateful_init_runs_backfill_once_across_restarts() -> None:
-    from gobby.runner_init import mcp_stack
-
-    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
-    store = _MarkerStore()
-    bundle = _memory_bundle(search)
-
-    await _run_stateful_init(bundle, MagicMock(), store)
-    await _run_stateful_init(bundle, MagicMock(), store)
-
-    search.embed_all_tools.assert_awaited_once()
-    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
-
-
-@pytest.mark.asyncio
-async def test_stateful_init_skips_backfill_when_marker_current() -> None:
-    from gobby.runner_init import mcp_stack
-
-    search = SimpleNamespace(embed_all_tools=AsyncMock())
-    store = _MarkerStore()
-    store.set(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY, mcp_stack.SCOPED_PAYLOAD_VERSION)
-
-    await _run_stateful_init(_memory_bundle(search), MagicMock(), store)
-
-    search.embed_all_tools.assert_not_awaited()
-    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
-
-
-@pytest.mark.asyncio
-async def test_stateful_init_backfill_skipped_without_memory_bundle() -> None:
-    from gobby.runner_init import mcp_stack
-
     runner = _fake_runner(
-        bootstrap_config=BootstrapConfig(),
-        config_runtime=SimpleNamespace(capture=lambda: SimpleNamespace(services={})),
+        bootstrap_config=bootstrap_config,
+        http_server=SimpleNamespace(
+            _tools_handler=SimpleNamespace(_semantic_search=object()),
+            _internal_manager=object(),
+        ),
         mcp_proxy=MagicMock(),
         database=object(),
-        definition_revision_listener=None,
     )
-    store = _MarkerStore()
-    before = set(mcp_stack._BACKFILL_TASKS)
+    caplog.set_level(logging.INFO, logger=mcp_stack.__name__)
+    skip = "skipping hub-only scoped tool backfill in node mode"
     with (
-        patch.object(services, "_init_stateful_dependencies") as deps,
-        patch.object(services, "_register_stateful_services", new=AsyncMock()) as register,
-        patch.object(services, "_apply_stateful_services") as apply_services,
-        patch.object(services, "_init_project_context"),
-        patch.object(services, "ConfigStore", return_value=store),
+        patch.object(mcp_stack, "schedule_scoped_embedding_backfill") as backfill,
+        patch.object(mcp_stack, "ConfigStore"),
     ):
-        await services.init_stateful_services(runner)
-    deps.assert_called_once_with(runner)
-    register.assert_awaited_once_with(runner)
-    apply_services.assert_called_once_with(runner)
-    assert set(mcp_stack._BACKFILL_TASKS) == before
-    assert store.values == {}
+        mcp_stack.schedule_runner_scoped_backfill(runner)
+
+    if schedules:
+        backfill.assert_called_once()
+        assert skip not in caplog.messages
+    else:
+        backfill.assert_not_called()
+        assert caplog.messages.count(skip) == 1
 
 
 def test_scoped_backfill_marker_roundtrip_real_config_store(temp_db: Any) -> None:

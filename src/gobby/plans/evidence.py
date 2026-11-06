@@ -242,6 +242,14 @@ def _resolve_worktree_diff(artifact_ref: str, *, ctx: EvidenceContextProtocol) -
             )
         )
 
+    # The fork moves when the base is merged or rebased in; the recorded sha is
+    # the fallback when the base branch is unknown or no longer resolves.
+    base_branch = artifacts.get("base_branch")
+    if isinstance(base_branch, str) and base_branch:
+        fork = _run_git(path, ["merge-base", "HEAD", f"refs/heads/{base_branch}"])
+        if fork.returncode == 0 and fork.stdout.strip():
+            base = fork.stdout.strip()
+
     diff = _run_git(path, ["diff", f"{base}...HEAD"])
     if diff.returncode != 0:
         detail = diff.stderr.strip() or f"git diff {base}...HEAD failed in {path}"

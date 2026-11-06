@@ -18,6 +18,7 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+from gobby.sessions.mailbox import MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager, coordination_wait_payload
 from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -235,6 +236,22 @@ def test_reply_matches_the_owner_to_waiter_direction_only(harness: CoordinationH
     assert completed["message_id"] == message_id
 
 
+@pytest.mark.parametrize("receipt_type", ["agent_started", "agent_recovery"])
+def test_reply_skips_daemon_receipts_written_in_the_child_name(
+    harness: CoordinationHarness, receipt_type: str
+) -> None:
+    # The daemon writes these receipts from the child to its parent. A receipt
+    # that lands after the wait exists must not answer it; the child's own
+    # message must.
+    row = harness.wait(reply=True)
+    harness.reply(message_type=receipt_type)
+    assert harness.row(row["id"])["outcome"] == "waiting"
+    message_id = harness.reply()
+    completed = harness.row(row["id"])
+    assert completed["outcome"] == "replied"
+    assert completed["message_id"] == message_id
+
+
 def test_reply_keeps_its_deadline_and_the_owner_ending(harness: CoordinationHarness) -> None:
     expired = harness.wait(reply=True)
     harness.db.execute(
@@ -426,6 +443,63 @@ async def test_listener_restart_and_duplicate_delivery(harness: CoordinationHarn
 
 
 @pytest.mark.asyncio
+async def test_parked_waiter_without_a_task_resumes_its_wait_past_a_global_notice(
+    harness: CoordinationHarness,
+) -> None:
+    """A parked waiter with no claimed task resumes its committed wait after a restart.
+
+    The global notice queues for it without a live wake, so the resume must come from
+    the durable wait itself.
+    """
+    harness.db.execute("UPDATE sessions SET status = 'waiting' WHERE id = %s", (harness.waiter,))
+    row = harness.wait(coordination_key="restart-park")
+    harness.release("restart-park")  # committed while the daemon is down
+
+    notice_calls: list[str] = []
+
+    class NoticeDispatcher:
+        async def dispatch_live_wake(
+            self, session_id: str, *, priority: str = "normal"
+        ) -> dict[str, Any]:
+            notice_calls.append(session_id)
+            return {"session_id": session_id, "delivered": True, "method": "fake"}
+
+    mailbox = MailboxService(
+        db=harness.db,
+        message_manager=harness.messages,
+        session_manager=SessionManager(harness.db),
+        wake_dispatcher=NoticeDispatcher(),
+    )
+    notice = await mailbox.send(
+        from_session_id=harness.owner, target="global", content="DAEMON BACK"
+    )
+    assert harness.waiter in notice.recipient_session_ids
+    assert harness.waiter not in notice_calls
+
+    payloads: list[dict[str, Any]] = []
+
+    async def wake(session: str, message: str, payload: dict[str, Any]) -> dict[str, bool]:
+        assert session == harness.waiter
+        payloads.append(payload)
+        return {"ism_persisted": True}
+
+    recovered = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await recovered.start()
+    try:
+        await asyncio.wait_for(recovered._queue.join(), 5)
+        assert [payload["outcome"] for payload in payloads] == ["released"]
+        assert payloads[0]["completion_id"] == row["id"]
+        assert harness.row(row["id"])["delivered_at"] is not None
+    finally:
+        await recovered.stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status", ["interrupted", "awaiting_input", "awaiting_approval", "awaiting_handoff"]
 )
@@ -516,7 +590,7 @@ async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="grok",
-        agent_name="security-auditor",
+        agent_name="fixture-definition-fc0c281e",
         prompt="Wait for work",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )
@@ -574,7 +648,7 @@ async def test_timed_out_reply_wait_wakes_a_codex_seat(harness: CoordinationHarn
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="codex",
-        agent_name="recovery-steward",
+        agent_name="fixture-definition-248cadd1",
         prompt="Patrol live seats",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )
@@ -733,6 +807,73 @@ async def test_restart_rehydrates_active_wait_and_deadline(harness: Coordination
         assert wake.call_args.args[2]["outcome"] == "timeout"
     finally:
         await restarted.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("form", "outcome"),
+    [({"statuses": ["paused"]}, "status_matched"), ({"reply": True}, "replied")],
+    ids=["owner-status", "reply"],
+)
+async def test_daemon_start_rearms_waits_whose_deadline_lapsed_while_down(
+    harness: CoordinationHarness, form: dict[str, Any], outcome: str
+) -> None:
+    row = harness.wait(**form, timeout=60)
+    # The daemon was down past the deadline, so no resolver ran: the row still says waiting.
+    harness.db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '5 minutes' "
+        "WHERE id = %s",
+        (row["id"],),
+    )
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        await asyncio.wait_for(service._queue.join(), 5)
+        rearmed = harness.row(row["id"])
+        assert rearmed["outcome"] == "waiting"
+        assert rearmed["expires_at"] > utc_now()
+        assert row["id"] in service._timers
+        wake.assert_not_awaited()
+
+        # The re-armed wait still resolves on its own condition.
+        if form.get("reply"):
+            harness.reply()
+        else:
+            harness.status("paused")
+        assert harness.row(row["id"])["outcome"] == outcome
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_failed_rearm_still_starts_delivery(
+    harness: CoordinationHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(machine_id: str, grace_seconds: int = 900) -> int:
+        raise RuntimeError(f"hub unavailable for {machine_id}")
+
+    monkeypatch.setattr(harness.manager, "rearm_lapsed", refuse)
+    row = harness.wait(reply=True, timeout=60)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        harness.reply()
+        assert harness.row(row["id"])["outcome"] == "replied"
+        assert service._listener is not None and not service._listener.done()
+    finally:
+        await service.stop()
 
 
 @pytest.mark.asyncio

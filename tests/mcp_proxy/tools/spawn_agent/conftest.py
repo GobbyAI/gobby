@@ -64,8 +64,8 @@ def mock_runner() -> MagicMock:
     runner.agent_lifecycle_monitor = None
     runner.task_manager = None
 
-    def cancel_run(run_id: str) -> bool:
-        return runner.run_storage.cancel(run_id) is not None
+    def cancel_run(run_id: str, *, terminal_reason: str | None = None) -> bool:
+        return runner.run_storage.cancel(run_id, terminal_reason=terminal_reason) is not None
 
     runner.cancel_run.side_effect = cancel_run
     return runner
@@ -75,7 +75,7 @@ def mock_runner() -> MagicMock:
 def agent_body() -> AgentDefinitionBody:
     return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-        name="default",
+        name="seat",
         provider="claude",
         model="claude-sonnet-5",
     )
@@ -90,7 +90,7 @@ def isolation_context() -> IsolationContext:
 def build_agent_body() -> Callable[..., AgentDefinitionBody]:
     def _build_agent_body(**overrides: object) -> AgentDefinitionBody:
         defaults: dict[str, object] = {
-            "name": "default",
+            "name": "seat",
             "provider": "claude",
         }
         defaults.update(overrides)

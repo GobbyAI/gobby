@@ -566,7 +566,7 @@ class TestGetDirtyContentTypes:
         """Covers every DB-synced bundled root."""
         dirty = [
             "shared/workflows/dev.yaml",
-            "shared/workflows/rules/tool-hygiene/require-uv.yaml",
+            "shared/workflows/rules/fixture-group/fixture-command-gate.yaml",
             "shared/workflows/variables/gobby-default-variables.yaml",
             "shared/registry/build_profiles.yaml",
         ]

@@ -21,6 +21,13 @@ def _reference_operator(command: str, index: int) -> tuple[str, int] | None:
         operator = fd_dup.group(0)
         return operator, len(operator)
     for operator in (
+        ">>&|",
+        "&>>|",
+        ">>&",
+        ">&|",
+        "&>|",
+        ">>|",
+        ">|",
         "<<<",
         "<<-",
         "&>>",
@@ -50,6 +57,7 @@ CORPUS = [
     "cat <<-EOF\n\tbody <x>\n\tEOF",
     "(( a < b && c > 1 )) || [[ $x == y && -n $z ]]; $((1<<3))",
     "cmd >&2 2>&- 0<&3 >&2file &>all &>>more >| clobber",
+    "z >>| a &>| b &>>| c >&| d >>& e >>&| f 2>| g",
     "src2>&1 12>>x 7>y 3< in ${a:-b} `echo |x`",
     "echo ²>sup ٣>arabic ١٢>>z",
     "a & b &\nc ; d\n\n|| e",
@@ -75,6 +83,13 @@ def test_operator_probe_corpus_reaches_every_operator_shape() -> None:
     }
 
     assert {
+        ">>&|",
+        "&>>|",
+        ">>&",
+        ">&|",
+        "&>|",
+        ">>|",
+        ">|",
         "<<<",
         "<<-",
         "&>>",

@@ -8,13 +8,15 @@ Provides infrastructure for embedding-based tool discovery:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import NAMESPACE_DNS, uuid5
 
-from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+from qdrant_client.models import FieldCondition, Filter, HasIdCondition, MatchAny, MatchValue
 
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
@@ -30,6 +32,13 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 _cosine_similarity = cosine_similarity
+
+
+def tool_embedding_id(server_id: str, tool_name: str) -> str:
+    """Identify a tool independently of cache row generations and server renames."""
+    if not server_id:
+        raise ValueError("Tool embedding requires a server ID")
+    return str(uuid5(NAMESPACE_DNS, f"{server_id}/{tool_name}"))
 
 
 @dataclass
@@ -136,6 +145,13 @@ class SemanticToolSearch:
         )
         self._vector_store = vector_store
         self._collection_name = collection_name or self.TOOL_COLLECTION
+        self._inventory_resolvers: tuple[Callable[[], Any], Callable[[], Any]] | None = None
+
+    def configure_inventory(
+        self, mcp_manager: Callable[[], Any], internal_manager: Callable[[], Any]
+    ) -> None:
+        """Bind the complete runtime inventory for every search entrypoint."""
+        self._inventory_resolvers = (mcp_manager, internal_manager)
 
     @staticmethod
     def _is_dimension_mismatch_error(error: Exception) -> bool:
@@ -244,6 +260,7 @@ class SemanticToolSearch:
         tool_name: str = "",
         description: str | None = None,
         server_id: str | None = None,
+        source_id: str | None = None,
     ) -> None:
         """
         Store a tool embedding in Qdrant.
@@ -277,6 +294,8 @@ class SemanticToolSearch:
         }
         if server_id:
             payload["server_id"] = server_id
+        if source_id:
+            payload["source_id"] = source_id
 
         async def _upsert() -> None:
             await vector_store.upsert(
@@ -392,7 +411,7 @@ class SemanticToolSearch:
         input_schema: dict[str, Any] | None,
         server_name: str,
         project_id: str,
-        server_id: str | None = None,
+        server_id: str,
     ) -> bool:
         """Generate and store one tool embedding under project admission."""
         async with project_write_context(self._vector_store, project_id):
@@ -408,13 +427,13 @@ class SemanticToolSearch:
 
     async def _embed_tool_admitted(
         self,
-        tool_id: str,
+        tool_id: str | None,
         name: str,
         description: str | None,
         input_schema: dict[str, Any] | None,
         server_name: str,
         project_id: str,
-        server_id: str | None = None,
+        server_id: str,
     ) -> bool:
         """
         Generate and store embedding for a tool.
@@ -433,18 +452,42 @@ class SemanticToolSearch:
         Returns:
             True if embedded successfully
         """
+        point_id = tool_embedding_id(server_id, name)
+        source_id = tool_id if tool_id != point_id else None
+        if source_id is None and self._vector_store is not None:
+            await self._ensure_tool_collection("preserve_tool_source")
+            existing = await self._vector_store.search_with_payload(
+                query_embedding=[0.0] * self.embedding_dim,
+                limit=1,
+                filters=Filter(must=[HasIdCondition(has_id=[point_id])]),
+                collection_name=self._collection_name,
+            )
+            if existing:
+                source_id = existing[0][2].get("source_id")
         text = _build_tool_text(name, description, input_schema)
         embedding = await self.embed_text(text)
 
         await self._store_embedding_admitted(
-            tool_id=tool_id,
+            tool_id=point_id,
             server_name=server_name,
             project_id=project_id,
             embedding=embedding,
             tool_name=name,
             description=description,
             server_id=server_id,
+            source_id=source_id,
         )
+        if self._vector_store is not None:
+            await self._vector_store.delete(
+                filters=Filter(
+                    must=[
+                        FieldCondition(key="server_id", match=MatchValue(value=server_id)),
+                        FieldCondition(key="tool_name", match=MatchValue(value=name)),
+                    ],
+                    must_not=[HasIdCondition(has_id=[point_id])],
+                ),
+                collection_name=self._collection_name,
+            )
         return True
 
     async def embed_all_tools(
@@ -481,8 +524,6 @@ class SemanticToolSearch:
         Returns:
             Dict with statistics: embedded, failed, by_server
         """
-        import uuid
-
         stats: dict[str, Any] = {
             "embedded": 0,
             "skipped": 0,
@@ -502,7 +543,7 @@ class SemanticToolSearch:
                     description = schema.get("description") if schema else None
                     input_schema = schema.get("inputSchema") if schema else None
                     # Deterministic UUID for internal tools (not in DB)
-                    tool_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{registry.name}/{tool_name}"))
+                    tool_id = tool_embedding_id(registry.name, tool_name)
 
                     try:
                         await self._embed_tool_admitted(
@@ -542,37 +583,44 @@ class SemanticToolSearch:
             server_stats = {"embedded": 0, "skipped": 0, "failed": 0}
             server_name = getattr(server, "name", "")
             server_id = str(getattr(server, "id", "") or "")
+            if not server_id:
+                server_stats["skipped"] += 1
+                stats["skipped"] += 1
+                stats["by_server"][str(server_name)] = server_stats
+                logger.warning("Skipping tool embeddings for %s: missing server ID", server_name)
+                continue
             server_project = str(getattr(server, "project_id", project_id) or project_id)
             await self._delete_legacy_points(server_name, server_project)
-            getter = getattr(mcp_manager, "get_cached_tools", None)
-            tools = getter(server_id) if callable(getter) and server_id else None
+            cache_manager = getattr(mcp_manager, "mcp_db_manager", None) or mcp_manager
+            getter = getattr(cache_manager, "get_cached_tools", None)
+            tools = await asyncio.to_thread(getter, server_id) if callable(getter) else None
             if not tools:
                 tools = getattr(server, "tools", None) or []
 
             for tool in tools:
                 try:
-                    raw_id = getattr(tool, "id", None)
-                    if raw_id is None and isinstance(tool, dict):
-                        raw_id = tool.get("id")
                     raw_name = getattr(tool, "name", None)
                     if raw_name is None and isinstance(tool, dict):
                         raw_name = tool.get("name")
                     tool_name = str(raw_name or "")
-                    tool_id = str(raw_id or tool_name)
+                    source_id = (
+                        tool.get("id") if isinstance(tool, dict) else getattr(tool, "id", None)
+                    )
+                    source_tool_id = str(source_id) if source_id else None
                     description = getattr(tool, "description", None)
                     if description is None and isinstance(tool, dict):
-                        description = tool.get("description")
+                        description = tool.get("description") or tool.get("brief")
                     input_schema = getattr(tool, "input_schema", None)
                     if input_schema is None and isinstance(tool, dict):
                         input_schema = tool.get("input_schema")
                     await self._embed_tool_admitted(
-                        tool_id=str(tool_id or tool_name),
+                        tool_id=source_tool_id,
                         name=str(tool_name),
                         description=description,
                         input_schema=input_schema if isinstance(input_schema, dict) else None,
                         server_name=str(server_name),
                         project_id=server_project,
-                        server_id=server_id or None,
+                        server_id=server_id,
                     )
 
                     server_stats["embedded"] += 1
@@ -653,6 +701,10 @@ class SemanticToolSearch:
             )
             return []
         vector_store = self._vector_store
+
+        if self._inventory_resolvers is not None:
+            mcp_manager = self._inventory_resolvers[0]()
+            internal_manager = self._inventory_resolvers[1]()
 
         # Embed the query
         query_embedding = await self.embed_text(query, is_query=True)

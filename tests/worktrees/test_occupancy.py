@@ -73,7 +73,7 @@ def _bound_run(db: HubDatabase, seat: Session, runbook: Session) -> AgentRun:
 
 
 def _park(db: HubDatabase, run: AgentRun) -> AgentRun:
-    """A daemon stop parked ``run``: cancelled, its process gone, its session paused."""
+    """A daemon stop parked ``run``: cancelled, its process gone, its session idle."""
     parked = LocalAgentRunManager(db).cancel(run.id, terminal_reason="daemon_stop")
     assert parked is not None and (parked.status, parked.pid) == ("cancelled", None)
     return parked
@@ -162,7 +162,7 @@ def test_a_seat_whose_run_went_terminal_does_not_block(
     runbook = _live_session(temp_db, project_id, "runbook", None)
     seat = _live_session(temp_db, project_id, "seat", worktree)
     _park(temp_db, _bound_run(temp_db, seat, runbook))
-    assert _status(temp_db, seat) == "paused", "the status a daemon stop leaves behind"
+    assert _status(temp_db, seat) == "idle", "the status a daemon stop leaves behind"
 
     assert refuse_occupied_worktree(temp_db, str(worktree)) is None
 
@@ -179,7 +179,7 @@ def test_a_stale_run_pointer_does_not_keep_an_ended_seat_live(
     assert LocalAgentRunManager(temp_db).complete(relaunched.id, result="done") is not None
     current = SessionManager(temp_db).get(seat.id)
     assert current is not None
-    assert (current.status, current.agent_run_id) == ("paused", parked.id)
+    assert (current.status, current.agent_run_id) == ("idle", parked.id)
 
     assert refuse_occupied_worktree(temp_db, str(worktree)) is None
 
@@ -206,6 +206,6 @@ def test_a_running_relaunch_keeps_a_seat_with_a_stale_run_pointer_live(
     _relaunch(temp_db, seat, runbook)
     current = SessionManager(temp_db).get(seat.id)
     assert current is not None
-    assert (current.status, current.agent_run_id) == ("paused", parked.id)
+    assert (current.status, current.agent_run_id) == ("idle", parked.id)
 
     assert refuse_occupied_worktree(temp_db, str(worktree)) == _refusal([seat.ref], worktree)

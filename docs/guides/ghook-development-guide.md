@@ -260,6 +260,12 @@ failure with exit 2 and `[Gobby] Daemon down. Please wait.` on every hook
 except Stop, SubagentStop, and Codex Interrupt. `restart_in_progress()` narrows
 one case: a fresh marker whose `intent` is `restart` lets Claude's
 `post-tool-batch` continue, because Claude ends the turn on that hook's exit 2.
+`daemon_down::action_for` then lets a held seat's own checks through. The prompt
+hook passes, and tool hooks pass for `ScheduleWakeup` and for the `call_tool`
+hold calls listed in `HOLD_CALLS`. A post-tool batch passes only when every call
+in it is one of those. `gmcp`'s `restart_hold` retries the same calls
+while a fresh restart marker exists, and only for failures where the call was
+never delivered: preflight failures, typed 503s and refused connections.
 
 Environment:
 

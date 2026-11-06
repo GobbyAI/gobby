@@ -27,7 +27,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
-from gobby.servers.routes.agents import (
+from gobby.servers.routes.agent_definition_requests import (
     CreateAgentDefinitionRequest,
     UpdateAgentDefinitionRequest,
 )
@@ -284,7 +284,7 @@ def test_agent_run_name_route_projects_only_the_run_names(
         parent_session_id=parent_run.parent_session_id,
         provider="claude",
         prompt="p" * 5_000,
-        agent_name="developer",
+        agent_name="fixture-worker",
         workflow_name="build-stage",
         resume_metadata_json={"initial_variables": {"prompt": "p" * 5_000}},
     )
@@ -296,7 +296,7 @@ def test_agent_run_name_route_projects_only_the_run_names(
     assert response.status_code == 200
     assert response.json() == {
         "status": "success",
-        "run": {"run_id": run.id, "agent_name": "developer", "workflow_name": "build-stage"},
+        "run": {"run_id": run.id, "agent_name": "fixture-worker", "workflow_name": "build-stage"},
     }
     assert len(response.content) < 500
     assert client.get(f"/api/agents/runs/{UNKNOWN_ID}/name").status_code == 404
@@ -836,7 +836,7 @@ class TestCreateDefinition:
         "field, value",
         [
             ("mode", "interactive"),
-            ("default_workflow", "review"),
+            ("default_workflow", "synthetic-workflow"),
             ("sandbox_config", {"network": False}),
             ("lifecycle_variables", {"on_start": "hello"}),
             ("default_variables", {"key": "val"}),
@@ -863,7 +863,7 @@ class TestCreateDefinition:
 
         created = client.post(
             "/api/agents/definitions",
-            json=_agent_request("developer-copy", tags=["gobby", "default"]),
+            json=_agent_request("fixture-copy", tags=["gobby", "default"]),
         ).json()["definition"]
         assert created["tags"] == ["default"]
         updated = client.put(
@@ -875,7 +875,7 @@ class TestCreateDefinition:
         _delete_installed_definitions(agent_manager.db, {"agents"})
 
         kept = agent_manager.get(created["id"])
-        assert kept.name == "developer-copy"
+        assert kept.name == "fixture-copy"
         assert kept.tags == ["edited"]
 
     @pytest.mark.parametrize("tags", [["gobby", "default"], ["default"]])
@@ -887,9 +887,9 @@ class TestCreateDefinition:
         from gobby.agents.sync import _is_sync_managed_bundled_agent
 
         bundled = agent_manager.create(
-            "developer",
+            "fixture-worker",
             {
-                "name": "developer",
+                "name": "fixture-worker",
                 "provider": "claude",
                 "prompts": {"agent": "Do the work."},
                 "workflows": {"rule_selectors": {"include": []}},
@@ -1654,12 +1654,14 @@ class TestUpdateDefinitionNestedFields:
             "required_review_capabilities",
             "respect_task_protections",
             "resumable_team_agents",
+            "reviews",
             "send_message_targets",
             "spawnable_agents",
             "supplemental_review",
             "task_close_reasons",
             "task_close_scope",
             "task_attestation_writes",
+            "task_attestation_kinds",
             "task_attestation_scope",
             "task_land_scope",
             "task_claim_scope",
@@ -1702,7 +1704,7 @@ class TestUpdateDefinitionNestedFields:
             ("read_all_agent_workspaces", True),
             ("task_step_writes", ["implementation"]),
             ("capabilities", ["land_tasks"]),
-            ("resumable_team_agents", ["developer"]),
+            ("resumable_team_agents", ["fixture-worker"]),
         ],
     )
     @pytest.mark.parametrize("method", ["post", "put"])
@@ -1763,7 +1765,7 @@ class TestUpdateDefinitionNestedFields:
         "field, value",
         [
             ("mode", "interactive"),
-            ("default_workflow", "review"),
+            ("default_workflow", "synthetic-workflow"),
             ("sandbox_config", {"network": False}),
             ("lifecycle_variables", {"on_start": "hello"}),
             ("default_variables", {"key": "val"}),

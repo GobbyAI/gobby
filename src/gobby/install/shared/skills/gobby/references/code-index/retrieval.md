@@ -28,4 +28,6 @@ When retrieval reports contract or payload skew, follow [recovery](recovery.md).
 
 Guide: [Symbol retrieval](../../../../../../../../docs/guides/gcode-user-guide.md#symbol-retrieval).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -2,7 +2,7 @@
 
 A parallel batch of sibling denials from one assistant response buys one
 remediation attempt; separate responses, marked by the provider's tool-batch
-boundary event, still escalate to the consecutive-tool-block guard.
+boundary event, still reach the retry-limit escalation.
 """
 
 from __future__ import annotations
@@ -18,18 +18,24 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.block_batching import BLOCK_SCOPES_VARIABLE
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import seed_seat
+from tests.workflows.rule_arming import SYNTHETIC_ESCALATION_PREFIX, install_retry_limit_rule
 
 pytestmark = pytest.mark.unit
 
 # Session id columns are native uuid in PostgreSQL.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
+ENFORCED_SEAT = "fixture-enforced-seat"
 BLOCKED_RULE = "block-todowrite"
 BLOCKED_REASON = "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
 
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
+    # The enforcing seat must resolve its definition, or it fails closed first.
+    seed_seat(temp_db, ENFORCED_SEAT, include=["*"])
+    install_retry_limit_rule(temp_db)
     return temp_db
 
 
@@ -135,7 +141,7 @@ class TestParallelBatchCounting:
         )
         assert response.decision == "block"
         assert response.reason is not None
-        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response.reason
+        assert f"{SYNTHETIC_ESCALATION_PREFIX}: TodoWrite x5 |" in response.reason
 
     @pytest.mark.asyncio
     async def test_batch_suppression_survives_a_full_batch_then_escalates(
@@ -246,11 +252,11 @@ class TestAgentContextScoping:
         assert BLOCKED_REASON in response.reason
 
     @pytest.mark.asyncio
-    async def test_turn_start_clears_subagent_scopes(self, db: HubDatabase) -> None:
+    async def test_turn_start_keeps_subagent_scopes(self, db: HubDatabase) -> None:
+        """A parent turn start clears only the main context; a live subagent keeps its scope."""
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {
-            BLOCK_SCOPES_VARIABLE: {"agent-a": {**_blocked_state(), "consecutive_tool_blocks": 2}},
-        }
+        subagent_state = {**_blocked_state(), "consecutive_tool_blocks": 2}
+        variables: dict[str, Any] = {BLOCK_SCOPES_VARIABLE: {"agent-a": subagent_state}}
 
         await engine.evaluate(
             _make_event(HookEventType.BEFORE_AGENT, data={"prompt": "next"}),
@@ -258,7 +264,7 @@ class TestAgentContextScoping:
             variables,
         )
 
-        assert variables[BLOCK_SCOPES_VARIABLE] == {}
+        assert variables[BLOCK_SCOPES_VARIABLE] == {"agent-a": subagent_state}
 
 
 class TestBlockReasonScoping:
@@ -337,7 +343,7 @@ class TestEnforcementBlockScoping:
     @staticmethod
     def _enforcing_variables(**extra: Any) -> dict[str, Any]:
         return {
-            "_agent_type": "backend-developer",
+            "_agent_type": ENFORCED_SEAT,
             "_agent_blocked_tools": ["TodoWrite"],
             **extra,
         }
@@ -395,7 +401,7 @@ class TestEnforcementBlockScoping:
         engine = RuleEngine(db)
         variables = self._enforcing_variables(
             _last_blocked_tool="Edit",
-            _last_blocked_rule_name="require-python-skill",
+            _last_blocked_rule_name="fixture-definition-06531cd3",
             _last_blocked_reason="Load the python skill.",
             consecutive_tool_blocks=2,
             max_consecutive_blocked_tool_attempts=5,

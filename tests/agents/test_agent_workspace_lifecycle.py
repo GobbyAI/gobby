@@ -33,7 +33,6 @@ from tests.hooks.test_session_materialize import (
 
 pytestmark = pytest.mark.unit
 
-SHARED = Path(__file__).parents[2] / "src/gobby/install/shared/workflows"
 KEEPER = "workspace-keeper"
 WORKER = "workspace-worker"
 PREDECESSOR_NOTE = (
@@ -71,8 +70,6 @@ def _activate(
     with ExitStack() as stack:
         for name in _ACTIVATION_STUBS:
             stack.enter_context(patch(f"{_MATERIALIZE}.{name}", MagicMock()))
-        # Commits scheduled on the test loop can outlive it; these assertions do not need them.
-        stack.enter_context(patch("gobby.agents.agent_workspaces.schedule_workspace_commit"))
         activate_materialized_session(
             _seat_handler(pane.sessions),
             event,

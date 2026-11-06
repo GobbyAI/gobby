@@ -24,7 +24,6 @@ import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
-from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -376,21 +375,14 @@ def codex_model_ids_in_policy(defaults: Any) -> set[str]:
 
 @cache
 def packaged_codex_launch_models() -> frozenset[str]:
-    """Read the static package seed baseline once per process.
+    """Read model IDs from definition YAML once per process.
 
     Install and workspace seeding reuse this baseline. Spawn and resume union
-    it with the DB-active project policy, which is read live on each call.
-    The packaged launch snapshot is outside the rule templates and never syncs
-    into the DB. Package upgrades take effect when the process restarts.
+    it with DB-active project policy, read live on each call.
     """
     from gobby.agents.sync import get_bundled_agents_path
 
     models: set[str] = set()
-    defaults = files("gobby").joinpath("data/codex_launch_defaults.json")
-    try:
-        models.update(codex_model_ids_in_policy(json.loads(defaults.read_text(encoding="utf-8"))))
-    except (OSError, ValueError):
-        logger.warning("Could not read packaged Codex launch defaults", exc_info=True)
     for path in get_bundled_agents_path().glob("*.yaml"):
         try:
             definition = yaml.safe_load(path.read_text(encoding="utf-8"))

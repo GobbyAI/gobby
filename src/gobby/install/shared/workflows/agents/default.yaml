@@ -1,6 +1,7 @@
-version: "1.0.0"
+version: "1.4.0"
 name: default
 capabilities:
+  - accept_resume_retype
   - override_spawn_network
   - write_session_variables
   - direct_integration_commit
@@ -9,6 +10,9 @@ capabilities:
   - coordinate_tasks
   - close_without_work
   - message_restricted_seats
+  - manage_mcp_servers
+  - manage_workflow_definitions
+  - activate_agent_definitions
 direct_integration_commit_paths: ["**"]
 task_attestation_writes: ["*"]
 respect_task_protections: true
@@ -125,12 +129,9 @@ workflows:
       - "tag:plan-directive-policy"
     exclude:
       - "name:unassigned-session-no-task-close"
-      # Interactive sessions keep the native question dialog; every other definition
-      # asks through send_message.
-      - "name:seat-no-ask-user-question"
   skill_selectors:
     include: []
-    # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other
+    # Every context epoch requests gobby:references/memory/overview.md, brevity, then restraint. Other
     # guidance stays on-demand through file, task, and tool-specific rules.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   variables: {}

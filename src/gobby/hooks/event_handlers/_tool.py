@@ -21,6 +21,7 @@ from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, tool_execution_id
 from gobby.hooks.normalization import is_shell_tool
+from gobby.hooks.shell_execution import literal_shell_workdir
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
@@ -97,9 +98,27 @@ def _background_output_path(data: dict[str, Any]) -> str | None:
 
 
 def _call_worktree_root(event: HookEvent) -> str | None:
-    """The checkout a Bash call runs in, normalized the way the task ledgers key it."""
+    """The checkout a Bash call writes, normalized the way the task ledgers key it.
+
+    A Git mutation's proven checkout (``git -C <worktree> merge``) wins over the shell's cwd;
+    Git mutations in different checkouts leave the call with no single root.
+    """
+    git_cwds = event.data.get("canonical_git_mutation_cwds")
+    if isinstance(git_cwds, list) and git_cwds:
+        roots = {
+            checkout_root(Path(git_cwd).resolve(strict=False))
+            for git_cwd in git_cwds
+            if isinstance(git_cwd, str)
+        }
+        root = roots.pop() if len(roots) == 1 else None
+        return normalize_task_checkout_root(str(root)) if root is not None else None
     cwd = effective_tool_cwd(event.cwd, event.data)
-    root = checkout_root(Path(cwd)) if cwd is not None else None
+    tool_input = event.data.get("tool_input")
+    if isinstance(tool_input, dict):
+        command = tool_input.get("command", tool_input.get("cmd"))
+        if isinstance(command, str):
+            cwd = literal_shell_workdir(command) or cwd
+    root = checkout_root(Path(cwd).resolve(strict=False)) if cwd is not None else None
     return normalize_task_checkout_root(str(root)) if root is not None else None
 
 
@@ -144,7 +163,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if event.wait_kind is not None:
                 self._enter_turn_wait(event, event.wait_kind)
             else:
-                self._resume_turn_lifecycle(event)
+                self._resume_turn_lifecycle(event, tool="start")
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
@@ -159,14 +178,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 input_data.get("arguments", input_data.get("tool_input"))
             )
             if wrapper_error is not None:
-                return HookResponse(decision="block", reason=wrapper_error)
+                return self._refuse_started_tool(
+                    event, HookResponse(decision="block", reason=wrapper_error)
+                )
 
         # Intercept Skill tool calls to resolve gobby skills
         if tool_name == "Skill":
             try:
                 skill_response = self._resolve_skill_tool_call(input_data, project_id, session_id)
                 if skill_response is not None:
-                    return skill_response
+                    return self._refuse_started_tool(event, skill_response)
             except SkillResolutionError:
                 self.logger.warning(
                     "Failed to resolve Skill tool call; allowing native handler",
@@ -246,6 +267,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         self.logger.warning(
                             "Failed to release rejected tool binding", exc_info=True
                         )
+                self._resume_turn_lifecycle(event, tool="finish")
                 return HookResponse(
                     decision="block",
                     reason=(
@@ -467,7 +489,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         status = "FAIL" if is_failure else "OK"
         if session_id:
             self.logger.debug("AFTER_TOOL [%s]: %s, session %s", status, tool_name, session_id)
-            self._resume_turn_lifecycle(event)
+            self._resume_turn_lifecycle(event, tool="finish")
             if not is_wrapper_echo_event(event):
                 try:
                     db = getattr(self._session_manager, "db", None)
@@ -594,8 +616,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def _snapshot_shell_writes(self, event: HookEvent, session_id: str) -> None:
         """Remember the claimed-task ledger paths this Bash call may rewrite, before it runs."""
         db = getattr(self._session_manager, "db", None)
-        cwd = effective_tool_cwd(event.cwd, event.data)
-        root = checkout_root(Path(cwd)) if cwd is not None else None
+        root = _call_worktree_root(event)
         if db is None or root is None:
             return
         call_id = tool_execution_id(event)

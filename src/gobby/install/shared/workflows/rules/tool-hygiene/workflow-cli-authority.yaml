@@ -1,0 +1,85 @@
+version: "1.1.0"
+tags: [gobby, default, tool-hygiene]
+
+# The command matcher unwraps uv options, Python module entrypoints and shell
+# wrappers before applying these patterns. Quoted prose remains data.
+rules:
+  workflow-definition-cli-authority:
+    description: Require definition authority for CLI imports and template publishing
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_workflow_definitions'))
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*(?:(?:rules|pipelines)\s+import\b|sync\b(?![^\n;&|]*--verify-only(?=\s|$|[;&|]))|install\b)'
+        reason: >-
+          CLI definition imports and template publishing require
+          manage_workflow_definitions or the operator's terminal. Ask an
+          authorized session to make the change through the governed MCP tools.
+          Read-only rules and pipeline commands remain available.
+
+  rule-enforcement-cli-authority:
+    description: Require rule authority for CLI enable and disable
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_workflow_definitions')
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_rule_enforcement'))
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*rules\s+(?:enable|disable)\b'
+        reason: >-
+          CLI rule toggles require manage_workflow_definitions,
+          manage_rule_enforcement or the operator's terminal. Ask an authorized
+          session to use toggle_rule through MCP. Rule inspection remains available.
+
+  session-variable-cli-authority:
+    description: Require variable authority for CLI session writes
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'write_session_variables'))
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*variables\s+set\b'
+        reason: >-
+          CLI session-variable writes require write_session_variables or the
+          operator's terminal. Request the exact session, scope, name and value
+          from an authorized session and await confirmation. variables get remains available.
+
+  mcp-cli-operator-boundary:
+    description: Keep CLI tool execution and spawning from bypassing seated MCP enforcement
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: not operator_session(event.metadata.get('_platform_session_id'))
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(?:--config(?:=[^\s;&|]*|\s+[^\s;&|]*)\s+)*(?:mcp-proxy\s+call-tool|agents\s+spawn)\b'
+        reason: >-
+          Seated agents must execute tools and spawn through MCP so caller authority and
+          workflow enforcement stay active. The CLI call-tool route is reserved
+          for the operator's terminal; schema and tool-list inspection remain available.

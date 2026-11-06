@@ -1,4 +1,4 @@
-"""Reused developer worktrees retain exact task checkpoint commits."""
+"""Reused fixture-worker worktrees retain exact task checkpoint commits."""
 
 import subprocess
 from pathlib import Path
@@ -23,7 +23,7 @@ def git(path: Path, *args: str) -> str:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("linked", [True, False], ids=["linked", "unlinked"])
-async def test_reused_worktree_merges_base_without_rewriting_checkpoints(
+async def test_reused_worktree_keeps_its_checkpoints_and_defers_the_base(
     tmp_path: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -36,7 +36,8 @@ async def test_reused_worktree_merges_base_without_rewriting_checkpoints(
     git(source, "config", "user.email", "test@example.com")
     git(source, "config", "user.name", "Reuse Test")
     git(source, "commit", "--allow-empty", "-m", "initial")
-    child = tmp_path / "developer"
+    fork = git(source, "rev-parse", "HEAD")
+    child = tmp_path / "fixture-worker"
     git(source, "worktree", "add", "-b", "candidate", str(child))
     tasks = LocalTaskManager(temp_db)
     task = tasks.create_task(
@@ -90,12 +91,17 @@ async def test_reused_worktree_merges_base_without_rewriting_checkpoints(
         main_repo_path=str(source),
     )
 
+    # The branch carries its own commits, so reuse merges nothing: the seat that owns
+    # the branch merges the pending base itself.
     reachable = git(child, "rev-list", "HEAD").splitlines()
     assert all(sha in reachable for sha in checkpoints)
-    assert base in reachable
-    assert git(child, "rev-parse", "HEAD^1") == checkpoints[-1]
-    assert git(child, "rev-parse", "HEAD^2") == base
+    assert base not in reachable
+    assert git(child, "rev-parse", "HEAD") == checkpoints[-1]
     assert git(child, "status", "--porcelain") == ""
-    assert context.extra["base_commit_sha"] == base
+    assert context.extra["base_commit_sha"] == fork
+    assert context.extra["deferred_base_sync"] == {
+        "reason": "branch_diverged",
+        "pending_base_sha": base,
+    }
     if linked:
         assert tasks.get_task(task.id).commits == checkpoints

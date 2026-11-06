@@ -17,3 +17,5 @@ Before mutation, load the operation topic and confirm ownership, scope and types
 A menu does not run these operations or load their references. Tool schemas remain
 authoritative. If a value is surprising, compare definition scope/enabled state
 against the intended session before writing. See the [verified guide](../../../../../../../../docs/guides/variables.md).
+
+_Version: 1.0.0_

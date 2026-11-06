@@ -64,3 +64,5 @@ the operation's stash, never whichever stash happens to be newest. A returned
 schema cutover advisory is a separate operator procedure, not an executed restart.
 Record failures/unresolved work, and perform [cleanup](cleanup.md). Read
 [merge resolution tools](../../../../../../../../docs/guides/worktrees.md#merge-resolution-tools).
+
+_Version: 1.0.0_

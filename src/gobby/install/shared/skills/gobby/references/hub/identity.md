@@ -25,3 +25,5 @@ transcript access, and source-control guidance for managed workspaces.
 
 See [machine and project ownership](../../../../../../../../docs/guides/shared-stack.md#machine-and-project-ownership)
 and [files and client credentials](../../../../../../../../docs/guides/hub-install-contract.md#files-and-client-credentials).
+
+_Version: 1.0.0_

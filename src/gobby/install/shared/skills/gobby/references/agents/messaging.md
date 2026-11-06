@@ -18,9 +18,14 @@ must supply project scope. Preserve the returned message IDs and inspect partial
 broadcast/wake failures before retrying.
 
 Content never implies wake. Omitting `wake` requests immediate processing for direct
-`session`, `parent`, and `agent` targets. `project` and `global` fanout
-stays queued without live wakes unless `wake=true` is explicit. Set `wake=false`
-to queue any target without a live wake. A requested wake may steer active work;
+`session`, `parent`, and `agent` targets. Fanout (`global`, and `project` with
+`wake=true`) live-wakes only active recipients and recipients holding a claimed task;
+an idle, paused, or waiting recipient with no claimed task keeps its message queued
+for its next turn, so send it a direct message to wake it. Otherwise `project` fanout
+stays queued without live wakes, and `wake=false` queues any target without a live
+wake. The daemon sends restart and cutover notices itself as system globals: a hold
+before it stops and DAEMON BACK once healthy. Active seats and seats holding a claimed
+task wake on them. Never compose them by hand. A requested wake may steer active work;
 interrupted or input/approval/handoff-waiting sessions retain the message without
 unsafe daemon input. A successful send is durable queuing, not evidence that the
 recipient read or acted on it. Use `get_inter_session_message` for a message ID
@@ -29,30 +34,40 @@ needed windows; lists are not automatically exhaustive.
 
 ## Deliver text artifacts across workspace boundaries
 
-Send the complete UTF-8 report or review as `send_message.content`, with its task,
-candidate SHA, suggested filename and content SHA-256 in `metadata`. Preserve the
+Send a review, report or plan document with `send_attachment`. `content` is the
+message text: the task, the candidate SHA, and what the document is. `document` is the
+complete UTF-8 text, `filename` names it, and `media_type` is `text/markdown` or
+`text/plain`. The daemon stores the document in the database with its byte size and
+SHA-256 digest. A document over 256 KiB is refused with `attachment_too_large`, and
+nothing is stored; split it into numbered parts, one attachment each. Preserve the
 returned message IDs in the handoff and attestation evidence. A sender's private
 workspace path alone is not a delivery: recipients cannot read that folder.
 
-The recipient calls `get_inter_session_message(message_id=...)` for each ID,
-checks the task, candidate and digest, and writes the exact content to a file in
-its own session workspace. Choose the local filename there; never treat a sender's
-path as a write destination. If a transport requires parts, send numbered parts
-with the part count in metadata and one digest for the assembled content. Fetch
-every part and verify the assembled bytes before acting. A notification preview
-or mailbox list is not the full artifact. Confirm the received message IDs and
+The recipient calls `get_inter_session_message(message_id=...)` for each ID to see the
+attachment's filename, size and digest, then `get_attachment(message_id=...)` for its
+content. It checks the task, candidate and digest, and writes the exact content to a
+file in its own session workspace. Choose the local filename there; never treat a
+sender's path as a write destination. For numbered parts, fetch every part and verify
+the assembled bytes against the digest named in the parts before acting. A notification
+preview or mailbox list is not the full artifact. Confirm the received message IDs and
 local artifact to the sender; the sender retains its original.
 
-For a developer review, address the task's assigned developer through the declared
-report route. Orchestrator rulings and dispositions go through Triage, which
-retrieves and forwards the complete content to the target seat with `wake=true`.
-Forwarding creates new message IDs; give those recipient-addressed IDs to the
-developer, since only each message's sender and recipient may retrieve it.
+A `project` or `global` send with a document gives each recipient its own message ID
+and copy, and each recipient reads its own copy. Only the sender and that message's
+recipient can read it; anyone else sees `attachment_not_found`.
 
-For an operator report, send the complete content to the Assistant through its
-declared route. The Assistant reconstructs its own file and uses
-`send_operator_attachment` with `project_policy.operator_channel`; report the
-returned delivery message ID. This route grants no access to another seat's folder.
+For a developer review, address the task's assigned developer through the declared
+report route. Orchestrator rulings and dispositions go through Triage, which retrieves
+the complete document with `get_attachment` and forwards it to the target seat with
+`send_attachment` and `wake=true`. Forwarding creates new message IDs; give those
+recipient-addressed IDs to the developer, since only each message's sender and recipient
+may retrieve it.
+
+For an operator report, send the complete document to the Assistant with
+`send_attachment` through its declared route. The Assistant reads it with
+`get_attachment`, reconstructs its own file, and uses `send_operator_attachment` with
+`project_policy.operator_channel`; report the returned delivery message ID. This route
+grants no access to another seat's folder.
 
 For a coordinated hold, load the schema for `wait_for_coordination` and register
 once against the owner session. Supply exactly one condition: a unique
@@ -62,10 +77,16 @@ hold with a durable `coordination_release` message to you containing the
 matching `metadata.coordination_key`; ordinary message text does not release a
 keyed hold. A reply wait is the primitive for a requested parent reply: it
 resolves `replied` on the next durable message that owner sends you after
-registration, and omitting `owner_session` waits on the session that spawned
+registration. Daemon receipts written in the owner's name (`agent_started`,
+`agent_recovery`) never resolve it. Omitting `owner_session` waits on the session that spawned
 you. Messages already sent never resolve it, so send the question and register
 in the same turn. A registered wait holds off idle and stuck cleanup until it
 resolves, times out, or is cancelled.
+To yield while your own provider background task runs (a background shell,
+monitor or workflow that re-invokes you when it finishes), register
+`background_task_id=<the provider's task id>` with no `owner_session` and a
+timeout that covers the job's next report. Your next prompt clears it; expiry
+wakes you to check the job and register again if it still runs.
 The default timeout is 900 seconds, maximum 3600. While waiting, repeating the same
 owner and condition returns the original wait and expiry. After completion,
 repeating the same owner and condition creates a new wait. Preserve `wait_id` and
@@ -93,5 +114,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 1.1.0_
-_Last verified: 2026-11-02_
+_Version: 2.2.0_
+_Last verified: 2026-11-04_

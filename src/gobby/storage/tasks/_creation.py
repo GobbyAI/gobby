@@ -104,7 +104,6 @@ def create_task_for_agent(
             assigned_agent=assigned_agent,
             implementation_domain=implementation_domain,
             additional_skills=additional_skills,
-            guard_selection=True,
         )
 
 
@@ -150,7 +149,6 @@ def _create_task_in_transaction(
     assigned_agent: str | None = None,
     implementation_domain: str | None = None,
     additional_skills: list[str] | None = None,
-    guard_selection: bool = False,
 ) -> str:
     """Insert a task using a caller-owned TaskSeqAllocation transaction."""
     max_retries = 3
@@ -217,12 +215,6 @@ def _create_task_in_transaction(
 
                 record_claim(conn, claimed_by_session_id, task_id)
                 from gobby.workflows.state_manager import SessionVariableManager
-                from gobby.workflows.task_tool_bindings import TaskToolBindings
-
-                if guard_selection:
-                    TaskToolBindings(
-                        SessionVariableManager(db), claimed_by_session_id
-                    ).assert_can_select(None)
 
                 SessionVariableManager(db).select_task_claim(
                     claimed_by_session_id, task_id, f"#{next_seq_num}"

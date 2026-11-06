@@ -17,6 +17,8 @@ pub(super) struct HiddenPathContext {
 
 impl HiddenPathContext {
     pub(super) fn load(root: &Path) -> Self {
+        #[cfg(test)]
+        super::op_counts::record_hidden_context_load();
         let allowlist = HiddenPathAllowlist::load(root);
         Self { allowlist }
     }

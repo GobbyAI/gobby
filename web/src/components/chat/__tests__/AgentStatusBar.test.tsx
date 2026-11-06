@@ -20,7 +20,7 @@ describe("AgentStatusBar", () => {
           contextWindow: 200000,
           agentRunId: null,
           workflowName: null,
-          agentName: "triage-agent",
+          agentName: "observed-agent",
           sessionType: "terminal",
         }}
         interactionMode="observe"
@@ -32,7 +32,7 @@ describe("AgentStatusBar", () => {
     expect(screen.queryByText("#77")).toBeNull();
     expect(screen.queryByText("Observed Session")).toBeNull();
     expect(screen.queryByText("gpt-5.4")).toBeNull();
-    expect(screen.queryByText("triage-agent")).toBeNull();
+    expect(screen.queryByText("observed-agent")).toBeNull();
   });
 
   it("uses the shared neutral session action styling for resume", async () => {

@@ -83,20 +83,16 @@ class TestResolveSyncPlaceholders:
         result = resolve_sync_placeholders('{"event": "before_tool"}')
         assert result == '{"event": "before_tool"}'
 
-    def test_replaces_gobby_bin_with_which(self) -> None:
+    def test_never_bakes_an_interpreter_path(self) -> None:
+        """Sync stores no install-time binary or interpreter path in a rule.
+
+        A baked path dies with the environment that ran sync, so only
+        content-derived placeholders resolve; other braces stay literal.
+        """
         from gobby.workflows.sync_rules import resolve_sync_placeholders
 
-        with patch("gobby.workflows.sync_rules.shutil.which", return_value="/usr/local/bin/gobby"):
-            result = resolve_sync_placeholders("run {{ gobby_bin }} tasks list")
-            assert result == "run /usr/local/bin/gobby tasks list"
-
-    def test_falls_back_to_python_m_gobby(self) -> None:
-        from gobby.workflows.sync_rules import resolve_sync_placeholders
-
-        with patch("gobby.workflows.sync_rules.shutil.which", return_value=None):
-            result = resolve_sync_placeholders("run {{ gobby_bin }} tasks")
-            assert "-m gobby" in result
-            assert "{{ gobby_bin }}" not in result
+        body = '{"cmd": "run {{ gobby_bin }} tasks"}'
+        assert resolve_sync_placeholders(body) == body
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -293,7 +289,7 @@ rules:
         manager = RuleDefinitionManager(db)
         manager.create(
             name="collision-rule",
-            definition_json='{"event": "before_tool", "effects": [{"type": "log", "message": "v1"}]}',
+            definition_json='{"event": "before_tool", "effects": [{"type": "block", "reason": "v1"}]}',
             source="installed",
             tags=["gobby"],
         )
@@ -307,9 +303,9 @@ rules:
 rules:
   collision-rule:
     event: before_tool
-    effect:
-      type: log
-      message: "user version"
+    effects:
+      - type: block
+        reason: "user version"
 """
         )
 
@@ -803,7 +799,7 @@ steps:
                 "type": "pipeline",
                 "description": "Old dispatch pipeline",
                 "enabled": True,
-                "inputs": {"agent": {"type": "string", "default": "developer"}},
+                "inputs": {"agent": {"type": "string", "default": "fixture-worker"}},
                 "steps": [
                     {
                         "id": "spawn",

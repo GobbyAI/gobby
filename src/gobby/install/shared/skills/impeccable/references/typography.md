@@ -140,3 +140,5 @@ Beyond contrast ratios (which are well-documented), consider:
 ---
 
 **Avoid**: More than 2-3 font families per project. Skipping fallback font definitions. Ignoring font loading performance (FOUT/FOIT). Using decorative fonts for body text.
+
+_Version: 1.0.0_

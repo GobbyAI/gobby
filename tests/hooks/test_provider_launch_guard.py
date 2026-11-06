@@ -1,22 +1,12 @@
 """Literal launch classification and real-engine enforcement without launching providers."""
 
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
-from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks import provider_launch_guard
 from gobby.hooks._provider_shell_syntax import _prepare
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
-from gobby.storage.definitions.rules import RuleDefinitionManager
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.sync_rules import sync_rule_file
-from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -757,16 +747,6 @@ def test_xargs_required_operands(tool_name: str, options: str, target: str, bloc
     assert blocks_direct_provider_launch(tool_name, {key: f"xargs {options} {target}"}) is blocked
 
 
-SHARED = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
-RULE = SHARED / "workflows/rules/worker-safety/block-direct-provider-launch.yaml"
-SESSION = "abababab-0000-4000-8000-000000000001"
-
-
-def _synthetic_seat_workflows(*rules: str) -> dict[str, Any]:
-    """Activate the named rules on a synthetic seat, with no bundled rule selectors."""
-    return {"rules": list(rules), "rule_selectors": {"include": [], "exclude": []}}
-
-
 @pytest.mark.parametrize("error", [MemoryError, RecursionError])
 @pytest.mark.parametrize("target", ["ast.parse", "_python_skeleton"])
 def test_python_parse_resource_limit_fails_closed(
@@ -781,227 +761,6 @@ def test_python_parse_resource_limit_fails_closed(
             "exec_command", {"cmd": "python3 -c 'import os; os.system(\"true\")'"}
         )
     assert blocked
-
-
-@pytest.mark.parametrize(
-    "command,blocked",
-    [
-        pytest.param(
-            "uv run python - <<'MM23659_CLOSE_REPORT'\n"
-            "from pathlib import Path\n"
-            "Path('/tmp/provider-report.json').write_text("
-            + repr("codex exec --sandbox danger-full-access " + "x" * 131_072)
-            + ")\nMM23659_CLOSE_REPORT\n",
-            False,
-            id="large-report-data",
-        ),
-        pytest.param(
-            "uv run python -c 'from pathlib import Path; "
-            'Path("/tmp/provider-report.txt").write_text("codex exec ' + "x" * 131_072 + '")'
-            "'",
-            False,
-            id="large-inline-report-data",
-        ),
-        ("uv run python report.py -c 'import subprocess; subprocess.run([\"codex\"])'", False),
-        *[
-            pytest.param(
-                "uv run python - <<'PY'\n"
-                f"{imports}\nfrom pathlib import Path\n"
-                "Path('/tmp/report.txt').write_text('codex exec hi')\nPY\n",
-                False,
-                id=f"dotted-report-{index}",
-            )
-            for index, imports in enumerate(
-                (
-                    "import os\nimport os.path",
-                    "import urllib.request\nimport urllib.parse",
-                    "import xml.etree.ElementTree\nimport xml.dom.minidom",
-                )
-            )
-        ],
-        *[
-            pytest.param(
-                f"uv run python - <<'PY'\n{body}\nPY\n",
-                True,
-                id=f"round2-launch-{index}",
-            )
-            for index, body in enumerate(
-                (
-                    "import os.path\nos.system('codex exec hi')",
-                    "import asyncio.subprocess\nasyncio.create_subprocess_shell('codex exec hi')",
-                    "import os\nos.system('codex exec %s' % x)",
-                    "import os\nos.system('codex exec {}'.format(x))",
-                    "import os\nos.system(' '.join(['codex', 'exec', x]))",
-                    "import os, shlex\nos.system(shlex.join(['codex', 'exec', x]))",
-                )
-            )
-        ],
-        *[
-            pytest.param(
-                f"uv run python {option} <<'PY'\n"
-                "import subprocess\nsubprocess.run(['codex'])\nPY\n",
-                False,
-                id=f"query-{option}",
-            )
-            for option in ("-V", "-h", "--version", "--help", "-IV")
-        ],
-        pytest.param(
-            "uv run python -Ic 'import subprocess; subprocess.run([\"codex\"])'",
-            True,
-            id="clustered-inline-code",
-        ),
-        *[
-            pytest.param(
-                f"uv run python - <<'PY'\nimport subprocess, os, sys\n{body}\nPY\n",
-                True,
-                id=f"review-{index}",
-            )
-            for index, body in enumerate(
-                (
-                    'subprocess.run(["claude", "-p", p])',
-                    'subprocess.run(["codex", "exec", *sys.argv])',
-                    'subprocess.run(f"codex exec {p}", shell=True)',
-                    'subprocess.run("codex exec " + p, shell=True)',
-                    'os.system(f"claude -p {p}")',
-                    "import json as j; import sys as j; "
-                    'from subprocess import run; run(["codex", "exec", "hi"])',
-                    'subprocess.run("codex exec hi", shell=1)',
-                    'subprocess.run("codex exec hi", shell=use_shell)',
-                )
-            )
-        ],
-        *[
-            pytest.param(command, True, id=f"python-channel-{index}")
-            for index, command in enumerate(
-                (
-                    "echo 'import subprocess; subprocess.run([\"codex\"])' | python3",
-                    "python3 <<< 'import subprocess; subprocess.run([\"codex\"])'",
-                    "python3 --check-hash-based-pycs always - <<'PY'\n"
-                    'import subprocess; subprocess.run(["codex"])\nPY\n',
-                    "uv run python3.13 <<'PY'\n"
-                    'import subprocess; subprocess.run(["codex"])\nPY\n',
-                )
-            )
-        ],
-        ("python3 -c 'import subprocess; subprocess.run([cmd, \"exec\"])'", False),
-        ("python3 -c 'import subprocess; subprocess.run(\"codex exec\", shell=False)'", False),
-        ("uv run python -c 'from subprocess import run as launch; launch([\"claude\"])'", True),
-        ("uv run python -c 'import subprocess; subprocess.run(args=[\"codex\"])'", True),
-        (
-            'uv run python -c \'import subprocess; subprocess.run(["data"], executable="codex")\'',
-            True,
-        ),
-        ("uv run python -c 'import subprocess; subprocess.run(\"true; codex\", shell=True)'", True),
-        pytest.param(
-            "uv run python -c 'import subprocess; "
-            'subprocess.run("codex", shell=True, executable="/bin/bash")\'',
-            True,
-            id="shell-executable-override",
-        ),
-        pytest.param(
-            "uv run python -c 'import subprocess; "
-            'subprocess.run(["codex exec", "unused"], shell=True)\'',
-            True,
-            id="shell-list-command",
-        ),
-        pytest.param(
-            "uv run python -c 'import subprocess; "
-            'subprocess.run(["printf", "codex"], shell=True)\'',
-            False,
-            id="shell-list-data",
-        ),
-        ('uv run python -c \'import subprocess; subprocess.run(["printf", "codex exec"])\'', False),
-        ('uv run python -c \'import subprocess; subprocess.run(["codex", "--help"])\'', False),
-        (
-            'uv run python -c \'import asyncio; asyncio.create_subprocess_exec("codex", "--help")\'',
-            False,
-        ),
-        (
-            "uv run python <<'PY'\n"
-            "from pathlib import Path\n"
-            "Path('/tmp/provider-report.json').write_text("
-            '\'{"command": "codex exec --sandbox danger-full-access"}\')\n'
-            "PY\n",
-            False,
-        ),
-        (
-            "uv run python -c 'from pathlib import Path; "
-            'Path("/tmp/provider-report.txt").write_text("claude -p hi")'
-            "'",
-            False,
-        ),
-        ("codex exec hi", True),
-        ("true && claude -p hi", True),
-        ("true; codex exec hi", True),
-        (
-            "uv run python <<'PY'\n"
-            "import subprocess\n"
-            "subprocess.run(['codex', 'exec', 'hi'])\n"
-            "PY\n",
-            True,
-        ),
-        ("uv run python -c 'import subprocess; subprocess.run([\"codex\"])'", True),
-    ],
-)
-@pytest.mark.asyncio
-async def test_interpreter_provider_launch_rule(
-    hub_db: HubDatabase, command: str, blocked: bool
-) -> None:
-    synced = sync_rule_file(hub_db, RULE, tag="gobby")
-    assert synced["success"]
-    row = RuleDefinitionManager(hub_db).get_by_name("block-direct-provider-launch")
-    assert row is not None and row.enabled
-    template = yaml.safe_load(RULE.read_text())["rules"]["block-direct-provider-launch"]
-    assert row.description == template["description"]
-    for field in ("event", "when", "effects"):
-        assert row.definition_json[field] == template[field]
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION,
-        source=SessionSource.CODEX,
-        timestamp=datetime.now(UTC),
-        data={"tool_name": "exec_command", "tool_input": {"cmd": command}},
-    )
-    result = await RuleEngine(hub_db).evaluate(event, session_id=SESSION, variables={})
-    assert (result.decision == "block") is blocked
-    if blocked:
-        assert result.reason is not None and "block-direct-provider-launch" in result.reason
-
-
-@pytest.mark.parametrize(
-    ("command", "blocked"),
-    [("codex exec smoke", True), ("codex --help", False), ("git status --short", False)],
-)
-async def test_native_codex_command_alias_with_command_pattern_rules(
-    hub_db: HubDatabase, command: str, blocked: bool
-) -> None:
-    for path in (RULE, SHARED / "workflows/rules/task-enforcement/block-gobby-tasks-cli.yaml"):
-        assert sync_rule_file(hub_db, path, tag="gobby")["success"]
-    seed_seat(
-        hub_db,
-        "default",
-        workflows=_synthetic_seat_workflows(
-            "block-direct-provider-launch", "block-gobby-tasks-cli"
-        ),
-    )
-    event = CodexHooksAdapter().translate_to_hook_event(
-        {
-            "hook_type": "PreToolUse",
-            "input_data": {
-                "session_id": SESSION,
-                "tool_name": "exec_command",
-                "tool_input": {"cmd": command},
-            },
-        }
-    )
-    assert event is not None
-    assert event.data["tool_input"]["command"] == command
-    assert event.data["_raw_tool_input"] == {"cmd": command}
-    result = await RuleEngine(hub_db).evaluate(
-        event, session_id=SESSION, variables={"_agent_type": "default", "is_spawned_agent": False}
-    )
-    assert (result.decision == "block") is blocked
-    assert "block-gobby-tasks-cli" not in (result.reason or "")
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "droid", "grok", "agy"])
@@ -1024,6 +783,10 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "agy --help",
         "codex help",
         "codex -V",
+        "codex --version",
+        "codex app-server --help",
+        "codex app-server -h",
+        "codex app-server help",
         "codex login status",
         "codex help login",
         "codex help login status",
@@ -1043,6 +806,7 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "grok models --help",
         "claude auth login --help",
         "claude help",
+        "claude plugin help",
         "env A=b /opt/bin/codex login status",
         "command -- codex --help",
         "codex --help && claude auth status",
@@ -1100,11 +864,154 @@ def test_administration_and_documentation(command: str) -> None:
         # a leaf subcommand takes a prompt, not `help`.
         "claude please help",
         "codex exec help",
+        "codex sandbox help",
         "claude mcp add --scope user --help",
+        # A trailing `help` after a positional group is a prompt, and launch options
+        # stay blocked.
+        "codex app-server",
+        "codex app-server --listen stdio:// --help",
+        "codex app-server --help && codex exec hi",
+        "codex --version && codex exec hi",
     ],
 )
 def test_help_does_not_exempt_launch_operands(command: str) -> None:
     assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+# Every real subcommand codex's --help lists (aliases included) and each nested one
+# its zsh completion lists. Internal, hidden, and [internal] entries are excluded.
+CODEX_HELP_SUBCOMMANDS = [
+    "agents",
+    "exec",
+    "e",
+    "exec fork",
+    "exec resume",
+    "exec review",
+    "review",
+    "login",
+    "login status",
+    "logout",
+    "mcp",
+    "mcp add",
+    "mcp get",
+    "mcp list",
+    "mcp login",
+    "mcp logout",
+    "mcp remove",
+    "plugin",
+    "plugin add",
+    "plugin list",
+    "plugin marketplace",
+    "plugin marketplace add",
+    "plugin marketplace list",
+    "plugin marketplace remove",
+    "plugin marketplace upgrade",
+    "plugin remove",
+    "app-server",
+    "app-server daemon",
+    "app-server daemon bootstrap",
+    "app-server daemon disable-remote-control",
+    "app-server daemon enable-remote-control",
+    "app-server daemon restart",
+    "app-server daemon start",
+    "app-server daemon stop",
+    "app-server daemon update",
+    "app-server daemon version",
+    "app-server generate-json-schema",
+    "app-server generate-ts",
+    "app-server proxy",
+    "remote-control",
+    "remote-control pair",
+    "remote-control start",
+    "remote-control stop",
+    "app",
+    "completion",
+    "update",
+    "doctor",
+    "sandbox",
+    "sandbox uninstall",
+    "debug",
+    "debug app-server",
+    "debug app-server send-message-v2",
+    "debug models",
+    "debug prompt-input",
+    "debug trace-reduce",
+    "apply",
+    "a",
+    "resume",
+    "queue",
+    "archive",
+    "delete",
+    "migrate-rollouts",
+    "migrate-nfs-db",
+    "unarchive",
+    "fork",
+    "cloud",
+    "cloud apply",
+    "cloud diff",
+    "cloud exec",
+    "cloud list",
+    "cloud status",
+    "exec-server",
+    "exec-server forward",
+    "features",
+    "features disable",
+    "features enable",
+    "features list",
+]
+
+
+@pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
+def test_codex_subcommand_help_is_exempt(subcommand: str) -> None:
+    for flag in ("--help", "-h"):
+        command = f"codex {subcommand} {flag}"
+        assert not blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+# Groups that take no positional prompt or command. codex's completion lists their
+# children, so a trailing `help` answers the group's help.
+CODEX_HELP_GROUPS = [
+    "login",
+    "mcp",
+    "plugin",
+    "plugin marketplace",
+    "app-server",
+    "app-server daemon",
+    "remote-control",
+    "debug",
+    "debug app-server",
+    "cloud",
+    "features",
+    "exec-server",
+]
+
+
+@pytest.mark.parametrize("group", CODEX_HELP_GROUPS)
+def test_codex_group_trailing_help_is_exempt(group: str) -> None:
+    command = f"codex {group} help"
+    assert not blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize(
+    "subcommand", [path for path in CODEX_HELP_SUBCOMMANDS if path not in CODEX_HELP_GROUPS]
+)
+def test_codex_trailing_help_is_a_prompt(subcommand: str) -> None:
+    # A leaf, or a group with a positional prompt or command (exec, e, sandbox), takes
+    # `help` as a prompt word, so the launch stays blocked.
+    command = f"codex {subcommand} help"
+    assert blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
+def test_codex_subcommand_launch_stays_blocked(subcommand: str) -> None:
+    # A positional prompt, a launch option, and a chained launch each keep the path
+    # a launch.
+    for form in (
+        f"codex {subcommand} hi",
+        f"codex {subcommand} --json",
+        f"codex {subcommand} --help && codex exec hi",
+    ):
+        assert blocks_direct_provider_launch("Bash", {"command": form}), form
 
 
 @pytest.mark.parametrize(
@@ -1305,65 +1212,47 @@ def test_bounded_and_malformed_input() -> None:
     assert not blocks_direct_provider_launch("spawn_agent", {"command": "codex exec hi"})
 
 
-@pytest.mark.parametrize("agent", ["default", "developer", "code-reviewer"])
+_SRT_DIST = "/Users/josh/.gobby/tools/srt/0.0.79/node_modules/@anthropic-ai/sandbox-runtime/dist"
+_SRT_PROBE = (
+    f"D={_SRT_DIST}; "
+    'grep -rn "function whichSync" $D | head; '
+    'f=$(grep -rln "function whichSync" $D | head -1); '
+    'n=$(grep -n "function whichSync" $f | cut -d: -f1); '
+    'sed -n "{start},$((n+30))p" $f'
+)
+
+
 @pytest.mark.parametrize(
-    "source",
+    "command",
     [
-        SessionSource.CLAUDE,
-        SessionSource.CODEX,
-        SessionSource.DROID,
-        SessionSource.GROK,
-        SessionSource.AGY,
+        'n=3; sed -n "$n,30p" a.py',
+        'a=10; b=20; sed -n "${a},${b}p" src/x.py',
+        'n=3 && sed -n "$n,$((n+30))p" a.py',
+        'N=5; sed -n "$N"p src/x.py',
+        _SRT_PROBE.format(start="$((n))"),
     ],
 )
+def test_sed_program_with_literal_bindings_or_arithmetic_is_allowed(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
 @pytest.mark.parametrize(
-    "command,tool_name,blocked",
+    "command",
     [
-        ("codex exec --sandbox danger-full-access", "exec_command", True),
-        ("codex login status", "exec_command", False),
-        ("git status", "exec_command", False),
-        ("codex exec --sandbox danger-full-access", "spawn_agent", False),
+        # Parameter text inside a sed program is program text, not an operand.
+        _SRT_PROBE.format(start="$n"),
+        'sed -n "$n,30p" a.py',
+        "n='1e claude -p hi'; sed -n \"${n}p\" a.py",
+        'n=$(echo 1e claude); sed -n "${n}p" a.py',
+        'n=3; n=$(echo 1e claude); sed -n "${n}p" a.py',
+        'n=3 sed -n "${n}p" a.py',
+        'n=3 | sed -n "${n}p" a.py',
+        'true || n=3; sed -n "${n}p" a.py',
+        'n=3; echo; sed -n "${n}p" a.py',
+        f"{_SRT_DIST}/claude -p hi",
+        'f=claude; "$f" -p hi',
+        "f=/usr/local/bin/codex; ${f} exec hi",
     ],
 )
-@pytest.mark.asyncio
-async def test_real_engine_rule(
-    hub_db: HubDatabase,
-    agent: str,
-    source: SessionSource,
-    command: str,
-    tool_name: str,
-    blocked: bool,
-) -> None:
-    synced = sync_rule_file(hub_db, RULE, tag="gobby")
-    assert synced["success"]
-    row = RuleDefinitionManager(hub_db).get_by_name("block-direct-provider-launch")
-    assert row is not None
-    seed_seat(
-        hub_db,
-        agent,
-        workflows=_synthetic_seat_workflows("block-direct-provider-launch"),
-    )
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION,
-        source=source,
-        timestamp=datetime.now(UTC),
-        data={"tool_name": tool_name, "tool_input": {"cmd": command}},
-    )
-    result = await RuleEngine(hub_db).evaluate(
-        event,
-        session_id=SESSION,
-        variables={
-            "_agent_type": agent,
-            "allow_direct_provider_launch": True,
-            "is_spawned_agent": False,
-        },
-    )
-    assert row.enabled
-    assert (result.decision == "block") is blocked
-    if blocked:
-        assert result.reason is not None
-        assert "block-direct-provider-launch" in result.reason
-        assert "gobby-agents:spawn_agent" in result.reason
-        assert "extra_write_paths" in result.reason
-        assert "write_paths_reason" in result.reason
+def test_sed_program_with_unproven_text_stays_blocked(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})

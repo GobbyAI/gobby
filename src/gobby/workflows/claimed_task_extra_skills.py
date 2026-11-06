@@ -13,7 +13,6 @@ from gobby.skills.instruction_requirements import (
     parse_instruction_requirement,
 )
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.acceptance_references import extract_artifact_references, parse_test_reference
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -23,14 +22,13 @@ logger = logging.getLogger(__name__)
 EXTRA_SKILLS_VARIABLE = "claimed_task_extra_skills"
 UNRESOLVABLE_EXTRA_SKILLS_VARIABLE = "unresolvable_claimed_task_extra_skills"
 CLAIMED_TASK_REQUIRES_TDD_VARIABLE = "claimed_task_requires_tdd"
-CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE = "claimed_task_acceptance_test_paths"
 CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE = "claimed_task_is_source_work"
 
 # Categories whose deliverable is source that the developer obligations govern.
 # Claiming one already owes those obligations, so the gate can teach them before the
 # work starts rather than at the first write, when the design is already settled.
 # The claimed category is the whole signal: a docs or research claim owes nothing
-# here, and require-task-before-edit still governs what it may write.
+# here; configured write-admission rules still govern what it may write.
 SOURCE_WORK_CATEGORIES = frozenset({"code", "refactor", "test"})
 TDD_SKILL = "test-driven-development"
 
@@ -61,7 +59,6 @@ def build_claimed_task_extra_skill_state(
     claimed_tasks = variables.get("claimed_tasks") or {}
     extras: list[str] = []
     requires_tdd = False
-    acceptance_test_paths: list[str] = []
     is_source_work = False
 
     if isinstance(claimed_tasks, dict) and task_manager is not None:
@@ -88,12 +85,6 @@ def build_claimed_task_extra_skill_state(
                 requires_tdd = True
                 _append_unique(extras, TDD_SKILL)
 
-            if validation_criteria:
-                for reference in extract_artifact_references(validation_criteria, "test"):
-                    parsed = parse_test_reference(reference)
-                    if parsed is not None:
-                        _append_unique(acceptance_test_paths, parsed[0])
-
     unresolved = _string_list(variables.get(UNRESOLVABLE_EXTRA_SKILLS_VARIABLE))
     # A malformed identifier can never load, so it must not hold the extras gate.
     _extend_unique(unresolved, [skill for skill in extras if not _is_instruction(skill)])
@@ -101,7 +92,6 @@ def build_claimed_task_extra_skill_state(
         EXTRA_SKILLS_VARIABLE: extras,
         UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
         CLAIMED_TASK_REQUIRES_TDD_VARIABLE: requires_tdd,
-        CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE: acceptance_test_paths,
         CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE: is_source_work,
     }
 

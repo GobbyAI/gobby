@@ -97,7 +97,7 @@ def serialized_size(value: dict[str, Any]) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
-def _semantic_length(value: str) -> int:
+def semantic_length(value: str) -> int:
     blank_line = value.rfind("\n\n")
     if blank_line >= 0:
         return blank_line + 2
@@ -139,7 +139,7 @@ def build_content_page(
     if low == 0 and remaining:
         raise ValueError("Skill response metadata leaves no room for content")
 
-    semantic_count = _semantic_length(remaining[:low]) if low < len(remaining) else low
+    semantic_count = semantic_length(remaining[:low]) if low < len(remaining) else low
     response = candidate(semantic_count)
     if serialized_size(response) > RESPONSE_BUDGET_BYTES:
         raise ValueError("Skill response exceeds the internal delivery budget")

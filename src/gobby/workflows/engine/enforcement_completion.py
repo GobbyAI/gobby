@@ -19,6 +19,7 @@ from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.offloaded_output import restore_offloaded_output
+from gobby.workflows.reserved_variables import rule_variable_is_writable
 from gobby.workflows.step_binding import pending_claim_handlers, release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
@@ -370,6 +371,7 @@ class EnforcementCompletionMixin:
                     variables,
                     tool_input,
                     tool_output,
+                    handler.get("protocol"),
                 )
                 for changed_name, changed_value in changes.items():
                     instance.variables[changed_name] = changed_value
@@ -402,7 +404,11 @@ class EnforcementCompletionMixin:
                     ctx,
                     str(handler.get("action") or "set_variable"),
                 )
-                if var_name is not None and ok:
+                if (
+                    var_name is not None
+                    and ok
+                    and rule_variable_is_writable(var_name, None, writer="set_variable")
+                ):
                     instance.variables[var_name] = var_value
                     variables[var_name] = var_value
                     vars_changed = True
@@ -643,7 +649,7 @@ class EnforcementCompletionMixin:
                     return None
                 cas_token = (str(instance.id), instance.updated_at)
 
-                # Reset consecutive-tool-block counters so failures from the
+                # Reset blocked-retry counters so failures from the
                 # previous step don't bleed into the new one
                 variables["consecutive_tool_blocks"] = 0
                 variables["_last_blocked_tool"] = ""

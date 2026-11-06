@@ -8,6 +8,8 @@
 
 mod common;
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -61,7 +63,7 @@ const PUBLISH: &str = "/_gobby/ws/publish";
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 const MAX_MESSAGE: u64 = 64 * 1024;
-const PUBLISH_BOUND: u64 = 128 * 1024 * 1024;
+const PUBLISH_BOUND: u64 = 16 * 1024 * 1024;
 /// A leg ID gdaemon never assigns in these tests.
 const UNREGISTERED_LEG: u64 = 4_000_000_000;
 const SUBSCRIBE_SESSION: &str = r#"{"type": "subscribe", "events": ["session_event"]}"#;
@@ -1027,7 +1029,7 @@ async fn bind_and_publish_admit_only_the_current_pair() {
     assert_eq!(
         call(&h.native, request, LOOPBACK).await.0,
         StatusCode::PAYLOAD_TOO_LARGE,
-        "declared body over 128 MiB"
+        "declared body over the publish bound"
     );
 
     // Operations apply in order, each publish operation once.
@@ -1793,5 +1795,109 @@ async fn browser_attach_receives_only_its_session_frames() {
     assert_eq!(
         frames_before_marker(&mut other, &mut other_leg, "unattached after publish").await,
         Vec::<Message>::new()
+    );
+}
+
+/// Allocations of at least this size are counted on a thread while it is armed.
+/// A publish body is at most PUBLISH_BOUND (16 MiB), so a copy of one is at least
+/// 8 MiB; a bind allocates about 4 KiB.
+const LARGE_ALLOC: usize = 8 * 1024 * 1024;
+
+thread_local! {
+    static ARMED: Cell<bool> = const { Cell::new(false) };
+    static LARGE_ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+struct CountLargeAllocs;
+
+// SAFETY: each method forwards to `System` with the caller's layout and pointer
+// unchanged. The thread-locals are const-initialized and hold no heap memory,
+// so counting never re-enters the allocator.
+unsafe impl GlobalAlloc for CountLargeAllocs {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() >= LARGE_ALLOC {
+            let _ = ARMED.try_with(|armed| {
+                if armed.get() {
+                    let _ = LARGE_ALLOCS.try_with(|count| count.set(count.get() + 1));
+                }
+            });
+        }
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountLargeAllocs = CountLargeAllocs;
+
+/// The publisher gives up after two seconds (`native_publish.py`). Deterministic
+/// checks: the bind probe status, no large allocation on the runtime thread
+/// before bind answers, and the max publish still running when bind answers.
+/// Wall-clock checks (#25270 criterion 3): bind answers within BIND_BUDGET and
+/// before PUBLISHER_DEADLINE.
+#[tokio::test]
+async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
+    const PUBLISH_COMPLETION: Duration = Duration::from_secs(120);
+    const PUBLISHER_DEADLINE: Duration = Duration::from_secs(2);
+    const BIND_BUDGET: Duration = Duration::from_millis(250);
+    let mut h = Harness::start().await;
+    h.bind().await;
+
+    // One body near PUBLISH_BOUND: 240 frames of exactly max_message_size, about 15 MiB.
+    let ops = json!([{
+        "op": "publish",
+        "filter": {"type": "task_event"},
+        "frames": vec!["x".repeat(MAX_MESSAGE as usize); 240],
+    }]);
+    let body = json!({"generation": h.generation, "ops": ops}).to_string();
+    let native = h.native.clone();
+    let token = h.token.clone();
+
+    LARGE_ALLOCS.with(|count| count.set(0));
+    ARMED.with(|armed| armed.set(true));
+    let started = Instant::now();
+    let publish = tokio::spawn({
+        let (native, token) = (native.clone(), token.clone());
+        async move {
+            let request = private_request(PUBLISH, Some(SECRET), Some(&token), body);
+            let peer: SocketAddr = LOOPBACK.parse().expect("peer address");
+            let response = timeout(PUBLISH_COMPLETION, publish::handle(&native, request, peer))
+                .await
+                .expect("max publish completes within its bound");
+            response.status()
+        }
+    });
+    // Let the publish start first, as a concurrent request would.
+    tokio::task::yield_now().await;
+    let probe = private_request(BIND, Some(SECRET), Some(&token), "{not json");
+    let (probe_status, _) = call(&native, probe, LOOPBACK).await;
+    let probe_elapsed = started.elapsed();
+    ARMED.with(|armed| armed.set(false));
+    let large_allocs = LARGE_ALLOCS.with(Cell::get);
+    assert_eq!(probe_status, StatusCode::BAD_REQUEST, "bind probe");
+    assert_eq!(
+        large_allocs, 0,
+        "the runtime thread copied a publish body before bind answered"
+    );
+    assert!(
+        !publish.is_finished(),
+        "bind answered only after the max publish completed"
+    );
+    assert!(
+        probe_elapsed < BIND_BUDGET,
+        "bind answered after {probe_elapsed:?} behind a max publish"
+    );
+    assert!(
+        probe_elapsed < PUBLISHER_DEADLINE,
+        "bind missed the publisher deadline behind a max publish"
+    );
+    let publish_status = publish.await.expect("publish task");
+    assert_eq!(
+        publish_status,
+        StatusCode::NO_CONTENT,
+        "publish at max batch"
     );
 }

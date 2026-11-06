@@ -92,3 +92,5 @@ Read the flow in context and test:
 The final copy is as short as it can be without removing meaning or recovery.
 
 When the language reads cleanly, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.
+
+_Version: 1.0.0_

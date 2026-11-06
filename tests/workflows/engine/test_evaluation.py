@@ -26,8 +26,7 @@ def test_repeat_denial_keeps_step_and_concrete_recovery() -> None:
         "[step-enforcement:backend-developer/load_required_skills] "
         "(full reason shown earlier this turn — scroll up)."
     )
-    for skill in ("development-discipline", "restraint", "tasks"):
-        assert f'get_skill", {{"name":"{skill}"}}' in collapsed
+    assert 'get_skill", {"names":["development-discipline","restraint","tasks"]}' in collapsed
     assert "<skill-name>" not in collapsed
 
 

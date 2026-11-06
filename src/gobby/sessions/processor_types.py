@@ -61,6 +61,7 @@ class ProcessorHost(Protocol):
     _restored_render_sessions: set[str]
     _mirror_start_offsets: dict[str, int]
     _mirror_eligible_ids: dict[str, set[str]]
+    _mirror_eligible_lines: dict[str, set[int]]
     _pending_turn_completions: dict[str, TurnCompletion]
     _index_appenders: dict[str, TranscriptIndexAppender]
     _observation_store: UnmodeledObservationStore
@@ -189,6 +190,13 @@ class ProcessorHost(Protocol):
         rendered: dict[str, Any],
         *,
         complete: bool,
+    ) -> None: ...
+
+    async def _mirror_text_blocks(
+        self,
+        session_id: str,
+        message_id: str,
+        texts: list[str],
     ) -> None: ...
 
     def _revive_expired_terminal_session(self, session_id: str) -> None: ...

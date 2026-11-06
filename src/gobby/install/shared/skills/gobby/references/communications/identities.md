@@ -19,3 +19,5 @@ sender identities. Do not use a mapping change to bypass Telegram allowlists.
 
 See [automatic responder access](../../../../../../../../docs/guides/comm-integrations.md#automatic-responder)
 and the [Telegram operator guide](../../../../../../../../docs/guides/telegram.md).
+
+_Version: 1.0.0_

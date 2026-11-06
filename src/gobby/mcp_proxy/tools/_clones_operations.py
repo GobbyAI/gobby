@@ -166,7 +166,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 "error": f"Clone path must be under {clone_git.CLONES_ROOT.expanduser()}",
             }
 
-        project_directory = (clone_git.CLONES_ROOT.expanduser().resolve() / project.name).resolve()
+        project_directory = clone_git.project_clone_directory(project.name)
         if resolved_path.parent != project_directory:
             return {
                 "success": False,

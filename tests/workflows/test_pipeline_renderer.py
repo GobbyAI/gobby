@@ -100,7 +100,7 @@ class TestRenderMcpArgumentsDropNone:
                 server="gobby-agents",
                 tool="spawn_agent",
                 arguments={
-                    "agent": "epic-reviewer",
+                    "agent": "fixture-definition-b155e932",
                     "task_id": "${{ inputs.task_id }}",
                     "provider": "${{ inputs.provider }}",
                     "model": "${{ inputs.model }}",
@@ -116,7 +116,7 @@ class TestRenderMcpArgumentsDropNone:
         rendered = renderer.render_step(step, context)
 
         assert rendered.mcp.arguments == {
-            "agent": "epic-reviewer",
+            "agent": "fixture-definition-b155e932",
             "task_id": "#18705",
             "provider": "codex",
         }
@@ -135,3 +135,25 @@ class TestRenderMcpArgumentsDropNone:
         )
 
         assert rendered == {"unset": None}
+
+
+def test_seat_prompt_reads_a_peer_output_only_once_the_peer_is_launched() -> None:
+    """A skipped seat's step output is None, so a prompt reads it only after the launch check."""
+    prompt = (
+        "${{ 'name ' + steps['beta'].output.get('child_session_id') "
+        "if 'beta' in steps.guard.output.launch "
+        "and steps['beta'].output.get('child_session_id') else 'not launched' }}"
+    )
+    renderer = StepRenderer(TemplateEngine())
+    skipped = {"guard": {"output": {"launch": ["alpha"]}}, "beta": {"output": None}}
+    launched = {
+        "guard": {"output": {"launch": ["beta"]}},
+        "beta": {"output": {"child_session_id": "session-1"}},
+    }
+
+    assert renderer.render_mcp_arguments({"prompt": prompt}, {"inputs": {}, "steps": skipped}) == {
+        "prompt": "not launched"
+    }
+    assert renderer.render_mcp_arguments({"prompt": prompt}, {"inputs": {}, "steps": launched}) == {
+        "prompt": "name session-1"
+    }

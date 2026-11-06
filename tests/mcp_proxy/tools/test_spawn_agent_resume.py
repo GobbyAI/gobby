@@ -30,9 +30,9 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def stored_agent_type() -> Iterator[MagicMock]:
-    """Every resume target is a stored 'developer' seat unless a test says otherwise."""
+    """Every resume target is a stored 'fixture-worker' seat unless a test says otherwise."""
     with patch.object(resume, "SessionVariableManager") as manager:
-        manager.return_value.get_variable_subset.return_value = {"_agent_type": "developer"}
+        manager.return_value.get_variable_subset.return_value = {"_agent_type": "fixture-worker"}
         yield manager.return_value.get_variable_subset
 
 
@@ -41,7 +41,9 @@ def _run(**fields: object) -> SimpleNamespace:
     return SimpleNamespace(resume_metadata_json={}, **fields)
 
 
-@pytest.mark.parametrize("requested", ["assistant", "orchestrator", "default", "custom-seat"])
+@pytest.mark.parametrize(
+    "requested", ["fixture-helper", "fixture-coordinator", "default", "custom-seat"]
+)
 @pytest.mark.parametrize("granted", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_resume_retype_follows_destination_definition(
@@ -80,10 +82,10 @@ async def test_resume_retype_follows_destination_definition(
 @pytest.mark.parametrize(
     ("stored", "requested"),
     [
-        ({"_agent_type": "developer"}, "orchestrator"),
-        ({"_agent_type": "lane-manager"}, "assistant"),
-        ({"_agent_type": "developer"}, None),
-        ({}, "orchestrator"),
+        ({"_agent_type": "fixture-worker"}, "fixture-coordinator"),
+        ({"_agent_type": "lane-manager"}, "fixture-helper"),
+        ({"_agent_type": "fixture-worker"}, None),
+        ({}, "fixture-coordinator"),
     ],
 )
 async def test_resume_refuses_a_different_agent_type(
@@ -126,9 +128,9 @@ async def test_resume_refuses_a_different_agent_type(
 @pytest.mark.parametrize(
     ("stored", "requested", "allow_retype"),
     [
-        ({}, "developer", True),
-        ({"_agent_type": "developer"}, "lane-manager", True),
-        ({"_agent_type": "orchestrator"}, "orchestrator", False),
+        ({}, "fixture-worker", True),
+        ({"_agent_type": "fixture-worker"}, "lane-manager", True),
+        ({"_agent_type": "fixture-coordinator"}, "fixture-coordinator", False),
         ({}, "default", False),
     ],
 )
@@ -312,7 +314,7 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
             project_path_explicit=explicit,
             reserved_run_id="new-run",
             agent_body=make_agent_definition(
-                name="developer",
+                name="fixture-worker",
                 model=definition_model,
                 prompts={"agent": "Continue"},
                 step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="load_skills")]),
@@ -452,6 +454,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
         branch_name="lane-3",
         base_branch="main",
         project_id="project",
+        task_id=None,
     )
     worktrees = MagicMock()
     worktrees.resolve_reference.return_value = lane.id
@@ -490,7 +493,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
             target_project_id="project",
             resume_session_id="gobby#123",
             reserved_run_id="new-run",
-            agent_body=make_agent_definition(name="developer", prompts={"agent": "Continue"}),
+            agent_body=make_agent_definition(name="fixture-worker", prompts={"agent": "Continue"}),
             worktree_storage=worktrees,
             git_manager=WorktreeGitManager(tmp_path / "repo"),
             db=MagicMock(),
@@ -589,6 +592,7 @@ async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
         branch_name="task-branch",
         base_branch="main",
         project_id="project",
+        task_id=None,
     )
     worktrees = MagicMock()
     worktrees.resolve_reference.return_value = lane.id
@@ -636,7 +640,7 @@ async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
             reserved_run_id="new-run",
             project_path=project_path,
             project_path_explicit=explicit_call,
-            agent_body=make_agent_definition(name="developer", prompts={"agent": "Continue"}),
+            agent_body=make_agent_definition(name="fixture-worker", prompts={"agent": "Continue"}),
             worktree_storage=worktrees,
             git_manager=git_manager,
             git_manager_resolver=lambda _project_id: git_manager,

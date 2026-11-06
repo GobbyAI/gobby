@@ -1,4 +1,4 @@
-"""gobby-agents cold_start_admin: the /gobby admin and /gobby assistant pane cold start."""
+"""gobby-agents cold_start_admin: the /gobby admin and /gobby fixture-helper pane cold start."""
 
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ def _local_machine_identity() -> Iterator[None]:
 async def stack(temp_db: HubDatabase, sample_project: dict[str, Any]) -> AsyncIterator[_Stack]:
     LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID, hostname="local")
     for seat, command, counterpart in (
-        ("assistant", "assistant", "orchestrator"),
-        ("orchestrator", "admin", "assistant"),
+        ("fixture-helper", "fixture-helper", "fixture-coordinator"),
+        ("fixture-coordinator", "admin", "fixture-helper"),
     ):
         seed_seat(
             temp_db,
@@ -183,50 +183,57 @@ def _ref(stack: _Stack, session: Session) -> str:
 
 
 async def test_cold_start_twice_from_each_side_opens_one_counterpart_pane(stack: _Stack) -> None:
-    """The Orchestrator pane opens the Assistant pane once; every re-run reuses it."""
-    workspace_id, orchestrator_pane = await _operator_pane(stack)
-    orchestrator = _pane_session(stack, orchestrator_pane, "orchestrator-pane", "claude")
+    """The Coordinator pane opens the Helper pane once; every re-run reuses it."""
+    workspace_id, coordinator_pane = await _operator_pane(stack)
+    coordinator = _pane_session(stack, coordinator_pane, "coordinator-pane", "claude")
     spawns = stack.native.create_calls
     writes = len(stack.native.write_log)
 
-    first = await _cold_start(stack, orchestrator, "orchestrator")
+    first = await _cold_start(stack, coordinator, "fixture-coordinator")
     assert first["success"] is True, first
     assert (first["definition"], first["created"]) == ("applied", True)
-    assert first["session"] == _ref(stack, orchestrator)
-    assistant_pane_id = first["counterpart"]["pane"]
-    assistant_pane = _pane(stack, workspace_id, assistant_pane_id)
-    assert (assistant_pane.tab_id, assistant_pane.role) == (orchestrator_pane.tab_id, "assistant")
+    assert first["session"] == _ref(stack, coordinator)
+    helper_pane_id = first["counterpart"]["pane"]
+    helper_pane = _pane(stack, workspace_id, helper_pane_id)
+    assert (helper_pane.tab_id, helper_pane.role) == (
+        coordinator_pane.tab_id,
+        "fixture-helper",
+    )
     assert first["counterpart"]["session"] is None
     assert stack.native.create_calls == spawns + 1
-    assert stack.native.write_log[writes] == ("text", "claude '/gobby assistant'\n")
+    assert stack.native.write_log[writes] == ("text", "claude '/gobby fixture-helper'\n")
     launched = len(stack.native.write_log)
 
-    again = await _cold_start(stack, orchestrator, "orchestrator")
+    again = await _cold_start(stack, coordinator, "fixture-coordinator")
     assert again["success"] is True, again
     assert (again["definition"], again["created"]) == ("unchanged", False)
-    assert again["counterpart"] == {"role": "assistant", "pane": assistant_pane_id, "session": None}
+    assert again["counterpart"] == {
+        "role": "fixture-helper",
+        "pane": helper_pane_id,
+        "session": None,
+    }
 
-    assistant = _pane_session(stack, assistant_pane, "assistant-pane", "claude")
+    helper = _pane_session(stack, helper_pane, "helper-pane", "claude")
     for run in range(2):
-        reply = await _cold_start(stack, assistant, "assistant")
+        reply = await _cold_start(stack, helper, "fixture-helper")
         assert reply["success"] is True, reply
         assert reply["created"] is False
         assert reply["definition"] == ("applied" if run == 0 else "unchanged")
-        assert reply["session"] == _ref(stack, assistant)
+        assert reply["session"] == _ref(stack, helper)
         assert reply["counterpart"] == {
-            "role": "orchestrator",
-            "pane": orchestrator_pane.id,
-            "session": _ref(stack, orchestrator),
+            "role": "fixture-coordinator",
+            "pane": coordinator_pane.id,
+            "session": _ref(stack, coordinator),
         }
 
-    last = await _cold_start(stack, orchestrator, "orchestrator")
+    last = await _cold_start(stack, coordinator, "fixture-coordinator")
     assert last["created"] is False
-    assert last["counterpart"]["session"] == _ref(stack, assistant)
+    assert last["counterpart"]["session"] == _ref(stack, helper)
     assert stack.native.create_calls == spawns + 1
     assert len(stack.native.write_log) == launched
-    assert (_agent_type(stack, orchestrator), _agent_type(stack, assistant)) == (
-        "orchestrator",
-        "assistant",
+    assert (_agent_type(stack, coordinator), _agent_type(stack, helper)) == (
+        "fixture-coordinator",
+        "fixture-helper",
     )
 
 
@@ -257,7 +264,7 @@ async def test_builtin_name_needs_enabled_cold_start_configuration(
     stack: _Stack, enabled: bool, configured: bool
 ) -> None:
     definitions = AgentDefinitionManager(stack.db)
-    row = definitions.get_by_name("orchestrator")
+    row = definitions.get_by_name("fixture-coordinator")
     assert row is not None
     body = dict(row.definition_json)
     body["cold_start_commands"] = ["admin"] if configured else []
@@ -265,7 +272,7 @@ async def test_builtin_name_needs_enabled_cold_start_configuration(
     _, pane = await _operator_pane(stack)
     caller = _pane_session(stack, pane, "unconfigured-pane", "claude")
     spawns = stack.native.create_calls
-    result = await _cold_start(stack, caller, "orchestrator")
+    result = await _cold_start(stack, caller, "fixture-coordinator")
     assert result["success"] is False
     assert stack.native.create_calls == spawns
     assert _agent_type(stack, caller) is None
@@ -296,12 +303,12 @@ async def test_ambiguous_counterpart_alias_does_not_apply_or_split(stack: _Stack
         "other-companion",
         surfaces=["persona"],
         prompts={"persona": "Another companion."},
-        cold_start_commands=["assistant"],
+        cold_start_commands=["fixture-helper"],
     )
     _, pane = await _operator_pane(stack)
     caller = _pane_session(stack, pane, "ambiguous-pair", "claude")
     spawns = stack.native.create_calls
-    result = await _cold_start(stack, caller, "orchestrator")
+    result = await _cold_start(stack, caller, "fixture-coordinator")
     assert result["success"] is False
     assert stack.native.create_calls == spawns
     assert _agent_type(stack, caller) is None
@@ -309,7 +316,7 @@ async def test_ambiguous_counterpart_alias_does_not_apply_or_split(stack: _Stack
 
 async def test_pipeline_counterpart_refuses_before_applying_or_splitting(stack: _Stack) -> None:
     definitions = AgentDefinitionManager(stack.db)
-    row = definitions.get_by_name("assistant")
+    row = definitions.get_by_name("fixture-helper")
     assert row is not None
     body = dict(row.definition_json)
     body["workflows"] = {**body["workflows"], "pipeline": "custom-pipeline"}
@@ -317,7 +324,7 @@ async def test_pipeline_counterpart_refuses_before_applying_or_splitting(stack: 
     _, pane = await _operator_pane(stack)
     caller = _pane_session(stack, pane, "pipeline-pair", "claude")
     spawns = stack.native.create_calls
-    result = await _cold_start(stack, caller, "orchestrator")
+    result = await _cold_start(stack, caller, "fixture-coordinator")
     assert result["success"] is False
     assert stack.native.create_calls == spawns
     assert _agent_type(stack, caller) is None
@@ -325,21 +332,21 @@ async def test_pipeline_counterpart_refuses_before_applying_or_splitting(stack: 
 
 async def test_a_dead_counterpart_pane_is_replaced(stack: _Stack) -> None:
     """A pane row whose terminal exited no longer counts; codex launches with its prefix."""
-    workspace_id, assistant_pane = await _operator_pane(stack)
-    assistant = _pane_session(stack, assistant_pane, "assistant-pane", "codex")
+    workspace_id, helper_pane = await _operator_pane(stack)
+    helper = _pane_session(stack, helper_pane, "helper-pane", "codex")
     spawns = stack.native.create_calls
 
-    first = await _cold_start(stack, assistant, "assistant")
+    first = await _cold_start(stack, helper, "fixture-helper")
     assert first["success"] is True, first
     assert first["created"] is True
     dead = _pane(stack, workspace_id, first["counterpart"]["pane"])
-    assert dead.role == "orchestrator" and dead.terminal_id is not None
+    assert dead.role == "fixture-coordinator" and dead.terminal_id is not None
     assert ("text", "codex '$gobby admin'\n") in stack.native.write_log
     terminal = stack.terminals.get(dead.terminal_id)
     assert terminal is not None
     assert stack.terminals.transition_for_test(terminal.id, terminal.state, "exited") is not None
 
-    second = await _cold_start(stack, assistant, "assistant")
+    second = await _cold_start(stack, helper, "fixture-helper")
     assert second["created"] is True, second
     assert second["counterpart"]["pane"] != dead.id
     assert stack.native.create_calls == spawns + 2
@@ -348,11 +355,11 @@ async def test_a_dead_counterpart_pane_is_replaced(stack: _Stack) -> None:
 @pytest.mark.parametrize(
     ("source", "role", "line"),
     [
-        ("agy", "orchestrator", "agy -i '/gobby assistant'"),
-        ("claude", "assistant", "claude '/gobby admin'"),
-        ("codex", "orchestrator", "codex '$gobby assistant'"),
-        ("droid", "orchestrator", "droid '/gobby assistant'"),
-        ("grok", "assistant", "grok '/gobby admin'"),
+        ("agy", "fixture-coordinator", "agy -i '/gobby fixture-helper'"),
+        ("claude", "fixture-helper", "claude '/gobby admin'"),
+        ("codex", "fixture-coordinator", "codex '$gobby fixture-helper'"),
+        ("droid", "fixture-coordinator", "droid '/gobby fixture-helper'"),
+        ("grok", "fixture-helper", "grok '/gobby admin'"),
     ],
 )
 async def test_the_counterpart_cli_starts_interactively_with_its_command(
@@ -373,18 +380,18 @@ async def test_the_counterpart_cli_starts_interactively_with_its_command(
 async def test_refusals_open_no_pane(stack: _Stack) -> None:
     """A role change, a pane-less caller and an unknown role each refuse without a split."""
     _, pane = await _operator_pane(stack)
-    orchestrator = _pane_session(stack, pane, "orchestrator-pane", "claude")
-    opened = await _cold_start(stack, orchestrator, "orchestrator")
+    coordinator = _pane_session(stack, pane, "coordinator-pane", "claude")
+    opened = await _cold_start(stack, coordinator, "fixture-coordinator")
     assert opened["success"] is True, opened
     assert opened["created"] is True
     spawns = stack.native.create_calls
 
-    switched = await _cold_start(stack, orchestrator, "assistant")
+    switched = await _cold_start(stack, coordinator, "fixture-helper")
     assert (switched["success"], switched["error_code"]) == (
         False,
         "role_change_requires_relaunch",
     )
-    unknown = await _cold_start(stack, orchestrator, "triage")
+    unknown = await _cold_start(stack, coordinator, "fixture-definition-0f916789")
     assert (unknown["success"], unknown["error_code"]) == (False, "invalid_role")
     detached = stack.sessions.register(
         external_id="no-pane",
@@ -392,16 +399,16 @@ async def test_refusals_open_no_pane(stack: _Stack) -> None:
         source="claude",
         project_id=stack.project_id,
     )
-    stranded = await _cold_start(stack, detached, "assistant")
+    stranded = await _cold_start(stack, detached, "fixture-helper")
     assert stranded["success"] is True, stranded
-    assert stranded["counterpart"]["session"] == _ref(stack, orchestrator)
+    assert stranded["counterpart"]["session"] == _ref(stack, coordinator)
     lone = stack.sessions.register(
-        external_id="no-pane-orchestrator",
+        external_id="no-pane-coordinator",
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=stack.project_id,
     )
-    stack.sessions.update_status(orchestrator.id, "expired")
-    refused = await _cold_start(stack, lone, "orchestrator")
+    stack.sessions.update_status(coordinator.id, "expired")
+    refused = await _cold_start(stack, lone, "fixture-coordinator")
     assert (refused["success"], refused["error_code"]) == (False, "pane_unavailable")
     assert stack.native.create_calls == spawns

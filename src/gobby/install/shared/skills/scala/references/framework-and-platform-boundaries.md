@@ -44,3 +44,5 @@
   precision, and versioning rules at serialization boundaries.
 - Update generator inputs and regenerate outputs through the repository command.
   Keep hand-written behavior in adapters rather than generated files.
+
+_Version: 1.0.0_

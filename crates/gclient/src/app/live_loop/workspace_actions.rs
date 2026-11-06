@@ -71,11 +71,22 @@ pub(super) fn split_viewport(
     .map_or((None, None), viewport_of)
 }
 
+/// The toast for a placement that `placement_op` refused on a daemon tab. The
+/// refusal comes only from a missing project or an unresolved focused pane.
+pub(super) fn refusal_message(workspace: &Workspace<LiveDaemon>) -> &'static str {
+    if workspace.project_id().is_some() {
+        "Wait for the focused pane before splitting"
+    } else {
+        "Select a project before opening a shell"
+    }
+}
+
 /// The op that places `terminal_id` per `placement` when the window views a
 /// daemon workspace: a new tab of the focused project, or a split of the
 /// active daemon tab's focused pane (a bar with no tab yet gets a tab).
-/// `None` keeps the chrome-only placement: no model, no project, or a
-/// local tab active.
+/// `None` is no daemon op. With no model, no project, or a local tab active,
+/// the caller places the pane chrome-only. A split whose daemon tab's focus
+/// names no pane yet is refused: the caller must not place it chrome-only.
 pub(super) fn placement_op(
     workspace: &Workspace<LiveDaemon>,
     chrome: &Chrome,
@@ -96,7 +107,7 @@ pub(super) fn placement_op(
         return None;
     }
     let focused =
-        active_daemon_tab(chrome).and_then(|tab| daemon_pane_id(chrome, chrome.tab_focus(tab)));
+        active_daemon_tab(chrome).map(|tab| daemon_pane_id(chrome, chrome.tab_focus(tab)));
     let terminal_id = terminal_id.map(str::to_owned);
     let split = |pane, axis| {
         let (rows, cols) =
@@ -124,8 +135,11 @@ pub(super) fn placement_op(
             cols,
             node: None,
         },
-        (Placement::SplitRight, Some(pane)) => split(pane, LayoutAxis::Horizontal),
-        (Placement::SplitDown, Some(pane)) => split(pane, LayoutAxis::Vertical),
+        // The daemon tab's focus names no daemon pane yet, so there is nothing
+        // to split. Refuse; a tab.create here would open a second tab instead.
+        (_, Some(None)) => return None,
+        (Placement::SplitRight, Some(Some(pane))) => split(pane, LayoutAxis::Horizontal),
+        (Placement::SplitDown, Some(Some(pane))) => split(pane, LayoutAxis::Vertical),
     })
 }
 

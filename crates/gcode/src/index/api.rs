@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 mod calls;
 pub mod file_state;
 
-use calls::insert_call;
 pub use calls::upsert_calls;
 
 pub use crate::index::indexer::{
@@ -676,39 +675,97 @@ pub fn promote_inheritance_row(
     Ok(())
 }
 
-/// Replace a pending `local_import` call row with its resolved form. The exact
-/// pending row (identified by its persisted columns) is deleted and the
-/// `resolved` call — a `Symbol` target on a hit, `Unresolved` on a miss — is
-/// inserted in its place. Used by the post-write local-import resolution pass.
-pub fn promote_local_import_call(
+const LOCAL_IMPORT_PROMOTION_BATCH_SIZE: usize = 500;
+
+/// Replace pending `local_import` call rows with their resolved forms. Each
+/// `originals[i]` is a pending row (identified by its persisted columns) and
+/// `resolved[i]` replaces it: a `Symbol` target on a hit, `Unresolved` on a miss.
+/// Each chunk runs one batched delete and one batched insert. Used by the
+/// post-write local-import resolution pass.
+pub fn promote_local_import_calls(
     conn: &mut impl GenericClient,
     project_id: &str,
-    original: &CallRelation,
-    resolved: &CallRelation,
+    originals: &[CallRelation],
+    resolved: &[CallRelation],
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        originals.len() == resolved.len(),
+        "local-import promotion needs one resolved call per pending row"
+    );
     let project_uuid = id_param(project_id)?;
-    // Pending local_import rows never carry a callee, and NULL caller means
-    // module scope, so both uuid predicates are NULL-aware.
-    let caller_symbol_id = opt_id_param(&original.caller_symbol_id)?;
+    for (pending, replacements) in originals
+        .chunks(LOCAL_IMPORT_PROMOTION_BATCH_SIZE)
+        .zip(resolved.chunks(LOCAL_IMPORT_PROMOTION_BATCH_SIZE))
+    {
+        delete_pending_local_import_calls(conn, &project_uuid, pending)?;
+        let rows = pending
+            .iter()
+            .zip(replacements)
+            .map(|(original, replacement)| (original.content_hash.as_str(), replacement))
+            .collect::<Vec<_>>();
+        calls::insert_call_batch(conn, &project_uuid, &rows)?;
+    }
+    Ok(())
+}
+
+/// Delete each pending row by its persisted columns. Pending rows carry no callee,
+/// and a NULL caller means module scope, so the caller predicate is NULL-aware.
+fn delete_pending_local_import_calls(
+    conn: &mut impl GenericClient,
+    project_uuid: &uuid::Uuid,
+    originals: &[CallRelation],
+) -> anyhow::Result<()> {
+    let caller_symbol_ids = originals
+        .iter()
+        .map(|call| opt_id_param(&call.caller_symbol_id))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let callee_names = originals
+        .iter()
+        .map(|call| call.callee_name.clone())
+        .collect::<Vec<_>>();
+    let external_modules = originals
+        .iter()
+        .map(|call| call.callee_external_module.clone().unwrap_or_default())
+        .collect::<Vec<_>>();
+    let file_paths = originals
+        .iter()
+        .map(|call| call.file_path.clone())
+        .collect::<Vec<_>>();
+    let content_hashes = originals
+        .iter()
+        .map(|call| call.content_hash.clone())
+        .collect::<Vec<_>>();
+    let lines = originals
+        .iter()
+        .map(|call| to_i32(call.line))
+        .collect::<Vec<_>>();
     conn.execute(
-        "DELETE FROM code_calls
-         WHERE project_id = $1
-           AND caller_symbol_id IS NOT DISTINCT FROM $2
-            AND callee_symbol_id IS NULL
-            AND callee_name = $3 AND callee_target_kind = 'local_import'
-            AND callee_external_module = $4 AND file_path = $5
-            AND content_hash = $6 AND line = $7",
+        "DELETE FROM code_calls AS c
+         USING unnest(
+            $2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::int4[]
+         ) AS p(
+            caller_symbol_id, callee_name, callee_external_module,
+            file_path, content_hash, line
+         )
+         WHERE c.project_id = $1
+           AND c.callee_symbol_id IS NULL
+           AND c.callee_target_kind = 'local_import'
+           AND c.caller_symbol_id IS NOT DISTINCT FROM p.caller_symbol_id
+           AND c.callee_name = p.callee_name
+           AND c.callee_external_module = p.callee_external_module
+           AND c.file_path = p.file_path
+           AND c.content_hash = p.content_hash
+           AND c.line = p.line",
         &[
-            &project_uuid,
-            &caller_symbol_id,
-            &original.callee_name,
-            &original.callee_external_module.as_deref().unwrap_or(""),
-            &original.file_path,
-            &original.content_hash,
-            &to_i32(original.line),
+            project_uuid,
+            &caller_symbol_ids,
+            &callee_names,
+            &external_modules,
+            &file_paths,
+            &content_hashes,
+            &lines,
         ],
     )?;
-    insert_call(conn, project_id, &original.content_hash, resolved)?;
     Ok(())
 }
 

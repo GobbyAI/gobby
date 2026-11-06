@@ -18,7 +18,7 @@ from gobby.workflows.agent_resolver import (
 RECIPIENT_REFUSED = "message_recipient_not_allowed"
 REFUSAL = (
     "The recipient definition does not admit this sender's capabilities. "
-    "Report to the report_to session named in your launch prompt, or through Triage. "
+    "Report to the report_to session named in your launch prompt, or through your report route. "
     "Use gobby-agents:send_message(target='session', target_id=<report route>)."
 )
 

@@ -40,7 +40,7 @@ def test_seat_without_provider_inherits_live_provider_or_resolver_fallback(
     """
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
         {
-            "agent": "developer",
+            "agent": "fixture-builder",
             "prompt": "Claim the assigned task.",
             "provider": "${{ inputs.developer_provider }}",
         },
@@ -57,7 +57,7 @@ def test_seat_without_provider_inherits_live_provider_or_resolver_fallback(
         caller_session_id="d6a9f756",
         parent_session_id="launcher",
     )
-    _create_agent(definition_db, "developer", body={"provider": "inherit"})
+    _create_agent(definition_db, "fixture-builder", body={"provider": "inherit"})
     agent = resolve_agent(arguments["agent"], definition_db, cli_source=inherited)
     assert agent is not None
     provider = resolve_spawn_provider(
@@ -154,12 +154,12 @@ class TestResolveAgentLookup:
     def test_simple_lookup(self, definition_db: PostgresHubDatabase) -> None:
         _create_agent(
             definition_db,
-            "developer",
+            "fixture-builder",
             body={"prompts": {"agent": "Backend developer"}, "provider": "claude"},
         )
-        result = resolve_agent("developer", definition_db)
+        result = resolve_agent("fixture-builder", definition_db)
         assert result is not None
-        assert result.name == "developer"
+        assert result.name == "fixture-builder"
         assert result.prompt_for("agent") == "Backend developer"
         assert result.provider == "claude"
         assert result.step_workflow is None
@@ -182,7 +182,10 @@ class TestResolveAgentLookup:
     def test_skips_non_agent_type(self, definition_db: PostgresHubDatabase) -> None:
         RuleDefinitionManager(definition_db).create(
             name="my-rule",
-            definition_json={"event": "before_tool", "effect": {"type": "block", "reason": "no"}},
+            definition_json={
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "no"}],
+            },
             source="custom",
         )
         result = resolve_agent("my-rule", definition_db)
@@ -195,7 +198,10 @@ class TestResolveAgentLookup:
         _create_agent(definition_db, "shared-name", body={"provider": "codex"})
         RuleDefinitionManager(definition_db).create(
             name="shared-name",
-            definition_json={"event": "before_tool", "effects": []},
+            definition_json={
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "no"}],
+            },
             project_id=project_id,
             source="custom",
         )

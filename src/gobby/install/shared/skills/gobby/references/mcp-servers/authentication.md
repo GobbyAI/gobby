@@ -36,4 +36,6 @@ requirements: load [oauth](oauth.md).
 
 Guide: [Authentication](../../../../../../../../docs/guides/mcp-tools.md#authentication).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

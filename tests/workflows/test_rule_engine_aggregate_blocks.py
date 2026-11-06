@@ -130,19 +130,19 @@ class TestAggregateBlocks:
         )
         _insert_rule(
             manager,
-            "require-claimed-task-required-skills",
+            "fixture-shared-skill-gate",
             [RuleEffect(type="block", reason=python_directive)],
             priority=10,
         )
         _insert_rule(
             manager,
-            "require-python-skill",
+            "fixture-definition-06531cd3",
             [RuleEffect(type="block", reason=python_directive)],
             priority=20,
         )
         _insert_rule(
             manager,
-            "require-restraint-skill",
+            "fixture-definition-a19da299",
             [RuleEffect(type="block", reason=restraint_directive)],
             priority=30,
         )
@@ -153,8 +153,8 @@ class TestAggregateBlocks:
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
             f"{SKILL_BLOCK_ATOMICITY_NOTICE}\n"
             "Multiple gates blocked while retrying Edit.\n"
-            f"1. [require-claimed-task-required-skills] {python_directive}\n"
-            f"2. [require-restraint-skill] {restraint_directive}"
+            f"1. [fixture-shared-skill-gate] {python_directive}\n"
+            f"2. [fixture-definition-a19da299] {restraint_directive}"
         )
 
     def test_aggregate_formatter_omits_placeholder_retry_target(self) -> None:
@@ -174,7 +174,7 @@ class TestAggregateBlocks:
     ) -> None:
         _insert_rule(
             manager,
-            "require-code-review-skill",
+            "fixture-definition-585d1086",
             [
                 RuleEffect(
                     type="block",
@@ -384,6 +384,47 @@ class TestAggregateBlocks:
         )
         assert variables["nudge_fired"] is True
         assert second.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_lookahead_acknowledgement_keeps_originating_row_authority(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A lookahead gate acknowledges a reserved name only through its own trusted row."""
+        _insert_rule(
+            manager,
+            "mandatory-gate",
+            [RuleEffect(type="block", reason="Load mandatory skill")],
+            priority=10,
+            when="not variables.get('mandatory_skill_loaded')",
+        )
+        internal_body = RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            when="not variables.get('unlocked_tools')",
+            effects=[
+                RuleEffect(
+                    type="block",
+                    reason="Internal tool unlock nudge",
+                    acknowledge_variable="unlocked_tools",
+                )
+            ],
+        )
+        manager.create(
+            name="internal-ack-gate",
+            source="installed",
+            tags=["default", "gobby"],
+            definition_json=json.dumps(internal_body.model_dump(mode="json")),
+            priority=20,
+            enabled=True,
+        )
+        variables: dict[str, Any] = {}
+        engine = RuleEngine(db)
+
+        first = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
+        variables["mandatory_skill_loaded"] = True
+        await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
+
+        assert "[internal-ack-gate]" in (first.reason or "")
+        assert variables["unlocked_tools"] is True
 
     @pytest.mark.asyncio
     async def test_single_acknowledged_block_only_fires_once(

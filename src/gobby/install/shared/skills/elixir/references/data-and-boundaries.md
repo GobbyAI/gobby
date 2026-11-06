@@ -35,3 +35,5 @@
 - Validate events and params before changing state.
 - Keep HEEx/EEx changes paired with component tests or render assertions when
   behavior changes.
+
+_Version: 1.0.0_

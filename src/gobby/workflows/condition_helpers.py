@@ -18,6 +18,8 @@ from gobby.config.shell_lexing import shell_command_segments
 from gobby.config.validation_detection import (
     is_validation_command as _config_is_validation_command,
 )
+from gobby.hooks._normalization_base_commands import UV_VALUE_OPTIONS
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
@@ -25,6 +27,43 @@ from gobby.tasks.transcript_outcomes import (
 from gobby.utils.python_source import parse_agent_source
 
 logger = logging.getLogger(__name__)
+
+
+def task_label_update_allowed(
+    task_manager: LocalTaskManager | None, session_id: Any, tool_input: Any
+) -> bool:
+    """Allow only label patches admitted by the caller's stored team grant."""
+    if task_manager is None or not isinstance(session_id, str) or not session_id:
+        return False
+    if not isinstance(tool_input, Mapping):
+        return False
+    labels = tool_input.get("labels")
+    reference = tool_input.get("task_id")
+    if (
+        not isinstance(reference, str)
+        or not isinstance(labels, list)
+        or any(not isinstance(label, str) for label in labels)
+        or any(
+            value is not None
+            for key, value in tool_input.items()
+            if key not in {"task_id", "labels", "server_name", "tool_name"}
+        )
+    ):
+        return False
+    from gobby.storage.sessions import SessionManager
+    from gobby.tasks.lifecycle_access import can_add_team_task_labels
+
+    try:
+        caller = SessionManager(task_manager.db).get(session_id)
+        if caller is None or caller.project_id is None:
+            return False
+        task_id = task_manager.resolve_task_reference(reference, caller.project_id)
+        return can_add_team_task_labels(task_manager.db, caller.id, task_manager.get_task(task_id))
+    except Exception:
+        # This predicate controls an exception to a blocking rule: unavailable
+        # authority must leave the block armed, including on storage failures.
+        logger.exception("Unable to resolve task label authority")
+        return False
 
 
 TaskIdRef = str | int | UUID | bytes | bytearray | memoryview
@@ -38,7 +77,7 @@ _GIT_GLOBAL_FLAGS = frozenset(
     {"--no-pager", "--paginate", "-p", "--bare", "--literal-pathspecs", "--no-optional-locks"}
 )
 # Git subcommands that record reviewable content. Kept in sync with the
-# command_pattern in skill-discovery/require-code-review-skill.yaml.
+# command_pattern in the selected review rule; resolve its source through the rule registry.
 _REVIEW_GATED_GIT_SUBCOMMANDS = frozenset({"commit", "merge", "rebase", "cherry-pick", "revert"})
 _TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES = frozenset(
     {
@@ -503,7 +542,7 @@ def shell_command_runs_ocr_review(command: Any) -> bool:
         return False
 
     for segment in shell_command_segments(command):
-        tokens = _strip_shell_command_prefixes(segment)
+        tokens = _strip_uv_run(_strip_shell_command_prefixes(segment))
         if not tokens or _executable_name(tokens[0]) != "ocr":
             continue
         for index in range(1, len(tokens) - 1):
@@ -515,8 +554,7 @@ def shell_command_runs_ocr_review(command: Any) -> bool:
 def shell_command_consumes_code_review(command: Any) -> bool:
     """Return whether any segment runs a git operation that spends a code review.
 
-    Paired with the ``command_pattern`` in
-    ``skill-discovery/require-code-review-skill.yaml``: ``set_variable`` effects
+    Paired with the ``command_pattern`` in the configured review rule. ``set_variable`` effects
     take no command selectors, so the after_tool tracker matches here in ``when``
     while the block effect matches with a regex.
 
@@ -535,6 +573,21 @@ def shell_command_consumes_code_review(command: Any) -> bool:
         _git_subcommand(segment) in _REVIEW_GATED_GIT_SUBCOMMANDS
         for segment in shell_command_segments(command)
     )
+
+
+def _strip_uv_run(tokens: list[str]) -> list[str]:
+    """Return the command ``uv run [options]`` launches, or ``tokens`` unchanged."""
+    if len(tokens) < 2 or _executable_name(tokens[0]) != "uv" or tokens[1] != "run":
+        return tokens
+    index = 2
+    while index < len(tokens) and tokens[index].startswith("-"):
+        word = tokens[index]
+        index += 1
+        if word == "--":
+            break
+        if "=" not in word and word in UV_VALUE_OPTIONS:
+            index += 1
+    return tokens[index:]
 
 
 def _strip_shell_command_prefixes(tokens: list[str]) -> list[str]:

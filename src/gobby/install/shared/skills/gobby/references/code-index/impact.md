@@ -31,4 +31,6 @@ consult the route guide rather than translating arguments mechanically.
 
 Guide: [Dependency graph](../../../../../../../../docs/guides/gcode-user-guide.md#dependency-graph).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

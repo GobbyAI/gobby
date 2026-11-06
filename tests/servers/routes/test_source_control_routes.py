@@ -2070,6 +2070,7 @@ def test_create_client_worktree(
 ) -> None:
     """Create client worktrees and translate the documented request errors."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path / ".gobby/worktrees")
     storage = MagicMock()
     git_manager = MagicMock()
     git_manager.repo_path = "/repo"

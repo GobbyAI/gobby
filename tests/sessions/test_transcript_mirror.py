@@ -30,10 +30,10 @@ TS = datetime(2026, 10, 10, tzinfo=UTC)
 @pytest.mark.parametrize(
     "agent_type,definition_title,seat",
     [
-        ("archivist", None, "Archivist"),
+        ("fixture-definition-599e0437", None, "Fixture Definition 599E0437"),
         ("lane-manager", None, "Lane Manager"),
-        ("code-reviewer", None, "Code Reviewer"),
-        ("developer", "Lane 1 Developer", "Lane 1 Developer"),
+        ("fixture-definition-e08ba693", None, "Fixture Definition E08Ba693"),
+        ("fixture-worker", "Lane 1 Developer", "Lane 1 Developer"),
     ],
 )
 async def test_telegram_provisional_title_uses_persisted_seat(
@@ -712,12 +712,10 @@ async def test_text_tool_text_waits_for_whole_turn_completion(
     send.assert_not_awaited()
     assert (await target.complete_turn(session_id, suffix)).flushed
     assert (await target.complete_turn(session_id)).flushed
-    send.assert_awaited_once()
+    assert [call.args[0].content for call in send.call_args_list] == [prefix, suffix]
     rows = manager.store.list_messages(session_id=session_id)
-    assert len(rows) == 1
-    assert rows[0].content == prefix + "\n\n" + suffix
-    assert rows[0].status == "sent"
-    assert send.call_args.args[0].content == rows[0].content
+    assert sorted(row.content for row in rows) == sorted([prefix, suffix])
+    assert {row.status for row in rows} == {"sent"}
 
 
 @pytest.mark.parametrize("delivered", [False, True])
@@ -991,8 +989,7 @@ async def test_lagged_tool_result_keeps_pending_completion(
     with transcript.open("a") as stream:
         stream.write(native_line("assistant", "a2", "Final."))
     await target._process_all_sessions()
-    send.assert_awaited_once()
-    assert send.call_args.args[0].content.endswith("Final.")
+    assert [call.args[0].content for call in send.call_args_list] == ["Working.", "Final."]
 
 
 @pytest.mark.parametrize("next_id", ["a2", "a2b"])
@@ -1208,3 +1205,97 @@ async def test_consecutive_completed_assistant_turns_have_separate_reservations(
     messages = manager.store.list_messages(session_id=session_id)
     assert {message.content for message in messages} == {"one", "two"}
     assert len({message.id for message in messages}) == 2
+
+
+def _claude_tool_use(message_id: str, call_id: str) -> str:
+    content = [{"type": "tool_use", "id": call_id, "name": "probe", "input": {}}]
+    return json.dumps({"type": "assistant", "message": {"id": message_id, "content": content}})
+
+
+def _claude_tool_result(call_id: str) -> str:
+    content = [{"type": "tool_result", "tool_use_id": call_id, "content": "ok"}]
+    return json.dumps({"type": "user", "message": {"content": content}})
+
+
+def _claude_text(role: str, message_id: str, text: str) -> str:
+    return native_line(role, message_id, text).rstrip("\n")
+
+
+def _codex_message(role: str, text: str) -> str:
+    kind = "output_text" if role == "assistant" else "input_text"
+    payload = {"type": "message", "role": role, "content": [{"type": kind, "text": text}]}
+    return json.dumps({"type": "response_item", "payload": payload})
+
+
+def _codex_call(call_id: str) -> str:
+    payload = {"type": "function_call", "name": "probe", "arguments": "{}", "call_id": call_id}
+    return json.dumps({"type": "response_item", "payload": payload})
+
+
+def _codex_output(call_id: str) -> str:
+    payload = {"type": "function_call_output", "call_id": call_id, "output": "ok"}
+    return json.dumps({"type": "response_item", "payload": payload})
+
+
+# Lines written before the attachment, then lines written after it, per provider format.
+_MID_TURN_ATTACH_TRANSCRIPTS = {
+    "claude": (
+        [
+            _claude_text("user", "prompt", "go"),
+            _claude_text("assistant", "a1", "before attachment"),
+            _claude_tool_use("a2", "c1"),
+        ],
+        [
+            _claude_tool_result("c1"),
+            _claude_text("assistant", "a3", "after attachment"),
+            _claude_tool_use("a4", "c2"),
+            _claude_tool_result("c2"),
+            _claude_text("assistant", "a5", "final reply"),
+            _claude_text("user", "next", "next prompt"),
+        ],
+    ),
+    "codex": (
+        [
+            _codex_message("user", "go"),
+            _codex_message("assistant", "before attachment"),
+            _codex_call("c1"),
+        ],
+        [
+            _codex_output("c1"),
+            _codex_message("assistant", "after attachment"),
+            _codex_call("c2"),
+            _codex_output("c2"),
+            _codex_message("assistant", "final reply"),
+            _codex_message("user", "next prompt"),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("source", sorted(_MID_TURN_ATTACH_TRANSCRIPTS))
+async def test_mid_turn_attachment_mirrors_text_written_after_it(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    source: str,
+) -> None:
+    """A turn already running when /agent attaches still delivers its later text blocks."""
+    manager, session_id, send = attached
+    manager.detach_conversation("mirror-test", "dm:42", session_id)
+    before, after = _MID_TURN_ATTACH_TRANSCRIPTS[source]
+    transcript = tmp_path / f"{source}-mid-turn.jsonl"
+    transcript.touch()
+    manager._session_store.update(session_id, transcript_path=str(transcript))
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript), source=source)
+    transcript.write_text("".join(f"{line}\n" for line in before))
+    assert (await target.flush_session(session_id)).flushed
+    manager.attach_conversation("mirror-test", "dm:42", session_id)
+    for line in after:
+        with transcript.open("a") as stream:
+            stream.write(f"{line}\n")
+        assert (await target.flush_session(session_id)).flushed
+    delivered = [call.args[0].content for call in send.call_args_list]
+    assert delivered == ["after attachment", "final reply"]
+    rows = manager.store.list_messages(session_id=session_id)
+    assert sorted(row.content for row in rows) == ["after attachment", "final reply"]

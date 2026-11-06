@@ -42,4 +42,6 @@ just to shorten an observation wait.
 Guide: [Dream operations](../../../../../../../../docs/guides/memory.md#dream-operations)
 and [Configuration](../../../../../../../../docs/guides/memory.md#configuration).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

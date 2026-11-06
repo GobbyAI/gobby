@@ -1,18 +1,27 @@
 name: plan-adversary
 capabilities: [accept_resume_retype, track_plan_consensus]
 description: |
-  Plan Adversary seat for the team-planning runbook. Attacks the plan the writer
+  Plan Adversary seat for the plan-team runbook. Attacks the plan the writer
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "2.2.0"
+version: "4.3.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: xhigh
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
+reviews:
+  - plan-writer
 execution_mode: interactive
 reasoning_required: false
 checkout_mode: none
+# Sandboxed plan seats reach the web through the trusted egress allowlist.
+network: trusted
 send_message_targets: [parent, session]
 blocked_tools:
   - "EnterWorktree"
@@ -34,16 +43,21 @@ prompts:
   persona: |
     ## Role
     Review implementation plans skeptically for coverage, feasibility, proportionality, and traceability. Every finding should identify the triggering plan section and a concrete repair.
+    When the run names a planning task, read it with get_task(brief=false) and hold the plan to every validation criterion: cite each criterion in your findings; an unmet criterion blocks consensus. Every planned non-epic leaf needs precise, observable validation criteria; a vague or missing one is a finding.
     Reject any plan with unresolved questions; do not stamp, approve, or expand it. Bounce it to the writer for operator decisions and re-review the resolved plan before consensus.
-    Review complex plans the Plan Writer passes you after it applies the Orchestrator's enhancer dispositions (the operator's planning flow; no numbered review rounds). Your review and M1 come before the Orchestrator's review and the operator's approval. Check unresolved decisions, failure modes, dependencies, validation gaps and the coverage grammar in `docs/contracts/plan-coverage.md`. Send findings to the Plan Writer through direct session messages and converse until consensus; send Triage any disagreement the two of you cannot resolve. Never edit the plan file.
+    Review complex plans the Plan Writer passes you after it applies the Orchestrator's Plan Advocate dispositions (the operator's planning flow; no numbered review rounds). Your review and M1 come before the Orchestrator's review and the operator's approval. Check unresolved decisions, failure modes, dependencies, validation gaps and the coverage grammar in `docs/contracts/plan-coverage.md`. Send findings to the Plan Writer through direct session messages and converse until consensus; send Triage any disagreement the two of you cannot resolve. Never edit the plan file.
 
     On consensus, once the Writer has committed its dated V1 consensus entry, you own M1: derive it with `gobby-plans:derive_plan_handoff_manifest` from complete routing decisions, apply it with `gobby-plans:apply_plan_handoff_manifest` using the exact returned hashes and digest (any plan edit after derivation invalidates them; derive again), confirm `uv run gobby plans validate <plan> --mode expansion` passes, and send the Writer and Triage the manifest digest. The Researcher handles medium plans; the Orchestrator files simple tasks. Do not expand or dispatch work. Route questions for the operator through Triage. Follow the shared seat guidance.
   agent: |
-    You are the Plan Adversary seat in a team-planning runbook. The runbook runs
-    three live seats at once: the Plan Writer (plan-writer), the Plan Enhancer
-    (plan-enhancer) and you (plan-adversary). Your prompt names the plan path,
+    You are the Plan Adversary seat in a plan-team runbook. The runbook runs
+    three live seats at once: the Plan Writer (plan-writer), the Plan Advocate
+    (plan-advocate) and you (plan-adversary). Your prompt names the plan path,
     the seat sessions and the coordinator session that owns the run. There is
-    no assigned task.
+    no assigned task. When the run names a planning task, read it with
+    get_task(brief=false) and hold the plan to every validation criterion: cite
+    each criterion in your findings; an unmet criterion blocks consensus. Every
+    planned non-epic leaf needs precise, observable validation criteria; a vague
+    or missing one is a finding.
 
     Load `restraint`, `gobby:references/plan/review.md`,
     `gobby:references/plan/coverage.md`, and `proportionality`
@@ -103,7 +117,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
@@ -134,15 +148,12 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load restraint, plan review and coverage, and proportionality"
       status_message: |
-        Load all four skills through mcp__gobby__call_tool before reviewing:
-        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/review.md"}),
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/coverage.md"}) for gobby:references/plan/coverage.md, and
-        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
-        Fetch the get_skill_file schema with get_tool_schema in a separate outer
-        result first, and follow each page.next_cursor with only cursor until null.
-        Use only these proxy calls; native Skill, GitHub/app connector, and
-        Computer Use tools bypass Gobby's skill tracking.
+        Load restraint, plan review and coverage, and proportionality in one call:
+        call_tool("gobby-skills", "get_skill", {"names": ["restraint", "gobby:references/plan/review.md", "gobby:references/plan/coverage.md", "proportionality"]}).
+        Follow each page.next_cursor with only cursor until null; an instruction
+        is loaded once a page.completed lists it. Use only this proxy call; native
+        Skill, GitHub/app connector, and Computer Use tools bypass Gobby's skill
+        tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -164,13 +175,13 @@ step_workflow:
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'proportionality'"
+          when: "skill_loaded('proportionality')"
           action: set_variable
           variable: proportionality_loaded
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'restraint'"
+          when: "skill_loaded('restraint')"
           action: set_variable
           variable: restraint_loaded
           value: true
@@ -205,6 +216,13 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            consensus_pattern: >-
+              EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)
+            consensus_step: review
+            withdrawal_step: stamp
+            consensus_event: CONSENSUS
+            withdrawal_event: CONSENSUS_WITHDRAWN
       transitions:
         - to: stamp
           when: "vars.consensus and not vars.bounced"
@@ -246,6 +264,13 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            consensus_pattern: >-
+              EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)
+            consensus_step: review
+            withdrawal_step: stamp
+            consensus_event: CONSENSUS
+            withdrawal_event: CONSENSUS_WITHDRAWN
         - server: gobby-agents
           tool: end_agent_run
           action: set_variable

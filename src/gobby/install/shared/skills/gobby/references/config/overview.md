@@ -18,3 +18,5 @@ The database owns desired runtime overrides. Bootstrap YAML owns pre-database
 wiring; project JSON owns repository settings. An unexpected active value needs
 comparison with desired state and activation diagnostics before a write.
 See the [configuration guide](../../../../../../../../docs/guides/configuration.md).
+
+_Version: 1.0.0_

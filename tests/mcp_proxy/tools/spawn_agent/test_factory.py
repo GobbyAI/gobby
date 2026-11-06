@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import IsolationContext
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import INCOMPATIBLE_MODEL_PROVIDER
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.definitions import (
@@ -24,6 +25,7 @@ from gobby.workflows.definitions import (
 )
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
+from tests.fixtures.provider_catalogs import serve_catalogs
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
@@ -56,7 +58,7 @@ async def test_launch_assignment_overrides_definition_variables() -> None:
     from tests.fixtures.agent_definitions import make_agent_workflows
 
     body = make_agent_definition(
-        name="default",
+        name="seat",
         prompts={"agent": "Work."},
         workflows=make_agent_workflows(variables={"seat_context": {"worktree": "default"}}),
     )
@@ -88,7 +90,7 @@ async def test_single_spawn_network_is_launch_local(network: str | None) -> None
     from gobby.mcp_proxy.tools.spawn_agent import _factory
 
     body = make_agent_definition(
-        name="default", provider="claude", network="trusted", prompts={"agent": "Work."}
+        name="seat", provider="claude", network="trusted", prompts={"agent": "Work."}
     )
     launch = AsyncMock(return_value={"success": True, "run_id": "network-launch"})
     registry = _factory.create_spawn_agent_registry(MagicMock())
@@ -228,7 +230,7 @@ async def test_network_unreadable_seed_refuses_before_allocations() -> None:
     from gobby.mcp_proxy.tools.spawn_agent import _factory, _implementation
 
     body = make_agent_definition(
-        name="default", provider="claude", model="claude-sonnet-5", prompts={"agent": "Work."}
+        name="seat", provider="claude", model="claude-sonnet-5", prompts={"agent": "Work."}
     )
     registry = _factory.create_spawn_agent_registry(MagicMock())
     project = {"id": "11111111-1111-4111-8111-111111110123", "project_path": "/test"}
@@ -339,7 +341,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -404,7 +406,7 @@ class TestSpawnAgentDefaults:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=make_agent_definition(
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-                    name="default",
+                    name="seat",
                     provider="claude",
                     model="claude-sonnet-5",
                 ),
@@ -445,7 +447,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -497,7 +499,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -750,7 +752,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -795,7 +797,7 @@ class TestSpawnAgentParamOverrides:
     @pytest.mark.asyncio
     async def test_one_shot_spawn_drops_interactive_guidance(self, mock_runner: MagicMock) -> None:
         body = make_agent_definition(
-            name="developer",
+            name="fixture-worker",
             provider="claude",
             model="claude-sonnet-5",
             execution_mode="interactive",
@@ -828,7 +830,7 @@ class TestSpawnAgentParamOverrides:
         expected_ttl: int | None,
     ) -> None:
         body = make_agent_definition(
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
             prompts={"agent": "Run the assigned task."},
@@ -863,7 +865,7 @@ class TestSpawnAgentParamOverrides:
         expected: str,
     ) -> None:
         body = make_agent_definition(
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
             prompts={"agent": "Run the assigned task."},
@@ -886,6 +888,20 @@ class TestSpawnAgentParamOverrides:
         *,
         invoke: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     ) -> Any:
+        result, mock_execute = await self._spawn_outcome_for(
+            mock_runner, agent_body, call_params, invoke=invoke
+        )
+        assert result["success"] is True, result
+        return mock_execute.call_args[0][0]
+
+    async def _spawn_outcome_for(
+        self,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
+        call_params: dict[str, object],
+        *,
+        invoke: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+    ) -> tuple[dict[str, Any], MagicMock]:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -936,9 +952,7 @@ class TestSpawnAgentParamOverrides:
                 await invoke() if invoke is not None else await registry.call("spawn_agent", params)
             )
             await _drain_spawn_background_tasks()
-
-            assert result["success"] is True, result
-            return mock_execute.call_args[0][0]
+            return result, mock_execute
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -986,7 +1000,7 @@ class TestSpawnAgentParamOverrides:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -1039,10 +1053,11 @@ class TestSpawnAgentParamOverrides:
             assert mock_execute.call_args[0][0].provider == "claude"
 
     @pytest.mark.asyncio
-    async def test_provider_override_substitutes_same_tier_model(
-        self, mock_runner: MagicMock
+    async def test_provider_override_refuses_a_model_the_target_does_not_serve(
+        self, mock_runner: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The agent's model cannot cross providers, but the target CLI must not choose one."""
+        """The definition's model is never swapped for the target's peer; the launch is refused."""
+        serve_catalogs(monkeypatch, {"codex": ("gpt-5.6-sol",), "claude": ("opus",)})
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -1050,7 +1065,7 @@ class TestSpawnAgentParamOverrides:
             model="gpt-5.6-sol",
         )
 
-        spawn_request = await self._spawn_request_for(
+        result, mock_execute = await self._spawn_outcome_for(
             mock_runner,
             agent_body,
             {
@@ -1059,8 +1074,10 @@ class TestSpawnAgentParamOverrides:
             },
         )
 
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "opus"
+        assert result["success"] is False
+        assert result["error_code"] == INCOMPATIBLE_MODEL_PROVIDER
+        assert result["compatible_providers"] == ["codex"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_provider_override_preserves_explicit_model(self, mock_runner: MagicMock) -> None:
@@ -1085,10 +1102,11 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "opus"
 
     @pytest.mark.asyncio
-    async def test_provider_override_blank_model_still_substitutes_same_tier(
-        self, mock_runner: MagicMock
+    async def test_provider_override_blank_model_refuses_the_definition_model(
+        self, mock_runner: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A blank model is not a choice, so the tier substitution still applies."""
+        """A blank model is not a choice, so the definition's model stands and is refused."""
+        serve_catalogs(monkeypatch, {"codex": ("gpt-5.6-sol",), "claude": ("opus",)})
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -1096,7 +1114,7 @@ class TestSpawnAgentParamOverrides:
             model="gpt-5.6-sol",
         )
 
-        spawn_request = await self._spawn_request_for(
+        result, mock_execute = await self._spawn_outcome_for(
             mock_runner,
             agent_body,
             {
@@ -1106,8 +1124,9 @@ class TestSpawnAgentParamOverrides:
             },
         )
 
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "opus"
+        assert result["success"] is False
+        assert result["error_code"] == INCOMPATIBLE_MODEL_PROVIDER
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_provider_override_keeps_agent_definition_model(
@@ -1473,7 +1492,7 @@ class TestSpawnAgentPromptPreamble:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = make_agent_definition(
-            prompts={"agent": "## Role\nBackend developer\n\nWrite clean code."},
+            prompts={"agent": "## Role\nBackend fixture-worker\n\nWrite clean code."},
             name="dev",
             provider="claude",
             model="claude-sonnet-5",

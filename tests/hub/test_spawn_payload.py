@@ -33,7 +33,7 @@ _SOURCE_ROOT = "/srv/gobby/project"
 _TERMINAL_ID = "66666666-6666-4666-8666-666666666666"
 _NATIVE_ID = "019a1b2c-3d4e-7f00-8a9b-0c1d2e3f4a5b"
 _TOKEN = "tok-spawn-payload-secret"
-_PERSONA = "You are the developer agent."
+_PERSONA = "You are the fixture-worker agent."
 
 
 def _run(
@@ -54,7 +54,7 @@ def _run(
         created_at=now,
         updated_at=now,
         child_session_id=session_id or str(uuid.uuid4()),
-        workflow_name="developer",
+        workflow_name="fixture-worker",
         task_id=task_id,
     )
 
@@ -293,7 +293,7 @@ def test_codex_persona_prefix(
 ) -> None:
     project_id = sample_project["id"]
     machine_id = require_machine_id()
-    body = make_agent_definition(name="developer", prompts={"agent": _PERSONA})
+    body = make_agent_definition(name="fixture-worker", prompts={"agent": _PERSONA})
     session_id = _insert_session(temp_db, project_id, machine_id)
     codex_run = _run(machine_id=machine_id, session_id=session_id, provider="codex")
 
@@ -309,7 +309,7 @@ def test_codex_persona_prefix(
         run_id=codex_run.id,
         parent_session_id=codex_run.parent_session_id,
         project_id=project_id,
-        agent_name="developer",
+        agent_name="fixture-worker",
         prepared_spawn=cast(Any, None),
         session_manager=cast(Any, SimpleNamespace(_storage=SimpleNamespace(db=temp_db))),
     )
@@ -319,7 +319,7 @@ def test_codex_persona_prefix(
         raise AssertionError("the payload builder must not re-resolve the agent")
 
     monkeypatch.setattr("gobby.workflows.agent_resolver.resolve_agent", _no_reresolve)
-    request = _request(project_id=project_id, agent_body=body, agent_lookup_name="developer")
+    request = _request(project_id=project_id, agent_body=body, agent_lookup_name="fixture-worker")
 
     codex = _build(temp_db, codex_run, request)
 
@@ -363,20 +363,20 @@ def test_task_id_from_run(temp_db: HubDatabase) -> None:
 
 def test_launch_fields_and_workspace(temp_db: HubDatabase) -> None:
     developer = make_agent_definition(
-        name="developer",
+        name="fixture-worker",
         prompts={"agent": _PERSONA},
         prewarm_pre_commit_store=False,
         checkout_mode="inherit",
         base_branch="inherit",
     )
     clone_body = make_agent_definition(
-        name="developer",
+        name="fixture-worker",
         prompts={"agent": _PERSONA},
         checkout_mode="clone",
         base_branch="0.5.0",
     )
     worktree_body = make_agent_definition(
-        name="developer",
+        name="fixture-worker",
         prompts={"agent": _PERSONA},
         checkout_mode="worktree",
         base_branch="inherit",
@@ -386,7 +386,9 @@ def test_launch_fields_and_workspace(temp_db: HubDatabase) -> None:
     payload = _build(
         temp_db,
         run,
-        _request(agent_lookup_name="developer", agent_body=developer, droid_mode="interactive"),
+        _request(
+            agent_lookup_name="fixture-worker", agent_body=developer, droid_mode="interactive"
+        ),
     )
 
     assert payload.run_id == run.id
@@ -402,8 +404,8 @@ def test_launch_fields_and_workspace(temp_db: HubDatabase) -> None:
     assert payload.prompt == "implement the thing"
     assert payload.provider_args == []
     assert payload.reasoning_effort == "medium"
-    assert payload.workflow_name == "developer"
-    assert payload.agent_name == "developer"
+    assert payload.workflow_name == "fixture-worker"
+    assert payload.agent_name == "fixture-worker"
     assert payload.droid_mode == "interactive"
     assert payload.prewarm_pre_commit_store is False
     assert payload.code_index_preflight == "managed"
@@ -411,11 +413,11 @@ def test_launch_fields_and_workspace(temp_db: HubDatabase) -> None:
     assert payload.execution_mode is None
     assert SpawnPayload.model_validate(payload.model_dump()) == payload
 
-    assert _build(temp_db, run, _request(agent_body=developer)).agent_name == "developer"
+    assert _build(temp_db, run, _request(agent_body=developer)).agent_name == "fixture-worker"
 
     assert _build(temp_db, run, _request(timeout=600.0)).timeout_seconds == 600
     assert _build(temp_db, run, _request(agent_body=clone_body)).timeout_seconds == 0
-    timed = make_agent_definition(name="developer", prompts={"agent": _PERSONA}, timeout=900)
+    timed = make_agent_definition(name="fixture-worker", prompts={"agent": _PERSONA}, timeout=900)
     assert _build(temp_db, run, _request(agent_body=timed)).timeout_seconds == 900
 
     run_branch = f"agent/{run.id}"
@@ -466,7 +468,7 @@ def test_resume_uses_existing_workspace(
     remote_run = _run(machine_id=local, session_id=theirs)
     resume = {"resume_existing_session": True, "provider_native_session_id": _NATIVE_ID}
     clone_body = make_agent_definition(
-        name="developer",
+        name="fixture-worker",
         prompts={"agent": _PERSONA},
         checkout_mode="clone",
         base_branch="0.5.0",

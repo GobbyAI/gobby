@@ -1281,7 +1281,7 @@ class TestClaudeExpandLine:
         assert msg.tool_name == "Stop"
         assert msg.tool_use_id == "33333333-3333-3333-3333-333333333333"
         assert msg.content == (
-            "Rule enforced by Gobby: [require-task-close]\nTask #16260 is still open."
+            "Rule enforced by Gobby: [fixture-close-gate]\nTask #16260 is still open."
         )
         assert msg.tool_result == {"content": msg.content, "is_error": True}
 
@@ -1634,7 +1634,7 @@ class TestCodexTranscriptParser:
             "success": False,
             "result": {
                 "success": False,
-                "error": "Rule enforced by Gobby: [consecutive-tool-block]",
+                "error": "Rule enforced by Gobby: [fixture-retry-limit]",
                 "error_code": "TOOL_BLOCKED",
             },
             "response_time_ms": 1.59,

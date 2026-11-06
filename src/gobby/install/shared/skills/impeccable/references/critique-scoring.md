@@ -238,3 +238,5 @@ Tag each individual issue found during scoring with a priority level:
 **Tip**: If you're unsure between two levels, ask: "Would a user contact support about this?" If yes, it's at least P1.
 
 ---
+
+_Version: 1.0.0_

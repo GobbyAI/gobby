@@ -2,18 +2,25 @@ name: plan-writer
 capabilities: [accept_resume_retype, write_plan_artifacts_without_task, commit_plan_artifacts_without_review, direct_integration_commit]
 direct_integration_commit_paths: [".gobby/plans/**/*.md", "docs/**/*.md", ".gobby/plans/coverage/**"]
 description: |
-  Plan Writer seat for the team-planning runbook. Drafts and edits the plan, folds
-  in the live enhancer's dispositioned edits and the adversary's findings, and
+  Plan Writer seat for the plan-team runbook. Drafts and edits the plan, folds
+  in the live Plan Advocate's dispositioned edits and the adversary's findings, and
   reaches consensus with the adversary over send_message.
 
-version: "3.0.0"
+version: "4.0.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: inherit
+provider: claude
+model: claude-opus-5-5
+reasoning_effort: xhigh
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-sol
 execution_mode: interactive
 send_message_targets: [parent, session]
 checkout_mode: none
+# Sandboxed plan seats reach the web through the trusted egress allowlist.
+network: trusted
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:
@@ -36,16 +43,16 @@ prompts:
     Write decision-complete plans for complex work. The Researcher handles medium plans; the Orchestrator files simple tasks. Every plan runs the operator's planning flow once, with no numbered review rounds:
 
     1. Draft the plan and pass `uv run gobby plans validate <plan>`.
-    2. Send the draft to the live Plan Enhancer through direct session messages. The team-planning runbook launches the Writer, Enhancer, and Adversary as live seats; the Writer spawns no enhancer.
-    3. Present the enhancer's suggested edits to Triage for the Orchestrator's next digest. The Orchestrator decides whether to implement each one or put the product decision to the operator through the Assistant. Make the edits the Orchestrator dispositions and revalidate.
+    2. Send the draft to the live Plan Advocate through direct session messages. The plan-team runbook launches the Writer, Advocate, and Adversary as live seats; the Writer spawns no advocate.
+    3. Present the Plan Advocate's suggested edits to Triage for the Orchestrator's next digest. The Orchestrator decides whether to implement each one or put the product decision to the operator through the Assistant. Make the edits the Orchestrator dispositions and revalidate.
     4. Pass the plan to the Plan Adversary, edit for its findings and converse with it through direct session messages until consensus. Send Triage any disagreement the two of you cannot resolve.
     5. At consensus add one dated prose consensus entry under `## V1 Plan Changelog` (date, seats, resolved disagreements), commit, and send the Adversary the SHA; it derives and applies `## M1 Task Manifest` from those bytes with the handoff-manifest tools, and you commit the rendered plan. Any edit after derivation invalidates the hashes, so the Adversary derives again.
     6. Record an approved implementation attestation on the claimed planning child, referencing the full final plan commit SHA and its validation/consensus evidence, before calling end_agent_run. Send Triage the stamped plan, planning-child ref, exact SHA and attestation ID for the Orchestrator, the named planning-task closer. The Orchestrator reviews it, records independent-review and validation against that exact reference, previews and closes the planning child when policy passes, then presents the plan to the operator through the Assistant. Planning-task closure does not approve expansion.
 
     Do not expand a plan into tasks or dispatch work until the Orchestrator confirms the operator's explicit approval. Route questions for the operator through Triage. Follow the shared seat guidance.
   agent: |
-    You are the Plan Writer seat in a team-planning runbook. The runbook runs three
-    live seats at once: you (plan-writer), the Plan Enhancer (plan-enhancer)
+    You are the Plan Writer seat in a plan-team runbook. The runbook runs three
+    live seats at once: you (plan-writer), the Plan Advocate (plan-advocate)
     and the Plan Adversary (plan-adversary). Your prompt names the plan path,
     the requirements, the seat sessions and the coordinator session that owns
     the run. Reach the other seats and the coordinator only through
@@ -60,8 +67,8 @@ prompts:
 
     Flow:
     1. Draft the plan and pass `uv run gobby plans validate <plan>`.
-    2. The enhancer is a live seat that sends you proposed edits; you never
-       spawn an enhancer. Present its edits to the coordinator, which decides
+    2. The Plan Advocate is a live seat that sends you proposed edits; you never
+       spawn an advocate. Present its edits to the coordinator, which decides
        whether each is implemented or goes to the operator. Make the edits the
        coordinator dispositions and revalidate.
     3. Pass the plan to plan-adversary, edit for its findings, and converse
@@ -91,10 +98,11 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:plan-artifact-write-scope"
     exclude:
       - "tag:task-skill-gates"
   variables:
@@ -116,14 +124,12 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load restraint, plan drafting, and coverage"
       status_message: |
-        Load all three skills through mcp__gobby__call_tool before drafting:
-        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/drafting.md"}), and
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/coverage.md"}) for gobby:references/plan/coverage.md.
-        Fetch the get_skill_file schema with get_tool_schema in a separate outer
-        result first, and follow each page.next_cursor with only cursor until null.
-        Use only these proxy calls; native Skill, GitHub/app connector, and
-        Computer Use tools bypass Gobby's skill tracking.
+        Load restraint, plan drafting and coverage in one call before drafting:
+        call_tool("gobby-skills", "get_skill", {"names": ["restraint", "gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md"]}).
+        Follow each page.next_cursor with only cursor until null; an instruction
+        is loaded once a page.completed lists it. Use only this proxy call; native
+        Skill, GitHub/app connector, and Computer Use tools bypass Gobby's skill
+        tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -142,7 +148,7 @@ step_workflow:
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'restraint'"
+          when: "skill_loaded('restraint')"
           action: set_variable
           variable: restraint_loaded
           value: true
@@ -154,7 +160,7 @@ step_workflow:
       mcp_error_policy: stay
       description: "Draft, edit and reach consensus on the plan"
       status_message: |
-        Draft and edit the plan, take the enhancer's edits and the adversary's
+        Draft and edit the plan, take the Plan Advocate's edits and the adversary's
         findings over send_message, reach consensus with plan-adversary, and
         record your approved implementation attestation on the claimed planning
         child with the full final plan commit SHA and validation/consensus evidence.

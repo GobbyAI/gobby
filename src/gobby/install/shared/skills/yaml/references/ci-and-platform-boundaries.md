@@ -35,3 +35,5 @@
 - Validate playbooks or config through the owning tool when possible.
 - Keep local conventions for comments, key order, and grouped settings because
   they often map to operational review workflows.
+
+_Version: 1.0.0_

@@ -769,7 +769,7 @@ def test_an_undenied_permission_allow_still_allows() -> None:
 
 
 _FULL_DENY_REASON = (
-    "Rule enforced by Gobby: [require-development-discipline-skill]\n"
+    "Rule enforced by Gobby: [fixture-development-gate]\n"
     "The blocked tool call never executed.\n"
     "Load and fully read the reference in its own outer tool result."
 )

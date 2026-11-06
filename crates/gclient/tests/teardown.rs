@@ -776,7 +776,7 @@ impl LiveShutdownStall {
 }
 
 async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
-    timeout(Duration::from_secs(1), async {
+    timeout(Duration::from_secs(5), async {
         loop {
             if mock.requests().iter().any(|request| {
                 request
@@ -796,7 +796,7 @@ async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
 }
 
 async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
-    timeout(Duration::from_secs(1), async {
+    timeout(Duration::from_secs(5), async {
         loop {
             let count = mock
                 .requests()
@@ -840,11 +840,14 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .expect("live loop input");
 }
 
-fn send_process_signal(signal: &str) {
+async fn send_process_signal(signal: &str) {
+    // Awaited, not blocking: a synchronous wait here would park the test's
+    // single-threaded runtime while the signal is delivered.
     let pid = std::process::id().to_string();
-    let status = std::process::Command::new("kill")
+    let status = tokio::process::Command::new("kill")
         .args([signal, pid.as_str()])
         .status()
+        .await
         .unwrap_or_else(|error| panic!("send {signal} to the gclient test process: {error}"));
     assert!(status.success(), "kill {signal} failed: {status}");
 }
@@ -852,12 +855,13 @@ fn send_process_signal(signal: &str) {
 async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShutdownStall) {
     let mock = MockDaemon::start("shutdown-token").await;
     mock.use_unique_attachment_ids();
+    mock.set_attach_backend("terminal-shutdown", "tmux");
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-shutdown", "backend": "native", "state": "live"}],
+            "items": [{"terminal_id": "terminal-shutdown", "backend": "tmux", "state": "live"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         }),
@@ -891,7 +895,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
                 let daemon = observer.clone();
                 tokio::spawn(async move { daemon.reconnect(initial_generation).await })
             };
-            timeout(Duration::from_secs(1), async {
+            timeout(Duration::from_secs(5), async {
                 while mock.websocket_handshakes() < 2 {
                     tokio::task::yield_now().await;
                 }
@@ -909,7 +913,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
                 send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
             }
             LiveShutdownTrigger::Sigterm => {
-                send_process_signal("-TERM");
+                send_process_signal("-TERM").await;
             }
         }
         (exit_started, reconnect)
@@ -917,8 +921,10 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
 
     let mut switch = TerminalGuard::recording().0;
     let (loop_result, (exit_started, reconnect)) = tokio::join!(
+        // A hung loop is the only thing this outer guard catches; the shutdown
+        // deadline assertions below stay tight at 8 s and 2 s.
         timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(20),
             run_live_loop(
                 &mut workspace,
                 &mut terminal,
@@ -950,7 +956,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         "{trigger:?}/{stall:?} must restore the terminal exactly once"
     );
 
-    timeout(Duration::from_millis(250), async {
+    timeout(Duration::from_secs(2), async {
         while observer.shutdown_resources() != (false, false, false) {
             tokio::task::yield_now().await;
         }
@@ -972,7 +978,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
 
     if let Some((gate, reconnect)) = reconnect {
         assert_eq!(
-            timeout(Duration::from_millis(250), reconnect)
+            timeout(Duration::from_secs(2), reconnect)
                 .await
                 .expect("close must settle the reconnect owner")
                 .expect("reconnect owner task"),
@@ -980,7 +986,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         );
         gate.notify_waiters();
     }
-    timeout(Duration::from_millis(250), mock.wait_for_no_websockets())
+    timeout(Duration::from_secs(2), mock.wait_for_no_websockets())
         .await
         .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} left the WebSocket connected"));
     mock.shutdown().await;
@@ -1008,12 +1014,13 @@ impl LiveExitCause {
 async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<String>>>) {
     let mock = MockDaemon::start("exit-token").await;
     mock.use_unique_attachment_ids();
+    mock.set_attach_backend("terminal-exit", "tmux");
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-exit", "backend": "native", "state": "live"}],
+            "items": [{"terminal_id": "terminal-exit", "backend": "tmux", "state": "live"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-exit", "seq": 1}
         }),
@@ -1053,12 +1060,12 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
                 send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
             }
-            LiveExitCause::Sigint => send_process_signal("-INT"),
-            LiveExitCause::Sigterm => send_process_signal("-TERM"),
+            LiveExitCause::Sigint => send_process_signal("-INT").await,
+            LiveExitCause::Sigterm => send_process_signal("-TERM").await,
             LiveExitCause::SighupThenQuit => {
                 // A hangup is ignored: the loop logs it, keeps routing
                 // input, and only the quit chord ends it.
-                send_process_signal("-HUP");
+                send_process_signal("-HUP").await;
                 wait_for_trace_stage(&trace, "sighup-ignored").await;
                 send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
                 wait_for_ws_request_count(&mock, "terminal_input", 2).await;

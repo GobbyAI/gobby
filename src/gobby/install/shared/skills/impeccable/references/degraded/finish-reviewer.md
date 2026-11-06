@@ -35,3 +35,5 @@ Return the disposition line first, then exactly five sections: `persistence` (pa
 ## Verdict Pass
 
 When the parent returns with post-fix recaptures, you are scoring, not re-hunting. The parent's narration of what was fixed is not evidence; a claimed fix you cannot see in the recaptures is unresolved. For each material fix from your review, one line: resolved, partial, or unresolved, tied to what the new screenshots visibly show; a fix answered mechanically, positions moved but the quality the finding named still absent, is partial at best. Then name at most three regressions the fix batch itself introduced, judged by the same matrix rules, and nothing else; no new hunt, no new checks. Return exactly two sections: `verdict` (the scored list) and `remaining` (what stays open, or "clear"), and end with the disposition line recomputed against what remains open; unresolved or partial material findings can never recompute to ship.
+
+_Version: 1.0.0_

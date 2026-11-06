@@ -60,7 +60,7 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_conditionally_deletes_wo
     instance_manager.save(
         make_step_instance(
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
-            agent_name="tech-writer",
+            agent_name="fixture-definition-76c4b50c",
             current_step="implement",
         )
     )

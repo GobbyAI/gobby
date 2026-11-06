@@ -72,7 +72,7 @@ def test_typed_colon_form_loads_the_admin_capability() -> None:
     handler._skill_manager = HookSkillManager()
     result = handler._intercept_skill_command("/gobby:admin", project_id="project-1")
     assert result is not None
-    assert '"path":"references/admin/overview.md"' in result
+    assert '"get_skill", {"names":["gobby:references/admin/overview.md"]}' in result
     assert "cold_start_admin" not in result
 
 

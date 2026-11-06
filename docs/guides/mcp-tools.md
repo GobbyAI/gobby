@@ -252,6 +252,7 @@ capability guides and agent reference library.
 | `gobby-skills` | Installed instructions and hubs |
 | `gobby-cron` | Scheduled operations |
 | `gobby-communications` | External channels and identities |
+| `gobby-decisions` | Decision classifier over the configured `ai.decisions` wire. Read-only. `evaluate` takes one question type per call (Choice, Noul, Score, or Box) and returns typed answers with provenance, or `success: false` with a typed `reason`: `invalid_request`, `unconfigured`, `oversize`, `cooldown`, `timeout`, `transport`, `http_status`, `parse`, or `truncated`. See [configuration.md](configuration.md#decision-classifier-aidecisions) |
 
 Guarded tools can be hidden from ordinary discovery. A registry's existence is
 not permission to use its internal stage operations.

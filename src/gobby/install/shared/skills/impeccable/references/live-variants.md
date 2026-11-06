@@ -74,3 +74,5 @@ node <scripts_dir>/live-poll.mjs --reply EVENT_ID done --file RELATIVE_PATH
 ```
 
 `RELATIVE_PATH` is relative to project root; the browser fetches source directly if the dev server lacks HMR. Then poll again immediately.
+
+_Version: 1.0.0_

@@ -32,6 +32,18 @@ async fn chord(probe: &LivenessProbe<'_>, key: char) {
     probe.key(KeyCode::Char(key), KeyModifiers::NONE).await;
 }
 
+/// Wait until the host receives this keypress. `expect_input` also counts the
+/// attach's bind, which arrives before any key, so it can pass while the key
+/// still waits on the host grant.
+async fn wait_for_typed_at_host(host: &DirectHost, data: &[u8]) {
+    wait_until("typed key at the host", || {
+        host.drain()
+            .iter()
+            .any(|message| matches!(message, ClientMessage::Input { data: sent } if sent == data))
+    })
+    .await;
+}
+
 /// Take a bounded observation while the mutation is held, then release it.
 /// Fail on the missing rendered content/input, rather than on a timeout.
 async fn assert_progress_while_held(probe: &LivenessProbe<'_>, terminal: &str, release: &Notify) {
@@ -126,7 +138,12 @@ async fn split_right_with_a_held_control_or_create_reply_keeps_the_window_live()
     for held_kind in ["workspace_op", "terminal_release_control"] {
         let mock = MockDaemon::start("local-token").await;
         mock.queue_owned_terminal_id(FIRST_SHELL);
-        let host = DirectHost::start("epoch-1").await;
+        let mut host = DirectHost::start("epoch-1").await;
+        // A gterm host serves its control socket, so the host grant a keypress
+        // asks for resolves here. Without it every grant fails to connect, and
+        // whether the queued key survives then depends on which of that error
+        // and the take's answer lands first.
+        host.serve_gterm_control("control-token");
         mock.seed_workspace(
             "project-1",
             &[(&["terminal-a", "terminal-b"], "terminal-b")],
@@ -159,7 +176,7 @@ async fn split_right_with_a_held_control_or_create_reply_keeps_the_window_live()
             let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
             wait_for_replies(&mock, "terminal_take_control", 1).await;
             probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
-            host.expect_input(1).await;
+            wait_for_typed_at_host(&host, b"x").await;
             let release = mock.hold_ws(held_kind, |request| {
                 request["op"] == "pane.split" || request["terminal_id"] == "terminal-b"
             });
@@ -299,11 +316,15 @@ async fn two_new_tabs_before_the_first_create_lands_place_both() {
 async fn a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal() {
     let mock = MockDaemon::start("local-token").await;
     mock.refuse_workspace_op_at("pane.split", 1, "busy", "adoption split refused");
+    // The focused pane types through the daemon, so both are tmux-backed (see
+    // `pane_workspace`).
+    mock.set_attach_backend("terminal-a", "tmux");
+    mock.set_attach_backend("terminal-b", "tmux");
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
-        roster_items(&["terminal-a", "terminal-b"]),
+        roster_items_on("tmux", &["terminal-a", "terminal-b"]),
     );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -393,6 +414,7 @@ async fn closing_a_tab_issues_tab_close_only_after_every_kill_settles() {
             &["terminal-a", "terminal-b", "terminal-c"],
             None,
             false,
+            &[],
         )
         .await;
         let seeded = mock.seed_workspace(

@@ -63,3 +63,5 @@ unemitted fields. See [adapter fidelity](../../../../../../../../docs/guides/ada
 
 For failures, isolate transport, identity, authorization, responder and delivery
 in that order. Do not enable broad access or fake streaming to hide a failure.
+
+_Version: 1.0.0_

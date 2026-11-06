@@ -6,12 +6,14 @@ import logging
 import os
 import time
 from collections.abc import Callable, Mapping
-from typing import Any
+from enum import Enum
+from typing import Any, NamedTuple
 from uuid import UUID
 
 import psutil
 
 from gobby.sessions.tmux_context import parse_tmux_socket_path, query_tmux_identity
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,47 @@ _FRESH_SEAT_WINDOW_SECONDS = 60.0
 # thread's registration supplies it from the database so a seat that sat at a login
 # prompt past the fresh window can still be adopted when it is the only unowned one.
 SeatAvailable = Callable[[int, float], bool]
+
+
+class SeatOwner(Enum):
+    """What the database says about who owns a Codex seat TUI."""
+
+    NONE = "none"
+    # A session recorded the TUI's pid and create time as its process.
+    RECORDED = "recorded"
+    # A session with no recorded process started after the TUI: maybe one of its threads.
+    POSSIBLE = "possible"
+
+
+# Classify the seat TUI with this pid and create time. A thread started by /clear inside
+# a running seat supplies it: the predecessor thread owns that seat, so the successor
+# adopts the cwd's only seat TUI when its owner is recorded.
+SeatOwnerCheck = Callable[[int, float], SeatOwner]
+
+# The terminal context the thread's newest row stores, or None when it has no row. The
+# daemon supplies it from the database.
+StoredClearContext = Callable[[str], Mapping[str, Any] | None]
+
+
+class _SeatSearch(NamedTuple):
+    """How a thread that no argv names and no stored row seats may look for its seat."""
+
+    # A real startup began the thread, so the fresh seat TUI that minted it may be found.
+    startup_thread: bool = False
+    seat_available: SeatAvailable | None = None
+    cleared_seat_owner: SeatOwnerCheck | None = None
+
+
+class _StoredClear(Enum):
+    """What a thread's stored row says about its seat, short of a seat."""
+
+    # No /clear outcome: only a startup's search may find a seat.
+    NONE = "none"
+    # The origin is not settled yet: only the /clear search may adopt.
+    PENDING = "pending"
+    # The origin is settled with no seat: nothing may adopt one.
+    REFUSED = "refused"
+
 
 # Every key ghook derives from its own process and environment. Under a shared Codex
 # app-server host those values describe the host, never the seat that fired the hook.
@@ -125,13 +168,23 @@ def enrich_terminal_context_with_cwd(
     *,
     external_id: str | None = None,
     seat_available: SeatAvailable | None = None,
+    cleared_seat_owner: SeatOwnerCheck | None = None,
     machine_id: str | None = None,
+    startup_thread: bool = False,
 ) -> dict[str, Any] | None:
     """Copy terminal context and add cwd and parent-process identity.
 
     ``external_id`` is the CLI's own session handle (the Codex thread id). A hook fired
-    by a shared Codex app-server host is re-identified from that thread's seat process;
-    ``seat_available`` widens a fresh thread's search to the one seat no session owns.
+    by a shared Codex app-server host is re-identified from that thread's seat process.
+    Without it no seat is searched, so a shared-host hook records no seat process and
+    the session stays paneless.
+    ``startup_thread`` says a real startup began the thread, so it may search for the
+    fresh seat TUI that minted it; any other thread gets only a seat its argv or stored
+    row names. ``seat_available`` widens that startup search to the one seat no session
+    owns.
+    ``cleared_seat_owner``, given only for a /clear successor the caller verified came
+    from a seat TUI, instead confines it to the cwd's only seat TUI, whose owner is
+    recorded.
     ``machine_id`` is the event's machine: another machine's pids name no process here,
     so its hook records no parent-process identity rather than a local stranger's.
     """
@@ -140,6 +193,7 @@ def enrich_terminal_context_with_cwd(
         return {"cwd": cwd_text} if cwd_text else None
 
     enriched = dict(terminal_context)
+    enriched.pop(CODEX_CLEAR_ORIGIN_KEY, None)
     if cwd_text and not _non_empty_str(enriched.get("cwd")):
         enriched["cwd"] = cwd_text
     if machine_id and machine_id != get_machine_id():
@@ -151,6 +205,8 @@ def enrich_terminal_context_with_cwd(
         external_id=_non_empty_str(external_id),
         cwd=_non_empty_str(enriched.get("cwd")),
         seat_available=seat_available,
+        cleared_seat_owner=cleared_seat_owner,
+        startup_thread=startup_thread,
     )
     return enriched
 
@@ -161,6 +217,8 @@ def _record_parent_process_identity(
     external_id: str | None,
     cwd: str | None,
     seat_available: SeatAvailable | None,
+    cleared_seat_owner: SeatOwnerCheck | None,
+    startup_thread: bool,
 ) -> None:
     terminal_context.pop("parent_create_time", None)
     terminal_context.pop("parent_name", None)
@@ -179,7 +237,11 @@ def _record_parent_process_identity(
         hook_parent = psutil.Process(pid)
         if _is_codex_shared_host(hook_parent):
             _replace_with_codex_seat_identity(
-                terminal_context, hook_parent, external_id, cwd, seat_available
+                terminal_context,
+                hook_parent,
+                external_id,
+                cwd,
+                _SeatSearch(startup_thread, seat_available, cleared_seat_owner),
             )
             return
         process = _stable_cli_process(hook_parent)
@@ -232,12 +294,19 @@ def _replace_with_codex_seat_identity(
     host: psutil.Process,
     external_id: str | None,
     cwd: str | None,
-    seat_available: SeatAvailable | None,
+    search: _SeatSearch,
 ) -> None:
     """Swap the shared host's identity for the seat TUI that owns ``external_id``."""
     for key in _PROCESS_IDENTITY_KEYS:
         terminal_context.pop(key, None)
-    seat = _SEAT_INDEX.resolve(external_id, cwd, seat_available) if external_id else None
+    if not external_id:
+        logger.debug(
+            "Codex shared app-server host pid %s: no seat search for this thread; "
+            "recording no terminal identity",
+            host.pid,
+        )
+        return
+    seat = _SEAT_INDEX.resolve(external_id, cwd, search)
     if seat is None:
         logger.warning(
             "Codex shared app-server host pid %s: no seat process resumes thread %s or "
@@ -281,57 +350,108 @@ class _CodexSeatIndex:
     """Map Codex thread ids to their live seat TUI processes.
 
     A resumed seat names its thread in argv (``codex resume <thread-id>``), the primary
-    match. A fresh seat carries no thread in argv, but Codex thread ids are UUIDv7, so
-    the thread's mint time is known: the newest seat TUI started in the hook's cwd at
-    most ``_FRESH_SEAT_WINDOW_SECONDS`` before that time is adopted for the thread. A
-    full process scan costs tens of milliseconds, so the index rescans only when a
-    thread is unknown or its recorded process is gone, and rate-limits repeated misses
-    for the same thread.
+    match. Otherwise the thread's newest stored row decides: its live seat, a settled
+    /clear refusal, or a pending /clear origin only the /clear search may settle.
+
+    A fresh seat carries no thread in argv, but Codex thread ids are UUIDv7, so the
+    thread's mint time is known: the newest seat TUI started in the hook's cwd at most
+    ``_FRESH_SEAT_WINDOW_SECONDS`` before that time is adopted for the thread. Only a
+    thread a real startup began may search this way. A /clear successor never does, so
+    no adoption made before its /clear row existed can outlive the row's outcome, and
+    every adoption the index holds is final. A full process scan costs tens of
+    milliseconds, so the index rescans only when a thread is unknown or its recorded
+    process is gone, and rate-limits repeated misses for the same thread. Every caller
+    resolves through here, so none can guess past it.
     """
 
     def __init__(self) -> None:
         self._seats: list[tuple[int, float, tuple[str, ...]]] = []
         self._adopted: dict[str, tuple[int, float]] = {}
         self._missed_at: dict[str, float] = {}
+        self._stored_clear: StoredClearContext | None = None
 
     def clear(self) -> None:
         self._seats = []
         self._adopted = {}
         self._missed_at = {}
 
+    def configure(self, stored_clear: StoredClearContext | None) -> None:
+        self._stored_clear = stored_clear
+
     def resolve(
-        self, thread_id: str, cwd: str | None, seat_available: SeatAvailable | None = None
+        self, thread_id: str, cwd: str | None, search: _SeatSearch
     ) -> psutil.Process | None:
-        seat = self._cached(thread_id)
+        seat = self._resumed(thread_id)
+        # A /clear search decides from the stored row alone.
+        if seat is None and search.cleared_seat_owner is None:
+            seat = self._remembered(thread_id)
         if seat is not None:
             return seat
         now = time.monotonic()
         missed_at = self._missed_at.get(thread_id)
-        # Registration runs once per thread, so its wider search is never rate-limited.
+        # A startup's search and a clear successor's start run once per thread, so an
+        # earlier hook's miss never holds them back.
         if (
-            seat_available is None
+            not search.startup_thread
+            and search.cleared_seat_owner is None
             and missed_at is not None
             and now - missed_at < _SEAT_RESCAN_INTERVAL_SECONDS
         ):
             return None
         self._rescan()
-        seat = self._cached(thread_id)
+        seat = self._resumed(thread_id)
         if seat is None:
-            seat = self._adopt(thread_id, cwd)
-        if seat is None and seat_available is not None:
-            seat = self._adopt_unowned(thread_id, cwd, seat_available)
+            seat = self._decide(thread_id, cwd, search)
         if seat is None:
             self._missed_at[thread_id] = now
         else:
             self._missed_at.pop(thread_id, None)
         return seat
 
-    def _cached(self, thread_id: str) -> psutil.Process | None:
+    def _decide(
+        self, thread_id: str, cwd: str | None, search: _SeatSearch
+    ) -> psutil.Process | None:
+        """The seat a thread no argv names may have, by its stored row and its search."""
+        try:
+            stored = self._stored_clear(thread_id) if self._stored_clear else None
+        except Exception:
+            # A guess could type into another pane, so an unread row adopts nothing.
+            logger.warning(
+                "Codex thread %s: stored /clear row unreadable; recording no seat",
+                thread_id,
+                exc_info=True,
+            )
+            return None
+        outcome = _stored_clear_outcome(stored)
+        if isinstance(outcome, tuple):
+            seat = _recorded_process(*outcome)
+            if seat is not None:
+                self._adopted[thread_id] = outcome
+            return seat
+        if outcome is _StoredClear.REFUSED:
+            return None
+        if search.cleared_seat_owner is not None:
+            # A clear successor's seat already hosted a thread, so a fresh or unowned
+            # TUI is never it.
+            return self._adopt_cleared(thread_id, cwd, search.cleared_seat_owner)
+        if outcome is _StoredClear.PENDING or not search.startup_thread:
+            # A fresh or unowned TUI is a guess: made for a thread no startup began, it
+            # could be a /clear successor's and type into another pane.
+            return None
+        seat = self._adopt(thread_id, cwd)
+        if seat is None and search.seat_available is not None:
+            seat = self._adopt_unowned(thread_id, cwd, search.seat_available)
+        return seat
+
+    def _resumed(self, thread_id: str) -> psutil.Process | None:
         for pid, create_time, cmdline in self._seats:
             if thread_id in cmdline:
                 process = _recorded_process(pid, create_time)
                 if process is not None:
                     return process
+        return None
+
+    def _remembered(self, thread_id: str) -> psutil.Process | None:
         adopted = self._adopted.get(thread_id)
         if adopted is not None:
             process = _recorded_process(*adopted)
@@ -397,6 +517,46 @@ class _CodexSeatIndex:
         self._adopted[thread_id] = (pid, create_time)
         return process
 
+    def _adopt_cleared(
+        self, thread_id: str, cwd: str | None, owner_of: SeatOwnerCheck
+    ) -> psutil.Process | None:
+        """Adopt the seat TUI in ``cwd`` that ran /clear to mint ``thread_id``.
+
+        The caller has verified from the thread's rollout that a terminal TUI minted it.
+        Every seat TUI in the cwd that started before the thread is a candidate, whoever
+        owns it; resumed and Gobby-spawned seats count, since /clear works in either.
+        Adopt only a sole candidate whose owner is recorded. Any second candidate refuses:
+        a guess could type into another pane. The adoption is only a proposal, so it is
+        not cached: the caller publishes it with ``sync_codex_seat`` once storage
+        accepts it.
+        """
+        minted_at = _thread_minted_at(thread_id)
+        if minted_at is None or cwd is None:
+            return None
+        candidates: list[tuple[psutil.Process, int, float]] = []
+        for pid, create_time, _cmdline in self._seats:
+            if create_time > minted_at:
+                continue
+            try:
+                process = psutil.Process(pid)
+                if _is_seat_tui(process, cwd):
+                    candidates.append((process, pid, create_time))
+            except _PSUTIL_ERRORS:
+                continue
+        if len(candidates) != 1:
+            return None
+        process, pid, create_time = candidates[0]
+        if owner_of(pid, create_time) is not SeatOwner.RECORDED:
+            return None
+        return process
+
+    def sync(self, thread_id: str, seat: tuple[int, float] | None) -> None:
+        if seat is None:
+            self._adopted.pop(thread_id, None)
+            return
+        self._adopted[thread_id] = seat
+        self._missed_at.pop(thread_id, None)
+
     def _rescan(self) -> None:
         seats: list[tuple[int, float, tuple[str, ...]]] = []
         for process in psutil.process_iter(attrs=["name"]):
@@ -433,14 +593,19 @@ def _recorded_process(pid: int, create_time: float) -> psutil.Process | None:
 
 
 def _is_fresh_seat_tui(process: psutil.Process, cwd: str | None) -> bool:
-    """A seat TUI is launched from a shell, never forked by another codex process, runs
-    in the hook's cwd when that cwd is known, and is not one Gobby spawned for an agent
-    run (``GOBBY_AGENT_RUN_ID``). An unreadable environment raises to the caller, which
+    """A fresh seat TUI is a seat TUI Gobby did not spawn for an agent run
+    (``GOBBY_AGENT_RUN_ID``). An unreadable environment raises to the caller, which
     skips the seat."""
+    if _non_empty_str(process.environ().get("GOBBY_AGENT_RUN_ID")) is not None:
+        return False
+    return _is_seat_tui(process, cwd)
+
+
+def _is_seat_tui(process: psutil.Process, cwd: str | None) -> bool:
+    """A seat TUI is launched from a shell, never forked by another codex process, and
+    runs in the hook's cwd when that cwd is known."""
     parent = process.parent()
     if parent is not None and parent.name() == _CODEX_PROCESS_NAME:
-        return False
-    if _non_empty_str(process.environ().get("GOBBY_AGENT_RUN_ID")) is not None:
         return False
     if cwd is None:
         return True
@@ -468,6 +633,50 @@ _SEAT_INDEX = _CodexSeatIndex()
 def clear_codex_seat_index() -> None:
     """Forget every cached seat process; tests call this between scenarios."""
     _SEAT_INDEX.clear()
+
+
+def configure_codex_seat_index(stored_clear: StoredClearContext | None) -> None:
+    """Give the seat index the stored /clear rows it decides from; None reads none.
+
+    ``clear_codex_seat_index`` keeps it: the daemon configures it once per hook manager.
+    """
+    _SEAT_INDEX.configure(stored_clear)
+
+
+def sync_codex_seat(thread_id: str, stored_context: Mapping[str, Any] | None) -> None:
+    """Make the cached seat for a /clear successor's thread the one its row stores.
+
+    Call it with the row as storage holds it after the successor's write. A seat
+    guessed for the thread before its /clear row existed gives way to the stored seat,
+    or is forgotten when the row stores none.
+    """
+    _SEAT_INDEX.sync(thread_id, _stored_seat(stored_context))
+
+
+def _stored_seat(context: Mapping[str, Any] | None) -> tuple[int, float] | None:
+    """The seat process a stored terminal context records, if it records a valid one."""
+    if not isinstance(context, Mapping):
+        return None
+    pid, create_time = context.get("parent_pid"), context.get("parent_create_time")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    if isinstance(create_time, bool) or not isinstance(create_time, (int, float)):
+        return None
+    return pid, float(create_time)
+
+
+def _stored_clear_outcome(
+    context: Mapping[str, Any] | None,
+) -> tuple[int, float] | _StoredClear:
+    """Classify a thread's stored row: its seat, or what may still adopt one."""
+    seat = _stored_seat(context)
+    if seat is not None:
+        return seat
+    if not isinstance(context, Mapping) or context.get(CODEX_CLEAR_ORIGIN_KEY) is None:
+        return _StoredClear.NONE
+    if context.get(CODEX_CLEAR_ORIGIN_KEY) == CODEX_CLEAR_ORIGIN_PENDING:
+        return _StoredClear.PENDING
+    return _StoredClear.REFUSED
 
 
 def _non_empty_str(value: Any) -> str | None:

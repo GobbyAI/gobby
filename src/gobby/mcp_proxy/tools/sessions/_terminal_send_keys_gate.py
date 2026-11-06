@@ -1,6 +1,6 @@
 """Target checks an allowed ``send_keys`` caller must pass before keys are written.
 
-The bundled ``no-send-keys`` rule decides who may call ``send_keys``. This module
+Configured rules decide who may call ``send_keys``. This module
 decides whether the target can take keys: a live agent CLI in the foreground, an
 empty composer that the composer ledger vouches for, and no credential prompt on
 screen. Every signal that cannot be read refuses.
@@ -18,14 +18,16 @@ from typing import Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
+from gobby.agents.srt_runtime import srt_install_root
 from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.foreground import (
     command_name,
+    foreground_child_executables,
     foreground_executables,
     foreground_node_script,
     shell_pid,
 )
-from gobby.terminals.pane_io import composer_reader, live_runtime_pane
+from gobby.terminals.pane_io import clear_composer, composer_reader, live_runtime_pane
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +47,31 @@ _CREDENTIAL_PROMPT = re.compile(
 _BUSY_RULE_IDS = ("turn_in_flight", "active_work")
 
 
+_HELD_RECOVERY = (
+    "The composer holds unsubmitted daemon text, such as a staged /compact. Clear all of it "
+    "with one clear key, such as send_keys(keys='ctrl_u', literal=false), or rerun "
+    "set_handoff to resubmit it."
+)
+_DRAFT_RECOVERY = (
+    "Keys never clear an operator draft or an unconfirmed composer. Once the pane shows "
+    "no draft, free it from another session with gobby-sessions:release_composer."
+)
+
+
 @dataclass(frozen=True)
 class SendKeysRefusal:
     code: str
     message: str
+    recovery: str | None = None
 
 
-def _refuse(code: str, reason: str) -> SendKeysRefusal:
-    return SendKeysRefusal(code, f"send_keys refused: {reason}. {SEND_MESSAGE_HINT}")
+@dataclass(frozen=True)
+class ComposerCleared:
+    """A held daemon draft was drained through the pane instead of taking the keys."""
+
+
+def _refuse(code: str, reason: str, recovery: str | None = None) -> SendKeysRefusal:
+    return SendKeysRefusal(code, f"send_keys refused: {reason}. {SEND_MESSAGE_HINT}", recovery)
 
 
 def _last_nonblank_line(text: str) -> str:
@@ -89,11 +108,40 @@ def _is_versioned_claude(executable: str) -> bool:
     )
 
 
+def _is_installed_srt_runner(script: str) -> bool:
+    """Whether ``script`` is the SRT runner this install launches providers through."""
+    try:
+        installed = (srt_install_root() / "runner.mjs").resolve(strict=True)
+        return Path(script).resolve(strict=True) == installed
+    except (OSError, RuntimeError):
+        return False
+
+
+def _srt_runner_cli(pid: int) -> str | None:
+    """The agent CLI an SRT runner launched, read from its live child in the same group.
+
+    The runner's script names no provider; its child does. The child is classified like
+    any foreground executable, so only an allowlisted CLI name or a versioned Claude
+    build on disk qualifies.
+    """
+    for executable in foreground_child_executables(pid):
+        cli = _agent_cli(command_name(executable), executable)
+        if cli is not None:
+            return cli
+    return None
+
+
 def _node_agent_cli(pid: int) -> str | None:
-    """Bind node's live script to the installed Claude package's declared CLI."""
+    """Bind node's live script to the agent CLI it runs.
+
+    Either the installed Claude package's declared CLI, or Gobby's installed SRT runner
+    with its provider as a live child.
+    """
     script = foreground_node_script(pid)
     if script is None:
         return None
+    if _is_installed_srt_runner(script):
+        return _srt_runner_cli(pid)
     try:
         entrypoint = Path(script).resolve(strict=True)
         manifest_path = entrypoint.parent / "package.json"
@@ -122,8 +170,16 @@ async def send_keys_target_refusal(
     session_id: str,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
-) -> SendKeysRefusal | None:
-    """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer."""
+    *,
+    clear_held: bool = False,
+) -> SendKeysRefusal | ComposerCleared | None:
+    """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
+
+    ``clear_held`` is set for a pure clear-key request. When the ledger holds daemon
+    text, the composer is drained through the pane (recording the drain, so no held
+    command is replayed later) and ``ComposerCleared`` is returned; every other
+    check still applies.
+    """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
     try:
@@ -153,10 +209,12 @@ async def send_keys_target_refusal(
             )
 
         composer = read_composer(terminal.id)
-        if composer.state != "empty":
+        draining = clear_held and composer.state == "held"
+        if composer.state != "empty" and not draining:
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
+                _HELD_RECOVERY if composer.state == "held" else _DRAFT_RECOVERY,
             )
 
         registry = _detection_registry(terminal_manager)
@@ -192,12 +250,24 @@ async def send_keys_target_refusal(
             or activity.match is None
             or busy
             or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
-            or read_frame(snapshot).state != "empty"
+            # A held draft is visible in the frame; only the drain may touch it.
+            or (not draining and read_frame(snapshot).state != "empty")
         ):
             return _refuse(
                 "send_keys_composer_not_idle",
                 "the target pane does not show an idle agent composer",
             )
+        if draining:
+            if pane is None:
+                return _refuse("send_keys_target_unconfirmed", "the target pane cannot be read")
+            drained = await clear_composer(pane, cli, read_frame)
+            if not drained.ok:
+                return _refuse(
+                    "send_keys_composer_not_idle",
+                    f"the held composer could not be cleared: {drained.reason}",
+                    _HELD_RECOVERY,
+                )
+            return ComposerCleared()
     except Exception:
         # Fail closed: an unreadable target never receives keys.
         logger.warning("send_keys target check failed for %s", session_id, exc_info=True)

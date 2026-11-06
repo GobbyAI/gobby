@@ -33,12 +33,14 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requ
 
 @pytest.mark.parametrize("operator", [False, True])
 @pytest.mark.parametrize("operation", ["update", "bulk-toggle", "toggle", "delete"])
-def test_reserved_writer_routes_use_authenticated_operator_identity(
+@pytest.mark.parametrize("guard", ["reserved-writer", "protected"])
+def test_guarded_rule_routes_use_authenticated_operator_identity(
     client: TestClient,
     def_manager: RuleDefinitionManager,
     monkeypatch: pytest.MonkeyPatch,
     operator: bool,
     operation: str,
+    guard: str,
 ) -> None:
     from gobby.servers.auth_service import AuthService
     from gobby.utils.local_token import AgentApiTokenClaims
@@ -50,16 +52,32 @@ def test_reserved_writer_routes_use_authenticated_operator_identity(
     monkeypatch.setattr(
         AuthService, "_verified_agent_claims_for_token", lambda _self, _request, _token: claims
     )
-    body = {
-        "event": "turn_start",
-        "effects": [
-            {
-                "type": "set_variable",
-                "variable": "project_policy",
-                "value": {"security_paths": ["src/**"]},
-            }
-        ],
-    }
+    if guard == "protected":
+        body: dict[str, Any] = {
+            "event": "turn_start",
+            "protected": True,
+            "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+        }
+        replacement: dict[str, Any] = {
+            "event": "turn_start",
+            "protected": True,
+            "effects": [{"type": "set_variable", "variable": "ordinary", "value": 2}],
+        }
+    else:
+        body = {
+            "event": "turn_start",
+            "effects": [
+                {
+                    "type": "set_variable",
+                    "variable": "project_policy",
+                    "value": {"security_paths": ["src/**"]},
+                }
+            ],
+        }
+        replacement = {
+            "event": "turn_start",
+            "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+        }
     row = def_manager.create(
         name="synthetic-protected-policy", definition_json=body, source="installed"
     )
@@ -68,12 +86,7 @@ def test_reserved_writer_routes_use_authenticated_operator_identity(
         response = client.put(
             f"/api/rules/{row.name}",
             headers=headers,
-            json={
-                "definition": {
-                    "event": "turn_start",
-                    "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
-                }
-            },
+            json={"definition": replacement},
         )
     elif operation == "bulk-toggle":
         response = client.put(
@@ -153,7 +166,7 @@ def _seed_rule(
     body = {
         "event": event,
         "group": group,
-        "effect": {"type": "block", "reason": "test"},
+        "effects": [{"type": "block", "reason": "test"}],
     }
     row = def_manager.create(
         name=name,
@@ -166,11 +179,17 @@ def _seed_rule(
 
 
 def _seed_invalid_rule(def_manager: RuleDefinitionManager) -> None:
-    def_manager.create(
+    rule_id = _seed_rule(
+        def_manager,
         name="invalid-rule",
-        definition_json={"not": "a-rule"},
         tags=["invalid-tag"],
     )
+    # Model a corrupt persisted row without bypassing validation for normal writers.
+    with def_manager.db.transaction() as conn:
+        conn.execute(
+            "UPDATE rule_definitions SET definition_json = %s WHERE id = %s",
+            ('{"not": "a-rule"}', rule_id),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -462,20 +481,18 @@ class TestUpdateRule:
         data = resp.json()
         assert data["rule"]["description"] == "Updated"
 
-    def test_update_unparseable_definition_returns_metadata(
+    def test_update_unparseable_definition_is_rejected(
         self, client: TestClient, def_manager: RuleDefinitionManager
     ) -> None:
         _seed_invalid_rule(def_manager)
 
         resp = client.put("/api/rules/invalid-rule", json={"priority": 9})
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "success"
-        assert data["rule"]["name"] == "invalid-rule"
-        assert data["rule"]["priority"] == 9
-        assert data["rule"]["event"] is None
-        assert data["rule"]["effects"] is None
+        assert resp.status_code == 400
+        assert "Field required" in resp.json()["detail"]
+        current = def_manager.get_by_name("invalid-rule")
+        assert current is not None
+        assert current.priority != 9
 
     def test_renames_rule(self, client: TestClient, def_manager: RuleDefinitionManager) -> None:
         rule_id = _seed_rule(def_manager, name="my-rule")
@@ -701,7 +718,7 @@ class TestProjectScopedNameLookup:
 
         project_id = LocalProjectManager(def_manager.db).create(f"rules-{uuid4()}").id
         global_id = _seed_rule(def_manager, name="shared", source="custom")
-        body = {"event": "turn_start", "effect": {"type": "observe", "message": "x"}}
+        body = {"event": "turn_start", "effects": [{"type": "observe", "message": "x"}]}
         project_row = def_manager.create(
             name="shared", definition_json=body, source="custom", project_id=project_id
         )

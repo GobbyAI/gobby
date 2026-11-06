@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -10,11 +11,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.tasks.attestation_shapes import select_closure_rules
 from gobby.tasks.attestations import TaskAttestation
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
-from gobby.workflows.selectors import resolve_rules_for_agent
 
 
 class ClosureSnapshot(BaseModel):
@@ -44,16 +45,7 @@ def evaluate_closure_policy(
     Attestation kind/result strings have no built-in meaning. YAML supplies every
     requirement; this function supplies only snapshot queries and block semantics.
     """
-    available = [row for row in rules if row.enabled and row.deleted_at is None]
-    selected_names = resolve_rules_for_agent(agent, available)
-    selected = sorted(
-        (
-            row
-            for row in available
-            if row.name in selected_names and row.definition_json.get("event") == snapshot.event
-        ),
-        key=lambda row: (row.priority, row.name, row.id),
-    )
+    selected = select_closure_rules(agent, rules, (snapshot.event,))
     policy_data = {
         "agent": agent.model_dump(mode="json"),
         "rules": [
@@ -77,23 +69,7 @@ def evaluate_closure_policy(
     context["all_attestations"] = all_records
     context["attestations"] = active
 
-    def latest_attestation(kind: str) -> dict[str, Any]:
-        return next((record for record in reversed(active) if record["kind"] == kind), {})
-
-    evaluator = SafeExpressionEvaluator(
-        context,
-        {
-            "latest_attestation": latest_attestation,
-            "any": any,
-            "all": all,
-            "len": len,
-            "str": str,
-            "int": int,
-            "bool": bool,
-            "paths_match": paths_match,
-            "timestamp": lambda value: datetime.fromisoformat(value).timestamp(),
-        },
-    )
+    evaluator = SafeExpressionEvaluator(context, build_closure_condition_helpers(context))
     blockers = []
     for row in selected:
         try:
@@ -113,6 +89,32 @@ def evaluate_closure_policy(
         policy_revision,
         _digest({"snapshot": snapshot.model_dump(mode="json"), "policy": policy_revision}),
     )
+
+
+def build_closure_condition_helpers(context: dict[str, Any]) -> dict[str, Callable[..., Any]]:
+    """The closure engine's function contract; construction performs no queries."""
+
+    def latest_attestation(kind: str) -> dict[str, Any]:
+        return next(
+            (
+                record
+                for record in reversed(context.get("attestations", []))
+                if record["kind"] == kind
+            ),
+            {},
+        )
+
+    return {
+        "latest_attestation": latest_attestation,
+        "any": any,
+        "all": all,
+        "len": len,
+        "str": str,
+        "int": int,
+        "bool": bool,
+        "paths_match": paths_match,
+        "timestamp": lambda value: datetime.fromisoformat(value).timestamp(),
+    }
 
 
 def paths_match(paths: list[str], patterns: list[str]) -> bool:

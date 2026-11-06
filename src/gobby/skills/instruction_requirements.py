@@ -53,18 +53,20 @@ def instruction_is_loaded(value: str, variables: Mapping[str, object]) -> bool:
 
 
 def instruction_fetch_call(value: str) -> str:
-    """Render a safely quoted call; schema leasing belongs to the directive."""
+    """Render a safely quoted call; references load through get_skill names."""
     if ":" not in value:
         return 'call_tool("gobby-skills", "get_skill", {"name":' + json.dumps(value) + "})"
-    requirement = parse_instruction_requirement(value)
-    arguments = json.dumps(
-        {"name": requirement.skill, "path": requirement.path}, separators=(",", ":")
-    )
-    return f'call_tool("gobby-skills", "get_skill_file", {arguments})'
+    return instruction_batch_call([parse_instruction_requirement(value).identity])
+
+
+def instruction_batch_call(values: list[str]) -> str:
+    """Render one get_skill call that loads every identity in order."""
+    arguments = json.dumps({"names": values}, separators=(",", ":"))
+    return f'call_tool("gobby-skills", "get_skill", {arguments})'
 
 
 def instruction_fetch_directive(value: str) -> str:
-    """Keep plain-skill wording stable and explicitly gate reference retrieval."""
+    """Keep plain-skill wording stable; references name their completion proof."""
     try:
         call = instruction_fetch_call(value)
     except ValueError as exc:
@@ -72,13 +74,33 @@ def instruction_fetch_directive(value: str) -> str:
     if ":" not in value:
         return f"Load and fully read the skill in its own outer tool result: {call}. Then continue."
     return (
-        "Load and fully read the reference in its own outer tool result. "
-        "If its schema is not leased in this context, first call "
-        'get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file") '
-        "in a separate outer tool result. Then call "
-        f"{call}. Follow page.next_cursor using get_skill_file with only cursor until null; "
-        "partial pages, listings and the router do not satisfy this requirement. Then continue."
+        f"Load and fully read the reference in its own outer tool result: {call}. "
+        "Follow page.next_cursor with only cursor until null; it is loaded once a "
+        "page.completed lists it. Then continue."
     )
+
+
+def instruction_batch_directive(values: list[str]) -> str:
+    """Name every identity in one call; invalid identities are reported separately."""
+    valid: list[str] = []
+    invalid: list[str] = []
+    for value in values:
+        try:
+            valid.append(parse_instruction_requirement(value).identity)
+        except ValueError as exc:
+            invalid.append(
+                f"Invalid instruction requirement: {exc}. Correct the requirement before "
+                "continuing."
+            )
+    lines = invalid
+    if valid:
+        lines = [
+            "Load and fully read these instructions with one call, in its own outer tool "
+            f"result: {instruction_batch_call(valid)}. Follow page.next_cursor with only cursor "
+            "until null; each is loaded once a page.completed lists it. Then continue.",
+            *invalid,
+        ]
+    return "\n".join(lines)
 
 
 INSTRUCTION_CALL_PREFIXES = ("get_skill(", "get_skill_file(")
@@ -88,10 +110,14 @@ def instruction_call_form(value: str) -> str:
     """Render the bare keyword call: the fewest characters that still name a target exactly."""
     if ":" not in value:
         return f"get_skill(name={json.dumps(value)})"
-    requirement = parse_instruction_requirement(value)
-    return (
-        f"get_skill_file(name={json.dumps(requirement.skill)}, path={json.dumps(requirement.path)})"
-    )
+    identity = parse_instruction_requirement(value).identity
+    return f"get_skill(names={json.dumps([identity])})"
+
+
+def instruction_batch_call_form(values: list[str]) -> str:
+    """Render the bare keyword call that loads several identities at once."""
+    identities = [parse_instruction_requirement(value).identity for value in values]
+    return f"get_skill(names={json.dumps(identities)})"
 
 
 def is_instruction_call_line(line: str) -> bool:

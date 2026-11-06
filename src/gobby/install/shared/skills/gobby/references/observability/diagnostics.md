@@ -53,3 +53,5 @@ use isolated test state for any mutating diagnostic rehearsal.
 See [logs](../../../../../../../../docs/guides/observability.md#log-files),
 [traces](../../../../../../../../docs/guides/observability.md#traces), and
 [Collector setup](../../../../../../../../docs/guides/observability.md#collect-logs-with-opentelemetry).
+
+_Version: 1.0.0_

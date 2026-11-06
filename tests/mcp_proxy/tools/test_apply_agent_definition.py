@@ -226,7 +226,7 @@ async def test_activation_arms_the_seat_reading_gates(
         prompts={"persona": "Run the seat."},
         workflows=make_agent_workflows(
             variables={
-                "_seat_procedure": "gobby:references/agents/procedures/orchestrator.md",
+                "_seat_procedure": "gobby:references/agents/procedures/fixture-procedure.md",
                 "_seat_references": ["gobby:references/agents/gclient.md"],
                 "_reserved": "bad",
             }
@@ -241,11 +241,14 @@ async def test_activation_arms_the_seat_reading_gates(
 
     result = await apply_definition()(agent="seat", db=temp_db, session_id=session_id)
 
-    # Cold start activates the Orchestrator and Assistant this way, never through a spawn,
+    # Cold start activates a seat this way, never through a spawn,
     # so activation must arm the same required-reading gates a spawned seat gets.
     assert result["success"] is True
     variables = SessionVariableManager(temp_db).get_variables(session_id)
-    assert variables.get("_seat_procedure") == "gobby:references/agents/procedures/orchestrator.md"
+    assert (
+        variables.get("_seat_procedure")
+        == "gobby:references/agents/procedures/fixture-procedure.md"
+    )
     assert variables.get("_seat_references") == ["gobby:references/agents/gclient.md"]
     assert "_reserved" not in variables
 
@@ -661,7 +664,7 @@ class TestBuildDefinitionChanges:
 
         agent = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="developer",
+            name="fixture-worker",
         )
         changes, active_rules, active_skills = build_definition_changes(
             agent_body=agent,
@@ -669,7 +672,7 @@ class TestBuildDefinitionChanges:
             db=db,
         )
 
-        assert changes["_agent_type"] == "developer"
+        assert changes["_agent_type"] == "fixture-worker"
         assert "_active_rule_names" in changes
         assert changes["is_spawned_agent"] is False
 
@@ -1000,10 +1003,12 @@ def test_default_title_yields_to_a_later_apply_and_a_task_claim(
     from gobby.storage.sessions._title_defaults import TASK_TITLE_SOURCE
 
     with session_context_for_test(session_id):
-        title_applied_session(db, {"success": True}, "developer", None)
-        relabeled = title_applied_session(db, {"success": True}, "code-reviewer", None)
+        title_applied_session(db, {"success": True}, "fixture-worker", None)
+        relabeled = title_applied_session(
+            db, {"success": True}, "fixture-definition-e08ba693", None
+        )
 
-    assert relabeled["title"] == "Code Reviewer"
+    assert relabeled["title"] == "Fixture Definition E08Ba693"
     SessionManager(db).update_title(session_id, "#7 Fix it", title_source=TASK_TITLE_SOURCE)
     assert session_title(db, session_id) == "#7 Fix it"
     from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
@@ -1012,7 +1017,7 @@ def test_default_title_yields_to_a_later_apply_and_a_task_claim(
     stored = SessionVariableManager(db).get_variable_subset(
         session_id, (DEFINITION_TITLE_VARIABLE,)
     )
-    assert stored == {DEFINITION_TITLE_VARIABLE: "Code Reviewer"}
+    assert stored == {DEFINITION_TITLE_VARIABLE: "Fixture Definition E08Ba693"}
 
 
 @pytest.mark.asyncio

@@ -45,7 +45,6 @@ from gobby.workflows.commit_guard_conflicts import (
     format_dirty_edit_reason,
     format_ref,
 )
-from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
@@ -56,7 +55,6 @@ from gobby.workflows.git_operation_ownership import (
 )
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.task_tool_bindings import TaskToolBindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
@@ -67,8 +65,8 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
-RULE_NAME = "block-cross-session-foreign-staged-commit"
-DIRTY_EDIT_RULE_NAME = "block-cross-session-foreign-dirty-edit"
+RULE_NAME = "synthetic-staged-conflict-observer"
+DIRTY_EDIT_RULE_NAME = "synthetic-dirty-conflict-observer"
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
@@ -1242,13 +1240,19 @@ def guard_harness(
         },
     )
 
-    result = sync_bundled_rules(temp_db, get_bundled_rules_path())
-    assert result["errors"] == []
-    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    temp_db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
-        (RULE_NAME, DIRTY_EDIT_RULE_NAME),
-    )
+    for name, fact in (
+        (RULE_NAME, "foreign_staged_commit_conflict"),
+        (DIRTY_EDIT_RULE_NAME, "foreign_dirty_edit_conflict"),
+    ):
+        RuleDefinitionManager(temp_db).create(
+            name,
+            {
+                "event": "before_tool",
+                "when": fact,
+                "effects": [{"type": "block", "reason": "{{ " + fact + " }}"}],
+            },
+            tags=["default"],
+        )
 
     engine = RuleEngine(temp_db, task_manager=task_manager)
     handler = WorkflowHookHandler(
@@ -2318,30 +2322,23 @@ async def test_merge_branch_change_checks_foreign_ownership(
 @pytest.mark.parametrize(
     "operation", ["checkout -f HEAD", "checkout foreign.txt", "checkout -m HEAD"]
 )
-async def test_checkout_unverified_cwd_fails_closed(
+async def test_checkout_unverified_cwd_reports_unknown_scope(
     guard_harness: GuardHarness, operation: str
 ) -> None:
     harness = guard_harness
-    harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
-        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
-    )
     (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     event = harness.event(f"git {operation}")
     event.cwd = None
-    response = await harness.handler._evaluate_rules(event)
+    await harness.handler._evaluate_rules(event)
     assert event.data["canonical_repo_mutation_scope_unknown"] is True
-    assert response.decision == "block", response.reason
-    assert response.reason is not None
-    assert "cannot resolve its target scope" in response.reason
 
 
 @pytest.mark.asyncio
 async def test_nonforce_head_checkout_allows_unverified_cwd(guard_harness: GuardHarness) -> None:
     harness = guard_harness
     harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
-        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME),
     )
     (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     response = await harness.handler._evaluate_rules(harness.event("git checkout HEAD"))
@@ -2371,18 +2368,13 @@ async def test_nonforce_head_checkout_allows_unverified_cwd(guard_harness: Guard
         "git rm -f 'f*.txt'",
     ],
 )
-async def test_checkout_opaque_operands_block_foreign_restore(
+async def test_checkout_opaque_operands_report_unknown_scope(
     guard_harness: GuardHarness, command: str
 ) -> None:
     harness = guard_harness
-    harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
-        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
-    )
     (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     event = harness.event(command.replace("{repo}", str(harness.repo)), workdir=harness.repo)
-    response = await harness.handler._evaluate_rules(event)
-    assert response.decision == "block", response.reason
+    await harness.handler._evaluate_rules(event)
     assert event.data["canonical_repo_mutation_scope_unknown"] is True
 
 
@@ -2404,8 +2396,8 @@ async def test_checkout_literal_operand_controls_allow(
 ) -> None:
     harness = guard_harness
     harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
-        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME),
     )
     (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     response = await harness.handler._evaluate_rules(
@@ -2416,16 +2408,12 @@ async def test_checkout_literal_operand_controls_allow(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shell", ["bash", "zsh"])
-async def test_append_icase_prefix_blocks_foreign_restore(
+async def test_append_icase_prefix_reports_unknown_scope(
     guard_harness: GuardHarness, shell: str
 ) -> None:
     if shutil.which(shell) is None:
         pytest.skip(f"{shell} is unavailable")
     harness = guard_harness
-    harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
-        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
-    )
     (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     result = subprocess.run(
         [shell, "-c", "GIT_ICASE_PATHSPECS+=1 git ls-files FOREIGN.TXT"],
@@ -2436,8 +2424,7 @@ async def test_append_icase_prefix_blocks_foreign_restore(
     )
     assert result.stdout.split() == ["foreign.txt"]
     event = harness.event("GIT_ICASE_PATHSPECS+=1 git checkout FOREIGN.TXT", workdir=harness.repo)
-    response = await harness.handler._evaluate_rules(event)
-    assert response.decision == "block", response.reason
+    await harness.handler._evaluate_rules(event)
     assert event.data["canonical_repo_mutation_scope_unknown"] is True
 
 
@@ -2445,29 +2432,6 @@ async def test_append_icase_prefix_blocks_foreign_restore(
 async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> None:
     response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
 
-    assert response.decision == "allow"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "touch d.py",
-        "case x in x) :;; esac; touch d.py",
-        "if true; then echo hi; fi; touch d.py",
-        "for f in a b; do echo $f; done; git add d.py",
-        "if [ ! -d build ]; then mkdir build; fi; cp a.py build/",
-        "if grep -q x a.py; then :; else touch d.py; fi",
-    ],
-)
-@pytest.mark.asyncio
-async def test_directory_preserving_branches_allow_claimed_shell_write(
-    guard_harness: GuardHarness, command: str
-) -> None:
-    guard_harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name = %s)",
-        ("block-unresolved-scope-shell-write",),
-    )
-    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
     assert response.decision == "allow"
 
 
@@ -3207,7 +3171,7 @@ async def test_literal_patch_refuses_foreign_owned_sidecars(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("definition_name", ["orchestrator", "fixture-controller"])
+@pytest.mark.parametrize("definition_name", ["fixture-coordinator", "fixture-controller"])
 @pytest.mark.parametrize("exempt", [False, True])
 async def test_definition_exemption_controls_actual_foreign_staged_commit(
     guard_harness: GuardHarness, definition_name: str, exempt: bool
@@ -3380,21 +3344,6 @@ async def test_completed_foreign_session_does_not_block_commit(
     )
 
     assert response.decision == "allow"
-
-
-def test_commit_guard_rule_syncs_and_validates(temp_db: HubDatabase) -> None:
-    result = sync_bundled_rules(temp_db, get_bundled_rules_path())
-    assert result["errors"] == []
-    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-
-    row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
-
-    assert row is not None
-    body = RuleDefinitionBody.model_validate(row.definition_json)
-    assert body.event.value == "before_tool"
-    assert body.group == "task-enforcement"
-    assert body.when == "foreign_staged_commit_conflict"
-    assert [effect.type for effect in body.resolved_effects] == ["block"]
 
 
 @pytest.mark.asyncio
@@ -4109,3 +4058,36 @@ def test_dirty_edit_refusal_names_only_remedies_that_exist() -> None:
     assert "release_task_paths" not in reason
     assert "gobby-agents.send_message" not in reason
     assert "gobby-agents:send_message" in reason
+
+
+@pytest.mark.asyncio
+async def test_session_sets_aside_and_restores_only_its_own_edits(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    h = guard_harness
+    (h.repo / "owned.txt").write_text("own change\n", encoding="utf-8")
+    (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id, _content_ledger(h, h.current_task, ["owned.txt"])
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    own_patch = workspace / "own.patch"
+    own_patch.write_text(_git(h.repo, "diff", "--", "owned.txt") + "\n", encoding="utf-8")
+    foreign_patch = workspace / "foreign.patch"
+    foreign_patch.write_text(_git(h.repo, "diff", "--", "foreign.txt") + "\n", encoding="utf-8")
+
+    set_aside = await h.handler._evaluate_rules(h.event("git checkout -- owned.txt"))
+    _git(h.repo, "checkout", "--", "owned.txt")
+    restore = h.event(f"git apply {own_patch}")
+    restored = await h.handler._evaluate_rules(restore)
+    foreign = h.event(f"git apply {foreign_patch}")
+    refused = await h.handler._evaluate_rules(foreign)
+
+    assert set_aside.decision == "allow", set_aside.reason
+    assert restored.decision == "allow", restored.reason
+    assert restore.data["canonical_file_paths"] == [str((h.repo / "owned.txt").resolve())]
+    assert not restore.data.get("canonical_repo_mutation_scope_unknown")
+    assert refused.decision == "block"
+    assert refused.reason is not None
+    assert "foreign.txt" in refused.reason

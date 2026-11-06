@@ -19,6 +19,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -29,8 +30,10 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
-    database = temp_db
-    return database
+    # Named seats must resolve their definitions; each selects every rule.
+    for seat in ("fixture-builder", "fixture-checker", "fixture-router"):
+        seed_seat(temp_db, seat, include=["*"])
+    return temp_db
 
 
 @pytest.fixture
@@ -57,6 +60,7 @@ def _insert_rule(
     body: RuleDefinitionBody,
     priority: int = 100,
 ) -> str:
+    body.mandatory = True
     row = manager.create(
         name=name,
         definition_json=body.model_dump_json(),
@@ -112,7 +116,7 @@ class TestAgentScopeFiltering:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        variables: dict[str, Any] = {"_agent_type": "developer"}
+        variables: dict[str, Any] = {"_agent_type": "fixture-builder"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
@@ -127,7 +131,7 @@ class TestAgentScopeFiltering:
             "dev-only-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer"],
+                agent_scope=["fixture-builder"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Dev block")],
             ),
             priority=10,
@@ -135,7 +139,7 @@ class TestAgentScopeFiltering:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        variables: dict[str, Any] = {"_agent_type": "developer"}
+        variables: dict[str, Any] = {"_agent_type": "fixture-builder"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
@@ -151,7 +155,7 @@ class TestAgentScopeFiltering:
             "dev-only-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer"],
+                agent_scope=["fixture-builder"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Dev block")],
             ),
             priority=10,
@@ -159,7 +163,7 @@ class TestAgentScopeFiltering:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        variables: dict[str, Any] = {"_agent_type": "qa"}
+        variables: dict[str, Any] = {"_agent_type": "fixture-checker"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
@@ -174,7 +178,7 @@ class TestAgentScopeFiltering:
             "dev-only-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer"],
+                agent_scope=["fixture-builder"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Dev block")],
             ),
             priority=10,
@@ -196,7 +200,7 @@ class TestAgentScopeFiltering:
             "dev-qa-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer", "qa"],
+                agent_scope=["fixture-builder", "fixture-checker"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Shared block")],
             ),
             priority=10,
@@ -206,17 +210,17 @@ class TestAgentScopeFiltering:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
 
         # Should match for developer
-        variables: dict[str, Any] = {"_agent_type": "developer"}
+        variables: dict[str, Any] = {"_agent_type": "fixture-builder"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
         # Should match for qa
-        variables = {"_agent_type": "qa"}
+        variables = {"_agent_type": "fixture-checker"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
         # Should NOT match for coordinator
-        variables = {"_agent_type": "coordinator"}
+        variables = {"_agent_type": "fixture-router"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
@@ -224,247 +228,3 @@ class TestAgentScopeFiltering:
 # ═══════════════════════════════════════════════════════════════════════
 # Developer agent rules
 # ═══════════════════════════════════════════════════════════════════════
-
-
-class TestDeveloperAgentRules:
-    """Developer-scoped rules: no-coderabbit, require-tests-pass."""
-
-    @pytest.mark.asyncio
-    async def test_no_coderabbit_blocks_for_developer(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """no-coderabbit blocks coderabbit MCP tools for developer agents."""
-        _insert_rule(
-            manager,
-            "no-coderabbit",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        mcp_tools=["coderabbit:*"],
-                        reason="Developers don't review their own code.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(
-            HookEventType.BEFORE_TOOL,
-            data={
-                "tool_name": "mcp__coderabbit__review",
-                "mcp_tool": "review",
-                "mcp_server": "coderabbit",
-            },
-        )
-        variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "block"
-        assert "review" in (response.reason or "").lower()
-
-    @pytest.mark.asyncio
-    async def test_no_coderabbit_allows_for_qa(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """no-coderabbit does not block QA agents."""
-        _insert_rule(
-            manager,
-            "no-coderabbit",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        mcp_tools=["coderabbit:*"],
-                        reason="Developers don't review their own code.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(
-            HookEventType.BEFORE_TOOL,
-            data={
-                "tool_name": "mcp__coderabbit__review",
-                "mcp_tool": "review",
-                "mcp_server": "coderabbit",
-            },
-        )
-        variables: dict[str, Any] = {"_agent_type": "qa"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_require_tests_blocks_git_commit_for_developer(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """require-tests-pass blocks git commit for developer agents."""
-        _insert_rule(
-            manager,
-            "require-tests-pass",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["developer"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        tools=["Bash"],
-                        command_pattern=r"git\s+commit",
-                        reason="Run tests before committing.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Bash", "command": "git commit -m 'fix'"},
-        )
-        variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "block"
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# QA agent rules
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestQAAgentRules:
-    """QA-scoped rules: no-code-writing (only test files)."""
-
-    @pytest.mark.asyncio
-    async def test_no_code_writing_blocks_edit_for_qa(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """no-code-writing blocks Edit/Write for QA agents."""
-        _insert_rule(
-            manager,
-            "qa-no-code-writing",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["qa"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        tools=["Edit", "Write"],
-                        reason="QA agents can only edit test files.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        variables: dict[str, Any] = {"_agent_type": "qa"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "block"
-
-    @pytest.mark.asyncio
-    async def test_no_code_writing_allows_for_developer(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """no-code-writing does not block developer agents."""
-        _insert_rule(
-            manager,
-            "qa-no-code-writing",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["qa"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        tools=["Edit", "Write"],
-                        reason="QA agents can only edit test files.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Coordinator agent rules
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestCoordinatorAgentRules:
-    """Coordinator-scoped rules: no-code-writing (orchestrate only)."""
-
-    @pytest.mark.asyncio
-    async def test_no_code_writing_blocks_for_coordinator(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """Coordinator can't use Edit/Write/NotebookEdit."""
-        _insert_rule(
-            manager,
-            "coordinator-no-code-writing",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["coordinator"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        tools=["Edit", "Write", "NotebookEdit"],
-                        reason="Coordinators orchestrate, don't write code.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        variables: dict[str, Any] = {"_agent_type": "coordinator"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "block"
-
-    @pytest.mark.asyncio
-    async def test_no_code_writing_allows_for_developer(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """Coordinator no-code-writing doesn't affect developer agents."""
-        _insert_rule(
-            manager,
-            "coordinator-no-code-writing",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["coordinator"],
-                effects=[
-                    RuleEffect(
-                        type="block",
-                        tools=["Edit", "Write", "NotebookEdit"],
-                        reason="Coordinators orchestrate, don't write code.",
-                    )
-                ],
-            ),
-            priority=50,
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"

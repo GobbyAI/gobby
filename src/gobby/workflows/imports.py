@@ -8,8 +8,6 @@ from stat import S_ISDIR, S_ISREG
 from types import SimpleNamespace
 from typing import Any
 
-import yaml
-
 from gobby.paths import get_global_workflows_dir
 from gobby.storage.definition_validation import validate_registry_regexes
 from gobby.storage.definitions import preserve_bundled_tag
@@ -27,6 +25,7 @@ from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.dev import linked_worktree_root
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import (
     PipelineDefinition,
@@ -35,13 +34,13 @@ from gobby.workflows.definitions import (
     validate_workflow_definition_data,
 )
 from gobby.workflows.pipeline_loader import detect_override_conflict
-from gobby.workflows.sync_rules import sync_rule_file
+from gobby.workflows.rule_authority import refuse_protected_rule_import
+from gobby.workflows.sync_rules import PROJECT_IMPORT_TAG, sync_rule_file
 
 logger = logging.getLogger(__name__)
 
 _KIND_TABLES = ("agent", "rule", "variable", "pipeline")
 _KIND_SUBDIRS = ("rules", "agents", "pipelines", "variables")
-_PROJECT_IMPORT_TAG = "project-workflow-import"
 _KIND_MANAGERS: dict[
     str,
     type[AgentDefinitionManager]
@@ -126,19 +125,21 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     RuleDefinitionBody.model_validate(body)
     manager = RuleDefinitionManager(db)
     name = str(data["name"])
-    data = prepare_rule_definition_for_persist(name, data)
+    body = prepare_rule_definition_for_persist(name, body)
     existing = manager.get_by_name(name, project_id=project_id)
+    target = existing if existing is not None and existing.project_id == project_id else None
+    refuse_protected_rule_import(manager, name, target, body)
     fields = {
-        "definition_json": data,
+        "definition_json": body,
         "description": data.get("description", ""),
         "enabled": normalize_workflow_definition_enabled(data),
         "priority": data.get("priority", 100),
         "sources": data.get("sources"),
         "tags": data.get("tags"),
     }
-    if existing is not None and existing.project_id == project_id:
-        preserve_bundled_tag(existing.tags, fields)
-        return manager.update(existing.id, **fields)
+    if target is not None:
+        preserve_bundled_tag(target.tags, fields)
+        return manager.update(target.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 
 
@@ -230,8 +231,8 @@ def _mark_project_import(db: Any, kind: str, name: str, project_id: str | None) 
     if row is None or row.project_id != project_id or row.source != "installed":
         return
     tags = row.tags or []
-    if "gobby" not in tags and _PROJECT_IMPORT_TAG not in tags:
-        manager.update_from_sync(row.id, tags=[*tags, _PROJECT_IMPORT_TAG])
+    if "gobby" not in tags and PROJECT_IMPORT_TAG not in tags:
+        manager.update_from_sync(row.id, tags=[*tags, PROJECT_IMPORT_TAG])
 
 
 def sync_imported_workflow_file(
@@ -242,8 +243,7 @@ def sync_imported_workflow_file(
     on_disk: set[tuple[str, str]] | None = None,
 ) -> Any:
     """Load one workflow YAML file and upsert it into the runtime database."""
-    with path.open(encoding="utf-8") as file:
-        data = yaml.safe_load(file)
+    data = load_strict_yaml(path.read_text(encoding="utf-8"))
     if isinstance(data, dict) and "name" not in data and isinstance(data.get("rules"), dict):
         # A rule file in the `gobby rules import` format: file-level group and
         # tags over a `rules` mapping. Import it through that same path.
@@ -251,11 +251,16 @@ def sync_imported_workflow_file(
         for name, rule_data in data["rules"].items():
             if isinstance(name, str) and isinstance(rule_data, dict):
                 _check_import_override(db, "rule", name, {**data, **rule_data})
+        names = [name for name in data["rules"] if isinstance(name, str)]
+        if on_disk is not None:
+            # Mark the rows this file already owns before the sync, so this pass refreshes
+            # a row that lost its sync tag instead of waiting for the next reload.
+            for name in names:
+                _mark_project_import(db, "rule", name, project_id)
         result = sync_rule_file(db, rule_file=path, project_id=project_id)
         if on_disk is not None:
-            for name in data["rules"]:
-                if isinstance(name, str):
-                    _mark_project_import(db, "rule", name, project_id)
+            for name in names:
+                _mark_project_import(db, "rule", name, project_id)
         if result["errors"]:
             raise ValueError("; ".join(result["errors"]))
         if on_disk is not None:
@@ -354,7 +359,7 @@ def sync_imported_workflows(
                         # Pipeline DB writers use custom source; installed also
                         # identifies older file imports (including crew-*).
                         # Other kinds share installed source with DB-only writers.
-                        and (kind == "pipeline" or _PROJECT_IMPORT_TAG in (row.tags or []))
+                        and (kind == "pipeline" or PROJECT_IMPORT_TAG in (row.tags or []))
                         and (kind, row.name) not in on_disk
                     ):
                         manager.delete(row.id)

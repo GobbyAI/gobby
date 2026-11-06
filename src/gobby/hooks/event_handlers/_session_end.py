@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gobby.agents.agent_workspaces import schedule_workspace_commit, unbind_epic_workspace
+from gobby.agents.agent_workspaces import unbind_epic_workspace
 from gobby.hooks.agent_run_ingress import session_end_targets_live_cli
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -38,11 +38,6 @@ class SessionEndMixin(EventHandlersBase):
                 session_id,
             )
             return HookResponse(decision="allow")
-
-        workspace_project_id = event.project_id or self._resolve_project_id(
-            event.project_id, event.cwd
-        )
-        schedule_workspace_commit(workspace_project_id, "session_end", loop=self._event_loop)
 
         if session_id:
             self.logger.debug("SESSION_END: session %s", session_id)
@@ -197,7 +192,7 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to unregister session from message processor: %s", e)
 
-        # Release any interactive plan-adversary lock labels owned by this
+        # Release any session-owned planning lock labels owned by this
         # session. The skill's terminal cleanup handles this on every clean
         # exit; this sweep is the safety net for sessions that die before
         # reaching terminal cleanup (browser tab closed, tmux pane killed,

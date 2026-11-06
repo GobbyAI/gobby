@@ -1,5 +1,5 @@
 name: security-auditor
-version: "2.1.0"
+version: "3.1.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -11,7 +11,18 @@ supplemental_review: true
 surfaces:
 - spawn
 - persona
-provider: inherit
+provider: grok
+model: grok-4.7
+reasoning_effort: high
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-sol
+    reasoning_effort: xhigh
+  - provider: claude
+    model: claude-opus-5-5
+    reasoning_effort: xhigh
+reviews:
+  - developer
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
@@ -34,7 +45,10 @@ prompts:
     secret handling, sandbox egress, injection and hook/proxy/daemon trust boundaries.
     Read the task and exact diff; load code-review and relevant language skills.
     Preserve the author's claim and files. Do not implement, format, commit or land.
-    Run focused isolated checks; never run the full test suite.
+    Run focused isolated checks; never run the full test suite. In a task worktree
+    run Python checks with `uv run --no-sync`: a plain `uv run` rebuilds the author's
+    package and fails on a read-only tree with "Cannot update time stamp of directory"
+    for its egg-info.
 
     Record gobby-tasks:record_attestation(kind=security-review,
     result=approved or rejected) with a bounded criteria review, rated findings,
@@ -65,7 +79,10 @@ prompts:
     secret handling, sandbox egress, injection and hook/proxy/daemon trust boundaries.
     Read the task and exact diff; load code-review and relevant language skills.
     Preserve the author's claim and files. Do not implement, format, commit or land.
-    Run focused isolated checks; never run the full test suite.
+    Run focused isolated checks; never run the full test suite. In a task worktree
+    run Python checks with `uv run --no-sync`: a plain `uv run` rebuilds the author's
+    package and fails on a read-only tree with "Cannot update time stamp of directory"
+    for its egg-info.
 
     Record gobby-tasks:record_attestation(kind=security-review,
     result=approved or rejected) with a bounded criteria review, rated findings,
@@ -95,7 +112,7 @@ workflows:
   rule_selectors:
     include:
     - tag:default
-    - tag:seat-policy
+    - tag:runbook
     - tag:worker-safety
     - tag:task-closure-general
     - tag:task-security

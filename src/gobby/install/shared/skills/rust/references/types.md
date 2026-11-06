@@ -113,3 +113,5 @@ impl Connection<Authenticated> {
 // let conn = Connection::connect("localhost")?;
 // conn.query("SELECT 1");  // no method `query` on Connection<Connected>
 ```
+
+_Version: 1.0.0_

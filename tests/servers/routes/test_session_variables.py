@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import AgentApiTokenClaims
@@ -315,11 +316,11 @@ def test_agent_token_hash_ref_resolves_only_to_claimed_session(
     ("role", "identity", "foreign", "allowed"),
     [
         ("default", "header", False, True),
-        ("assistant", "header", True, True),
-        ("developer", "header", False, False),
+        ("fixture-helper", "header", True, True),
+        ("fixture-worker", "header", False, False),
         ("default", "missing", False, False),
         ("default", "claims", False, True),
-        ("developer", "claims", False, False),
+        ("fixture-worker", "claims", False, False),
     ],
 )
 def test_http_setter_enforces_real_caller_authority(
@@ -342,6 +343,17 @@ def test_http_setter_enforces_real_caller_authority(
             (session_id, session_id, "21000000-0000-4000-8000-000000000001", "codex", _PROJECT),
         )
     variables = SessionVariableManager(temp_db)
+    AgentDefinitionManager(temp_db).create(
+        "fixture-helper",
+        {
+            "name": "fixture-helper",
+            "prompts": {"agent": "Maintain assigned session state."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "capabilities": ["write_session_variables"],
+        },
+        project_id=_PROJECT,
+        enabled=True,
+    )
     variables.set_variable(_OWN_SESSION, "_agent_type", role)
     server = create_http_server(
         config=DaemonConfig(),
@@ -369,7 +381,7 @@ def test_http_setter_enforces_real_caller_authority(
         json={"name": "candidate_sent", "value": False},
     )
     assert response.status_code == 200
-    assert response.json()["success"] is allowed
+    assert response.json()["success"] is allowed, response.json()
     stored = variables.get_variables(target)
     if allowed:
         assert stored["candidate_sent"] is False

@@ -120,3 +120,5 @@ Add backoff and jitter for real network calls. Stop retrying on validation, auth
 ## Async Tests
 
 Test timeouts, cancellation, and partial failure explicitly. Use fake timers where supported. Avoid real sleeps because they make suites slow and flaky.
+
+_Version: 1.0.0_

@@ -115,9 +115,10 @@ class PromptLoader:
 
     def _render_jinja(self, template_str: str, context: dict[str, Any]) -> str:
         """Render a template string with Jinja2."""
-        from jinja2 import Environment, StrictUndefined
+        from jinja2 import StrictUndefined
+        from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-        env = Environment(  # nosec B701 # generating raw text prompts, not HTML
+        env = ImmutableSandboxedEnvironment(  # nosec B701 # generating raw text prompts, not HTML
             autoescape=False,
             undefined=StrictUndefined,
             extensions=[],

@@ -1,6 +1,6 @@
 name: assistant-status-wake
 type: pipeline
-version: "1.0"
+version: "1.0.0"
 description: |
   Status tick for the operator's Assistant. The status-report cron runs this pipeline at the
   project-policy cadence. It lists the Assistant sessions in this project once per live status,

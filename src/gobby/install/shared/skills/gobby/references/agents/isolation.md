@@ -33,4 +33,6 @@ guides, and mutating verification uses isolated state.
 Guides: [Sandbox configuration](../../../../../../../../docs/guides/sandboxing.md)
 and [compatibility](../../../../../../../../docs/guides/sandbox-compatibility.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

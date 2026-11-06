@@ -336,6 +336,7 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
             definition: agent.definition_label(),
             reference: agent_reference(ws, chrome, agent),
             task: agent.task_ref.clone().zip(agent.task_title.clone()),
+            status_line: agent.status_line.clone(),
             model_slug: agent.model_slug(),
             label: agent_title(agent),
             kind: RowKind::Agent,

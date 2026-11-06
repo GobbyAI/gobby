@@ -450,6 +450,38 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "193b38a2da3b623d8e934e1d418d33e02641ae525d23e7851e450a7e6cbf3ae7",
         sql: include_str!("../../assets/schema/migrations/485_declarative_task_criteria.sql"),
     },
+    EmbeddedMigration {
+        version: 486,
+        filename: "486_inter_session_attachments.sql",
+        checksum: "8cb4c6d9209e594405b0e3359a3287c71c31e5477c612cd5cf7335d5694269a3",
+        sql: include_str!("../../assets/schema/migrations/486_inter_session_attachments.sql"),
+    },
+    EmbeddedMigration {
+        version: 487,
+        filename: "487_comms_message_destination_key.sql",
+        checksum: "1e898da4b4e8ce5f59a0be683687fff4abb34a121d7e2945e0bef18e70971068",
+        sql: include_str!("../../assets/schema/migrations/487_comms_message_destination_key.sql"),
+    },
+    EmbeddedMigration {
+        version: 488,
+        filename: "488_reply_waits_skip_daemon_receipts.sql",
+        checksum: "fb5b29fd8a17582f6ca84dc0b4ae19e7c95abc9c60a632a1f2c3cd72c26693ef",
+        sql: include_str!(
+            "../../assets/schema/migrations/488_reply_waits_skip_daemon_receipts.sql"
+        ),
+    },
+    EmbeddedMigration {
+        version: 489,
+        filename: "489_session_startup_marks.sql",
+        checksum: "fe7e5507c77bffaa5724bc2a47466f79d2476a4d4e4d87e71724d18beb032ace",
+        sql: include_str!("../../assets/schema/migrations/489_session_startup_marks.sql"),
+    },
+    EmbeddedMigration {
+        version: 490,
+        filename: "490_session_status_line.sql",
+        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
+        sql: include_str!("../../assets/schema/migrations/490_session_status_line.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

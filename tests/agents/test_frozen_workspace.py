@@ -32,6 +32,12 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _managed_checkout_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", tmp_path)
+
+
 def _session(session_manager: SessionManager, project_id: str, name: str) -> str:
     return session_manager.register(
         external_id=f"frozen-workspace-{name}",
@@ -288,7 +294,7 @@ async def test_clone_bound_run_create_for_own_task_and_claim_clone_refused(
             "create_clone",
             {
                 "branch_name": "mid-run",
-                "clone_path": str(tmp_path / "mid-run"),
+                "clone_path": str(tmp_path / sample_project["name"] / "mid-run"),
                 "remote_url": "https://example.invalid/repo.git",
                 "task_id": own_task,
             },
@@ -322,7 +328,7 @@ async def test_clone_bound_run_creates_clone_for_another_seat(
             "create_clone",
             {
                 "branch_name": "sub-lane",
-                "clone_path": str(tmp_path / "sub-lane"),
+                "clone_path": str(tmp_path / sample_project["name"] / "sub-lane"),
                 "remote_url": "https://example.invalid/repo.git",
             },
         )

@@ -32,4 +32,6 @@ agents use their run lifecycle tools and inspect the resulting run state.
 
 Guide: [Handoff boundaries](../../../../../../../../docs/guides/sessions.md#handoff-boundaries).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

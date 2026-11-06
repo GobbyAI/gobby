@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use axum::body::Body;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
+use bytes::Bytes;
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -20,8 +21,10 @@ const BIND: &str = "/_gobby/ws/bind";
 const PUBLISH: &str = "/_gobby/ws/publish";
 /// A bind body is a handful of integers; anything larger is refused unread.
 const BIND_LIMIT: usize = 4 * 1024;
-/// The largest publish body the bridge may send.
-const PUBLISH_LIMIT: usize = 128 * 1024 * 1024;
+/// Largest publish body. The Python bridge sends at most 4 MiB per op, except a single
+/// frame above that, which can reach about 10 MiB encoded at the default 5 MiB
+/// max_message_size with every byte escaped. 16 MiB leaves margin above that.
+const PUBLISH_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,7 +91,15 @@ async fn publish(
         Ok(body) => body,
         Err(refusal) => return refusal,
     };
-    let Some(request) = parse_object::<PublishRequest>(&body) else {
+    // The parse scales with the body, so it runs on the blocking pool. Parsed
+    // on the worker, it holds that worker for the whole body and delays every
+    // request that arrives with it.
+    let parsed =
+        match tokio::task::spawn_blocking(move || parse_object::<PublishRequest>(&body)).await {
+            Ok(parsed) => parsed,
+            Err(_) => return status_only(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+    let Some(request) = parsed else {
         return status_only(StatusCode::BAD_REQUEST);
     };
     // A stale generation has no bound of its own; the commit refuses it with 409.
@@ -138,7 +149,7 @@ async fn read_bounded(
     headers: &HeaderMap,
     body: Body,
     limit: usize,
-) -> Result<Vec<u8>, Response<Body>> {
+) -> Result<Bytes, Response<Body>> {
     let declared = headers
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
@@ -147,7 +158,7 @@ async fn read_bounded(
         return Err(status_only(StatusCode::PAYLOAD_TOO_LARGE));
     }
     match Limited::new(body, limit).collect().await {
-        Ok(collected) => Ok(collected.to_bytes().to_vec()),
+        Ok(collected) => Ok(collected.to_bytes()),
         Err(error) if error.is::<LengthLimitError>() => {
             Err(status_only(StatusCode::PAYLOAD_TOO_LARGE))
         }

@@ -5,6 +5,11 @@ Load before creating or changing a rule. Discover installed names with
 behavior to enforce or track, its trigger, conditions, effect, and audience.
 Ask only for missing decisions; an existing task can supply them.
 
+MCP rule creation requires `manage_workflow_definitions` or the operator's
+terminal. Updating, toggling or deleting a rule also accepts
+`manage_rule_enforcement`. Other seats can inspect rules and prepare YAML for an
+authorized session; loading this reference does not grant mutation authority.
+
 Use kebab-case names and groups as an authoring convention. Grouped YAML has
 `group`, optional `tags`/`sources`/`audience`, and a named `rules` mapping.
 YAML sync accepts single `effect` shorthand; stored/API bodies require a
@@ -44,12 +49,21 @@ imports to the registered current project, otherwise globally. Inspect errors
 and counts: multi-rule import can be partial. `gobby rules export --group GROUP`
 emits one YAML document for review/backup; check scope before import.
 
-Validate names, current events/effects, required fields, selectors, regex
-escaping, conditions, and multi-effect order before installation. Test matching
-and nonmatching events, missing variables, failure and recovery with fixtures
-or a temporary daemon. Read back the installed row before reporting success.
+Validate YAML syntax and the rule schema. The shared engine preflight checks
+conditions, templates, regexes and effect preparation without running external
+effects. Create, update, sync, restore and enable use the same validation boundary;
+disabled rules are checked too. Missing runtime context produces unresolved warnings,
+while invalid syntax or unsupported engine constructs reject the definition.
+
+Do not add Python tests for a rule's matching policy, wording, exemptions or recovery
+decisions, or copy those policies into Python or synthetic YAML fixtures. Users may
+change or create rules without authoring tests. Bundled and user-created rules use
+the same generic validation checks; engine and helper tests use independent synthetic
+definitions to cover reusable mechanics. Read back the installed row and inspect
+validation warnings before reporting success.
 Never test executable or blocking examples against the user's live session.
 
 Guide: [YAML and fields](../../../../../../../../docs/guides/rules.md#yaml-format).
 
-_Last verified: 2026-09-12_
+_Version: 2.0.0_
+_Last verified: 2026-11-03_

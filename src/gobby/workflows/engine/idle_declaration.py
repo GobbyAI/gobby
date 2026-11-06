@@ -47,7 +47,10 @@ def native_variable_write_error(
     from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 
     if isinstance(name, str) and is_reserved_workflow_variable(name):
-        return prefix + f"Native set_variable may not change the reserved variable {name!r}."
+        return prefix + (
+            f"Native set_variable may not change the reserved variable {name!r}. "
+            "set_variable remains available for other permitted variables."
+        )
     if not caller_id or sessions is None:
         return prefix + "Native set_variable requires a resolved calling session."
     caller = sessions.get(caller_id)

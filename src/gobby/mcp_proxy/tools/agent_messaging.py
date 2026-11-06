@@ -4,6 +4,8 @@ Provides P2P messaging and command coordination between sessions:
 - send_message: target-based messaging; session targets accept UUID, #N, or <project>#N
 - get_inter_session_message: Retrieve one complete message for a participant
 - get_inter_session_messages: Read-only query of message history
+- send_attachment: send_message with one stored document attached
+- get_attachment: read a message's attached document, for its sender or recipient only
 """
 
 from __future__ import annotations
@@ -13,6 +15,13 @@ import logging
 from collections.abc import Callable, Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.events.live_wake import NOT_LIVE_WAKE_SKIPS
+from gobby.storage.inter_session_attachments import (
+    MAX_ATTACHMENT_BYTES,
+    AttachmentDraft,
+    AttachmentError,
+    InterSessionAttachmentManager,
+)
 from gobby.storage.inter_session_messages import normalize_message_direction
 from gobby.storage.sessions import system_session_id
 from gobby.utils.datetime import utc_now
@@ -28,6 +37,11 @@ if TYPE_CHECKING:
 BroadcastFn = Callable[..., Coroutine[Any, Any, None]]
 
 logger = logging.getLogger(__name__)
+
+NOT_LIVE_RECIPIENT_MESSAGE = (
+    "The recipient session is not live. The message is stored and waits until that "
+    "session resumes; no live wake was delivered."
+)
 
 
 def get_context_project_id(session_manager: SessionManager) -> str | None:
@@ -93,6 +107,8 @@ def add_messaging_tools(
             Called with (msg_type=, event=, **kwargs) on successful operations.
     """
 
+    attachment_manager = InterSessionAttachmentManager(db)
+
     def _resolve(ref: str) -> str:
         """Resolve session reference to UUID."""
         return session_manager.resolve_session_reference(
@@ -129,7 +145,7 @@ def add_messaging_tools(
             "when omitted. Spawned agents may omit target (defaults to parent). "
             "target='parent' reaches the session that spawned the sender, "
             "forbids target_id, and is available only to spawned agent sessions, which "
-            "cannot override from_session. The bundled rule scope-spawned-agent-send-message "
+            "cannot override from_session. The bundled rule definition-selected messaging policy "
             "limits a spawned agent to the target modes its agent definition lists in "
             "send_message_targets (default: parent only). "
             "Recipient admission follows installed definitions: message_sender_capabilities "
@@ -137,9 +153,12 @@ def add_messaging_tools(
             "exemptions. Refused direct sends fail with message_recipient_not_allowed and "
             "fanout skips that recipient. "
             "Message content never causes wake behavior. Omitting wake requests immediate "
-            "processing for direct session, parent, or agent targets; global and project "
-            "fanout remains queued without live wakes. wake=true requests immediate "
-            "processing even for fanout; wake=false queues without a live wake. A wake may "
+            "processing for direct session, parent, or agent targets. Fanout (global, and "
+            "project with wake=true) live-wakes only active recipients and recipients "
+            "holding a claimed task; an idle, paused, or waiting recipient with no claimed "
+            "task keeps its message queued for its next turn. Otherwise project fanout "
+            "stays queued without live wakes, and wake=false queues any target without a "
+            "live wake. The daemon sends restart and cutover notices itself. A wake may "
             "steer active work; interrupted, awaiting-input, "
             "awaiting-approval, and awaiting-handoff sessions retain queued content. "
             "An awaiting-handoff terminal with a confirmed compact boundary and an empty "
@@ -148,7 +167,11 @@ def add_messaging_tools(
             "mailbox acknowledgement. Optional priority, message_type, metadata, and wake "
             "are keyword-only. For message_type='task_blocker', metadata.task_id must name "
             "the blocked assigned task. Responses are brief by default: target, recipient "
-            "count, delivery status, and message IDs. Pass brief=false for the full message, "
+            "count, delivery status, and message IDs. A direct send to a session outside the "
+            "live statuses returns delivery_status sent_recipient_not_live with that session's "
+            "recipient_status and a message: the durable message is stored and waits until the "
+            "session resumes, and no live wake is delivered. A live session whose wake is "
+            "declined returns sent_with_declined_wakes. Pass brief=false for the full message, "
             "selector, wake, and broadcast diagnostics."
         ),
     )
@@ -164,6 +187,34 @@ def add_messaging_tools(
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
         brief: bool = True,
+    ) -> dict[str, Any]:
+        return await _deliver(
+            target=target,
+            content=content,
+            target_id=target_id,
+            from_session=from_session,
+            project_id=project_id,
+            priority=priority,
+            wake=wake,
+            message_type=message_type,
+            metadata=metadata,
+            brief=brief,
+            attachment=None,
+        )
+
+    async def _deliver(
+        *,
+        target: str | None,
+        content: str,
+        target_id: str | None,
+        from_session: str | None,
+        project_id: str | None,
+        priority: str,
+        wake: bool | None,
+        message_type: str,
+        metadata: dict[str, Any] | None,
+        brief: bool,
+        attachment: AttachmentDraft | None,
     ) -> dict[str, Any]:
         try:
             from gobby.utils.session_context import get_current_session_id, is_daemon_execution
@@ -222,13 +273,9 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
-            # A caller's from_session cannot claim the system sender; only daemon-owned execution can.
-            if (
-                from_id == system_session_id()
-                and not is_daemon_execution()
-                and ctx_session_id is not None
-                and ctx_session_id != from_id
-            ):
+            # Only daemon-owned execution sends as the system session. A caller with no
+            # SessionContext (a session-less HTTP call) gets no exemption.
+            if from_id == system_session_id() and not is_daemon_execution():
                 return {
                     "success": False,
                     "error": "Only daemon-owned execution can send as the system session.",
@@ -266,7 +313,7 @@ def add_messaging_tools(
                 }
 
             # Spawned agents send only as themselves. The bundled rule
-            # scope-spawned-agent-send-message limits which target modes they use.
+            # definition-selected messaging policy limits which target modes they use.
             caller_id = (
                 _resolve(ctx_session_id)
                 if ctx_session_id and ctx_session_id != from_session
@@ -298,6 +345,7 @@ def add_messaging_tools(
                 message_type=message_type,
                 metadata=metadata,
                 project_id=project_id,
+                attachment=attachment,
             )
             msg = send_result.messages[0] if len(send_result.messages) == 1 else None
 
@@ -356,6 +404,8 @@ def add_messaging_tools(
             response["failed_ws_broadcasts"] = failed_ws_broadcasts
             response["success"] = send_result.success
             response["message"] = msg.to_dict() if msg is not None else None
+            if attachment is not None:
+                response["attachment"] = attachment.summary()
             if not brief or not send_result.success:
                 return response
 
@@ -369,6 +419,11 @@ def add_messaging_tools(
                 for result in send_result.wake_results
                 if result.get("delivered") is not True and not result.get("decline_reason")
             ]
+            not_live_wakes = [
+                result
+                for result in send_result.wake_results
+                if result.get("decline_reason") in NOT_LIVE_WAKE_SKIPS
+            ]
             has_failures = bool(
                 send_result.failed_broadcasts or failed_ws_broadcasts or wake_failures
             )
@@ -379,12 +434,16 @@ def add_messaging_tools(
                 "delivery_status": (
                     "sent_with_failures"
                     if has_failures
+                    else "sent_recipient_not_live"
+                    if not_live_wakes
                     else "sent_with_declined_wakes"
                     if wake_declines
                     else "sent"
                 ),
                 "message_ids": send_result.message_ids,
             }
+            if attachment is not None:
+                brief_response["attachment"] = attachment.summary()
             if send_result.target_id is not None:
                 brief_response["target_id"] = send_result.target_id
             if send_result.broadcast_id is not None:
@@ -395,6 +454,9 @@ def add_messaging_tools(
                 brief_response["failed_ws_broadcasts"] = failed_ws_broadcasts
             if wake_failures:
                 brief_response["wake_failures"] = wake_failures
+            if not_live_wakes:
+                brief_response["recipient_status"] = not_live_wakes[0].get("session_status")
+                brief_response["message"] = NOT_LIVE_RECIPIENT_MESSAGE
             return brief_response
 
         except ValueError as e:
@@ -406,6 +468,89 @@ def add_messaging_tools(
             return {"success": False, "error": str(e)}
 
     # ── get_inter_session_message ──────────────────────────────────
+
+    @registry.tool(
+        name="send_attachment",
+        description=(
+            "Send a message with one document attached. The message follows send_message "
+            "for target, wake, and fanout; each recipient of a project or global send gets "
+            "its own copy. document is the complete UTF-8 text, filename names it, and "
+            "media_type is text/plain or text/markdown. The daemon stores the document in the "
+            "database with its byte size and SHA-256 digest. A document over "
+            f"{MAX_ATTACHMENT_BYTES} bytes is refused with attachment_too_large and nothing is "
+            "stored. Only the sender and that message's recipient can read the document, with "
+            "get_attachment. Brief responses report delivery_status as send_message does, "
+            "including sent_recipient_not_live with recipient_status for an expired recipient."
+        ),
+    )
+    async def send_attachment(
+        target: Literal["global", "project", "parent", "session", "agent"] | None = None,
+        content: str = "",
+        filename: str = "",
+        document: str = "",
+        media_type: str = "text/markdown",
+        target_id: str | None = None,
+        from_session: str | None = None,
+        *,
+        project_id: str | None = None,
+        priority: str = "normal",
+        wake: bool | None = None,
+        message_type: str = "message",
+        metadata: dict[str, Any] | None = None,
+        brief: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            attachment = AttachmentDraft.build(
+                filename=filename, media_type=media_type, content=document
+            )
+        except AttachmentError as e:
+            return {"success": False, "error": str(e), "error_code": e.code}
+        return await _deliver(
+            target=target,
+            content=content,
+            target_id=target_id,
+            from_session=from_session,
+            project_id=project_id,
+            priority=priority,
+            wake=wake,
+            message_type=message_type,
+            metadata=metadata,
+            brief=brief,
+            attachment=attachment,
+        )
+
+    @registry.tool(
+        name="get_attachment",
+        read_only=True,
+        description=(
+            "Retrieve the document attached to one inter-session message by message ID. "
+            "Only the message's sender or recipient can read it. Anyone else gets "
+            "attachment_not_found, the same response as a message with no attachment."
+        ),
+    )
+    def get_attachment(message_id: str) -> dict[str, Any]:
+        try:
+            from gobby.utils.session_context import get_current_session_id
+
+            caller_session_id = get_current_session_id()
+            if not caller_session_id:
+                return {
+                    "success": False,
+                    "error": "No calling session is available for attachment retrieval.",
+                    "error_code": "missing_session_context",
+                }
+            stored = attachment_manager.get_for_caller(message_id, _resolve(caller_session_id))
+            if stored is None:
+                return {
+                    "success": False,
+                    "error": "No attachment for that message ID is readable by this session.",
+                    "error_code": "attachment_not_found",
+                }
+            return {"success": True, "attachment": stored.to_dict()}
+
+        except Exception as e:
+            logger.error("get_attachment failed: %s", e)
+            return {"success": False, "error": str(e)}
 
     @registry.tool(
         name="get_inter_session_message",
@@ -440,10 +585,14 @@ def add_messaging_tools(
                     "error": "Only the message sender or recipient may retrieve it.",
                     "error_code": "message_access_denied",
                 }
-            return {
+            payload: dict[str, Any] = {
                 "success": True,
                 "message": _message_delivery_payload(message),
             }
+            attachment = attachment_manager.get_summary(message.id)
+            if attachment is not None:
+                payload["attachment"] = attachment
+            return payload
 
         except Exception as e:
             logger.error("get_inter_session_message failed: %s", e)

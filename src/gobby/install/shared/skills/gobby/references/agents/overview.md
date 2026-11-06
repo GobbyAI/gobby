@@ -20,4 +20,6 @@ retrying. Do not duplicate active workers or clear task ownership directly.
 
 Guide: [Agents](../../../../../../../../docs/guides/agents.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

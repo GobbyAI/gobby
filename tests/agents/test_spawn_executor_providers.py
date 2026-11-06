@@ -81,7 +81,7 @@ async def test_grok_spawn_preserves_standing_seat_lifetime(
     request = replace(
         request,
         provider="grok",
-        agent_name="security-auditor",
+        agent_name="fixture-definition-fc0c281e",
         model="grok-4.7",
         effective_reasoning_effort="xhigh",
         session_manager=MagicMock(),
@@ -168,6 +168,136 @@ async def test_claude_spawn_preserves_housekeeping_settings_for_every_seat(
     assert plan.env["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"] == "0"
     assert record_launch.call_args.kwargs["env"] == plan.env
     assert plan.launch is launch
+
+
+_RESOLVER_SETTINGS = {
+    "allowManagedPermissionRulesOnly": True,
+    "sandbox": {"enabled": True, "allowUnsandboxedCommands": False},
+}
+
+
+def _only_claude_settings(command: list[str]) -> dict[str, object]:
+    """Parse the single ``--settings`` payload of a Claude argv."""
+    assert command.count("--settings") == 1, command
+    payload = json.loads(command[command.index("--settings") + 1])
+    assert isinstance(payload, dict)
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("launch", "expected"),
+    [
+        (
+            SandboxLaunch(backend="srt", enforced=True),
+            {"sandbox": {"enabled": False}, "idleCompaction": False},
+        ),
+        (
+            SandboxLaunch(
+                backend="provider-native",
+                enforced=True,
+                provider_args=["--settings", json.dumps(_RESOLVER_SETTINGS)],
+            ),
+            {**_RESOLVER_SETTINGS, "idleCompaction": False},
+        ),
+        (SandboxLaunch(backend="srt", enforced=False), {"idleCompaction": False}),
+    ],
+    ids=["srt", "provider-native", "unsandboxed"],
+)
+@pytest.mark.asyncio
+async def test_claude_spawn_carries_one_settings_with_idle_compaction_off(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    launch: SandboxLaunch,
+    expected: dict[str, object],
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
+    request, _, _ = _sandbox_request()
+    request = replace(request, provider="claude", session_manager=MagicMock())
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        AsyncMock(return_value=launch),
+    )
+    record_launch = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", record_launch
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+
+    plan = await prepare_claude_spawn(request)
+
+    assert isinstance(plan, ProviderSpawnPlan)
+    assert _only_claude_settings(plan.command) == expected
+    assert plan.command[-1] == "work"
+    # Resume re-derives from the raw resolver output, so the record keeps it unmerged.
+    assert record_launch.call_args.kwargs["sandbox_args"] == launch.provider_args
+
+
+@pytest.mark.parametrize(
+    ("launch", "expected_sandbox"),
+    [
+        (
+            SandboxLaunch(backend="srt", enforced=True),
+            {"enabled": False, "allowUnsandboxedCommands": True},
+        ),
+        (
+            SandboxLaunch(
+                backend="provider-native",
+                enforced=True,
+                provider_args=["--settings", json.dumps(_RESOLVER_SETTINGS)],
+            ),
+            # The preflighted resolver policy outranks the caller's sandbox keys.
+            {"enabled": True, "allowUnsandboxedCommands": False},
+        ),
+    ],
+    ids=["srt", "provider-native"],
+)
+@pytest.mark.asyncio
+async def test_claude_spawn_folds_caller_settings_under_the_managed_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    launch: SandboxLaunch,
+    expected_sandbox: dict[str, object],
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
+    request, _, _ = _sandbox_request()
+    request = replace(
+        request,
+        provider="claude",
+        session_manager=MagicMock(),
+        provider_args=(
+            "--add-dir",
+            "/opt/shared",
+            "--settings",
+            '{"idleCompaction": true, "sandbox": {"enabled": true,'
+            ' "allowUnsandboxedCommands": true}, "theme": "dark"}',
+        ),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        AsyncMock(return_value=launch),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", MagicMock()
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+
+    plan = await prepare_claude_spawn(request)
+
+    assert isinstance(plan, ProviderSpawnPlan)
+    settings = _only_claude_settings(plan.command)
+    assert settings["idleCompaction"] is False
+    assert settings["theme"] == "dark"
+    assert settings["sandbox"] == expected_sandbox
+    add_dir = plan.command.index("--add-dir")
+    assert plan.command[add_dir + 1] == "/opt/shared"
 
 
 @pytest.mark.parametrize(
