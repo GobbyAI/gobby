@@ -21,6 +21,8 @@ is written to its own transcript, never to the parent's.
 - Subagent transcripts are never read. Parent timestamps are read only for an unknown baseline:
   when the session's first compaction hook cannot read the transcript, a boundary counts as new
   when its timestamp is at or after that hook's millisecond.
+- A main-thread event that keeps the held hooks inside the grace window carries HOLD_OPEN_FLAG,
+  so the context observers keep a pending reset until the lifecycle settles or the window passes.
 - Each route decision is logged with its hook, trigger, source and signal.
 """
 
@@ -43,6 +45,9 @@ from gobby.hooks.subagent_boundary import subagent_payload_signal
 logger = logging.getLogger(__name__)
 
 REPLAY_FLAG = "_compaction_settled"
+# Set on a kept main-thread event while held hooks are still inside their grace window, so the
+# context observers keep a pending reset instead of clearing it from pre-compaction usage.
+HOLD_OPEN_FLAG = "_compaction_hold_open"
 COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
 
 _AUTO = "auto"
@@ -106,6 +111,9 @@ class CompactionOwnership:
             if state is None or not state.held:
                 return [], False
             replays = self._settle(state, event)
+            if state.held and _within_grace(state):
+                # Awaiting the boundary inside the window: observers keep a pending reset.
+                event.metadata[HOLD_OPEN_FLAG] = True
             return ([] if replays is None else replays), False
 
     def _hold(self, event: HookEvent) -> tuple[list[HookEvent], bool]:

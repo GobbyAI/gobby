@@ -455,6 +455,23 @@ def test_stale_pending_reset_stops_suppressing_mid_turn_band() -> None:
     assert variables["pending_context_reset"] is False
 
 
+def test_mid_turn_inside_the_grace_window_keeps_a_held_reset_and_writes_no_band() -> None:
+    # The held SessionStart may still clear the reset, and the usage still predates the compaction.
+    variables = _variables(pending_context_reset=True, turns_since_compact=1)
+
+    detect_mid_turn_context_compact_guidance(
+        _tool_event(),
+        variables,
+        SESSION_ID,
+        _SessionManager(260_000, 1_000_000),
+        hold_open=True,
+    )
+
+    assert variables[PRESSURE_BAND_VARIABLE] == "none"
+    assert variables["context_compact_guidance_kind"] == ""
+    assert variables["pending_context_reset"] is True
+
+
 def _fallback_variables(**overrides: Any) -> dict[str, Any]:
     """Variables of a session without parent_turn_seq, so the fallback turn counter runs alone."""
     variables: dict[str, Any] = {

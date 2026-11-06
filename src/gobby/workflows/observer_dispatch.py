@@ -46,6 +46,8 @@ def run_observers(
     # Imported per call so the observer modules stay a live patch seam (tests
     # replace e.g. ``gobby.workflows.observers.detect_task_claim``) and so this
     # module never participates in an import cycle with ``hooks``.
+    from gobby.hooks.compaction_ownership import HOLD_OPEN_FLAG
+
     from .found_work_gate import capture_found_work_handoff, capture_turn_prompt
     from .observer_context_usage import (
         detect_context_compact_guidance,
@@ -63,6 +65,7 @@ def run_observers(
     from .task_tool_bindings import cleanup_task_tool_bindings
 
     failures: set[str] = set()
+    hold_open = event.metadata.get(HOLD_OPEN_FLAG) is True
 
     def run_observer(
         name: str,
@@ -152,6 +155,7 @@ def run_observers(
             session_id,
             handler._session_manager,
             config=handler._config_section("context_handoff"),
+            hold_open=hold_open,
         )
 
     # Plan mode detection on the semantic start-of-turn boundary
@@ -172,6 +176,7 @@ def run_observers(
             session_id,
             handler._session_manager,
             config=handler._config_section("context_handoff"),
+            hold_open=hold_open,
         )
 
     return failures

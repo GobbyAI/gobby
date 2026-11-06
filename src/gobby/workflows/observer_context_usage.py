@@ -85,12 +85,17 @@ def detect_context_compact_guidance(
     session_id: str,
     session_manager: _SessionManager | None,
     config: _ContextHandoffConfig | None = None,
+    *,
+    hold_open: bool = False,
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
     gate = _handoff_gate(variables)
     turns_since_compact = _turns_since_compact(variables)
-    pending_reset = variables.get("pending_context_reset") is True and not _is_stale_pending_reset(
-        variables, turns_since_compact
+    # A held lifecycle inside its grace window may still clear a reset, and its usage predates the
+    # compaction, so it suppresses the band whether or not the reset is set yet.
+    pending_reset = hold_open or (
+        variables.get("pending_context_reset") is True
+        and not _is_stale_pending_reset(variables, turns_since_compact)
     )
     skip_session_lookup = gate in {"pending", "failed"} or pending_reset or _is_plan_mode(variables)
     # A timed-out or failed read must leave the previous guidance and turn counters intact.
@@ -155,6 +160,8 @@ def detect_mid_turn_context_compact_guidance(
     session_id: str,
     session_manager: _SessionManager | None,
     config: _ContextHandoffConfig | None = None,
+    *,
+    hold_open: bool = False,
 ) -> None:
     """Populate compact guidance for an after_tool event under context pressure."""
     variables["context_compact_guidance_kind"] = ""
@@ -164,8 +171,11 @@ def detect_mid_turn_context_compact_guidance(
 
     gate = _handoff_gate(variables)
     stored_turns = _int_or_none(variables.get("turns_since_compact"), default=0) or 0
-    pending_reset = variables.get("pending_context_reset") is True and not _is_stale_pending_reset(
-        variables, stored_turns
+    # A held lifecycle inside its grace window may still clear a reset, and its usage predates the
+    # compaction, so it suppresses the band whether or not the reset is set yet.
+    pending_reset = hold_open or (
+        variables.get("pending_context_reset") is True
+        and not _is_stale_pending_reset(variables, stored_turns)
     )
     if pending_reset or _is_plan_mode(variables) or gate == "pending":
         _write_band(variables, "none", None, None)
