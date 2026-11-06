@@ -631,6 +631,25 @@ def test_rejection_of_a_candidate_no_lane_produced_refuses_the_evidence(
     assert team.holder() == reviewer
 
 
+def test_code_correction_docs_approval_does_not_skip_the_code_reviewer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A correction routes like forward advancement. For a code task the docs lane is no route,
+    so a docs reviewer's approval of the corrected candidate cannot carry the claim to validate."""
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=CODE)
+    builder, checker = team.session(IMPLEMENT), team.session(REVIEW)
+    docs_reviewer, closer = team.session(REVIEW_DOCS), team.session(VALIDATE)
+    first = team.chain(builder, IMPLEMENT, C1)
+    team.chain(checker, REVIEW, C1, first_reference=C1)
+    team.hand_off(recipient=builder, holder=closer)
+
+    team.attest(docs_reviewer, "independent-review", REVIEW_DOCS, sha=C2)
+    for index, kind in enumerate(team.definition.claim_flow[IMPLEMENT].done_when):
+        team.attest(builder, kind, IMPLEMENT, sha=C2, supersedes_id=first[index])
+
+    assert team.holder() == checker
+
+
 def test_claim_stage_names_exactly_one_seat_or_agent() -> None:
     with pytest.raises(ValueError, match="exactly one of seat or agent"):
         PipelineDefinition(
