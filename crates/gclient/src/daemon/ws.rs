@@ -155,7 +155,7 @@ pub fn encode_text(message: &Value) -> Result<String, WsCodecError> {
 
 /// Parse a canonical protocol payload.
 pub fn decode_message(raw: &[u8]) -> Result<Value, WsCodecError> {
-    let parsed: Value = serde_json::from_slice(raw)?;
+    let parsed: Value = super::nested_json::from_slice_nested(raw)?;
     if !parsed.is_object() {
         return Err(WsCodecError::NotObject);
     }
