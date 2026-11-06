@@ -734,6 +734,55 @@ class TestMCPStepInPipelineExecute:
         assert mock_execution_manager.create_step_execution.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_mcp_only_pipeline_calls_only_its_tools_and_never_reaches_the_llm(
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_tool_proxy: AsyncMock,
+    ) -> None:
+        """An MCP-only pipeline runs its tool steps in order and makes no LLM or agent call.
+
+        Spawning an agent is itself a tool call, so an exact call sequence with no LLM
+        traffic shows that the pipeline wakes no session.
+        """
+        from gobby.workflows.definitions import PipelineDefinition
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="mcp-only-delivery",
+            steps=[
+                PipelineStep(
+                    id="compose",
+                    mcp=MCPStepConfig(server="gobby-communications", tool="compose_status_report"),
+                ),
+                PipelineStep(
+                    id="deliver",
+                    mcp=MCPStepConfig(
+                        server="gobby-communications",
+                        tool="send_operator_attachment",
+                        arguments={"file_path": "report.md"},
+                    ),
+                ),
+            ],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            tool_proxy_getter=lambda: mock_tool_proxy,
+        )
+
+        await executor.execute(pipeline=pipeline, inputs={}, project_id="proj-123")
+
+        assert [call.args[:2] for call in mock_tool_proxy.call_tool.call_args_list] == [
+            ("gobby-communications", "compose_status_report"),
+            ("gobby-communications", "send_operator_attachment"),
+        ]
+        assert mock_llm_service.mock_calls == []
+
+    @pytest.mark.asyncio
     async def test_step_output_with_null_error_completes(
         self,
         mock_db: MagicMock,

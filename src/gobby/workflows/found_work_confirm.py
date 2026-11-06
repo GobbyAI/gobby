@@ -13,6 +13,12 @@ from gobby.ai.decisions import DecisionsUnavailable, get_decision_service
 
 logger = logging.getLogger(__name__)
 
+
+def _noul_endpoint(decisions: Any) -> Any:
+    """The endpoint that serves the Noul classifier; the default endpoint when unrouted."""
+    return decisions.endpoint_for("noul") or decisions
+
+
 _CONSUMER = "found_work"
 _PROPOSITION = (
     "The final assistant message defers, declines, or hands back work the user instruction "
@@ -77,7 +83,7 @@ async def confirm_shirk(
     if policy.mode == "off":
         return await _llm_verdict(llm_service, validation, message, user_prompt, cap)
     deadline = asyncio.get_running_loop().time() + cap
-    if policy.mode == "enforce" and policy.evaluated_model == decisions.model:
+    if policy.mode == "enforce" and policy.evaluated_model == _noul_endpoint(decisions).model:
         return await _enforce(llm_service, validation, decisions, message, user_prompt, deadline)
     return await _shadow(llm_service, validation, decisions, message, user_prompt, cap)
 
@@ -210,7 +216,7 @@ def _record_shadow(
     decisions_shadow.record(
         _CONSUMER,
         {
-            "model": decisions.model,
+            "model": _noul_endpoint(decisions).model,
             "state": {"final_assistant_message": message, "user_instruction": user_prompt},
             "proposition": _PROPOSITION,
             "classifier": {
@@ -223,6 +229,6 @@ def _record_shadow(
                 "verdict": verdict,
             },
             "backend_identity": outcome.backend_identity,
-            "wire_api": decisions.wire_api,
+            "wire_api": _noul_endpoint(decisions).wire_api,
         },
     )

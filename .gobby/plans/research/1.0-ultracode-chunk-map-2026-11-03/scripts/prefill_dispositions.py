@@ -22,9 +22,9 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I drops the script dir
-_mapcheck = importlib.import_module("mapcheck")
-load_nodes = _mapcheck.load_nodes
-norm_ref = _mapcheck.norm_ref
+mapcheck = importlib.import_module("mapcheck")  # sibling module, loaded after the path insert
+load_nodes = mapcheck.load_nodes
+norm_ref = mapcheck.norm_ref
 
 
 def main() -> int:
@@ -59,26 +59,38 @@ def main() -> int:
         items = []
         for n in batch["nodes"]:
             ref = n["ref"]
-            item = {"ref": ref, "title": n.get("title"), "disposition": None, "target": None,
-                    "rationale": "", "prefill_basis": ""}
+            item = {
+                "ref": ref,
+                "title": n.get("title"),
+                "disposition": None,
+                "target": None,
+                "rationale": "",
+                "prefill_basis": "",
+            }
             if ref in owner and len(owner[ref][0]) == 1:
                 (cid,), anc = owner[ref]
                 how = "listed directly" if anc == ref else f"through listed ancestor {anc}"
-                item.update(disposition="chunk", target=cid,
-                            prefill_basis=f"owned by {cid}, {how}")
+                item.update(disposition="chunk", target=cid, prefill_basis=f"owned by {cid}, {how}")
             elif ref in owner:
                 item["prefill_basis"] = f"double-listed: {sorted(owner[ref][0])}"
             elif below.get(ref):
                 tgt = next(iter(below[ref])) if len(below[ref]) == 1 else "map-root"
-                item.update(disposition="container", target=tgt,
-                            prefill_basis=f"ancestor of nodes owned by {sorted(below[ref])}")
+                item.update(
+                    disposition="container",
+                    target=tgt,
+                    prefill_basis=f"ancestor of nodes owned by {sorted(below[ref])}",
+                )
             else:
                 item["prefill_basis"] = "orphan: no listed ancestor and no owned descendant"
             totals[str(item["disposition"])] += 1
             items.append(item)
         out = out_dir / f"prefill-{batch_path.name}"
-        out.write_text(json.dumps({"batch": batch.get("batch"), "part": batch.get("part"),
-                                   "dispositions": items}, indent=1))
+        out.write_text(
+            json.dumps(
+                {"batch": batch.get("batch"), "part": batch.get("part"), "dispositions": items},
+                indent=1,
+            )
+        )
         print(f"wrote {out.name}: {len(items)} items")
     print("PREFILL_TOTALS", json.dumps(dict(sorted(totals.items()))))
     return 0

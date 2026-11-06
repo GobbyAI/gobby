@@ -26,6 +26,7 @@ from gobby.ai.decisions import (
 from gobby.ai.text_generation import TextGenerationRequest
 from gobby.code_index.community_label_safety import sanitize_community_label
 from gobby.code_index.summary_safety import sanitize_source_for_summary_prompt
+from gobby.config.ai import DecisionKind
 from gobby.config.feature_base import candidate_labels
 
 if TYPE_CHECKING:
@@ -42,6 +43,9 @@ if TYPE_CHECKING:
     from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
+
+# The decision types this labeler asks; Box is never routed here.
+_LABELER_KINDS: tuple[DecisionKind, ...] = ("choice", "noul", "score")
 
 type RunDb = Callable[..., Awaitable[Any]]
 
@@ -130,7 +134,7 @@ class CommunityLabeler:
         """Generate, validate, and store names; stamp every rejection or failure."""
         batch_size = len(communities)
         config = self._decisions_resolver() if self._decisions_resolver else None
-        if config is not None and (not config.api_base or not config.model):
+        if config is not None and all(config.endpoint_for(kind) is None for kind in _LABELER_KINDS):
             config = None
         remaining, carried = await self._carry(project_id, communities, storage, run_db, config)
         communities, sufficient = await self._sufficiency(
@@ -242,7 +246,7 @@ class CommunityLabeler:
             if isinstance(decision, DecisionsUnavailable):
                 outcome = "unavailable"
             elif decision is not None:
-                mode = self._effective_mode(config, policy, decision.backend_identity)
+                mode = self._effective_mode(config, "noul", policy, decision.backend_identity)
                 probability = decision.answers[key].probability
                 if mode == "enforce" and probability >= policy.min_probability:
                     written = await run_db(
@@ -309,7 +313,7 @@ class CommunityLabeler:
             if isinstance(decision, DecisionsUnavailable):
                 outcome = "unavailable"
             else:
-                mode = self._effective_mode(config, policy, decision.backend_identity)
+                mode = self._effective_mode(config, "score", policy, decision.backend_identity)
                 position = decision.answers[key].score / (len(_SUFFICIENCY_LEVELS) - 1)
                 outcome = "sufficient" if position >= policy.min_score else "insufficient"
                 if mode == "enforce" and position >= policy.min_score:
@@ -375,19 +379,24 @@ class CommunityLabeler:
     def _effective_mode(
         self,
         config: DecisionsConfig,
+        kind: DecisionKind,
         policy: ChoiceConsumerConfig | RerankConsumerConfig | ScoreConsumerConfig,
         identity: str | None,
     ) -> DecisionConsumerMode:
         if policy.mode != "enforce":
             return policy.mode
+        endpoint = config.endpoint_for(kind)
         if (
-            policy.evaluated_model == config.model
+            endpoint is not None
+            and policy.evaluated_model == endpoint.model
             and identity is not None
             and policy.evaluated_backend == identity
         ):
             return "enforce"
+        # The warning window belongs to the endpoint that serves this type.
+        routed = endpoint or config
         now = time.monotonic()
-        if now - self._mismatch_warning_at >= config.failure_cooldown_seconds:
+        if now - self._mismatch_warning_at >= routed.failure_cooldown_seconds:
             logger.warning("evaluated_backend_mismatch: community label decision runs as shadow")
             self._mismatch_warning_at = now
         return "shadow"
@@ -446,13 +455,16 @@ class CommunityLabeler:
             policy = config.community_label
             if isinstance(decision, DecisionsUnavailable):
                 mode = policy.mode
-                if mode == "enforce" and policy.evaluated_model != config.model:
-                    mode = self._effective_mode(config, policy, None)
+                endpoint = config.endpoint_for("choice")
+                if mode == "enforce" and (
+                    endpoint is None or policy.evaluated_model != endpoint.model
+                ):
+                    mode = self._effective_mode(config, "choice", policy, None)
                 fields.update(decision_mode=mode, decision_unavailable=decision.reason)
                 if mode == "enforce":
                     return CommunityLabelOutcome.TRANSPORT_FAILED, fields
             else:
-                mode = self._effective_mode(config, policy, decision.backend_identity)
+                mode = self._effective_mode(config, "choice", policy, decision.backend_identity)
                 answer = decision.answers[f"c{community.community_id}"]
                 fields.update(
                     decision_mode=mode,
@@ -545,13 +557,24 @@ async def _decide[Q: (ChoiceQuestion, str, ScoreQuestion), A](
             continue
         trial = {**pending, key: question}
         state = {"communities": {k: states[k] for k in trial}}
-        if len(trial) > 64 or not service.request_fits(state, trial):
+        try:
+            fits = len(trial) <= 64 and service.request_fits(state, trial)
+        except DecisionsUnavailable as error:
+            # An unserved type fails only its own community; the pending batch goes on.
+            results[key] = error
+            continue
+        if not fits:
             if pending:
                 await submit(pending)
             pending = {}
             trial = {key: question}
             state = {"communities": {key: states[key]}}
-            if not service.request_fits(state, trial):
+            try:
+                single_fits = service.request_fits(state, trial)
+            except DecisionsUnavailable as error:
+                results[key] = error
+                continue
+            if not single_fits:
                 results[key] = DecisionsUnavailable("oversize", "community exceeds request ceiling")
                 continue
         pending = trial

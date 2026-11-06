@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.agents.resume_metadata import dump_resume_metadata, normalize_resume_metadata
@@ -15,6 +16,9 @@ from gobby.storage.daemon_resume_keys import (
 )
 from gobby.storage.daemon_resume_keys import (
     CONSUMED_BY_KEY as _CONSUMED_BY_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
+    DISPATCH_LEASE_HELD_KEY as _DISPATCH_LEASE_HELD_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
     FINALIZED_AT_KEY as _FINALIZED_AT_KEY,
@@ -31,9 +35,13 @@ from gobby.storage.daemon_resume_keys import (
 from gobby.storage.daemon_resume_keys import (
     RESUMED_FROM_RUN_ID_KEY as _RESUMED_FROM_RUN_ID_KEY,
 )
+from gobby.storage.daemon_resume_keys import (
+    SPAWN_LEASE_RUN_KEY as _SPAWN_LEASE_RUN_KEY,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
+from gobby.storage.tasks._runtime_mutex import DISPATCH_TTL_SECONDS
 from gobby.utils.datetime import utc_now
 
 # Error prefix of a parked original fenced because its agent definition is gone.
@@ -125,6 +133,43 @@ def refuse_parked_daemon_resume(
         return True
 
 
+def _hand_off_spawn_lease(
+    conn: Any,
+    *,
+    task_id: str,
+    successor_run_id: str,
+    now: datetime,
+) -> None:
+    """Re-take a parked run's spawn lease for its successor.
+
+    A lease still live under another run is left alone. An expired row is replaced,
+    as a fresh acquisition would replace it.
+    """
+    conn.execute(
+        """
+        INSERT INTO task_dispatch_mutex (
+            task_id, lease_until, lease_holder, run_id, action_kind, updated_at
+        )
+        VALUES (%s, %s, %s, %s, 'spawn_agent', %s)
+        ON CONFLICT(task_id) DO UPDATE SET
+            lease_until = excluded.lease_until,
+            lease_holder = excluded.lease_holder,
+            run_id = excluded.run_id,
+            action_kind = excluded.action_kind,
+            updated_at = excluded.updated_at
+         WHERE task_dispatch_mutex.lease_until IS NULL
+            OR task_dispatch_mutex.lease_until < excluded.updated_at
+        """,
+        (
+            task_id,
+            now + timedelta(seconds=DISPATCH_TTL_SECONDS),
+            f"spawn-agent:resume:{successor_run_id}",
+            successor_run_id,
+            now,
+        ),
+    )
+
+
 def finalize_daemon_resume(
     db: HubDatabase,
     *,
@@ -138,7 +183,7 @@ def finalize_daemon_resume(
         _lock_resume_fence(conn, original_run_id)
         original = conn.execute(
             """
-            SELECT id, status, terminal_reason, resume_metadata_json
+            SELECT id, status, terminal_reason, resume_metadata_json, task_id
             FROM agent_runs
             WHERE id = %s
             FOR UPDATE
@@ -284,6 +329,27 @@ def finalize_daemon_resume(
         )
         if successor_cursor.rowcount != 1:
             raise RuntimeError("Daemon resume successor finalization update did not apply")
+        if original_metadata.get(_DISPATCH_LEASE_HELD_KEY) and original["task_id"]:
+            _hand_off_spawn_lease(
+                conn,
+                task_id=str(original["task_id"]),
+                successor_run_id=successor_run_id,
+                now=now,
+            )
+            # The successor now holds the lease from its predecessor's spawn; record it there
+            # so restart recovery can restore the lease for the successor too.
+            conn.execute(
+                """
+                UPDATE agent_runs
+                   SET resume_metadata_json =
+                       COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb
+                 WHERE id = %s
+                """,
+                (
+                    dump_resume_metadata({_SPAWN_LEASE_RUN_KEY: successor_run_id}),
+                    successor_run_id,
+                ),
+            )
         subscriber_rows = conn.execute(
             """
             SELECT session_id
