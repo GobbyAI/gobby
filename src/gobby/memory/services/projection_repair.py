@@ -125,6 +125,7 @@ class ProjectionScopeRepairService:
                 rows = await falkor.query(
                     """
                     UNWIND $memories AS memory
+                    WITH memory
                     MATCH (m:Memory {memory_id: memory.memory_id})
                     WHERE NOT exists(m.project_id)
                        OR NOT exists(m.is_global)

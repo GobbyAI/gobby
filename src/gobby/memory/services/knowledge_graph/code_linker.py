@@ -105,7 +105,7 @@ class KnowledgeGraphCodeLinker:
 
         try:
             await self._falkor.query(
-                "UNWIND $links AS link "
+                "UNWIND $links AS link WITH link "
                 "MATCH (e:_Entity {entity_key: link.entity_key}) "
                 "MATCH (c:CodeSymbol {id: link.symbol_id, project: $project_id}) "
                 "MERGE (e)-[r:RELATES_TO_CODE]->(c) "
