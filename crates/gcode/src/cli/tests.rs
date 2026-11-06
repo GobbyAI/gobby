@@ -29,6 +29,27 @@ fn clap_command_leaves_are_documented_in_contract() {
     );
 }
 
+#[test]
+fn prune_help_describes_stale_project_removal_and_content_gc() {
+    let command = Cli::command();
+    let prune = command
+        .find_subcommand("prune")
+        .expect("prune subcommand is registered");
+    let about = prune
+        .get_about()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+
+    assert!(
+        about.contains("stale projects") && about.contains("content versions"),
+        "prune help must describe stale-project removal and content-version GC: {about}"
+    );
+    assert!(
+        !about.contains("orphaned"),
+        "prune help must not describe orphan projection reconciliation: {about}"
+    );
+}
+
 fn clap_command_leaves(command: &clap::Command) -> BTreeSet<String> {
     let mut leaves = BTreeSet::new();
     collect_clap_command_leaves(command, None, &mut leaves);

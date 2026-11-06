@@ -1,7 +1,5 @@
-use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::inventory::classify_collection_inventory;
 use super::reconcile::{bounded_project_id_summary, optional_reconcile_totals_lines};
 use super::*;
 
@@ -140,50 +138,14 @@ fn bounded_project_id_summary_caps_ids() {
 }
 
 #[test]
-fn global_prune_strict_collection_classification() {
-    let active_id = "11111111-1111-1111-1111-111111111111";
-    let stale_id = "22222222-2222-2222-2222-222222222222";
-    let orphan_id = "33333333-3333-3333-3333-333333333333";
-    let authority = HashSet::from([active_id.to_string(), stale_id.to_string()]);
-    let stale = HashSet::from([stale_id.to_string()]);
-    let collections = vec![
-        format!("code_symbols_{active_id}"),
-        format!("code_symbols_{stale_id}"),
-        format!("code_symbols_{orphan_id}"),
-        "code_symbols_33333333333333333333333333333333".to_string(),
-        "code_symbols_44444444-4444-4444-4444-44444444444A".to_string(),
-        "code_symbols_invalid".to_string(),
-        "memory_vectors".to_string(),
-    ];
-
-    let inventory = classify_collection_inventory(&collections, &authority, &stale);
-
-    assert_eq!(inventory.scanned, 6);
-    assert_eq!(inventory.active, 1);
-    assert_eq!(inventory.invalid, 3);
-    assert_eq!(inventory.existing_orphan_ids, vec![orphan_id.to_string()]);
-    assert_eq!(inventory.would_be_orphan_ids, vec![stale_id.to_string()]);
-}
-
-#[test]
 fn global_prune_authorization_matrix_uses_single_gate() {
     let cases = [
         DestructiveSet {
             stale_project_ids: vec!["stale".to_string()],
-            orphan_collection_ids: vec!["collection".to_string()],
-            orphan_graph_scope_ids: Vec::new(),
-            content_version_ids: Vec::new(),
-        },
-        DestructiveSet {
-            stale_project_ids: vec!["stale".to_string()],
             ..DestructiveSet::default()
         },
         DestructiveSet {
-            orphan_collection_ids: vec!["collection".to_string()],
-            ..DestructiveSet::default()
-        },
-        DestructiveSet {
-            orphan_graph_scope_ids: vec!["graph".to_string()],
+            content_version_ids: vec!["content".to_string()],
             ..DestructiveSet::default()
         },
     ];
@@ -201,9 +163,7 @@ fn global_prune_authorization_matrix_uses_single_gate() {
 
     let pending = DestructiveSet {
         stale_project_ids: vec!["stale".to_string()],
-        orphan_collection_ids: vec!["collection".to_string()],
-        orphan_graph_scope_ids: vec!["graph".to_string()],
-        content_version_ids: Vec::new(),
+        content_version_ids: vec!["content".to_string()],
     };
     let mut prompts = 0;
     let authorized = authorize_prune_with(false, &pending, |_| {

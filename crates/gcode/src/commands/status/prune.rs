@@ -10,7 +10,6 @@ use super::invalidate::invalidate_project_locked;
 use super::projects::stale_projects;
 use super::shared::{collect_projects_from, display_name};
 
-mod inventory;
 mod reconcile;
 
 use reconcile::{ReconcileTotals, SweepOutcome, print_reconcile_totals, sweep_discovered_ids_with};
@@ -18,17 +17,12 @@ use reconcile::{ReconcileTotals, SweepOutcome, print_reconcile_totals, sweep_dis
 #[derive(Debug, Default, PartialEq, Eq)]
 struct DestructiveSet {
     stale_project_ids: Vec<String>,
-    orphan_collection_ids: Vec<String>,
-    orphan_graph_scope_ids: Vec<String>,
     content_version_ids: Vec<String>,
 }
 
 impl DestructiveSet {
     fn is_empty(&self) -> bool {
-        self.stale_project_ids.is_empty()
-            && self.orphan_collection_ids.is_empty()
-            && self.orphan_graph_scope_ids.is_empty()
-            && self.content_version_ids.is_empty()
+        self.stale_project_ids.is_empty() && self.content_version_ids.is_empty()
     }
 }
 
@@ -53,8 +47,6 @@ impl GlobalPruneDiscovery {
                 .iter()
                 .map(|project| project.id.clone())
                 .collect(),
-            orphan_collection_ids: Vec::new(),
-            orphan_graph_scope_ids: Vec::new(),
             content_version_ids: self
                 .content_gc_candidates
                 .iter()

@@ -437,7 +437,7 @@ pub(crate) enum Command {
         #[arg(long, requires = "apply")]
         receipt: Option<String>,
     },
-    /// Remove stale projects and reconcile orphaned graph + vector projection state across indexed projects
+    /// Remove stale projects and garbage-collect unreferenced content versions across indexed projects
     Prune {
         /// Skip confirmation prompt
         #[arg(long)]
