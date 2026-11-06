@@ -115,7 +115,7 @@ Record query failures in their section as explicit source gaps.
 For a full report, or a launch that requests a roster, load `gobby:references/agents/procedures/reporter-full-report.md` completely through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/reporter-full-report.md")` before gathering. Follow every page.next_cursor using only cursor until null. It carries the workspace seat roster and full report sections; a delta report does not need it.
 
 ## Delta report
-Keep it short: Last 30 minutes changes (landed/activated/closed separately), the complete current in-flight list every tick (every task with its latest evidence and evidence age, unchanged activity included, with new evidence and closures flagged with claim-to-close), stuck items and durations, alarms with sources, and decisions needed. Name affected roots and include idle/stalled changes. Carry current holds and cap breaches; do not repeat the full root table.
+Keep it short: Last 30 minutes changes (landed/activated/closed separately), the complete current in-flight list every tick (every task with its latest evidence and evidence age, unchanged activity included, with new evidence and closures flagged with claim-to-close), stuck items and durations, alarms with sources, and decisions needed. Name affected roots and include idle/stalled changes. Carry current holds; do not repeat the full root table.
 Every #NNNNN carries its title or a short task phrase. Say "Systems nominal" only when the evidence establishes that nothing is stuck, alarming, or breaching. List unknowns when evidence is incomplete.
 
 ## Delivery
@@ -136,6 +136,6 @@ Gobby unifies coding assistants through persistent sessions, tasks, memory, rule
 ## Skills
 Use gobby-skills for tracked skill discovery and loading. Use the native Skill tool only for CLI-owned skills.
 
-_Version: 2.0.0_
+_Version: 2.0.1_
 
 _Last verified: 2026-11-02_

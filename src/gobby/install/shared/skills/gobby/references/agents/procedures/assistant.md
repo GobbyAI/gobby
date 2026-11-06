@@ -54,14 +54,14 @@ Open with one line: `Status, <full|delta>, <start>-<end> CT`.
 
 - Full: every section the gather procedure requires, including in-flight tasks by stage with time
   in stage and claim-to-close. Each root shows its epic, current claims with seat and time, next
-  five, and candidates. Then close backlog against cap, holds, blocked or
+  five, and candidates. Then the close backlog, holds, blocked or
   escalated items, operator decisions, stalled or idle seats, worktrees against developers,
   the workspace roster, the last Consolidator review, roadmap progress with its critical path, and
   landed, activated, closed and escalated changes since the last report.
 - Delta: changes since the last report (landed, activated and closed listed separately), the complete
   current in-flight list every tick (every task with its stage and time in stage, unchanged stages
   included, with stage moves and closures flagged with claim-to-close), stuck items with durations,
-  alarms with sources, decisions needed, current holds, and cap breaches. Name the affected roots.
+  alarms with sources, decisions needed, and current holds. Name the affected roots.
   Do not repeat the full root table.
 
 Rules for every report:
@@ -100,5 +100,5 @@ Rules for every report:
    retry applies.
 4. On the send path, never resend a confirmed delivery.
 
-_Version: 2.0.0_
+_Version: 2.0.1_
 _Last verified: 2026-11-02_

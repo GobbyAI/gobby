@@ -18,7 +18,7 @@ evidence as a gap.
 ## Full report
 Start with the report mode, timestamp, and evidence age. Use compact markdown blocks readable on the configured channel:
 - Policy-defined roots: one block for every root, including idle or unstaffed roots. Name the epic ref and title; current task(s) ref and title, developer/reviewer seat, and time claimed; the next five queued task refs and titles in Archivist order (or all if fewer); and candidates waiting on landing/activation/close. State missing queue or claim-time evidence explicitly. Use this policy-derived scaffold when available; otherwise read every root from injected policy, and mark missing policy as a source gap:
-- Close backlog: candidates sent and still open, versus the cap in the live project operating policy. A candidate still awaiting activation or close counts; exclude planning and tasks parked on an operator decision. Deduplicate task refs.
+- Close backlog: candidates sent and still open. A candidate still awaiting activation or close counts; exclude planning and tasks parked on an operator decision. Deduplicate task refs.
 - Hold state: restart/cutover and quiet hours (the window defined by the injected project policy). Omit load numbers unless the cited evidence shows a breach.
 - Blocked or escalated: task ref and title, reason, owner, and duration.
 - Operator decisions: one line per outstanding open task decision, task ref and title, opened time and age, and its existing decision link if available. Report only; never ask again or create buttons.
@@ -30,5 +30,5 @@ Start with the report mode, timestamp, and evidence age. Use compact markdown bl
 - In-flight tasks: every task in flight with its pipeline stage (test-writing, development, review, waiting to land), time in stage and claimed-since time, grouped by root, and the tasks closed in the window with claim-to-close time. Follow the in-flight section of reporter.md. The Assistant runs the stage and closure queries; a Reporter seat marks that part as a GAP.
 - Last 30 minutes: landed, activated, closed, and escalated, separately, with task refs and titles and evidence timestamps. Include stuck items and alarms with their source.
 
-_Version: 1.1.0_
+_Version: 1.1.1_
 _Last verified: 2026-11-02_
