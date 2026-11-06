@@ -68,7 +68,6 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
     external_id: "external-1",
     source: "codex",
     project_id: "proj-1",
-    title: "Session",
     status: "active",
     model: "gpt-5.4",
     message_count: 1,
@@ -141,7 +140,6 @@ describe("ChatPage – activity panel wiring", () => {
     const terminalMeta = {
       ref: "#220",
       source: "codex",
-      title: "Terminal",
       status: "active",
       model: "gpt-5.4",
       externalId: "terminal-ext",
@@ -435,7 +433,6 @@ describe("ChatPage – activity panel wiring", () => {
             viewingSessionMeta: {
               ref: "#220",
               source: "codex",
-              title: "Terminal",
               status: "active",
               model: "gpt-5.4",
               externalId: "terminal-ext",
@@ -474,7 +471,6 @@ describe("ChatPage – activity panel wiring", () => {
       external_id: "web-chat-ext",
       source: "codex",
       project_id: "proj-1",
-      title: "Swapped Web Chat",
       status: "active",
       model: "gpt-5.6-sol",
       message_count: 1,

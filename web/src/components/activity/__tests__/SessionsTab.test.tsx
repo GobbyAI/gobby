@@ -124,7 +124,6 @@ vi.mock("../../../hooks/useTmuxSessions", () => ({
         backend: "tmux",
         ownership: "external",
         state: "live",
-        title: "Paused Terminal",
         session_id: "paused-1",
         dims: null,
         name: "paused-pane",
@@ -135,7 +134,6 @@ vi.mock("../../../hooks/useTmuxSessions", () => ({
         pane_command: null,
         pane_path: null,
         window_name: "agent",
-        session_title: "Paused Terminal",
         gobby_session_id: "paused-1",
         agent_managed: false,
         agent_run_id: null,
@@ -290,7 +288,6 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
     external_id: "ext-201",
     source: "claude",
     project_id: "proj-1",
-    title: "Terminal Session",
     status: "active",
     model: "sonnet",
     message_count: 3,
@@ -315,12 +312,12 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
   };
 }
 
-function getSessionEntry(label: string): HTMLElement {
+function getSessionEntry(ref: string): HTMLElement {
   const row = screen
-    .getAllByText((text) => text === label || text.endsWith(`: ${label}`))
+    .getAllByText((text) => text === ref || text.startsWith(`${ref}: `))
     .map((node) => node.closest(".session-entry"))
     .find((candidate): candidate is HTMLElement => candidate != null);
-  if (!row) throw new Error(`No session row found for ${label}`);
+  if (!row) throw new Error(`No session row found for ${ref}`);
   return row;
 }
 
@@ -328,7 +325,6 @@ const LIVE_SESSION = makeSession({
   id: "live-1",
   ref: "#201",
   external_id: "live-ext-1",
-  title: "Live Terminal",
   status: "active",
   seq_num: 201,
   updated_at: "2026-04-08T12:05:00Z",
@@ -338,7 +334,6 @@ const PAUSED_SESSION = makeSession({
   id: "paused-1",
   ref: "#202",
   external_id: "paused-ext-1",
-  title: "Paused Terminal",
   status: "paused",
   seq_num: 202,
   updated_at: "2026-04-08T12:10:00Z",
@@ -370,7 +365,6 @@ const EXPIRED_SESSION = makeSession({
   id: "expired-1",
   ref: "#203",
   external_id: "expired-ext-1",
-  title: "Expired Terminal",
   status: "expired",
   seq_num: 203,
   updated_at: "2026-04-08T12:15:00Z",
@@ -383,7 +377,6 @@ const MAIN_WEB_CHAT_SESSION = makeSession({
   ref: "#210",
   external_id: "main-web-ext-1",
   source: "codex",
-  title: "Main Web Chat",
   status: "active",
   seq_num: 210,
   session_type: "web_chat",
@@ -395,7 +388,6 @@ const PARKED_WEB_CHAT_SESSION = makeSession({
   ref: "#211",
   external_id: "parked-web-ext-1",
   source: "codex",
-  title: "Parked Web Chat",
   status: "active",
   seq_num: 211,
   session_type: "web_chat",
@@ -406,7 +398,6 @@ const HANDOFF_READY_SESSION = makeSession({
   id: "handoff-1",
   ref: "#205",
   external_id: "handoff-ext-1",
-  title: "Handoff Terminal",
   status: "awaiting_handoff",
   seq_num: 205,
   updated_at: "2026-04-08T12:18:00Z",
@@ -416,7 +407,6 @@ const RUNNING_AGENT_SESSION = makeSession({
   id: "agent-running-1",
   ref: "#206",
   external_id: "agent-running-ext-1",
-  title: "Running Agent Terminal",
   status: "active",
   seq_num: 206,
   agent_run_id: "run-running-1",
@@ -428,7 +418,6 @@ const PENDING_AGENT_SESSION = makeSession({
   id: "agent-pending-1",
   ref: "#207",
   external_id: "agent-pending-ext-1",
-  title: "Pending Agent Terminal",
   status: "paused",
   seq_num: 207,
   agent_run_id: "run-pending-1",
@@ -440,7 +429,6 @@ const COMPLETED_AGENT_SESSION = makeSession({
   id: "agent-success-1",
   ref: "#208",
   external_id: "agent-success-ext-1",
-  title: "Completed Agent Terminal",
   status: "success",
   seq_num: 208,
   agent_run_id: "run-success-1",
@@ -452,7 +440,6 @@ const ERRORED_AGENT_SESSION = makeSession({
   id: "agent-error-1",
   ref: "#209",
   external_id: "agent-error-ext-1",
-  title: "Errored Agent Terminal",
   status: "error",
   seq_num: 209,
   agent_run_id: "run-error-1",
@@ -462,9 +449,8 @@ const ERRORED_AGENT_SESSION = makeSession({
 
 const CANCELLED_AGENT_SESSION = makeSession({
   id: "agent-cancelled-1",
-  ref: "#210",
+  ref: "#212",
   external_id: "agent-cancelled-ext-1",
-  title: "Cancelled Agent Terminal",
   status: "cancelled",
   seq_num: 210,
   agent_run_id: "run-cancelled-1",
@@ -476,7 +462,6 @@ const PIPELINE_SESSION = makeSession({
   id: "pipeline-1",
   ref: "#204",
   external_id: "pipeline-ext-1",
-  title: "Pipeline Session",
   source: "pipeline",
   status: "active",
   seq_num: 204,
@@ -622,7 +607,7 @@ describe("SessionsTab", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(getSessionEntry("Running Agent Terminal")).toBeInTheDocument();
+    expect(getSessionEntry("#206")).toBeInTheDocument();
 
     mockFetch.resetRoutes();
     mockAttentionRoster();
@@ -637,7 +622,7 @@ describe("SessionsTab", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Failed to load running agents",
     );
-    expect(getSessionEntry("Running Agent Terminal")).toBeInTheDocument();
+    expect(getSessionEntry("#206")).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "Failed to fetch running agents:",
       expect.any(Error),
@@ -687,7 +672,7 @@ describe("SessionsTab", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Failed to load running agents",
     );
-    expect(getSessionEntry("Running Agent Terminal")).toBeInTheDocument();
+    expect(getSessionEntry("#206")).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "Failed to fetch running agents:",
       expect.any(Error),
@@ -748,10 +733,10 @@ describe("SessionsTab", () => {
     });
     expect(localStorage.getItem("gobby-watching-session-id")).toBeNull();
 
-    fireEvent.click(getSessionEntry("Live Terminal"));
+    fireEvent.click(getSessionEntry("#201"));
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
 
-    fireEvent.keyDown(getSessionEntry("Paused Terminal"), {
+    fireEvent.keyDown(getSessionEntry("#202"), {
       key: "Enter",
     });
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("paused-1");
@@ -776,7 +761,7 @@ describe("SessionsTab", () => {
 
     render(<SessionsTab sessions={[LIVE_SESSION, PAUSED_SESSION]} />);
 
-    fireEvent.click(getSessionEntry("Live Terminal"));
+    fireEvent.click(getSessionEntry("#201"));
     await waitFor(() => {
       expect(
         screen.getByText("Transcript output for live-1"),
@@ -788,7 +773,7 @@ describe("SessionsTab", () => {
       target: { value: "paused-ext-1" },
     });
     await waitFor(() => {
-      expect(screen.queryByText(/(?:^|: )Live Terminal$/, IN_ROW)).toBeNull();
+      expect(screen.queryByText("#201", IN_ROW)).toBeNull();
     });
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
 
@@ -847,18 +832,18 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+        screen.getByText("#202", IN_ROW),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/(?:^|: )Live Terminal$/, IN_ROW),
+        screen.getByText("#201", IN_ROW),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/(?:^|: )Handoff Terminal$/, IN_ROW),
+        screen.getByText("#205", IN_ROW),
       ).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/(?:^|: )Expired Terminal$/, IN_ROW)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Pipeline Session$/, IN_ROW)).toBeNull();
+    expect(screen.queryByText("#203", IN_ROW)).toBeNull();
+    expect(screen.queryByText("#204", IN_ROW)).toBeNull();
 
     openSearch();
     fireEvent.change(screen.getByPlaceholderText("Search"), {
@@ -866,9 +851,9 @@ describe("SessionsTab", () => {
     });
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+        screen.getByText("#202", IN_ROW),
       ).toBeInTheDocument();
-      expect(screen.queryByText(/(?:^|: )Live Terminal$/, IN_ROW)).toBeNull();
+      expect(screen.queryByText("#201", IN_ROW)).toBeNull();
     });
 
     fireEvent.change(screen.getByPlaceholderText("Search"), {
@@ -878,34 +863,32 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Expired Terminal$/, IN_ROW),
+        screen.getByText("#203", IN_ROW),
       ).toBeInTheDocument();
     });
     expect(
       screen.getByRole("button", { name: "Session actions" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/(?:^|: )Paused Terminal$/, IN_ROW)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Handoff Terminal$/, IN_ROW)).toBeNull();
+    expect(screen.queryByText("#202", IN_ROW)).toBeNull();
+    expect(screen.queryByText("#205", IN_ROW)).toBeNull();
   });
 
-  it("renders provisional titles without their parenthesised prefix", async () => {
+  it("renders a provisional session by its ref alone", async () => {
     render(
       <SessionsTab
         sessions={[
           makeSession({
-            id: "provisional-title",
+            id: "provisional-1",
             ref: "#9829",
             seq_num: 9829,
-            title: "(gobby#9829): S#9829",
           }),
         ]}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )S#9829$/, IN_ROW)).toBeInTheDocument();
+      expect(screen.getByText("#9829", IN_ROW)).toBeInTheDocument();
     });
-    expect(screen.queryByText("(gobby#9829): S#9829")).toBeNull();
   });
 
   it("orders session entries by ref (#N) descending, not by recency", async () => {
@@ -914,14 +897,12 @@ describe("SessionsTab", () => {
     const olderHigherSeq = makeSession({
       id: "older-higher",
       ref: "#310",
-      title: "Older Higher Seq",
       seq_num: 310,
       updated_at: "2026-04-08T12:00:00Z",
     });
     const newerLowerSeq = makeSession({
       id: "newer-lower",
       ref: "#305",
-      title: "Newer Lower Seq",
       seq_num: 305,
       updated_at: "2026-04-08T13:00:00Z",
     });
@@ -935,13 +916,13 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Older Higher Seq$/, IN_ROW),
+        screen.getByText("#310", IN_ROW),
       ).toBeInTheDocument();
     });
 
     const rows = Array.from(document.querySelectorAll(".session-entry"));
-    expect(rows[0]).toHaveTextContent("Older Higher Seq");
-    expect(rows[1]).toHaveTextContent("Newer Lower Seq");
+    expect(rows[0]).toHaveTextContent("#310");
+    expect(rows[1]).toHaveTextContent("#305");
   });
 
   it("does not show the web chat currently rendered in the main chat", async () => {
@@ -955,11 +936,11 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Parked Web Chat$/, IN_ROW),
+        screen.getByText("#211", IN_ROW),
       ).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/(?:^|: )Main Web Chat$/, IN_ROW)).toBeNull();
+    expect(screen.queryByText("#210", IN_ROW)).toBeNull();
   });
 
   it("returns a parked main web chat to the list after the main chat is cleared", async () => {
@@ -994,13 +975,13 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(/(?:^|: )Parked Web Chat$/).length,
+        screen.getAllByText("#211").length,
       ).toBeGreaterThan(0);
       expect(
         screen.getByText("Transcript output for parked-web-1"),
       ).toBeInTheDocument();
     });
-    expect(screen.queryByText(/(?:^|: )Main Web Chat$/, IN_ROW)).toBeNull();
+    expect(screen.queryByText("#210", IN_ROW)).toBeNull();
 
     rerender(
       <SessionsTab
@@ -1013,14 +994,14 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(/(?:^|: )Main Web Chat$/).length,
+        screen.getAllByText("#210").length,
       ).toBeGreaterThan(0);
       expect(
         screen.getByText("Transcript output for main-web-1"),
       ).toBeInTheDocument();
     });
     expect(
-      screen.getAllByText(/(?:^|: )Parked Web Chat$/).length,
+      screen.getAllByText("#211").length,
     ).toBeGreaterThan(0);
   });
 
@@ -1029,7 +1010,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Live Terminal$/, IN_ROW),
+        screen.getByText("#201", IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -1049,22 +1030,22 @@ describe("SessionsTab", () => {
       PAUSED_SESSION,
       makeSession({
         id: "interrupted-1",
-        title: "Interrupted Terminal",
+        ref: "#221",
         status: "interrupted",
       }),
       makeSession({
         id: "input-1",
-        title: "Input Terminal",
+        ref: "#222",
         status: "awaiting_input",
       }),
       makeSession({
         id: "approval-1",
-        title: "Approval Terminal",
+        ref: "#223",
         status: "awaiting_approval",
       }),
       makeSession({
         id: "handoff-1",
-        title: "Handoff Terminal",
+        ref: "#224",
         status: "awaiting_handoff",
       }),
     ];
@@ -1074,37 +1055,37 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(/(?:^|: )Live Terminal$/).length,
+        screen.getAllByText("#201").length,
       ).toBeGreaterThan(0);
       expect(
-        screen.getAllByText(/(?:^|: )Paused Terminal$/).length,
+        screen.getAllByText("#202").length,
       ).toBeGreaterThan(0);
       expect(
-        screen.getAllByText(/(?:^|: )Interrupted Terminal$/).length,
+        screen.getAllByText("#221").length,
       ).toBeGreaterThan(0);
       expect(
-        screen.getAllByText(/(?:^|: )Input Terminal$/).length,
+        screen.getAllByText("#222").length,
       ).toBeGreaterThan(0);
       expect(
-        screen.getAllByText(/(?:^|: )Approval Terminal$/).length,
+        screen.getAllByText("#223").length,
       ).toBeGreaterThan(0);
       expect(
-        screen.getAllByText(/(?:^|: )Handoff Terminal$/).length,
+        screen.getAllByText("#224").length,
       ).toBeGreaterThan(0);
     });
 
-    const statusDotForTitle = (title: string) => {
+    const statusDotForRef = (ref: string) => {
       const row = screen
-        .getAllByText((text) => text === title || text.endsWith(`: ${title}`))
+        .getAllByText((text) => text === ref || text.startsWith(`${ref}: `))
         .map((node) => node.closest(".session-entry"))
         .find((candidate): candidate is HTMLElement => candidate != null);
-      if (!row) throw new Error(`No session row found for ${title}`);
+      if (!row) throw new Error(`No session row found for ${ref}`);
       const dot = row.querySelector("span.activity-row-status-dot");
-      if (!dot) throw new Error(`No status dot found for ${title}`);
+      if (!dot) throw new Error(`No status dot found for ${ref}`);
       return dot as HTMLSpanElement;
     };
 
-    const activeDot = statusDotForTitle("Live Terminal");
+    const activeDot = statusDotForRef("#201");
     const activeSvg = activeDot.querySelector("svg");
     expect(activeDot.getAttribute("data-kind")).toBe("active");
     expect(activeDot.getAttribute("class")).toContain(
@@ -1115,7 +1096,7 @@ describe("SessionsTab", () => {
     );
     expect(activeSvg?.querySelector("polygon")).not.toBeNull();
 
-    const pausedDot = statusDotForTitle("Paused Terminal");
+    const pausedDot = statusDotForRef("#202");
     const pausedSvg = pausedDot.querySelector("svg");
     expect(pausedDot.getAttribute("data-kind")).toBe("paused");
     expect(pausedDot.getAttribute("class")).not.toContain(
@@ -1127,13 +1108,13 @@ describe("SessionsTab", () => {
     expect(pausedSvg?.querySelectorAll("rect")).toHaveLength(2);
 
     const expected = [
-      ["Interrupted Terminal", "paused", "Session interrupted", "dash"],
-      ["Input Terminal", "info", "Session awaiting_input", "eye"],
-      ["Approval Terminal", "warning", "Session awaiting_approval", "lock"],
-      ["Handoff Terminal", "warning", "Session awaiting_handoff", "lock"],
+      ["#221", "paused", "Session interrupted", "dash"],
+      ["#222", "info", "Session awaiting_input", "eye"],
+      ["#223", "warning", "Session awaiting_approval", "lock"],
+      ["#224", "warning", "Session awaiting_handoff", "lock"],
     ] as const;
-    for (const [title, kind, label, glyph] of expected) {
-      const dot = statusDotForTitle(title);
+    for (const [ref, kind, label, glyph] of expected) {
+      const dot = statusDotForRef(ref);
       expect(dot).toHaveAttribute("data-kind", kind);
       expect(dot).toHaveAttribute("aria-label", label);
       expect(dot.querySelector("svg")).toHaveAttribute("data-glyph", glyph);
@@ -1325,41 +1306,41 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Running Agent Terminal$/, IN_ROW),
+        screen.getByText("#206", IN_ROW),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/(?:^|: )Pending Agent Terminal$/, IN_ROW),
+        screen.getByText("#207", IN_ROW),
       ).toBeInTheDocument();
     });
 
     expect(
-      screen.queryByText(/(?:^|: )Completed Agent Terminal$/, IN_ROW),
+      screen.queryByText("#208", IN_ROW),
     ).toBeNull();
     expect(
-      screen.queryByText(/(?:^|: )Errored Agent Terminal$/, IN_ROW),
+      screen.queryByText("#209", IN_ROW),
     ).toBeNull();
     expect(
-      screen.queryByText(/(?:^|: )Cancelled Agent Terminal$/, IN_ROW),
+      screen.queryByText("#212", IN_ROW),
     ).toBeNull();
 
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(
-        screen.queryByText(/(?:^|: )Running Agent Terminal$/, IN_ROW),
+        screen.queryByText("#206", IN_ROW),
       ).toBeNull();
       expect(
-        screen.queryByText(/(?:^|: )Pending Agent Terminal$/, IN_ROW),
+        screen.queryByText("#207", IN_ROW),
       ).toBeNull();
     });
     expect(
-      screen.queryByText(/(?:^|: )Completed Agent Terminal$/, IN_ROW),
+      screen.queryByText("#208", IN_ROW),
     ).toBeNull();
     expect(
-      screen.queryByText(/(?:^|: )Errored Agent Terminal$/, IN_ROW),
+      screen.queryByText("#209", IN_ROW),
     ).toBeNull();
     expect(
-      screen.queryByText(/(?:^|: )Cancelled Agent Terminal$/, IN_ROW),
+      screen.queryByText("#212", IN_ROW),
     ).toBeNull();
   });
 
@@ -1509,7 +1490,7 @@ describe("SessionsTab", () => {
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText(/(?:^|: )Live Terminal$/, IN_ROW));
+    fireEvent.click(screen.getByText("#201", IN_ROW));
 
     await waitFor(() => {
       expect(
@@ -1606,7 +1587,7 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(
         container.querySelector(".activity-panel-status-bar__title"),
-      ).toHaveTextContent("#202: Paused Terminal");
+      ).toHaveTextContent("#202");
     });
     expect(
       container.querySelector(".activity-panel-status-bar__title"),
@@ -1698,7 +1679,6 @@ describe("SessionsTab", () => {
       id: "usage-1",
       ref: "#205",
       external_id: "usage-ext-1",
-      title: "High Usage Session",
       seq_num: 205,
       usage_input_tokens: 1200,
       usage_output_tokens: 3400,
@@ -1711,7 +1691,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )High Usage Session$/, IN_ROW),
+        screen.getByText("#205", IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -1822,7 +1802,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+        screen.getByText("#202", IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -1846,7 +1826,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+        screen.getByText("#202", IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -1862,7 +1842,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+        screen.getByText("#202", IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -1874,7 +1854,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Attach #202: Paused Terminal" }),
+        screen.getByRole("button", { name: "Attach #202" }),
       ).toHaveAttribute("aria-pressed", "true");
     });
     // Terminal is a regular activity tab: opening it switches the panel tab.
@@ -1906,7 +1886,7 @@ describe("SessionsTab", () => {
       />,
     );
     const rowTitle = () =>
-      screen.queryByText(/(?:^|: )Paused Terminal$/, IN_ROW);
+      screen.queryByText("#202", IN_ROW);
 
     await waitFor(() => {
       expect(rowTitle()).toBeInTheDocument();
@@ -1936,7 +1916,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+        screen.getByText("#202", IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -2008,7 +1988,6 @@ describe("SessionsTab", () => {
         ref: "#301",
         external_id: "acp-ext-1",
         source: "grok",
-        title: "ACP Session",
         status: "active",
         session_type: "web_chat",
         seq_num: 301,
@@ -2021,7 +2000,7 @@ describe("SessionsTab", () => {
     const openRowMenu = async () => {
       await waitFor(() => {
         expect(
-          screen.getByText(/(?:^|: )ACP Session$/, IN_ROW),
+          screen.getByText("#301", IN_ROW),
         ).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -2097,14 +2076,14 @@ describe("SessionsTab", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Close Session" }));
       expect(onAcpCloseSession).toHaveBeenCalledWith("acp-1");
-      expect(screen.queryByText(/(?:^|: )ACP Session$/, IN_ROW)).toBeNull();
+      expect(screen.queryByText("#301", IN_ROW)).toBeNull();
 
       await act(async () => {
         resolveClose?.(false);
       });
       await waitFor(() => {
         expect(
-          screen.getByText(/(?:^|: )ACP Session$/, IN_ROW),
+          screen.getByText("#301", IN_ROW),
         ).toBeInTheDocument();
       });
     });
@@ -2131,14 +2110,14 @@ describe("SessionsTab", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete Session" }));
       expect(onAcpDeleteSession).toHaveBeenCalledWith("acp-1");
-      expect(screen.queryByText(/(?:^|: )ACP Session$/, IN_ROW)).toBeNull();
+      expect(screen.queryByText("#301", IN_ROW)).toBeNull();
 
       await act(async () => {
         resolveDelete?.(false);
       });
       await waitFor(() => {
         expect(
-          screen.getByText(/(?:^|: )ACP Session$/, IN_ROW),
+          screen.getByText("#301", IN_ROW),
         ).toBeInTheDocument();
       });
     });
@@ -2212,7 +2191,7 @@ describe("SessionsTab", () => {
       );
       await waitFor(() => {
         expect(
-          screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+          screen.getByText("#202", IN_ROW),
         ).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -2239,7 +2218,6 @@ describe("SessionsTab", () => {
           ref: "#302",
           status: "paused",
           seq_num: 302,
-          title: "ACP Paused",
         },
       );
       mockUseSessionDetail.mockReturnValue({
@@ -2278,7 +2256,6 @@ describe("SessionsTab", () => {
           ref: "#302",
           status: "paused",
           seq_num: 302,
-          title: "ACP Paused",
         },
       );
       mockUseSessionDetail.mockReturnValue({

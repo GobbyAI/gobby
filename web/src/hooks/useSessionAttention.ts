@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWebSocketConnected, useWebSocketEvent } from "./useWebSocketEvent";
+import type { SessionRosterLabel } from "../lib/sessionLabel";
 
 export interface SessionAttentionSummary {
   count: number;
@@ -85,9 +86,33 @@ function summarizeAttention(
   );
 }
 
+function parseRosterLabel(entry: Record<string, unknown>): SessionRosterLabel {
+  const rawTask = entry.task;
+  const task =
+    typeof rawTask === "object" && rawTask !== null
+      ? (rawTask as Record<string, unknown>)
+      : null;
+  return {
+    definition: typeof entry.definition === "string" ? entry.definition : null,
+    task:
+      task !== null && typeof task.ref === "string"
+        ? {
+            ref: task.ref,
+            title: typeof task.title === "string" ? task.title : null,
+            claimHolder: task.claim_holder === true,
+          }
+        : null,
+    statusLine:
+      typeof entry.status_line === "string" ? entry.status_line : null,
+  };
+}
+
 export function useSessionAttention() {
   const [attentionBySession, setAttentionBySession] = useState<
     Map<string, SessionAttentionSummary>
+  >(new Map());
+  const [rosterBySession, setRosterBySession] = useState<
+    Map<string, SessionRosterLabel>
   >(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const cursorRef = useRef<AttentionCursor | null>(null);
@@ -165,6 +190,15 @@ export function useSessionAttention() {
         });
       }
 
+      const labels = new Map<string, SessionRosterLabel>();
+      for (const rawEntry of data.entries) {
+        if (typeof rawEntry !== "object" || rawEntry === null) continue;
+        const entry = rawEntry as Record<string, unknown>;
+        if (typeof entry.session_id === "string") {
+          labels.set(entry.session_id, parseRosterLabel(entry));
+        }
+      }
+
       let seq = snapshotSeq;
       for (const event of matchingEvents
         .filter((candidate) => candidate.seq > snapshotSeq)
@@ -176,6 +210,7 @@ export function useSessionAttention() {
       entriesRef.current = entries;
       resyncAttemptedRef.current = false;
       setAttentionBySession(summarizeAttention(entries));
+      setRosterBySession(labels);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -248,5 +283,5 @@ export function useSessionAttention() {
     };
   }, []);
 
-  return { attentionBySession, fetchAttentionRoster };
+  return { attentionBySession, rosterBySession, fetchAttentionRoster };
 }

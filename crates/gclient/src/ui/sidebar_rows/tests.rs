@@ -1182,6 +1182,52 @@ fn an_agent_without_a_task_shows_its_status_line_on_line_three() {
     assert_eq!(row_travel(&row, 40), 0);
 }
 
+fn assert_no_control_characters(line: &Line<'_>) {
+    for span in &line.spans {
+        assert!(
+            !span.content.chars().any(char::is_control),
+            "a control character reached the draw: {:?}",
+            span.content
+        );
+    }
+}
+
+/// A status line that reached the row with control characters draws only its
+/// printable text: no escape, bell or C1 control leaves the sidebar (#25728).
+#[test]
+fn a_status_line_with_control_characters_draws_only_its_printable_text() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        status_line: Some("\u{1b}[31mReviewing\u{1b}[0m the \u{7}ticker\u{85}".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    let line = row_third_line(&row, 40, &chrome);
+    assert_eq!(line_text(&line), "   [31mReviewing[0m the ticker");
+    assert_no_control_characters(&line);
+}
+
+/// The scrolling path measures and slices the same stripped text, so every
+/// tick of a long line with control characters draws without them (#25728).
+#[test]
+fn a_long_status_line_with_control_characters_scrolls_without_drawing_them() {
+    let mut chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        status_line: Some("Reviewing\u{1b}[2J the sidebar ticker across the \u{7}whole row".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert!(row_travel(&row, 24) > 0);
+    for ticker in [0, TICKER_STEP, (TICKER_PAUSE + 2) * TICKER_STEP] {
+        chrome.ticker = ticker;
+        assert_no_control_characters(&row_third_line(&row, 24, &chrome));
+    }
+}
+
 #[test]
 fn a_status_line_longer_than_the_row_scrolls_across_line_three() {
     let mut chrome = Chrome::dark();

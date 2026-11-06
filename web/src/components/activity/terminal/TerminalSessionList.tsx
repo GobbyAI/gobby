@@ -109,15 +109,15 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
       ) : session.external ? (
         <ExternalTerminalGlyph />
       ) : null}
-      {/* Status, provider and ref stay put; only the title tail tickers when
+      {/* Status, provider and ref stay put; only the derived detail tickers when
           the row is too narrow for it. The raw tmux pane name never renders
           here — it is the terminal's identity, not the session's. */}
       {session.refLabel ? (
         <span className="activity-row-meta font-mono">{session.refLabel}</span>
       ) : null}
-      {session.titleText ? (
+      {session.tickerText ? (
         <TickerText className="min-w-0 flex-1 text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
-          {session.titleText}
+          {session.tickerText}
         </TickerText>
       ) : null}
     </>

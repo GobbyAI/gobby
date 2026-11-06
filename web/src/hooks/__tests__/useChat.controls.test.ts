@@ -168,7 +168,6 @@ describe("useChat project and mode controls", () => {
         type: "session_info",
         conversation_id: result.current.conversationId,
         db_session_id: "db-1",
-        session_title: "ACP title",
         updated_at: "2026-06-27T05:00:00Z",
         available_commands: [
           {
@@ -180,7 +179,6 @@ describe("useChat project and mode controls", () => {
       });
     });
 
-    expect(result.current.sessionTitle).toBe("ACP title");
     expect(result.current.acpAvailableCommands).toEqual([
       {
         name: "research",
@@ -194,7 +192,6 @@ describe("useChat project and mode controls", () => {
         type: "session_info",
         conversation_id: result.current.conversationId,
         db_session_id: "db-1",
-        session_title: "ACP title",
         updated_at: "2026-06-27T05:00:30Z",
       });
     });

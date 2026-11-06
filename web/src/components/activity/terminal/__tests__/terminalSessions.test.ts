@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
+import type { SessionRosterLabel } from "../../../../lib/sessionLabel";
 import type { GobbySession } from "../../../../types/sessions";
 import {
   findByGobbySessionId,
@@ -15,7 +16,6 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
     external_id: "external-1",
     source: "codex",
     project_id: "project-1",
-    title: "Session",
     status: "active",
     model: "gpt-5.4",
     message_count: 0,
@@ -59,7 +59,6 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
     pane_command: null,
     pane_path: null,
     window_name: null,
-    session_title: null,
     gobby_session_id: null,
     agent_managed: false,
     attached_bridge: null,
@@ -73,13 +72,11 @@ describe("terminal session helpers", () => {
       id: "user-session",
       seq_num: 7,
       ref: "other-project#7",
-      title: "User shell",
     });
     const agentSession = makeGobbySession({
       id: "agent-session",
       seq_num: 8,
       ref: "gobby#8",
-      title: "Agent shell",
       agent_run_id: "run-8",
     });
     const tmux = [
@@ -104,9 +101,9 @@ describe("terminal session helpers", () => {
       {
         tmux: tmux[0],
         gobby: userSession,
-        label: "other-project#7: User shell",
+        label: "other-project#7",
         refLabel: "other-project#7",
-        titleText: "User shell",
+        tickerText: "",
         provider: "codex",
         paneRef: "user-shell",
         backendLabel: "tmux",
@@ -119,7 +116,7 @@ describe("terminal session helpers", () => {
         gobby: null,
         label: "external-shell",
         refLabel: null,
-        titleText: "external-shell",
+        tickerText: "external-shell",
         provider: null,
         paneRef: "external-shell",
         backendLabel: "tmux",
@@ -130,9 +127,9 @@ describe("terminal session helpers", () => {
       {
         tmux: tmux[2],
         gobby: agentSession,
-        label: "gobby#8: Agent shell",
+        label: "gobby#8",
         refLabel: "gobby#8",
-        titleText: "Agent shell",
+        tickerText: "",
         provider: "codex",
         paneRef: "agent-shell",
         backendLabel: "tmux",
@@ -151,21 +148,27 @@ describe("terminal session helpers", () => {
       id: "own",
       ref: "gobby#12",
       project_id: "project-1",
-      title: "Task #22203 - portrait fixes",
     });
     const foreign = makeGobbySession({
       id: "foreign",
       ref: "other-project#7",
       project_id: "project-2",
-      title: "User shell",
     });
     const provisional = makeGobbySession({
       id: "provisional",
       ref: "gobby#13",
       project_id: "project-1",
-      title: "gobby#13: New Session",
-      title_source: "provisional",
     });
+    const rosterBySession = new Map<string, SessionRosterLabel>([
+      [
+        "own",
+        {
+          definition: "developer",
+          task: { ref: "#22203", title: "portrait fixes", claimHolder: false },
+          statusLine: null,
+        },
+      ],
+    ]);
     const joined = joinTmuxSessions(
       [
         makeTmuxSession({ name: "own", gobby_session_id: "own" }),
@@ -174,28 +177,29 @@ describe("terminal session helpers", () => {
       ],
       [own, foreign, provisional],
       "project-1",
+      rosterBySession,
     );
 
-    expect(joined[0].label).toBe("#12: Task #22203 - portrait fixes");
+    expect(joined[0].label).toBe("#12: developer");
     expect(joined[0].refLabel).toBe("#12");
-    expect(joined[0].titleText).toBe("Task #22203 - portrait fixes");
-    expect(joined[1].label).toBe("other-project#7: User shell");
+    expect(joined[0].tickerText).toBe(
+      "developer · Working task 22203 portrait fixes",
+    );
+    expect(joined[1].label).toBe("other-project#7");
     expect(joined[1].refLabel).toBe("other-project#7");
     // A provisional title never rides along: the ref stands alone.
     expect(joined[2].label).toBe("#13");
-    expect(joined[2].titleText).toBe("");
+    expect(joined[2].tickerText).toBe("");
   });
 
   it("socket specific identity join", () => {
     const userSession = makeGobbySession({
       id: "user-session",
       seq_num: 10,
-      title: "User",
     });
     const agentSession = makeGobbySession({
       id: "agent-session",
       seq_num: 11,
-      title: "Agent",
       agent_run_id: "run-11",
     });
     const tmux = [

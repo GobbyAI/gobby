@@ -211,7 +211,6 @@ function normalizeSessionMeta(value: unknown): SessionObservationMeta | null {
   return {
     ref: nullableString(value.ref),
     source: value.source,
-    title: nullableString(value.title),
     status: value.status,
     canProxyAttach:
       typeof value.canProxyAttach === "boolean"
@@ -272,7 +271,6 @@ function normalizeContinuationSnapshot(
     conversationId: snapshot.conversationId,
     dbSessionId: nullableString(snapshot.dbSessionId),
     mainSessionMeta: normalizeSessionMeta(snapshot.mainSessionMeta),
-    sessionTitle: nullableString(snapshot.sessionTitle),
     sessionRef: nullableString(snapshot.sessionRef),
     selectedProvider: nullableString(snapshot.selectedProvider),
     messages,
@@ -306,7 +304,6 @@ interface UseContinuationRestoreParams {
     setObservedSessionId: Setter<string | null>;
     setSelectedProvider: Setter<string | null>;
     setSessionRef: Setter<string | null>;
-    setSessionTitle: Setter<string | null>;
     setViewingSessionId: Setter<string | null>;
   };
   conversationRefs: {
@@ -369,7 +366,6 @@ export function useContinuationRestore({
     setObservedSessionId,
     setSelectedProvider,
     setSessionRef,
-    setSessionTitle,
     setViewingSessionId,
   } = sessionSetters;
   const {
@@ -413,7 +409,6 @@ export function useContinuationRestore({
       saveDbSessionId(restored.dbSessionId);
       setMessages(restored.messages);
       setMainSessionMeta(restored.mainSessionMeta);
-      setSessionTitle(restored.sessionTitle);
       setSessionRef(restored.sessionRef);
       setSelectedProvider(restored.selectedProvider);
       setContextUsage(restored.contextUsage);
@@ -493,7 +488,6 @@ export function useContinuationRestore({
       setSelectedProvider,
       setSessionInteractionMode,
       setSessionRef,
-      setSessionTitle,
       setViewingSessionId,
       setViewingSessionMeta,
       setWorktreePath,

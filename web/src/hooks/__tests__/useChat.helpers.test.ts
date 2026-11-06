@@ -232,7 +232,6 @@ describe("useChat persisted message helpers", () => {
         source: "codex",
         session_type: "terminal",
         status: "active",
-        title: "Terminal Session",
       },
     });
 
@@ -268,7 +267,6 @@ describe("useChat persisted message helpers", () => {
         id: "test-conversation-id",
         seq_num: 314,
         ref: "other-project#314",
-        title: "Persisted Main Chat",
         source: "codex",
         session_type: "web_chat",
         chat_mode: "bypass",
@@ -285,7 +283,6 @@ describe("useChat persisted message helpers", () => {
     const { result } = renderHook(() => useChat());
 
     await waitFor(() => {
-      expect(result.current.sessionTitle).toBe("Persisted Main Chat");
       expect(result.current.sessionRef).toBe("other-project#314");
       expect(result.current.currentBranch).toBe("feature/mobile-refresh");
       expect(result.current.selectedProvider).toBe("codex");

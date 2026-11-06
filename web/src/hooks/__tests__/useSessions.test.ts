@@ -26,7 +26,6 @@ const SAMPLE_SESSIONS = [
     external_id: "ext-1",
     source: "claude",
     project_id: "proj-1",
-    title: "Test Session",
     status: "active",
     model: "claude-4",
     message_count: 5,
@@ -52,7 +51,6 @@ const SAMPLE_SESSIONS = [
     external_id: "ext-2",
     source: "unknown",
     project_id: "proj-1",
-    title: "Another Session",
     status: "expired",
     model: null,
     message_count: 10,
@@ -107,7 +105,7 @@ describe("useSessionCatalog", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.sessions).toHaveLength(2);
-    expect(result.current.sessions[0].title).toBe("Another Session");
+    expect(result.current.sessions[0].id).toBe("sess-2");
   });
 
   it("passes the project filter and page-size limit to the sessions API", async () => {
@@ -134,7 +132,6 @@ describe("useSessionCatalog", () => {
       ...SAMPLE_SESSIONS[0],
       id: "sess-project-b",
       project_id: "proj-2",
-      title: "Project B Session",
     };
     mockFetch.fn.mockImplementation((url) => {
       if (String(url).includes("project_id=proj-1")) {
@@ -172,7 +169,6 @@ describe("useSessionCatalog", () => {
     const filteredSession = {
       ...SAMPLE_SESSIONS[0],
       id: "sess-filtered",
-      title: "Filtered Session",
     };
     let requestCount = 0;
     mockFetch.fn.mockImplementation(() => {
@@ -276,22 +272,6 @@ describe("useSessionCatalog", () => {
 
     expect(result.current.sessions).toHaveLength(1);
     expect(result.current.deletingIds.has("sess-1")).toBe(false);
-  });
-
-  it("renameSession updates title optimistically", async () => {
-    mockFetch.mockJsonResponse("/api/sessions/sess-1/rename", { ok: true });
-
-    const { result } = renderHook(() => useSessionCatalog("proj-1"));
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
-
-    await act(async () => {
-      await result.current.renameSession("sess-1", "Renamed");
-    });
-
-    expect(
-      result.current.sessions.find((session) => session.id === "sess-1")?.title,
-    ).toBe("Renamed");
   });
 
   it("hasMore reflects next_cursor on the response", async () => {
@@ -416,21 +396,4 @@ describe("useSessionCatalog", () => {
     expect(result.current.sessions.some((s) => s.id === "sess-2")).toBe(false);
   });
 
-  it("renameSession restores the previous title when the API call fails", async () => {
-    const { result } = renderHook(() => useSessionCatalog("proj-1"));
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
-
-    mockFetch.resetRoutes();
-    mockFetch.mockErrorResponse("/api/sessions/sess-1/rename", 500);
-    mockFetch.mockErrorResponse("/api/sessions", 500);
-
-    await act(async () => {
-      await result.current.renameSession("sess-1", "Renamed");
-    });
-
-    expect(
-      result.current.sessions.find((session) => session.id === "sess-1")?.title,
-    ).toBe("Test Session");
-  });
 });
