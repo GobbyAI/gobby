@@ -71,19 +71,33 @@ def _approved_on(
     return True
 
 
-def _paths_between(definition: PipelineDefinition, start: str, goal: str) -> list[list[str]]:
-    """Each run of stages strictly between start and goal along next edges, by every route."""
-    runs: list[list[str]] = []
+def _routes(definition: PipelineDefinition, name: str, category: str | None) -> list[str]:
+    """Alternatives a task may take from a stage, in declared order, filtered by its category."""
+    return [
+        following
+        for following in definition.claim_flow[name].next
+        if _admits(definition, following, category)
+    ]
 
-    def walk(current: str, between: list[str]) -> None:
-        for following in definition.claim_flow[current].next:
-            if following == goal:
-                runs.append(between)
-            elif following != start and following not in between:
-                walk(following, [*between, following])
 
-    walk(start, [])
-    return runs
+def _route_between(
+    definition: PipelineDefinition, start: str, goal: str, category: str | None
+) -> list[str] | None:
+    """The stages strictly between start and goal on the route a task takes: the first admitted
+    alternative at each stage, as advancement picks it. None when that route never reaches goal."""
+    between: list[str] = []
+    current = start
+    while True:
+        taken = _routes(definition, current, category)[:1]
+        if not taken:
+            return None
+        following = taken[0]
+        if following == goal:
+            return between
+        if following == start or following in between:
+            return None
+        between.append(following)
+        current = following
 
 
 def _returned_stage(
@@ -93,6 +107,7 @@ def _returned_stage(
     correction: TaskAttestation,
     records: list[TaskAttestation],
     stage_agents: dict[str, str | None],
+    category: str | None,
 ) -> str | None:
     """The marked stage when a correction re-records a kind on an already reviewed candidate.
 
@@ -130,11 +145,11 @@ def _returned_stage(
         current_stage = _current_by_kind(records, stage.done_when, _by_agent(writer))
         return _approved_on(current_stage, stage.done_when, candidate, stage.approved_result, "")
 
-    # The marked stage must lie beyond at least one stage. Any route that passes only through
-    # stages approved on the candidate can carry the claim forward.
-    for between in _paths_between(definition, holder_stage, marked):
-        if between and all(writers_approved(name) for name in between):
-            return marked
+    # The marked stage must lie beyond at least one stage, all on the route this task takes. Each
+    # of those stages must be approved on the candidate by its own writers.
+    between = _route_between(definition, holder_stage, marked, category)
+    if between and all(writers_approved(name) for name in between):
+        return marked
     return None
 
 
@@ -287,7 +302,9 @@ def advance_claim_flow(
             raise ValueError(f"claim flow seat {record.session_id} holds more than one stage")
         name = holder_stages[0]
         if prior is not None and marked in definition.claim_flow:
-            returned = _returned_stage(definition, name, str(marked), record, records, stage_agents)
+            returned = _returned_stage(
+                definition, name, str(marked), record, records, stage_agents, task.category
+            )
     stage = definition.claim_flow[name]
     superseded = {item.supersedes_id for item in records if item.supersedes_id}
     active = {
@@ -343,9 +360,7 @@ def advance_claim_flow(
                 f"Supersede conflicting records or omit references for unrelated evidence: {conflicting}"
             )
         # The first alternative whose categories admit this task takes the claim, in declared order.
-        routes = [
-            following for following in stage.next if _admits(definition, following, task.category)
-        ]
+        routes = _routes(definition, name, task.category)
         if stage.next and not routes:
             raise ValueError(
                 f"claim flow stage {name!r} has no route for category {task.category!r}"
