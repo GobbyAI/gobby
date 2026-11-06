@@ -231,7 +231,8 @@ fn proxy_geometry_clears_deferred_viewport() {
 
     let messages = workspace
         .stage_geometry(PaneId(1), 30, 100)
-        .expect("stage proxy geometry");
+        .expect("stage proxy geometry")
+        .expect("the proxy pane has a writer");
 
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0]["type"], "terminal_set_viewport");
@@ -265,8 +266,8 @@ fn a_geometry_job_that_sends_nothing_forgets_the_size_it_recorded() {
     );
     let staged = workspace.stage_geometry(PaneId(1), 30, 100);
     assert!(
-        matches!(staged, Ok(ref messages) if messages.is_empty()),
-        "staging sends nothing for a pane without a writer"
+        matches!(staged, Ok(None)),
+        "staging has nothing to send for a pane without a writer"
     );
     let mut jobs = LoopJobs::new(&workspace);
     let mut chrome = Chrome::dark();
@@ -282,6 +283,95 @@ fn a_geometry_job_that_sends_nothing_forgets_the_size_it_recorded() {
     assert!(
         jobs.sent_geometry.is_empty(),
         "a size that was never sent must not stay recorded as sent"
+    );
+}
+
+/// A daemon-created pane attached at a size other than its rect is resized to the
+/// rect, and the size it now holds is recorded.
+#[test]
+fn a_pane_attached_at_another_size_is_resized_to_its_rect() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let (_, receiver) = daemon.subscribe();
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    let source = ProxyFrameSource::from_attachment(daemon, "terminal-1", attachment, receiver)
+        .expect("proxy source");
+    pane.install_frame_source(PaneFrameSource::Proxy(source));
+    pane.pty_size = Some((24, 80));
+    let mut workspace = Workspace::scripted();
+    workspace.panes.insert(pane.id, pane);
+
+    let messages = workspace
+        .stage_geometry(PaneId(1), 30, 100)
+        .expect("stage geometry")
+        .expect("the proxy pane has a writer");
+
+    let resize = messages
+        .iter()
+        .find(|message| message["type"] == "terminal_resize")
+        .expect("a resize for the mismatched PTY");
+    assert_eq!(resize["rows"], 30);
+    assert_eq!(resize["cols"], 100);
+    assert_eq!(workspace.pane(PaneId(1)).pty_size, Some((30, 100)));
+}
+
+/// A PTY already at the rect needs no resize. The viewport still goes out.
+#[test]
+fn a_pane_already_at_its_rect_is_not_resized() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let (_, receiver) = daemon.subscribe();
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    let source = ProxyFrameSource::from_attachment(daemon, "terminal-1", attachment, receiver)
+        .expect("proxy source");
+    pane.install_frame_source(PaneFrameSource::Proxy(source));
+    pane.pty_size = Some((30, 100));
+    let mut workspace = Workspace::scripted();
+    workspace.panes.insert(pane.id, pane);
+
+    let messages = workspace
+        .stage_geometry(PaneId(1), 30, 100)
+        .expect("stage geometry")
+        .expect("the proxy pane has a writer");
+
+    assert_eq!(messages.len(), 1, "only the viewport goes out");
+    assert_eq!(messages[0]["type"], "terminal_set_viewport");
+    assert_eq!(workspace.pane(PaneId(1)).pty_size, Some((30, 100)));
+}
+
+/// A direct pane at its rect sends its viewport on its own socket and no daemon
+/// request. That is not a send the next pass must redo, so the size stays recorded.
+#[test]
+fn a_direct_pane_already_at_its_rect_keeps_the_size_it_recorded() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    // A live workspace starts unready, and unready refuses every request.
+    workspace.daemon_ready = true;
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    pane.install_frame_source(PaneFrameSource::Scripted(ScriptedFrameSource::new(
+        Transport::Direct,
+    )));
+    pane.pty_size = Some((30, 100));
+    workspace.panes.insert(pane.id, pane);
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    jobs.sent_geometry = vec![(PaneId(1), 30, 100, attachment.clone())];
+
+    jobs.offer(
+        &mut workspace,
+        &mut chrome,
+        JobKey::Geometry(PaneId(1)),
+        Pending::Geometry(PaneId(1), 30, 100),
+    );
+
+    assert_eq!(
+        jobs.sent_geometry,
+        vec![(PaneId(1), 30, 100, attachment)],
+        "the viewport went out directly, so the size stays recorded"
     );
 }
 

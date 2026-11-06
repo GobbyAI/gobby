@@ -588,13 +588,16 @@ impl LoopJobs {
             }
             Pending::Geometry(pane, rows, cols) => {
                 match workspace.stage_geometry(pane, rows, cols) {
-                    // Nothing was sent, so the recorded size is not on its way.
-                    // Forget it, or a later pass takes it as sent and never offers it.
-                    Ok(messages) if messages.is_empty() => {
+                    // Nothing to send yet. Forget the size, or a later pass takes it
+                    // as sent and never offers it.
+                    Ok(None) => {
                         self.sent_geometry.retain(|entry| entry.0 != pane);
                         false
                     }
-                    Ok(messages) => {
+                    // Only a direct viewport went out, on the pane's own socket.
+                    // That needs no daemon call, so the size stays recorded.
+                    Ok(Some(messages)) if messages.is_empty() => false,
+                    Ok(Some(messages)) => {
                         let daemon = workspace.daemon().clone();
                         spawn_job(&self.tx, tag.clone(), async move {
                             let mut result = Ok(());
