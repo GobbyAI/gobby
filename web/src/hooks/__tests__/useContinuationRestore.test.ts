@@ -100,7 +100,6 @@ function makeSnapshot(messages: ChatMessage[]): ContinuationRollbackSnapshot {
     conversationId: "conversation-1",
     dbSessionId: "db-session-1",
     mainSessionMeta: null,
-    sessionTitle: "Restored",
     sessionRef: "#1",
     selectedProvider: "codex",
     messages,
@@ -143,7 +142,6 @@ function renderRestoreHook(setMessages = vi.fn(), setCurrentMode = vi.fn()) {
         setObservedSessionId: vi.fn(),
         setSelectedProvider: vi.fn(),
         setSessionRef: vi.fn(),
-        setSessionTitle: vi.fn(),
         setViewingSessionId: vi.fn(),
       },
       conversationRefs: {

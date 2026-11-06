@@ -35,8 +35,7 @@ interface ChatMainColumnProps extends AgentPickerProps {
   projectHasCheckout?: boolean;
   panelVisible: boolean;
   effectiveSessionRef: string | null;
-  activeTitle: string | null;
-  mainSessionSource: string | null;
+    mainSessionSource: string | null;
   messageListRef: RefObject<MessageListHandle>;
   providerState: UseChatPageProviderStateResult;
   voiceStatus: UseChatPageVoiceStatusResult;
@@ -59,7 +58,6 @@ export function ChatMainColumn({
   projectHasCheckout,
   panelVisible,
   effectiveSessionRef,
-  activeTitle,
   mainSessionSource,
   messageListRef,
   providerState,
@@ -136,7 +134,6 @@ export function ChatMainColumn({
     >
       <CommandBar
         sessionRef={effectiveSessionRef}
-        title={viewingMeta?.title ?? activeTitle}
         sessionSource={viewingMeta?.source ?? mainSessionSource}
         onOpenPalette={onOpenPalette}
         onTogglePanel={onTogglePanel}

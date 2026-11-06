@@ -25,7 +25,6 @@ export interface TmuxSession {
   pane_command: string | null;
   pane_path: string | null;
   window_name: string | null;
-  session_title: string | null;
   gobby_session_id: string | null;
   agent_managed: boolean;
   attached_bridge: string | null;
@@ -76,7 +75,6 @@ export function asSession(
     pane_command: row.pane_command ?? null,
     pane_path: row.pane_path ?? null,
     window_name: row.window_name ?? null,
-    session_title: row.session_title ?? row.title ?? null,
     gobby_session_id: row.gobby_session_id ?? row.session_id ?? null,
     agent_managed: row.agent_managed ?? row.ownership === "gobby",
     attached_bridge: row.attached_bridge ?? null,

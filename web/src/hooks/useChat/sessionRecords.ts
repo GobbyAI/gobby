@@ -44,7 +44,6 @@ export interface CreatedWebChatSession extends Record<string, unknown> {
   model: string | null;
   chat_mode: string | null;
   seq_num: number | null;
-  title: string | null;
   status?: string | null;
   external_id?: string | null;
   git_branch?: string | null;
@@ -73,7 +72,6 @@ function isCreatedWebChatSession(
     isNullableString(value.model) &&
     isNullableString(value.chat_mode) &&
     isNullableNumber(value.seq_num) &&
-    isNullableString(value.title) &&
     isNullableString(value.status) &&
     isNullableString(value.external_id) &&
     isNullableString(value.git_branch) &&
@@ -86,7 +84,6 @@ export interface ContinuationRollbackSnapshot {
   conversationId: string;
   dbSessionId: string | null;
   mainSessionMeta: SessionObservationMeta | null;
-  sessionTitle: string | null;
   sessionRef: string | null;
   selectedProvider: string | null;
   messages: ChatMessage[];
@@ -117,7 +114,6 @@ export async function createWebChatSession(params?: {
   model?: string | null;
   reasoningEffort?: string | null;
   chatMode?: ChatMode | null;
-  title?: string | null;
 }): Promise<CreatedWebChatSession> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
   const reasoningEffort = normalizeReasoningEffort(
@@ -132,7 +128,6 @@ export async function createWebChatSession(params?: {
       model: params?.model ?? null,
       reasoning_effort: reasoningEffort,
       chat_mode: params?.chatMode ?? null,
-      title: params?.title ?? null,
     }),
   });
 
@@ -222,11 +217,6 @@ export function toSessionObservationMeta(
       overrides,
       "source",
       sessionString(session, "source", "unknown")!,
-    ),
-    title: sessionMetaValue(
-      overrides,
-      "title",
-      sessionString(session, "title", null),
     ),
     status: sessionMetaValue(
       overrides,

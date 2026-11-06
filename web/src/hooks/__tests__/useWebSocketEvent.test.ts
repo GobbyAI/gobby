@@ -322,7 +322,6 @@ describe("useWebSocketEvent", () => {
           sessions: [
             {
               id: "session-1",
-              title: "First session",
               status: "active",
               seq_num: 100,
               updated_at: "2026-04-28T10:00:00Z",
@@ -336,14 +335,12 @@ describe("useWebSocketEvent", () => {
           sessions: [
             {
               id: "session-1",
-              title: "First session",
               status: "active",
               seq_num: 100,
               updated_at: "2026-04-28T10:00:00Z",
             },
             {
               id: "session-2",
-              title: "Second session",
               status: "active",
               seq_num: 101,
               updated_at: "2026-04-28T10:05:00Z",

@@ -164,6 +164,11 @@ function SessionEntryRow({
         />
         <SourceIcon source={entry.provider} size={14} />
         <TickerText className="activity-row-title">{displayLabel}</TickerText>
+        {entry.detailLine ? (
+          <span className="min-w-0 truncate text-[var(--text-muted)]">
+            {entry.detailLine}
+          </span>
+        ) : null}
       </div>
       <div className="flex items-center gap-1.5">
         {renderBadges(entry)}

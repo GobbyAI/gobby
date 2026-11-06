@@ -83,7 +83,6 @@ export interface UseChatActionsParams {
   sessionInteractionMode: SessionInteractionMode;
   sessionInteractionModeRef: MutableRefObject<SessionInteractionMode>;
   sessionRef: string | null;
-  sessionTitle: string | null;
   setActiveAgent: Setter<string>;
   setContextUsage: Setter<ContextUsage>;
   setConversationId: Setter<string>;
