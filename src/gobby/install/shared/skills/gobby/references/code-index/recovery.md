@@ -51,13 +51,14 @@ project's Qdrant collection, reads PostgreSQL read-only, and prints orphan and
 missing classes with an `inventory_digest`. It deletes nothing and takes no
 project lock; a missing collection counts as empty. Absence from `code_symbols`
 is the only deletion authority; orphan classes are evidence. Apply is
-operator-reviewed: `--apply --expect-digest <digest> --receipt <private-file>`
+operator-reviewed and runs only through the Live Maintenance Procedure:
+`--apply --expect-digest <digest> --receipt <private-file>`
 takes the maintenance lease, refuses unless the rebuilt inventory matches the
 digest, and deletes orphan vectors in batches of 256 while the receipt records
 each step. A busy lease or a refused receipt makes no mutation; rerun the dry
-run. After an interrupted apply, read the receipt, then take a fresh dry-run
-digest before any further apply. Never delete vectors from a dry-run inventory
-by hand.
+run. A nonzero exit is unconfirmed whatever the receipt reads, including
+`complete: true`; read the receipt, then take a fresh dry-run digest before any
+further apply. Never delete vectors from a dry-run inventory by hand.
 
 Operator-only cleanup: `invalidate` removes the selected project's index and
 prompts unless `--force`; `prune` without `--project` requests global daemon
@@ -86,6 +87,6 @@ targeted. Retry the blocked raw command rather than repeating the failing call.
 
 Guide: [Recovery and maintenance](../../../../../../../../docs/guides/gcode-user-guide.md#project-management).
 
-_Version: 1.2.0_
+_Version: 1.3.0_
 
 _Last verified: 2026-11-05_

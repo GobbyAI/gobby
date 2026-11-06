@@ -72,7 +72,7 @@
     {"path": "crates/gcode/src/commands/status/retire_files.rs", "calls": {"query": 1, "query_one": 5}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/retire_files/backend.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
     {"path": "crates/gcode/src/commands/status/shared.rs", "calls": {"query": 1}, "classification": "operator-only"},
-    {"path": "crates/gcode/src/commands/vector/reconcile.rs", "calls": {"query": 3}, "classification": "project-read"},
+    {"path": "crates/gcode/src/commands/vector/reconcile.rs", "calls": {"query": 4}, "classification": "project-write"},
     {"path": "crates/gcode/src/config/context.rs", "calls": {"query_one": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/config/managed_scope.rs", "calls": {"query_one": 2, "query_opt": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/config/runtime_contract.rs", "calls": {"query": 1, "query_one": 1}, "classification": "project-read"},
