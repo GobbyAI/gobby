@@ -311,22 +311,54 @@ bounds apply: 5 MiB per image, 8 images and 24 MiB decoded bytes per request. Th
 stricter than TypeSafe's documented 16 MiB per-image limit. Invalid input never opens
 the service cooldown.
 
-- OpenRouter carries `[instructions, {type: image_url, image_url: {url: data URL}}]`
-  inside each Box question. It receives no top-level assets or images map.
-- Systemone carries `[instructions, reference]` with a fresh `gobby-image-<uuid4 hex>`
-  whole-value reference. Its top-level `assets` entry carries `type: image`,
-  `format: png|jpeg`, and `data_base64`. The request sets
-  `TypeSafe-Danger-Zone-Images: true`.
-- Workers AI's Clef schema has no Box; Gobby refuses it before dialing. The documented
-  llama.cpp and LM Studio systemone surfaces list Choice, Noul and Score only; Box
-  runtime support remains unverified there.
+- Box routes only to `openrouter-decisions`. Each Box question carries
+  `[instructions, {type: image_url, image_url: {url: data URL}}]`. The request has no
+  top-level assets or images map and no `TypeSafe-Danger-Zone-Images` header.
+- Systemone and Workers AI refuse Box. Config load rejects a `box` override on either
+  wire, naming the type, the `wire_api`, and `openrouter-decisions`. A default endpoint
+  on either wire refuses Box before dialing with reason `unconfigured`. The Workers AI
+  Clef schema has no Box. The documented llama.cpp and LM Studio systemone surfaces list
+  Choice, Noul and Score only.
+- A refused image names its size and the bounds, for example `image is 64x64 px; Box
+  takes 280 to 1568 px per side`.
+
+Per-type routing for Clef and Jev. Choice, Noul and Score use the local Ollama Clef
+model. Box uses OpenRouter's Jev model:
+
+```yaml
+ai:
+  decisions:
+    api_base: http://127.0.0.1:11434
+    wire_api: systemone
+    model: clef:27b
+    identity_contract: response_version
+    max_input_tokens: 8192
+    max_request_bytes: 65536
+    overrides:
+      box:
+        api_base: https://openrouter.ai/api
+        wire_api: openrouter-decisions
+        model: typesafe/jev-1.14-20261014
+        api_key: $secret:OPENROUTER_API_KEY
+```
+
+This is configuration guidance, not a live activation or an additional capture.
+
+Request shape. One endpoint takes one request per evaluate call for every question it serves,
+whatever the types: Choice and Noul questions routed to the same endpoint share a request. The
+wire carries each question's own `type` in `questions` and each answer's `type` in `answers`
+(section 1 states the answer type rule, and section 5 lists Noul, Choice and Score on
+`/v1/systemone`). Gobby checks and parses each question by its own type. No live capture of a
+mixed-type request has been run, so the mixed shape is documented but unverified against a
+live server.
 
 The strict answer requires `type: box`, finite `top`, `bottom`, `left`, `right` edges
 in [0,1], `left < right`, `top < bottom`, and finite confidence in [0,1]. Missing or
 null confidence fails closed, even though OpenRouter marks it optional and TypeSafe
-allows null. There is no probability-sum check. The two `*_box_response.json` fixtures
-exercise both transports with keyed answers. The text estimate removes image data;
-image token cost is unknown until capture, and the response truncation guard remains.
+allows null. There is no probability-sum check. The
+`openrouter_decisions_box_response.json` fixture exercises the Box transport with
+keyed answers. The text estimate removes image data; image token cost is unknown until
+capture, and the response truncation guard remains.
 
 Sources transcribed by researcher gobby#17515 in the 2026-10-24 working note:
 [TypeSafe Box](https://docs.typesafe.ai/primitives/box),

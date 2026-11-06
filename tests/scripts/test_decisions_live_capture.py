@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
 import base64
 import json
@@ -10,11 +11,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from scripts import decisions_live_capture
 from tests.scripts.conftest import (
     ALIAS_MODEL,
     BACKEND_MAX_STATE_TOKENS,
+    OPENROUTER_BASE,
     PRIVACY,
     REQUEST_MODEL,
     RESPONSE_MODEL,
@@ -61,14 +64,86 @@ def _capture(
     return code, out.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+BOX_BASE = "https://box.example/api"
+BOX_MODEL = "typesafe-box"
+
+
+def _parse_flags(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    decisions_live_capture.add_decision_flags(parser)
+    return parser.parse_args(argv)
+
+
+def test_no_box_flags_keep_one_endpoint_for_every_type() -> None:
+    config = decisions_live_capture.build_decisions_config(
+        _parse_flags(decision_flags()), resolve_secret
+    )
+
+    assert config.overrides.box is None
+    for kind in ("choice", "noul", "score", "box"):
+        assert config.endpoint_for(kind) is config, kind
+
+
+def test_capture_sends_box_to_its_own_endpoint(
+    tmp_path: Path, openrouter_wire: OpenRouterWire
+) -> None:
+    code, section = _capture(
+        tmp_path,
+        "openrouter-decisions",
+        "--box-wire-api",
+        "openrouter-decisions",
+        "--box-api-base",
+        BOX_BASE,
+        "--box-model",
+        BOX_MODEL,
+    )
+
+    assert code == 0
+    sent: dict[str, set[str]] = {}
+    for request in openrouter_wire.requests:
+        if request.method == "POST":
+            body = json.loads(request.content)
+            kinds = {question["type"] for question in body.get("questions", {}).values()}
+            sent.setdefault(request.url.host, set()).update(kinds)
+    assert sent["openrouter.ai"] == {"choice", "noul", "score"}
+    assert sent["box.example"] == {"box"}
+    # The shared --api-key-secret is for the shared endpoint only: a bearer token never reaches
+    # the Box host unless --box-api-key-secret names it.
+    box_requests = [r for r in openrouter_wire.requests if r.url.host == "box.example"]
+    assert box_requests
+    assert all("authorization" not in r.headers for r in box_requests)
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    shapes = {shape["shape"]: shape for shape in capture["shapes"]}
+    assert shapes["choice"]["api_base"] == OPENROUTER_BASE
+    assert shapes["choice"]["request_model"] == REQUEST_MODEL
+    assert shapes["box"]["api_base"] == BOX_BASE
+    assert shapes["box"]["request_model"] == BOX_MODEL
+
+
+def test_box_flags_refuse_a_wire_that_cannot_serve_box() -> None:
+    args = _parse_flags(
+        [
+            *decision_flags(),
+            "--box-wire-api",
+            "systemone",
+            "--box-api-base",
+            "http://127.0.0.1:8100",
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="box"):
+        decisions_live_capture.build_decisions_config(args, resolve_secret)
+
+
+# Box is refused before dialing on systemone, so that run dials three shapes, not four.
+@pytest.mark.parametrize(("wire_api", "dialed"), [("systemone", 9), ("openrouter-decisions", 10)])
 def test_capture_long_context_is_explicit_on_shapes_and_probes(
-    tmp_path: Path, openrouter_wire: OpenRouterWire, wire_api: str
+    tmp_path: Path, openrouter_wire: OpenRouterWire, wire_api: str, dialed: int
 ) -> None:
     code, section = _capture(tmp_path, wire_api, "--long-context")
     assert code == 0
     requests = [r for r in openrouter_wire.requests if r.method == "POST"]
-    assert len(requests) == 10
+    assert len(requests) == dialed
     assert all(r.headers.get("TypeSafe-Danger-Zone-Long-Context") == "true" for r in requests)
     capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
     assert capture["long_context"] is True
@@ -214,13 +289,12 @@ def test_capture_output_omits_key_and_image(
     assert imported.isdisjoint(LIVE_CONFIG_MODULES)
 
 
-@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
 def test_capture_box_failure_does_not_block_raw_probes(
-    tmp_path: Path, openrouter_wire: OpenRouterWire, wire_api: str
+    tmp_path: Path, openrouter_wire: OpenRouterWire
 ) -> None:
     openrouter_wire.refused_kinds = {"box"}
 
-    code, section = _capture(tmp_path, wire_api)
+    code, section = _capture(tmp_path)
 
     assert code == 0
     capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
@@ -233,12 +307,10 @@ def test_capture_box_failure_does_not_block_raw_probes(
     assert capture["alias_matches_pinned_response"] is True
 
 
-@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
 def test_capture_records_bounded_redacted_http_errors(
     tmp_path: Path,
     openrouter_wire: OpenRouterWire,
     monkeypatch: pytest.MonkeyPatch,
-    wire_api: str,
 ) -> None:
     original = openrouter_wire.handle
     image = base64.b64encode(png()).decode()
@@ -258,7 +330,7 @@ def test_capture_records_bounded_redacted_http_errors(
         return original(request)
 
     monkeypatch.setattr(openrouter_wire, "handle", fail)
-    code, section = _capture(tmp_path, wire_api)
+    code, section = _capture(tmp_path)
 
     assert code == 0
     capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
@@ -354,7 +426,8 @@ def test_capture_probe_timeout_applies_only_to_raw_probes(
         r.extensions["timeout"]["read"] for r in openrouter_wire.requests if not _is_probe(r)
     ]
     assert probe_reads == [probe_timeout] * 6
-    assert len(shape_reads) == 4
+    # Box is refused before dialing on systemone, so three shapes dial.
+    assert len(shape_reads) == 3
     assert set(shape_reads) == {30.0}
     capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
     assert capture["probe_timeout_seconds"] == probe_timeout

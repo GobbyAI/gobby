@@ -571,7 +571,8 @@ def test_decide_binding_reports_configuration() -> None:
     status = unconfigured.status(AICapability.DECIDE)
     assert status.available is False
     assert status.reason == (
-        "Decision capability requires ai.decisions.api_base and ai.decisions.model."
+        "Decision capability requires ai.decisions.api_base and model, "
+        "or an ai.decisions.overrides entry for a type."
     )
     snapshot = unconfigured.status_snapshot()["capabilities"]
     assert snapshot["decide"]["state"] == "unavailable"
@@ -601,12 +602,94 @@ def test_decide_binding_reports_configuration() -> None:
         assert binding.provider == provider
         assert binding.adapter_style == AIAdapterStyle.LLM_PROVIDER
         assert binding.models == (model,)
-        assert binding.metadata == {
+        assert binding.metadata["routes"]["choice"] == {
+            "available": True,
+            "provider": provider,
             "wire_api": wire_api,
+            "model": model,
             "max_input_tokens": 8192,
-            "api_base_configured": True,
         }
         assert registry.status_snapshot()["capabilities"]["decide"]["state"] == "available"
+
+
+def test_decide_binding_names_the_served_override_when_the_default_serves_nothing() -> None:
+    decisions = DecisionsConfig.model_validate(
+        {
+            "overrides": {
+                "box": {
+                    "api_base": "https://openrouter.ai/api",
+                    "model": "jev-latest",
+                    "wire_api": "openrouter-decisions",
+                },
+            },
+        }
+    )
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(ai=AIConfig(decisions=decisions)),
+        provider_installed=lambda _entry: False,
+    )
+
+    binding = registry.select(AICapability.DECIDE)
+
+    assert binding.provider == "openrouter"
+    assert binding.models == ("jev-latest",)
+
+
+def test_decide_binding_routes_each_type_to_its_endpoint() -> None:
+    decisions = DecisionsConfig.model_validate(
+        {
+            "api_base": "http://127.0.0.1:8100",
+            "model": "clef",
+            "wire_api": "systemone",
+            "overrides": {
+                "box": {
+                    "api_base": "https://openrouter.ai/api",
+                    "model": "jev-latest",
+                    "wire_api": "openrouter-decisions",
+                },
+            },
+        }
+    )
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(ai=AIConfig(decisions=decisions)),
+        provider_installed=lambda _entry: False,
+    )
+
+    binding = registry.select(AICapability.DECIDE)
+    routes = binding.metadata["routes"]
+
+    assert binding.models == ("clef", "jev-latest")
+    assert routes["choice"] == {
+        "available": True,
+        "provider": "systemone",
+        "wire_api": "systemone",
+        "model": "clef",
+        "max_input_tokens": 8192,
+    }
+    assert routes["box"] == {
+        "available": True,
+        "provider": "openrouter",
+        "wire_api": "openrouter-decisions",
+        "model": "jev-latest",
+        "max_input_tokens": 8192,
+    }
+
+
+def test_decide_binding_names_refused_box_route_on_default_wire() -> None:
+    decisions = DecisionsConfig.model_validate(
+        {"api_base": "http://127.0.0.1:8100", "model": "clef", "wire_api": "systemone"}
+    )
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(ai=AIConfig(decisions=decisions)),
+        provider_installed=lambda _entry: False,
+    )
+
+    routes = registry.select(AICapability.DECIDE).metadata["routes"]
+
+    assert routes["choice"]["available"] is True
+    assert routes["box"]["available"] is False
+    assert "systemone" in routes["box"]["reason"]
+    assert "openrouter-decisions" in routes["box"]["reason"]
 
 
 def test_daemon_registry_reports_voice_transcribe_configured_state(
