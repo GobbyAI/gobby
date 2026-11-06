@@ -106,6 +106,17 @@ impl WorkspaceSim {
         find(&self.panes).or_else(|| self.parked.iter().find_map(|(_, _, panes)| find(panes)))
     }
 
+    /// The pane this workspace created most recently for `terminal_id`. A
+    /// seeded pane can show the same terminal first, so `pane_for_terminal`
+    /// would name it instead of the placed pane.
+    pub fn newest_pane_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        self.panes.iter().rev().find_map(|pane| {
+            (pane["terminal_id"].as_str() == Some(terminal_id))
+                .then(|| pane["id"].as_str().unwrap_or_default().to_string())
+                .filter(|id| !id.is_empty())
+        })
+    }
+
     /// The terminal row the daemon serves for a shell this workspace created,
     /// once a placed pane owns it. Adopted and seeded terminals are read from
     /// the roster instead.

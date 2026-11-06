@@ -54,7 +54,7 @@ pub(super) fn placement_op(
         return None;
     }
     let focused =
-        active_daemon_tab(chrome).and_then(|tab| daemon_pane_id(chrome, chrome.tab_focus(tab)));
+        active_daemon_tab(chrome).map(|tab| daemon_pane_id(chrome, chrome.tab_focus(tab)));
     let terminal_id = terminal_id.map(str::to_owned);
     let split = |pane, axis| WorkspaceOp::PaneSplit {
         pane,
@@ -73,8 +73,11 @@ pub(super) fn placement_op(
             cwd,
             node: None,
         },
-        (Placement::SplitRight, Some(pane)) => split(pane, LayoutAxis::Horizontal),
-        (Placement::SplitDown, Some(pane)) => split(pane, LayoutAxis::Vertical),
+        // The daemon tab's focus names no daemon pane yet, so there is nothing
+        // to split. Refuse; a tab.create here would open a second tab instead.
+        (_, Some(None)) => return None,
+        (Placement::SplitRight, Some(Some(pane))) => split(pane, LayoutAxis::Horizontal),
+        (Placement::SplitDown, Some(Some(pane))) => split(pane, LayoutAxis::Vertical),
     })
 }
 

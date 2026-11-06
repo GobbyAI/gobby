@@ -224,6 +224,11 @@ pub(super) fn place_live_terminal(
         issue_op(workspace, outcomes, op, Some(terminal_id.to_owned()));
         return;
     }
+    // A daemon tab never changes locally. When its op was refused, the pane
+    // stays unplaced rather than opening in the chrome alone.
+    if chrome.active_tab().is_some_and(|tab| !tab.is_local()) {
+        return;
+    }
     if let Some(pane) = workspace.pane_for_terminal(terminal_id) {
         let title = workspace.pane(pane).display_name();
         match placement {

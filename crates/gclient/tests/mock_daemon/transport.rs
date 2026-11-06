@@ -370,6 +370,15 @@ impl MockDaemon {
             .pane_for_terminal(terminal_id)
     }
 
+    /// The daemon pane this workspace created most recently for `terminal_id`.
+    pub fn newest_pane_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .newest_pane_for_terminal(terminal_id)
+    }
+
     pub fn enqueue_spawn_events_before_reply(&self, events: Vec<Value>) {
         self.state
             .lock()
@@ -386,8 +395,10 @@ impl MockDaemon {
         self.state.lock().expect("mock state").requests.clone()
     }
 
-    /// Count the websocket requests of `kind` in place, without copying the log.
-    pub fn websocket_request_count(&self, kind: &str) -> usize {
+    /// Count the websocket requests of `kind` that name a terminal, in place,
+    /// without copying the log. A request without a `terminal_id` is not a
+    /// terminal request, so it is left out, as the wire readers leave it out.
+    pub fn websocket_terminal_request_count(&self, kind: &str) -> usize {
         self.state
             .lock()
             .expect("mock state")
@@ -396,6 +407,7 @@ impl MockDaemon {
             .filter(|request| request.method == "WS")
             .filter_map(|request| request.body.as_ref())
             .filter(|body| body.get("type").and_then(Value::as_str) == Some(kind))
+            .filter(|body| body.get("terminal_id").and_then(Value::as_str).is_some())
             .count()
     }
 

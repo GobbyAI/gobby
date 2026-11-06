@@ -203,7 +203,14 @@ pub(super) async fn spawn_live_shell(
             worktree_id,
             personal_cwd,
         ) {
-            chrome.notify(Toast::warning("Select a project before opening a shell"));
+            // The owned path refuses only without a project or while the
+            // focused pane is unresolved; say which one applies.
+            let message = if workspace.project_id().is_some() {
+                "Wait for the focused pane before splitting"
+            } else {
+                "Select a project before opening a shell"
+            };
+            chrome.notify(Toast::warning(message));
         }
         return Ok(());
     }

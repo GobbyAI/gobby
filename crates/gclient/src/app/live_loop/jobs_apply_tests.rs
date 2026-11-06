@@ -16,6 +16,8 @@ mod held_placement;
 mod orphan_inventory;
 #[path = "jobs_snapshot_order_tests.rs"]
 mod snapshot_order;
+#[path = "jobs_split_focus_tests.rs"]
+mod split_focus;
 use crate::app::live_loop::jobs;
 use crate::app::live_loop::lifecycle::spawn_live_shell;
 use crate::app::live_loop::mouse::Placement;

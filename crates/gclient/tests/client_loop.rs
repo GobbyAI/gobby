@@ -8702,6 +8702,12 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
                 .any(|request| request.get("terminal_id") == Some(&json!(OWNED)))
         })
         .await;
+        // The second chord splits the focused pane. Until the first shell takes
+        // focus, that pane resolves to nothing, so wait for its focus hint first.
+        let owned_pane = mock
+            .newest_pane_for_terminal(OWNED)
+            .expect("daemon pane for the first new shell");
+        wait_for_focus_hint(&mock, &owned_pane).await;
         mock.enqueue(
             "GET",
             "/api/terminals?",

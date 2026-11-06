@@ -3926,7 +3926,7 @@ async fn a_second_release_behind_a_full_backlog_is_never_lost() {
             // Count takes in place. Copying the whole request log on every
             // pass held the mock's state lock for each copy, which slowed the
             // mock's own replies under load.
-            while mock.websocket_request_count("terminal_take_control") < 4 {
+            while mock.websocket_terminal_request_count("terminal_take_control") < 4 {
                 tokio::task::yield_now().await;
             }
         })
