@@ -1,6 +1,6 @@
 name: research-team
 type: pipeline
-version: "4.1.0"
+version: "4.1.1"
 description: |
   Research runbook: admits a treeless team for the task and launches a Researcher, a Research
   Reviewer and a Research Team Lead into one 'Research Team - #<task>' tab in the shared checkout.
@@ -99,7 +99,7 @@ steps:
         require_report_to: true
         skip_live_seats: true
         task: "${{ inputs.task }}"
-        tab_title: "Research Team - ${{ inputs.task }}"
+        tab_title: Research Team
         catalogue:
           - name: research-team-lead
             title: Research Team Lead
