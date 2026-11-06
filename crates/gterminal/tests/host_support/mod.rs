@@ -18,10 +18,13 @@ pub const TOKEN_FILE: &str = "gterm-control.token";
 /// The pid of the host this test spawned, so a readiness timeout can tell a
 /// host that died before binding from one still starting.
 pub const SPAWN_PID_FILE: &str = "gterm.spawned-pid";
-/// How long a spawned host may take to come up. A cold start pins the binary
-/// and re-execs from the pin before it binds, which a loaded machine stretches
-/// past five seconds (#23420). This is a hang guard, not a speed bound.
+/// Default bound for ordinary test operations.
 pub const COLD_START: Duration = Duration::from_secs(15);
+/// A debug host pins and verifies its image, then re-execs before binding.
+/// Under heavy load measured binds reached 11s and the old 15s guard expired
+/// with a live process still starting (#25653). Allow scheduler headroom here
+/// without extending operation or upgrade deadlines. This remains a hang guard.
+const SOCKET_STARTUP: Duration = Duration::from_secs(60);
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct HostProc {
@@ -235,12 +238,25 @@ pub fn rpc(stream: &mut UnixStream, method: &str, extra: serde_json::Value) -> V
 }
 
 pub fn wait_socket(path: &Path) {
-    let deadline = Instant::now() + COLD_START;
-    while Instant::now() < deadline {
+    let started = Instant::now();
+    wait_socket_with(
+        path,
+        || started.elapsed(),
+        || std::thread::sleep(Duration::from_millis(20)),
+    );
+}
+
+/// Clock and polling seams let the startup guard be tested without a slow sleep.
+pub fn wait_socket_with(
+    path: &Path,
+    mut elapsed: impl FnMut() -> Duration,
+    mut pause: impl FnMut(),
+) {
+    while elapsed() < SOCKET_STARTUP {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        pause();
     }
     let dir = path.parent().unwrap_or(path);
     let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
@@ -249,9 +265,11 @@ pub fn wait_socket(path: &Path) {
     let spawned = std::fs::read_to_string(dir.join(SPAWN_PID_FILE)).unwrap_or_default();
     let state = host_process_state(&spawned);
     panic!(
-        "timed out waiting for {}; path_len={}; exists={}; pid={pid:?}; \
+        "timed out waiting for {}; elapsed={:?}; budget={SOCKET_STARTUP:?}; \
+         path_len={}; exists={}; pid={pid:?}; \
          spawned_pid={spawned:?}; state={state:?}; log={log:?}; stderr={stderr:?}",
         path.display(),
+        elapsed(),
         path.as_os_str().len(),
         path.exists(),
     );
