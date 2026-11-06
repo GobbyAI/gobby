@@ -19,7 +19,7 @@ use super::jobs::{spawn_job, JobOutcome, JobResult, PaneAction};
 use super::mouse::Placement;
 use super::projection::close_slot;
 use super::sync_live_chrome;
-use super::workspace_actions::{daemon_pane_id, spawn_owned_live_shell};
+use super::workspace_actions::{daemon_pane_id, refusal_message, spawn_owned_live_shell};
 
 /// The daemon row decides whether closing this pane may kill its terminal.
 fn daemon_pane_is_adopted(
@@ -203,7 +203,9 @@ pub(super) async fn spawn_live_shell(
             worktree_id,
             personal_cwd,
         ) {
-            chrome.notify(Toast::warning("Select a project before opening a shell"));
+            // The owned path refuses only without a project or while the
+            // focused pane is unresolved; say which one applies.
+            chrome.notify(Toast::warning(refusal_message(workspace)));
         }
         return Ok(());
     }

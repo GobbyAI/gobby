@@ -89,9 +89,12 @@ class SandboxRunPaths:
             values["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(self.zig_system_dir)
         # The cache stays inside the Cargo home's trust domain. The server socket
         # needs the launch's run-tmp Unix socket grant, so without it builds run uncached.
+        # The shim sits beside the Cargo home, not in it: runs read and exec it, never write it.
         values.update(
             cargo_environment(
-                self.cargo_home / "sccache", self.tmp / "sccache.sock" if run_sockets else None
+                self.cargo_home / "sccache",
+                self.tmp / "sccache.sock" if run_sockets else None,
+                self.shared_cache / "bin",
             )
         )
         return values

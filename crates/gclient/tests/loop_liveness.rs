@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_loop::RENDER_TICK;
 use gobby_client::app::{run_live_loop, spawn_job, JobKey, JobLedger, JobResult, PaneId};
 use gobby_client::daemon::{
@@ -820,17 +820,15 @@ async fn ungranted_native_pane_types_on_host_grant_while_the_take_is_held() {
 enum TakeReply {
     /// The daemon answers at once.
     Healthy,
-    /// The daemon's reply is held for `SLOW_REPLY`, then released.
+    /// The daemon's reply is held until the first key has reached the host.
     Slowed,
     /// The daemon never answers.
     Absent,
 }
 
-/// How long a `TakeReply::Slowed` daemon holds its reply.
-const SLOW_REPLY: Duration = Duration::from_secs(1);
 /// The most a keystroke may take to reach the host stream in any daemon state.
-/// A key that waited on the daemon would take `SLOW_REPLY` when slowed and
-/// would never arrive when absent.
+/// A key that waited on the daemon would not reach the host while a slowed
+/// reply is held, and would never arrive when absent.
 const KEY_BOUND: Duration = Duration::from_millis(500);
 
 /// Keystroke latency on a native pane, first while the host has not granted
@@ -854,17 +852,15 @@ async fn keystroke_latency_is_the_same_whether_the_daemon_is_healthy_slowed_or_a
         let driver = async {
             let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
             wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-            if let (TakeReply::Slowed, Some(release)) = (reply, &release) {
-                let release = Arc::clone(release);
-                tokio::spawn(async move {
-                    tokio::time::sleep(SLOW_REPLY).await;
-                    release.notify_one();
-                });
-            }
             let started = std::time::Instant::now();
             probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
             host.wait_for_input(b"x").await;
             let ungranted = started.elapsed();
+            // The slowed reply lands only after the first key reaches the host, so
+            // that key is typed while the take is still outstanding.
+            if let (TakeReply::Slowed, Some(release)) = (reply, &release) {
+                release.notify_one();
+            }
             // The host's grant applies with the first key's flush, so the next
             // key types on the granted pane's host stream.
             probe.draws_continue().await;
@@ -1039,6 +1035,7 @@ async fn a_host_grant_survives_a_daemon_take_timeout_after_it() {
         probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
         host.wait_for_input(b"x").await;
         assert_eq!(grants.lock().expect("grant log").len(), 1);
+        // test-quality: allow SLEEP_IN_TEST -- absence of a detach cannot be awaited; the take's deadline is internal, and paused time would advance over the mock daemon's real socket I/O
         tokio::time::sleep(CONTROL_REQUEST_DEADLINE + Duration::from_millis(500)).await;
         assert!(
             websocket_requests(&mock, "terminal_detach")
@@ -1759,6 +1756,262 @@ fn warnings_for(logs: &Arc<Mutex<Vec<u8>>>, terminal_id: &str) -> Vec<String> {
         .filter(|line| line.contains("WARN") && line.contains(terminal_id))
         .map(str::to_owned)
         .collect()
+}
+
+fn orphan_row(terminal_id: &str, name: &str) -> Value {
+    json!({
+        "terminal_id": terminal_id,
+        "backend": "native",
+        "state": "orphaned",
+        "name": name,
+    })
+}
+
+#[tokio::test]
+async fn held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    // The roster refresh after the kills needs answers too.
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    mock.seed_terminal_inventory(vec![
+        orphan_row("orphan-a", "alpha"),
+        orphan_row("orphan-b", "beta"),
+    ]);
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        // Empty tab-bar space opens the global menu, where destroy is the
+        // eighth item.
+        input_tx
+            .send(RawInputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: 95,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }))
+            .await
+            .expect("live loop mouse input");
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        // The held inventory leaves the window and loop live.
+        probe.draws_continue().await;
+        inventory.notify_one();
+        probe.shows("alpha").await;
+
+        // Hold each kill separately so both must be in flight at once.
+        let kill_a = mock.hold_ws("terminal_kill", |request| {
+            request["terminal_id"] == "orphan-a"
+        });
+        let kill_b = mock.hold_ws("terminal_kill", |request| {
+            request["terminal_id"] == "orphan-b"
+        });
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 2).await;
+        probe.draws_continue().await;
+        // Complete the later request first; the summary still counts both.
+        kill_b.notify_one();
+        kill_a.notify_one();
+        probe.shows("destroyed 2 of 2 orphaned terminals").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        websocket_requests(&mock, "terminal_kill").len(),
+        2,
+        "one kill per requested orphan"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn orphan_kill_fanout_keeps_at_most_eight_requests_in_flight() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    let ids: Vec<String> = (0..9).map(|index| format!("orphan-{index}")).collect();
+    mock.seed_terminal_inventory(ids.iter().map(|id| orphan_row(id, id)).collect());
+    let kills: Vec<_> = ids
+        .iter()
+        .map(|id| {
+            let id = id.clone();
+            mock.hold_ws("terminal_kill", move |request| {
+                request["terminal_id"].as_str() == Some(id.as_str())
+            })
+        })
+        .collect();
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        input_tx
+            .send(RawInputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: 95,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }))
+            .await
+            .expect("live loop mouse input");
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        inventory.notify_one();
+        probe.shows("orphan-0").await;
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+
+        wait_for_websocket_requests(&mock, "terminal_kill", 8).await;
+        probe.draws_continue().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_kill").len(),
+            8,
+            "at most eight kills in flight"
+        );
+        // One reply frees a slot for the ninth kill.
+        kills[0].notify_one();
+        wait_for_websocket_requests(&mock, "terminal_kill", 9).await;
+        for kill in &kills[1..] {
+            kill.notify_one();
+        }
+        probe.shows("destroyed 9 of 9 orphaned terminals").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+}
+
+async fn open_global_menu(input_tx: &mpsc::Sender<RawInputEvent>) {
+    input_tx
+        .send(RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 95,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        }))
+        .await
+        .expect("live loop mouse input");
+}
+
+#[tokio::test]
+async fn a_stale_orphan_inventory_never_replaces_a_dialog_opened_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    mock.seed_terminal_inventory(vec![
+        orphan_row("orphan-a", "alpha"),
+        orphan_row("orphan-b", "beta"),
+    ]);
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        // Destroy is the eighth global menu item. Its inventory is held.
+        open_global_menu(&input_tx).await;
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        // The user opens keybinding help, the sixth item, before the inventory lands.
+        open_global_menu(&input_tx).await;
+        probe.shows("Keybinding help").await;
+        for _ in 0..5 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        probe.shows("Keybinds").await;
+        // The stale reply lands while the help is open.
+        inventory.notify_one();
+        for _ in 0..5 {
+            probe.draws_continue().await;
+        }
+        // Enter answers the open help, never a destroy list of checked rows.
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        probe.draws_continue().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        chrome.dialog.is_none(),
+        "a stale inventory replaced the dialog state after the user moved on"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_kill").len(),
+        0,
+        "Enter sent kills for rows the user never asked to destroy"
+    );
+    mock.shutdown().await;
 }
 
 #[tokio::test]
@@ -3670,7 +3923,10 @@ async fn a_second_release_behind_a_full_backlog_is_never_lost() {
         // This waits for the full serial write backlog before the releases
         // and takes. Rendering progress keeps its separate liveness bound.
         timeout(DRAIN_DEADLINE, async {
-            while takes().iter().filter(|line| line.starts_with("take ")).count() < 4 {
+            // Count takes in place. Copying the whole request log on every
+            // pass held the mock's state lock for each copy, which slowed the
+            // mock's own replies under load.
+            while mock.websocket_terminal_request_count("terminal_take_control") < 4 {
                 tokio::task::yield_now().await;
             }
         })
