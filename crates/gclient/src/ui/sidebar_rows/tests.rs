@@ -198,6 +198,18 @@ fn agent_and_terminal_rows_are_separate() {
     assert!(!terminals[0].nested);
 }
 
+/// Pane output is not a state: a bare terminal has nothing assigned, so a pane
+/// streaming output still draws blank in the terminals section (#25790).
+#[test]
+fn bare_terminal_streaming_output_stays_blank() {
+    let mut ws = scripted_workspace();
+    let beta = ws.pane_for_terminal("term-beta").unwrap();
+    ws.pane_mut(beta).new_output = true;
+    let terminals = crate::ui::sidebar::terminal_rows(&ws, &Chrome::dark());
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0].state, RowState::Blank);
+}
+
 #[test]
 fn agent_rows_render_three_lines_with_the_model_slug() {
     let mut ws = Workspace::scripted();

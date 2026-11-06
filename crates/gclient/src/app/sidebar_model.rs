@@ -701,16 +701,6 @@ fn resolve_state(blocked: bool, orphaned: bool, lifecycle_status: Option<&str>) 
     RowState::Blank
 }
 
-/// The pane-only state for a terminal no roster entry names: a live pane that
-/// is streaming output is active, and any other pane is blank.
-pub fn pane_state(pane: &Pane) -> RowState {
-    if pane.new_output && pane.live {
-        RowState::Working
-    } else {
-        RowState::Blank
-    }
-}
-
 /// Roster and attention reads a live event asks for. Applying the event only
 /// sets these; the loop drains them into coalesced jobs, so no event awaits a
 /// daemon read.

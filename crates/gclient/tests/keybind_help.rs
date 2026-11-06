@@ -155,33 +155,33 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
         .map(line_text)
         .collect();
     assert_eq!(legend[0], " Legend");
+    // Five rows, one per state, named by the state labels alone: the status
+    // bar counts under the same words, so no second column repeats them.
+    assert!(!legend[1].contains("counts as"), "{:?}", legend[1]);
     let states = [
         (
             "⍾ needs you",
-            "needs you",
             "waiting on you: a question, a plan approval or a permission prompt",
         ),
         (
             "▶ active",
-            "active",
             "mid-turn, or between turns while waiting on a child run it started",
         ),
         (
             "‖ paused",
-            "idle",
             "alive but stopped: paused on purpose or interrupted by you",
         ),
         (
             "✕ no live agents",
-            "gone",
             "agents are assigned but all are dead, or the machine's daemon is unreachable",
         ),
-        ("  blank", "idle", "nothing is assigned or being worked"),
+        ("  blank", "nothing is assigned or being worked"),
     ];
-    for ((state, counts_as, means), row) in states.iter().zip(&legend[2..]) {
+    assert_eq!(legend.len(), 2 + states.len() + 1, "{legend:?}");
+    for ((state, means), row) in states.iter().zip(&legend[2..]) {
         assert!(row.starts_with(&format!(" {state} ")), "{row:?}");
-        assert!(row.contains(&format!(" {counts_as} ")), "{row:?}");
         assert!(row.ends_with(means), "{row:?}");
+        assert!(!row.contains(" idle") && !row.contains(" gone"), "{row:?}");
     }
 
     let screen = rendered_help(&chrome, 120, 40);

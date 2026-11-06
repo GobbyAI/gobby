@@ -7,7 +7,7 @@
 //! there is no pane, still answer with a name rather than the id they were
 //! handed.
 
-use crate::app::sidebar_model::{pane_state, AgentEntry};
+use crate::app::sidebar_model::AgentEntry;
 use crate::app::{short_terminal_id, PaneId};
 use crate::ui::chrome::WorkspaceView;
 use crate::ui::sidebar::agent_label;
@@ -134,9 +134,9 @@ pub fn terminal_label<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
 }
 
 pub fn row_state<W: WorkspaceView>(ws: &W, terminal_id: &str) -> RowState {
-    let Some(pane_id) = ws.pane_for_terminal(terminal_id) else {
+    if ws.pane_for_terminal(terminal_id).is_none() {
         return RowState::Blank;
-    };
-    let pane = ws.pane(pane_id);
-    agent_for_terminal(ws, terminal_id).map_or_else(|| pane_state(pane), |agent| agent.state)
+    }
+    // A pane no roster row names is a bare terminal: nothing is assigned, so it is blank.
+    agent_for_terminal(ws, terminal_id).map_or(RowState::Blank, |agent| agent.state)
 }

@@ -444,18 +444,32 @@ pub fn render_status_line<W: WorkspaceView>(
     // the left slot before the informational counts on a narrow row. A
     // count of zero draws nothing.
     if focused_overflow(ws, chrome).is_none() {
-        let (gone, gone_color) = state_dot(RowState::NoLive, p);
+        // Each count is named by its state label, the words the Help legend lists.
+        let (glyph, glyph_color) = state_dot(RowState::NoLive, p);
         for (count, text, color) in [
-            (counts.idle, format!("{} idle", counts.idle), p.subtext0),
             (
                 counts.active,
-                format!("{} active", counts.active),
+                format!("{} {}", counts.active, state_label(RowState::Working)),
                 p.subtext0,
             ),
             (
-                counts.gone,
-                format!("{gone} {} gone", counts.gone),
-                gone_color,
+                counts.paused,
+                format!("{} {}", counts.paused, state_label(RowState::Paused)),
+                p.subtext0,
+            ),
+            (
+                counts.no_live,
+                format!(
+                    "{glyph} {} {}",
+                    counts.no_live,
+                    state_label(RowState::NoLive)
+                ),
+                glyph_color,
+            ),
+            (
+                counts.blank,
+                format!("{} {}", counts.blank, state_label(RowState::Blank)),
+                p.subtext0,
             ),
         ] {
             if count > 0 {
@@ -545,7 +559,7 @@ pub fn render_status_line<W: WorkspaceView>(
     let right_area = Rect::new(hint_area.x - right_width, area.y, right_width, 1);
     let fixed_spans = spans.len() - optional_spans;
     // Preserve the fixed connection and needs-you slots. Optional left
-    // segments, the idle, active and gone counts included, disappear whole
+    // segments, the active, paused, no live and blank counts included, disappear whole
     // before the right slot.
     let left_limit = right_area.x.saturating_sub(area.x).saturating_sub(3);
     while left_width > left_limit && spans.len() > fixed_spans {
@@ -763,7 +777,7 @@ mod tests {
             "status should show the retry countdown: {text}"
         );
         assert!(
-            !text.contains("idle"),
+            !text.contains("blank") && !text.contains("paused") && !text.contains("active"),
             "an empty roster counts nothing: {text}"
         );
         let (terminal, _) = status_terminal(&ws, &chrome);

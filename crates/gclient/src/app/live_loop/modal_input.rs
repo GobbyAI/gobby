@@ -311,13 +311,13 @@ pub(super) fn navigator_key<W: WorkspaceView>(
         KeyCode::Char('a') => filter = Some(NavigatorStateFilter::All),
         KeyCode::Char('b') => filter = Some(NavigatorStateFilter::Attention),
         KeyCode::Char('w') => filter = Some(NavigatorStateFilter::Working),
-        KeyCode::Char('i') => filter = Some(NavigatorStateFilter::Idle),
+        KeyCode::Char('i') => filter = Some(NavigatorStateFilter::Blank),
         KeyCode::Tab => {
             filter = Some(match nav.filter {
                 NavigatorStateFilter::All => NavigatorStateFilter::Attention,
                 NavigatorStateFilter::Attention => NavigatorStateFilter::Working,
-                NavigatorStateFilter::Working => NavigatorStateFilter::Idle,
-                NavigatorStateFilter::Idle => NavigatorStateFilter::All,
+                NavigatorStateFilter::Working => NavigatorStateFilter::Blank,
+                NavigatorStateFilter::Blank => NavigatorStateFilter::All,
             });
         }
         _ => {}

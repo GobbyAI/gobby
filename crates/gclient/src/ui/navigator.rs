@@ -28,7 +28,7 @@ pub enum NavigatorStateFilter {
     All,
     Attention,
     Working,
-    Idle,
+    Blank,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -110,13 +110,13 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
         .collect()
 }
 
-/// Blank rows, with nothing assigned or being worked, match the idle filter.
+/// Blank rows, with nothing assigned or being worked, match the blank filter.
 fn matches_filter(state: RowState, filter: NavigatorStateFilter) -> bool {
     match filter {
         NavigatorStateFilter::All => true,
         NavigatorStateFilter::Attention => state == RowState::Attention,
         NavigatorStateFilter::Working => state == RowState::Working,
-        NavigatorStateFilter::Idle => state == RowState::Blank,
+        NavigatorStateFilter::Blank => state == RowState::Blank,
     }
 }
 
@@ -229,7 +229,7 @@ fn render_search<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W, chrome
     match chrome.navigator.filter {
         NavigatorStateFilter::Attention => push_state_chip(&mut spans, RowState::Attention, chrome),
         NavigatorStateFilter::Working => push_state_chip(&mut spans, RowState::Working, chrome),
-        NavigatorStateFilter::Idle => push_state_chip(&mut spans, RowState::Blank, chrome),
+        NavigatorStateFilter::Blank => push_state_chip(&mut spans, RowState::Blank, chrome),
         NavigatorStateFilter::All if query.is_empty() => spans.push(Span::styled(
             "search terminals",
             Style::default().fg(p.overlay0),
@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.state == RowState::Attention));
 
-        chrome.navigator.filter = NavigatorStateFilter::Idle;
+        chrome.navigator.filter = NavigatorStateFilter::Blank;
         assert_eq!(titles(&navigator_rows(&ws, &chrome)), ["term-beta"]);
     }
 

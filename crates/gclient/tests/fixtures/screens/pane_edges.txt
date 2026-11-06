@@ -78,5 +78,5 @@
 37 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 38 |└──────────────────────────────────────────────────────────────────────────────────────────────────────────────── tmux ┘|
 38 : accent/panel_bg*113 accent/panel_bg+b*6 accent/panel_bg*1
-39 | 1 idle                                                                                                   prefix ctrl+b |
-39 : text/surface0*1 subtext0/surface0*6 text/surface0*99 subtext0/surface0*13 text/surface0*1
+39 | 1 blank                                                                                                  prefix ctrl+b |
+39 : text/surface0*1 subtext0/surface0*7 text/surface0*98 subtext0/surface0*13 text/surface0*1

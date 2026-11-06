@@ -426,6 +426,36 @@ fn main_checkout_coordinator_seat_rolls_into_its_project_only() {
     assert_eq!(project.worktrees[0].state, RowState::Blank);
 }
 
+/// The main checkout is the project card: its branch is the checkout's, and
+/// `project_rows` copies its state and counts. A coordinator seat that runs
+/// there is unbound, so it counts on that row in each live state and in
+/// no-live, and the feature worktree beside it stays blank.
+#[test]
+fn main_checkout_row_counts_its_coordinator_seats_in_every_state() {
+    let worktrees = vec![WorktreeRow {
+        id: "w-feature".to_string(),
+        project_id: PROJECT.to_string(),
+        worktree_path: "/wt/feature".to_string(),
+        ..Default::default()
+    }];
+    let rows = rows_with(worktrees, vec![]);
+    let working = running("coord-live", "s-live", "t-live");
+    let ended = dead(running("coord-ended", "s-ended", "t-ended"));
+    let waiting = with_lifecycle(running("coord-ask", "s-ask", "t-ask"), "awaiting_approval");
+    let model = build_model(&rows, &[working.clone(), ended, waiting], &[]);
+    let project = &model.projects[0];
+    assert_eq!(project.state, RowState::Attention);
+    assert_eq!(project.needs_you, 1);
+    assert_eq!(project.no_live, 1);
+    assert_eq!(project.worktrees[0].state, RowState::Blank);
+
+    let model = build_model(&rows, &[working], &[]);
+    let project = &model.projects[0];
+    assert_eq!(project.state, RowState::Working);
+    assert_eq!(project.needs_you, 0);
+    assert_eq!(project.worktrees[0].state, RowState::Blank);
+}
+
 /// A tree bound by its task: each lead carries the epic's task, and no worktree.
 fn task_lead(entry_id: &str) -> RosterEntry {
     RosterEntry {

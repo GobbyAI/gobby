@@ -29,13 +29,14 @@ impl StatusSegment {
 }
 
 /// Every agent on this machine by its legend class, whatever the sidebar
-/// filter shows. The four counts sum to that agent total.
+/// filter shows. The five counts sum to that agent total.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AgentCounts {
     pub need_you: usize,
-    pub idle: usize,
     pub active: usize,
-    pub gone: usize,
+    pub paused: usize,
+    pub no_live: usize,
+    pub blank: usize,
 }
 
 pub fn agent_counts<W: WorkspaceView>(ws: &W) -> AgentCounts {
@@ -48,9 +49,10 @@ pub fn agent_counts<W: WorkspaceView>(ws: &W) -> AgentCounts {
     {
         match agent.state {
             RowState::Attention => counts.need_you += 1,
-            RowState::NoLive => counts.gone += 1,
+            RowState::NoLive => counts.no_live += 1,
             RowState::Working => counts.active += 1,
-            RowState::Paused | RowState::Blank => counts.idle += 1,
+            RowState::Paused => counts.paused += 1,
+            RowState::Blank => counts.blank += 1,
         }
     }
     counts

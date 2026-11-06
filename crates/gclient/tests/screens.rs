@@ -898,9 +898,9 @@ fn status_segments_golden() {
     let rendered = deterministic_capture("status_segments", status_segments);
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
-    assert!(status.contains("⍾ 1 needs you │ 1 idle"), "{status:?}");
+    assert!(status.contains("⍾ 1 needs you │ 1 blank"), "{status:?}");
     // #23049: the sandbox state in words; the model stays on the Agents row.
-    assert!(status.contains("1 idle · unrestricted"), "{status:?}");
+    assert!(status.contains("1 blank · unrestricted"), "{status:?}");
     assert!(!status.contains("claude-fable"), "{status:?}");
     assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");

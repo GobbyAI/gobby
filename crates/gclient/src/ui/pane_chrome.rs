@@ -5,7 +5,7 @@
 //! A shared divider moves the upper pane's address beside its title; a pane
 //! with no top edge hands its title to status.
 
-use crate::app::sidebar_model::{pane_state, AgentEntry, SandboxState};
+use crate::app::sidebar_model::{AgentEntry, SandboxState};
 use crate::app::{ControlState, Pane};
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
@@ -104,7 +104,8 @@ pub fn pane_corners<W: WorkspaceView>(
     let state = if exited(pane, agent) {
         RowState::NoLive
     } else {
-        agent.map_or_else(|| pane_state(pane), |agent| agent.state)
+        // A pane no roster row names is a bare terminal: nothing is assigned, so it is blank.
+        agent.map_or(RowState::Blank, |agent| agent.state)
     };
     let identity = agent
         .filter(|agent| {
