@@ -244,7 +244,16 @@ QUOTA_PAYLOAD: dict[str, Any] = {
                 "stale_reason": None,
                 "source_observed_at": "2026-10-20T10:00:00+00:00",
                 "resets_at": "2026-10-20T15:00:00+00:00",
-            }
+            },
+            "claude:weekly": {
+                "limit_id": "weekly",
+                "scope": "account",
+                "state": "stale",
+                "fresh": False,
+                "stale_reason": "no-fresh-observation",
+                "source_observed_at": None,
+                "resets_at": None,
+            },
         }
     },
 }
@@ -280,11 +289,19 @@ def test_quota_command_reads_daemon_snapshot(
     assert stub.calls == [("/api/providers/claude/usage", "GET")]
     lines = result.output.splitlines()
     assert lines[0] == "claude: state=exhausted supported=true reason=Five-hour window exhausted."
-    assert "  five_hour: 80.0% used, resets 2026-10-20T15:00:00+00:00" in lines
-    assert "  weekly: 7.0% used, resets n/a" in lines
     assert (
-        "  component claude:five_hour: state=exhausted fresh=true "
-        "resets=2026-10-20T15:00:00+00:00" in lines
+        "  five_hour: used=80 limit=100 used_percent=80.0% resets=2026-10-20T15:00:00+00:00"
+        in lines
+    )
+    assert "  weekly: used=7 limit=100 used_percent=7.0% resets=n/a" in lines
+    assert (
+        "  component claude:five_hour: limit_id=five_hour scope=account state=exhausted "
+        "fresh=true stale_reason=n/a source_observed_at=2026-10-20T10:00:00+00:00 "
+        "resets_at=2026-10-20T15:00:00+00:00" in lines
+    )
+    assert (
+        "  component claude:weekly: limit_id=weekly scope=account state=stale fresh=false "
+        "stale_reason=no-fresh-observation source_observed_at=n/a resets_at=n/a" in lines
     )
 
 
