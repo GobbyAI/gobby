@@ -11,8 +11,7 @@ The daemon records operational data at several layers:
 - OpenTelemetry spans describe traced operations.
 - Hub-backed metrics aggregate MCP tool calls and event history.
 - Token events record model usage by source, model, project, and session.
-- Savings events record token or character savings from code index, compression,
-  discovery, and related systems.
+- Savings events are not currently produced; no subsystem posts them to the daemon.
 - Admin HTTP routes expose health and dashboard data.
 - HTTP reports expose chart data and stored spans. The current Activity panel
   hides the Traces tab.

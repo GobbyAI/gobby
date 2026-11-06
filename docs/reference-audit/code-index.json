@@ -68,7 +68,8 @@
         "status",
         "list-projects",
         "repair",
-        "prune-and-projection-cleanup",
+        "prune-and-content-retention",
+        "projection-reconciliation",
         "exact-content-retirement",
         "cross-project-queries",
         "re-indexing",
@@ -677,17 +678,17 @@
     },
     {
       "surface": "cli",
-      "command": "gcode vector cleanup-orphans",
-      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "command": "gcode vector reconcile",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
       "implementation": {
-        "path": "crates/gcode/src/commands/vector.rs",
-        "symbol": "cleanup_orphans"
+        "path": "crates/gcode/src/commands/vector/reconcile.rs",
+        "symbol": "run"
       },
       "verification": [
         "source-audit",
         "rust-capability"
       ],
-      "audience": "agent"
+      "audience": "operator"
     },
     {
       "surface": "cli",

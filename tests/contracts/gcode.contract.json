@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 12,
+  "contract_version": 13,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -2228,11 +2228,35 @@
       ]
     },
     {
-      "name": "vector cleanup-orphans",
-      "summary": "Remove Qdrant code-symbol vectors for files missing from PostgreSQL.",
-      "daemon_consumed": true,
+      "name": "vector reconcile",
+      "summary": "Inventory code-symbol vectors against PostgreSQL. Dry run unless --apply, which deletes orphan vectors under the maintenance lease.",
+      "daemon_consumed": false,
       "positionals": [],
       "flags": [
+        {
+          "name": "--apply",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--expect-digest",
+          "takes_value": true,
+          "value_name": "DIGEST",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--receipt",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
         {
           "name": "--format",
           "takes_value": true,
@@ -2247,14 +2271,18 @@
       ],
       "json_output_keys": [
         "project_id",
-        "projection",
-        "action",
         "collection",
-        "status",
-        "vector_files_scanned",
-        "orphan_files_deleted",
-        "vectors_deleted",
-        "summary"
+        "mode",
+        "success",
+        "points_scanned",
+        "pg_symbols",
+        "orphans",
+        "missing",
+        "inventory_digest",
+        "receipt",
+        "deleted_points",
+        "versions_reset",
+        "complete"
       ]
     },
     {

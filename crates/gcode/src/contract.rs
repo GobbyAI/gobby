@@ -9,7 +9,7 @@ use schema::*;
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 12,
+        contract_version: 13,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -531,13 +531,18 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
-                daemon_consumed: true,
+                daemon_consumed: false,
                 positionals: vec![],
-                flags: vec![format_flag()],
-                json_output_keys: vector_cleanup_keys(),
+                flags: vec![
+                    FlagContract::switch("--apply"),
+                    FlagContract::value("--expect-digest", "DIGEST"),
+                    FlagContract::value("--receipt", "FILE"),
+                    format_flag(),
+                ],
+                json_output_keys: vector_reconcile_keys(),
                 ..CommandContract::new(
-                    "vector cleanup-orphans",
-                    "Remove Qdrant code-symbol vectors for files missing from PostgreSQL.",
+                    "vector reconcile",
+                    "Inventory code-symbol vectors against PostgreSQL. Dry run unless --apply, which deletes orphan vectors under the maintenance lease.",
                 )
             },
             CommandContract {

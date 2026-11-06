@@ -22,7 +22,6 @@ mod output;
 pub(crate) mod postgres_errors;
 mod project;
 mod projection;
-mod savings;
 mod schema;
 mod search;
 #[doc(hidden)]

@@ -384,17 +384,22 @@ pub(super) fn vector_lifecycle_keys() -> Vec<&'static str> {
     ]
 }
 
-pub(super) fn vector_cleanup_keys() -> Vec<&'static str> {
+pub(super) fn vector_reconcile_keys() -> Vec<&'static str> {
     vec![
         "project_id",
-        "projection",
-        "action",
         "collection",
-        "status",
-        "vector_files_scanned",
-        "orphan_files_deleted",
-        "vectors_deleted",
-        "summary",
+        "mode",
+        "success",
+        "points_scanned",
+        "pg_symbols",
+        "orphans",
+        "missing",
+        "inventory_digest",
+        // Apply-mode keys: the dry run emits none of these.
+        "receipt",
+        "deleted_points",
+        "versions_reset",
+        "complete",
     ]
 }
 
