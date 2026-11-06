@@ -140,9 +140,11 @@ def test_ledger_command_prints_scope_totals(
         input_tokens=20,
         output_tokens=7,
     )
-    task_id = LocalTaskManager(cli_db).create_task(
-        project_id, "Ledger scope", validation_criteria="Scope follows."
-    ).id
+    task_id = (
+        LocalTaskManager(cli_db)
+        .create_task(project_id, "Ledger scope", validation_criteria="Scope follows.")
+        .id
+    )
     _interval(cli_db, task_id, session_id, BASE - timedelta(hours=1), BASE + timedelta(hours=1))
     expected = "totals: in=30 out=12 cache_write=0 cache_read=0"
 

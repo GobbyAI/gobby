@@ -14,6 +14,7 @@ from typing import Any, cast
 import click
 
 from gobby.cli.runtime import require_cli_database
+from gobby.cli.tasks._utils.resolution import resolve_task_id
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
 from gobby.sessions.reported_usage import ReportedRun, collect_runs
@@ -23,6 +24,7 @@ from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.reported_usage import ReportedUsageStore
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.token_events import (
     TokenEvent,
     TokenEventStore,
@@ -30,6 +32,7 @@ from gobby.storage.token_events import (
     token_event_retention_cutoff,
     token_event_retention_transaction,
 )
+from gobby.storage.usage_ledger import UsageLedgerStore
 
 
 @click.group()
@@ -435,3 +438,108 @@ def token_stats(project_ref: str | None) -> None:
             )
         )
         click.echo(f"sessions={breakdown['totals']['session_count']}")
+
+
+def _count(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _or_na(value: object) -> str:
+    return "n/a" if value is None else str(value)
+
+
+def _capability_text(capability: Mapping[str, Any]) -> str:
+    mode = str(capability["mode"])
+    reason = capability.get("reason")
+    return mode if reason is None else f"{mode} ({reason})"
+
+
+def _spend_text(amounts: Mapping[str, str], runs: int, incomplete: int) -> str:
+    """Reported amounts over the runs they cover. Incomplete runs are named, never summed as zero."""
+    head = ", ".join(f"{amount} {unit}" for unit, amount in sorted(amounts.items()))
+    text = f"{head or 'no amount reported'} over {_count(runs, 'run')}"
+    if incomplete:
+        text += f", {_count(incomplete, 'incomplete run')}"
+    return text
+
+
+def _ledger_lines(page: Mapping[str, Any]) -> list[str]:
+    totals = page["totals"]
+    lines = [_format_totals("totals", totals)]
+    for source, stats in totals["by_source"].items():
+        partial = "" if stats["api_calls_complete"] else " api_calls_complete=false"
+        lines.append(
+            f"  {_format_totals(source, stats)} rows={stats['rows']}"
+            f" api_calls={stats['api_calls']}{partial}"
+        )
+    for entry in page["coverage"]:
+        observed = entry["spend_observed"]
+        if observed["mode"] == "unknown":
+            spend = f"unknown ({observed['reason']})"
+        else:
+            spend = _spend_text(observed["amounts"], observed["runs"], observed["incomplete_runs"])
+        lines.append(
+            f"coverage {entry['source']}: tokens={_capability_text(entry['tokens'])}"
+            f" api_calls={_capability_text(entry['api_calls'])}"
+            f" spend={_capability_text(entry['spend'])}"
+        )
+        lines.append(f"spend {entry['source']}: {spend}")
+    reported = page["spend"]["reported"]
+    if reported["runs"]:
+        lines.append(
+            "reported spend: "
+            + _spend_text(reported["by_unit"], reported["runs"], reported["incomplete_runs"])
+        )
+    if page["spend"]["unattributed"]:
+        lines.append(f"unattributed spend: {_count(len(page['spend']['unattributed']), 'run')}")
+    durations = page["durations"]
+    lines.append(
+        f"durations: active_span_ms={_or_na(durations['active_span_ms'])}"
+        f" claimed_ms={_or_na(durations['claimed_ms'])}"
+    )
+    lines.append(f"attribution_since: {_or_na(page['attribution_since'])}")
+    lines.append(f"next_cursor: {_or_na(page['next_cursor'])}")
+    return lines
+
+
+@tokens.command("ledger")
+@click.option("--session", "session_ref", help="Scope to a session (#N, UUID or prefix).")
+@click.option("--task", "task_ref", help="Scope to a task (#N or UUID).")
+@click.option("--cursor", help="Continue from a previous next_cursor.")
+@click.option(
+    "--limit", type=click.IntRange(min=1), default=200, show_default=True, help="Rows per page."
+)
+@click.option(
+    "--json", "as_json", is_flag=True, help="Print the whole page as JSON, rows included."
+)
+def token_ledger(
+    session_ref: str | None,
+    task_ref: str | None,
+    cursor: str | None,
+    limit: int,
+    as_json: bool,
+) -> None:
+    """Show the token ledger for one session or task.
+
+    Text output omits rows; use --json for the row page.
+    """
+    if (session_ref is None) == (task_ref is None):
+        raise click.UsageError("Pass exactly one of --session or --task.")
+    with nullcontext(require_cli_database()) as db:
+        session_id: str | None = None
+        task_id: str | None = None
+        if session_ref is not None:
+            session_id = resolve_session_id(session_ref)
+        elif task_ref is not None:
+            task = resolve_task_id(LocalTaskManager(db), task_ref)
+            if task is None:
+                raise click.ClickException(f"Task not found: {task_ref}")
+            task_id = task.id
+        page = UsageLedgerStore(db).page(
+            session_id=session_id, task_id=task_id, cursor=cursor, limit=limit
+        )
+    if as_json:
+        click.echo(json.dumps(page, indent=2))
+        return
+    for line in _ledger_lines(page):
+        click.echo(line)
