@@ -22,6 +22,7 @@ from gobby.storage.agents import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
+from gobby.storage.tasks._dispatch_mutex import MutexRenewal
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 
@@ -301,29 +302,13 @@ class LifecycleReconciliation:
                 if not run.task_id:
                     skipped += 1
                     continue
-                mutex = storage.get_mutex(run.task_id)
-                if mutex is not None:
-                    if (
-                        mutex.run_id == run.id
-                        and mutex.lease_holder
-                        and storage.refresh_mutex_for_run(
-                            run.task_id,
-                            run.id,
-                            lease_holder=mutex.lease_holder,
-                            ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
-                        )
-                    ):
-                        refreshed += 1
-                    else:
-                        skipped += 1
-                    continue
-                if storage.acquire_mutex(
+                # Only a lease this run took itself is renewed; a free lease is left for spawns.
+                outcome = storage.renew_owned_for_run(
                     run.task_id,
-                    holder="dispatcher",
-                    kind="heartbeat",
+                    run.id,
                     ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
-                    run_id=run.id,
-                ):
+                )
+                if outcome is MutexRenewal.RENEWED:
                     refreshed += 1
                 else:
                     skipped += 1

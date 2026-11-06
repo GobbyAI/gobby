@@ -19,7 +19,7 @@ from gobby.storage.agents import (
     LocalAgentRunManager,
 )
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
-from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._dispatch_mutex import MutexRenewal, TaskDispatchMutexManager
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -254,38 +254,29 @@ async def _sweep_sandbox_run_roots_on_startup(runner: GobbyRunner) -> None:
         logger.exception("Sandbox run-root sweep failed during startup")
 
 
-def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:
-    """Extend the dispatch mutex for a run that survived daemon restart."""
+def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> MutexRenewal | None:
+    """Renew the dispatch lease a run that survived daemon restart already holds.
+
+    Returns ``None`` when the outcome is unknown (no task, no database, or an error),
+    so reconciliation keeps the run fenced.
+    """
     task_id = getattr(run, "task_id", None)
     run_id = getattr(run, "id", None)
     if not task_id or not run_id:
-        return False
+        return None
 
     db = getattr(runner, "database", None)
     if db is None:
         run_storage = getattr(getattr(runner, "agent_runner", None), "run_storage", None)
         db = getattr(run_storage, "db", None)
     if db is None:
-        return False
+        return None
 
     try:
-        mutexes = TaskDispatchMutexManager(db)
-        mutex = mutexes.get_mutex(str(task_id))
-        if mutex is not None:
-            if mutex.run_id is not None and str(mutex.run_id) == str(run_id) and mutex.lease_holder:
-                return mutexes.refresh_mutex_for_run(
-                    str(task_id),
-                    str(run_id),
-                    lease_holder=mutex.lease_holder,
-                    ttl_seconds=600,
-                )
-            return False
-        return mutexes.acquire_mutex(
+        return TaskDispatchMutexManager(db).renew_owned_for_run(
             str(task_id),
-            holder="dispatcher",
-            kind="heartbeat",
+            str(run_id),
             ttl_seconds=600,
-            run_id=str(run_id),
         )
     except Exception as e:
         logger.warning(
@@ -293,7 +284,7 @@ def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:
             run_id,
             e,
         )
-        return False
+        return None
 
 
 def _list_active_agent_runs_once(

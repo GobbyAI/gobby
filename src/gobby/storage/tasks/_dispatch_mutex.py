@@ -5,10 +5,23 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
+
+# Rows written by the retired heartbeat fallback; no live path creates them now.
+LEGACY_HEARTBEAT_ACTION_KIND = "heartbeat"
+
+
+class MutexRenewal(StrEnum):
+    """Outcome of a heartbeat asking to renew the lease bound to one run."""
+
+    RENEWED = "renewed"
+    RELEASED_LEGACY = "released_legacy"
+    FREE = "free"
+    FOREIGN = "foreign"
 
 
 @normalize_datetime_model(required=("updated_at",), optional=("lease_until",))
@@ -190,6 +203,59 @@ class TaskDispatchMutexManager:
                 (lease_until, now_value, task_id, lease_holder, run_id),
             )
             return cursor.rowcount > 0
+
+    def renew_owned_for_run(
+        self,
+        task_id: str,
+        run_id: str,
+        ttl_seconds: int,
+        now: datetime | str | None = None,
+    ) -> MutexRenewal:
+        """Renew only a lease that ``run_id`` already holds; never take a free one.
+
+        A free task lease belongs to the next spawn, so a live run that did not take
+        it leaves it free. A heartbeat-signed row is a leftover of the retired fallback
+        and is released, not renewed.
+        """
+        now_value = _coerce_timestamp(now)
+        lease_until = now_value + timedelta(seconds=ttl_seconds)
+
+        with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
+            row = conn.execute(
+                """
+                SELECT run_id, lease_holder, action_kind
+                  FROM task_dispatch_mutex
+                 WHERE task_id = %s
+                """,
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                return MutexRenewal.FREE
+            if str(row["run_id"]) != str(run_id) or not row["lease_holder"]:
+                return MutexRenewal.FOREIGN
+            if row["action_kind"] == LEGACY_HEARTBEAT_ACTION_KIND:
+                conn.execute(
+                    """
+                    DELETE FROM task_dispatch_mutex
+                     WHERE task_id = %s
+                       AND run_id = %s
+                       AND action_kind = %s
+                    """,
+                    (task_id, run_id, LEGACY_HEARTBEAT_ACTION_KIND),
+                )
+                return MutexRenewal.RELEASED_LEGACY
+            conn.execute(
+                """
+                UPDATE task_dispatch_mutex
+                   SET lease_until = %s,
+                       updated_at = %s
+                 WHERE task_id = %s
+                   AND lease_holder = %s
+                   AND run_id = %s
+                """,
+                (lease_until, now_value, task_id, row["lease_holder"], run_id),
+            )
+            return MutexRenewal.RENEWED
 
     def sweep_expired(self, *, now: datetime | str | None = None) -> int:
         now_value = _coerce_timestamp(now)

@@ -9,6 +9,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import MutexRenewal
 
 pytestmark = pytest.mark.unit
 
@@ -205,6 +206,54 @@ def test_force_release(temp_db, sample_project) -> None:
     assert manager.force_release(task.id) is False
 
 
+def test_renew_owned_for_run_renews_only_spawn_rows_and_releases_heartbeat_rows(
+    temp_db, sample_project
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Renew owned dispatch mutex",
+        validation_criteria="Test task completion is observable.",
+    )
+    manager = _manager_class()(temp_db)
+    run_a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    run_b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    assert manager.renew_owned_for_run(task.id, run_a, ttl_seconds=30) is MutexRenewal.FREE
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        run_id=run_a,
+        ttl_seconds=30,
+    )
+    assert manager.renew_owned_for_run(task.id, run_b, ttl_seconds=30) is MutexRenewal.FOREIGN
+    assert manager.get_mutex(task.id) is not None
+    assert manager.renew_owned_for_run(task.id, run_a, ttl_seconds=30) is (
+        MutexRenewal.RELEASED_LEGACY
+    )
+    assert manager.get_mutex(task.id) is None
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder=f"spawn-agent:{run_a}",
+        kind="spawn_agent",
+        run_id=run_a,
+        ttl_seconds=30,
+    )
+    before = manager.get_mutex(task.id)
+    assert before is not None
+    assert manager.renew_owned_for_run(task.id, run_b, ttl_seconds=30) is MutexRenewal.FOREIGN
+    assert manager.renew_owned_for_run(task.id, run_a, ttl_seconds=600) is MutexRenewal.RENEWED
+    after = manager.get_mutex(task.id)
+    assert after is not None
+    assert after.lease_holder == before.lease_holder
+    assert after.run_id == run_a
+    assert after.lease_until is not None
+    assert before.lease_until is not None
+    assert after.lease_until > before.lease_until
+
+
 def test_release_mutex_only_releases_matching_holder(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -395,7 +444,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
     assert other_mutex.lease_until == past + timedelta(seconds=60)
 
 
-def test_sweep_expired(temp_db, sample_project) -> None:
+def test_sweep_expired(temp_db: Any, sample_project: dict[str, Any]) -> None:
     task_manager = LocalTaskManager(temp_db)
     stale = task_manager.create_task(
         project_id=sample_project["id"],

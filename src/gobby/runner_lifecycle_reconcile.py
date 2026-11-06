@@ -16,6 +16,7 @@ from gobby.runner_lifecycle_agents import (
     _refresh_active_run_dispatch_mutex,
     _run_db,
 )
+from gobby.storage.tasks._dispatch_mutex import MutexRenewal
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -23,6 +24,11 @@ if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal, TerminalManager
 
 logger = logging.getLogger("gobby.runner_lifecycle")
+
+# Lease outcomes that leave nothing to restore, so the run's restart fence can clear.
+_SETTLED_MUTEX_OUTCOMES = frozenset(
+    {MutexRenewal.RENEWED, MutexRenewal.RELEASED_LEGACY, MutexRenewal.FREE}
+)
 
 # Per-process marker deduplicating parent recovery notifications: reconnect
 # messages fire once per daemon boot, not once per reconciliation pass.
@@ -190,11 +196,16 @@ async def _refresh_surviving_run(
     run: Any,
     resolved_run_ids: set[str] | None,
 ) -> int:
-    """Extend the dispatch mutex of a run that survived restart intact."""
-    mutex_refreshed = await _run_db(runner, _refresh_active_run_dispatch_mutex, runner, run)
-    if resolved_run_ids is not None and (mutex_refreshed or not getattr(run, "task_id", None)):
+    """Renew the dispatch lease of a run that survived restart intact.
+
+    A run whose task lease is free or released is settled: it never owned a lease to
+    restore. A lease held by another run, or an unknown outcome, keeps the fence.
+    """
+    outcome = await _run_db(runner, _refresh_active_run_dispatch_mutex, runner, run)
+    settled = outcome in _SETTLED_MUTEX_OUTCOMES or not getattr(run, "task_id", None)
+    if resolved_run_ids is not None and settled:
         resolved_run_ids.add(str(run.id))
-    return 1 if mutex_refreshed else 0
+    return 1 if outcome is MutexRenewal.RENEWED else 0
 
 
 async def _reconcile_native_runs(

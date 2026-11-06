@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.storage.agent_resume import (
     claim_daemon_stop_orphan_reap,
     finalize_daemon_resume,
@@ -19,6 +20,8 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
+from gobby.storage.tasks._dispatch_mutex import MutexRenewal
 from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
@@ -72,6 +75,8 @@ def _local_machine_identity() -> Iterator[None]:
 def _seed_parked_run(
     temp_db: Any,
     sample_project: dict[str, Any],
+    *,
+    task_id: str | None = None,
 ) -> tuple[SessionManager, LocalAgentRunManager, Any, Any, Any]:
     sessions = SessionManager(temp_db)
     parent = sessions.register(
@@ -94,6 +99,7 @@ def _seed_parked_run(
         provider="codex",
         prompt="work",
         resume_metadata_json={"provider_native_session_id": "native-1"},
+        task_id=task_id,
     )
     temp_db.execute(
         "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
@@ -239,6 +245,93 @@ def test_waiter_follows_successor_under_resume_fence(
     )
     assert followed.run_id == successor.id
     assert followed.recovery_pending is False
+
+
+@pytest.mark.parametrize(
+    ("held_spawn_lease", "rival", "expected_owner"),
+    [
+        pytest.param(True, None, "successor", id="held-lease-moves-to-successor"),
+        pytest.param(False, None, None, id="unheld-task-stays-free"),
+        pytest.param(True, "live", "rival", id="live-rival-lease-is-not-stolen"),
+        pytest.param(True, "expired", "successor", id="expired-rival-lease-is-replaced"),
+    ],
+)
+def test_finalize_daemon_resume_hands_spawn_lease_to_successor(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    held_spawn_lease: bool,
+    rival: str | None,
+    expected_owner: str | None,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Daemon-stop lease handoff",
+        validation_criteria=(
+            "Finalizing a daemon-stop resume re-takes the parked run's spawn lease for its "
+            "successor and never takes a live lease held by another run."
+        ),
+    )
+    mutex = TaskDispatchMutexManager(temp_db)
+    _sessions, runs, parent, child, original = _seed_parked_run(
+        temp_db, sample_project, task_id=task.id
+    )
+    if held_spawn_lease:
+        assert mutex.acquire_mutex(
+            task.id,
+            holder=f"spawn-agent:{original.id}",
+            kind="spawn_agent",
+            ttl_seconds=600,
+            run_id=original.id,
+        )
+    cleanup_agent_runtime_state(
+        temp_db,
+        run_id=original.id,
+        child_session_id=child.id,
+        terminal_reason="daemon_stop",
+    )
+
+    rival_run_id: str | None = None
+    if rival is not None:
+        rival_run = runs.create(
+            parent_session_id=parent.id,
+            provider="codex",
+            prompt="replacement developer",
+            task_id=task.id,
+        )
+        rival_run_id = rival_run.id
+        now = datetime.now(UTC)
+        if rival == "live":
+            rival_now, ttl = now, 600
+        else:
+            rival_now, ttl = now - timedelta(hours=1), 60
+        assert mutex.acquire_mutex(
+            task.id,
+            holder=f"spawn-agent:{rival_run.id}",
+            kind="spawn_agent",
+            ttl_seconds=ttl,
+            run_id=rival_run.id,
+            now=rival_now,
+        )
+
+    successor = _seed_successor(
+        temp_db, runs, parent_id=parent.id, child_id=child.id, original_id=original.id
+    )
+    finalize_daemon_resume(
+        temp_db,
+        original_run_id=original.id,
+        successor_run_id=successor.id,
+        child_session_id=child.id,
+    )
+
+    expected_run_id = {"successor": successor.id, "rival": rival_run_id, None: None}[expected_owner]
+    lease = mutex.get_mutex(task.id)
+    assert (lease.run_id if lease is not None else None) == expected_run_id
+    if expected_owner == "successor":
+        assert lease is not None
+        assert lease.action_kind == "spawn_agent"
+        assert mutex.renew_owned_for_run(task.id, successor.id, ttl_seconds=600) is (
+            MutexRenewal.RENEWED
+        )
 
 
 def test_finalize_daemon_resume_repeat_call_is_idempotent(

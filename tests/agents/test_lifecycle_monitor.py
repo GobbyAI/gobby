@@ -34,6 +34,7 @@ from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from gobby.sessions import activity as session_activity
 from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.status_events import SessionStatusTransition
@@ -690,15 +691,8 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
         child_session_id=child.id,
         run_id=_rid("run-refresh-dispatch-mutex"),
         terminal_id="gobby-refresh-dispatch-mutex",
-    )
-    past = datetime.now(UTC) - timedelta(minutes=10)
-    assert mutexes.acquire_mutex(
-        task.id,
-        holder="dispatcher",
-        kind="heartbeat",
-        ttl_seconds=60,
-        run_id=run.id,
-        now=past,
+        lease_ttl_seconds=60,
+        lease_now=datetime.now(UTC) - timedelta(minutes=10),
     )
     stale = mutexes.get_mutex(task.id)
     assert stale is not None
@@ -719,7 +713,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
     refreshed = mutexes.get_mutex(task.id)
     assert refreshed is not None
     assert refreshed.run_id == run.id
-    assert refreshed.lease_holder == "dispatcher"
+    assert refreshed.lease_holder == stale.lease_holder
     assert refreshed.lease_until is not None
     assert refreshed.lease_until > before_refresh
 
@@ -838,7 +832,7 @@ async def test_refresh_active_run_dispatch_mutexes_skips_mutex_bound_to_other_ru
 
 
 @pytest.mark.asyncio
-async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
+async def test_refresh_active_run_dispatch_mutexes_does_not_reacquire_cleared_mutex(
     agent_run_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_session: dict[str, Any],
@@ -873,19 +867,12 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
         terminal_services=_fake_terminal_services(temp_db),
     )
 
-    before_restore = datetime.now(UTC)
-    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
-
-    restored = mutexes.get_mutex(task.id)
-    assert restored is not None
-    assert restored.run_id == run.id
-    assert restored.lease_holder == "dispatcher"
-    assert restored.lease_until is not None
-    assert restored.lease_until > before_restore
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+    assert mutexes.get_mutex(task.id) is None
 
 
 @pytest.mark.asyncio
-async def test_refresh_active_run_dispatch_mutexes_restores_manual_task_run(
+async def test_refresh_active_run_dispatch_mutexes_leaves_free_mutex_for_unowned_run(
     agent_run_manager: LocalAgentRunManager,
     session_manager: SessionManager,
     sample_session: dict[str, Any],
@@ -927,10 +914,58 @@ async def test_refresh_active_run_dispatch_mutexes_restores_manual_task_run(
         terminal_services=_fake_terminal_services(temp_db),
     )
 
-    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
-    restored = mutexes.get_mutex(task.id)
-    assert restored is not None
-    assert restored.run_id == run.id
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+    assert mutexes.get_mutex(task.id) is None
+    # The free lease is still spawnable: a task-bound run that did not take it cannot block spawns.
+    lease = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert lease.acquire() is None
+    lease.release_unattached()
+
+
+@pytest.mark.asyncio
+async def test_refresh_active_run_dispatch_mutexes_releases_heartbeat_signed_mutex(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict[str, Any],
+    sample_project: dict[str, Any],
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-heartbeat-signed-mutex",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task, run, mutexes = _make_dispatched_stage_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=LocalTaskManager(temp_db),
+        temp_db=temp_db,
+        sample_project=sample_project,
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        run_id=_rid("run-heartbeat-signed-mutex"),
+        terminal_id="gobby-heartbeat-signed-mutex",
+    )
+    # Rows written by the removed acquire-on-free fallback carry this signature.
+    assert mutexes.force_release(task.id)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=600,
+        run_id=run.id,
+    )
+
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+    assert mutexes.get_mutex(task.id) is None
 
 
 def _link_child_session_to_run(
@@ -1500,6 +1535,8 @@ def _make_dispatched_stage_run(
     run_id: str,
     terminal_id: str,
     provider: str = "codex",
+    lease_ttl_seconds: int = 600,
+    lease_now: datetime | None = None,
 ) -> tuple[Any, AgentRun, TaskDispatchMutexManager]:
     task = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1531,12 +1568,14 @@ def _make_dispatched_stage_run(
     assert stored_run is not None
 
     mutexes = TaskDispatchMutexManager(temp_db)
+    # Seed the lease the way spawn_agent does: a spawn-held token, not a heartbeat.
     assert mutexes.acquire_mutex(
         task.id,
-        holder="dispatcher",
-        kind="heartbeat",
-        ttl_seconds=600,
+        holder=f"spawn-agent:{run.id}",
+        kind="spawn_agent",
+        ttl_seconds=lease_ttl_seconds,
         run_id=run.id,
+        now=lease_now,
     )
     return task, stored_run, mutexes
 
