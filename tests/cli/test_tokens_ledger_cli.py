@@ -1,4 +1,4 @@
-"""`gobby tokens ledger` CLI: scope totals, JSON parity and distinct unknown spend (plan 3.2, #23602)."""
+"""`gobby tokens` ledger and quota CLIs: totals, JSON parity, unknown spend, quota (plan 3.2, #23602)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -214,3 +215,86 @@ def test_ledger_command_keeps_unknown_spend_distinct(
         and "usd" not in line
         for line in incomplete_out.output.splitlines()
     ), incomplete_out.output
+
+
+QUOTA_PAYLOAD: dict[str, Any] = {
+    "provider": "claude",
+    "supported": True,
+    "state": "exhausted",
+    "observed_at": "2026-10-20T10:00:00+00:00",
+    "windows": [
+        {
+            "label": "five_hour",
+            "used": 80,
+            "limit": 100,
+            "unit": "percent",
+            "resets_at": "2026-10-20T15:00:00+00:00",
+        },
+        {"label": "weekly", "used": 7, "limit": 100, "unit": "percent", "resets_at": None},
+    ],
+    "reason": "Five-hour window exhausted.",
+    "source_version": "1",
+    "details": {
+        "components": {
+            "claude:five_hour": {
+                "limit_id": "five_hour",
+                "scope": "account",
+                "state": "exhausted",
+                "fresh": True,
+                "stale_reason": None,
+                "source_observed_at": "2026-10-20T10:00:00+00:00",
+                "resets_at": "2026-10-20T15:00:00+00:00",
+            }
+        }
+    },
+}
+
+
+class _DaemonStub:
+    def __init__(self, outcome: httpx.Response | Exception) -> None:
+        self.outcome = outcome
+        self.calls: list[tuple[str, str]] = []
+
+    def call_http_api(self, endpoint: str, method: str = "POST", **_: Any) -> httpx.Response:
+        self.calls.append((endpoint, method))
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+def test_quota_command_reads_daemon_snapshot(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    stub = _DaemonStub(
+        httpx.Response(
+            200,
+            json=QUOTA_PAYLOAD,
+            request=httpx.Request("GET", "http://daemon.test/api/providers/claude/usage"),
+        )
+    )
+    monkeypatch.setattr(tokens_module, "get_daemon_client", lambda **_: stub)
+
+    result = runner.invoke(tokens_module.tokens, ["quota", "claude"])
+
+    assert result.exit_code == 0, result.output
+    assert stub.calls == [("/api/providers/claude/usage", "GET")]
+    lines = result.output.splitlines()
+    assert lines[0] == "claude: state=exhausted supported=true reason=Five-hour window exhausted."
+    assert "  five_hour: 80.0% used, resets 2026-10-20T15:00:00+00:00" in lines
+    assert "  weekly: 7.0% used, resets n/a" in lines
+    assert (
+        "  component claude:five_hour: state=exhausted fresh=true "
+        "resets=2026-10-20T15:00:00+00:00" in lines
+    )
+
+
+def test_quota_command_fails_when_daemon_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    stub = _DaemonStub(httpx.ConnectError("connection refused"))
+    monkeypatch.setattr(tokens_module, "get_daemon_client", lambda **_: stub)
+
+    result = runner.invoke(tokens_module.tokens, ["quota", "claude"])
+
+    assert result.exit_code == 1, result.output
+    assert "connection refused" in result.output

@@ -16,6 +16,7 @@ import click
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.tasks._utils.resolution import resolve_task_id
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
+from gobby.cli.utils_config import get_daemon_client
 from gobby.sessions.model_family import normalize_model
 from gobby.sessions.reported_usage import ReportedRun, collect_runs
 from gobby.sessions.subagent_usage import read_all_subagent_events
