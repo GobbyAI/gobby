@@ -124,8 +124,9 @@ class ClaimStage(BaseModel):
     seat: str | None = Field(default=None, min_length=1)
     agent: str | None = Field(default=None, min_length=1)
     done_when: list[str] = Field(default_factory=list)
-    # Alternatives in declared order; the first whose seat is live takes the claim.
+    # Alternatives in declared order; the first whose categories admit the task takes the claim.
     next: list[str] = Field(default_factory=list)
+    # Several alternatives: the lane whose writer produced the rejected candidate takes it back.
     on_rejected: list[str] = Field(default_factory=list)
     # Task categories this stage takes the claim for; empty admits every category.
     categories: list[str] = Field(default_factory=list)

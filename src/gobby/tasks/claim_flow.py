@@ -15,8 +15,8 @@ from gobby.workflows.pipeline_models import PipelineDefinition
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from gobby.storage.session_models import Session
     from gobby.tasks.attestations import TaskAttestation
+    from gobby.workflows.pipeline_models import ClaimStage
 
 
 def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
@@ -136,6 +136,31 @@ def _returned_stage(
         if between and all(writers_approved(name) for name in between):
             return marked
     return None
+
+
+def _admits(definition: PipelineDefinition, name: str, category: str | None) -> bool:
+    categories = definition.claim_flow[name].categories
+    return not categories or category in categories
+
+
+def _produced(
+    records: list[TaskAttestation],
+    stage: ClaimStage,
+    writer: str | None,
+    candidate: tuple[str, str] | None,
+) -> bool:
+    """Whether the stage's writer approved every done_when kind, all on the candidate. test-before
+    is recorded before the candidate exists, so it may carry no reference."""
+    if writer is None or candidate is None or not stage.done_when:
+        return False
+    current = _current_by_kind(records, stage.done_when, _by_agent(writer))
+    if any(
+        kind not in current or current[kind].result != stage.approved_result
+        for kind in stage.done_when
+    ):
+        return False
+    references = {_reference_key(current[kind]) for kind in stage.done_when} - {None}
+    return references == {candidate}
 
 
 def advance_claim_flow(
@@ -282,6 +307,20 @@ def advance_claim_flow(
         targets = [returned]
     elif record.kind in stage.done_when and record.result == stage.rejected_result:
         targets = stage.on_rejected
+        if len(targets) > 1:
+            # Several lanes can take a rejection back; only the lane whose writer produced the
+            # rejected candidate takes it, so no other lane's seat is ever picked by liveness.
+            candidate = _reference_key(record)
+            producers = [
+                lane
+                for lane in targets
+                if _produced(records, definition.claim_flow[lane], stage_agents[lane], candidate)
+            ]
+            if len(producers) != 1:
+                raise ValueError(
+                    f"claim flow stage {name!r} cannot tell which lane produced the candidate"
+                )
+            targets = producers
     elif stage.done_when and all(
         kind in active and active[kind].result == stage.approved_result for kind in stage.done_when
     ):
@@ -303,25 +342,27 @@ def advance_claim_flow(
                 f"Accepted reference for this attempt: {reference.scheme}:{reference.value}. "
                 f"Supersede conflicting records or omit references for unrelated evidence: {conflicting}"
             )
-        targets = stage.next
+        # The first alternative whose categories admit this task takes the claim, in declared order.
+        routes = [
+            following for following in stage.next if _admits(definition, following, task.category)
+        ]
+        if stage.next and not routes:
+            raise ValueError(
+                f"claim flow stage {name!r} has no route for category {task.category!r}"
+            )
+        targets = routes[:1]
     if not targets:
         return
-    # The first alternative whose seat is live takes the claim. None live refuses the evidence.
     target = targets[0]
-    recipient: Session | None = None
-    for name in targets:
-        recipient_id = stage_session(name)
-        candidate = session_store.get(recipient_id) if recipient_id else None
-        if (
-            candidate is not None
-            and candidate.project_id == task.project_id
-            and candidate.machine_id == author.machine_id
-            and candidate.status in LIVE_SESSION_STATUSES
-        ):
-            target, recipient = name, candidate
-            break
-    if recipient is None:
-        raise ValueError(f"claim flow stage {targets[0]!r} needs its live pipeline seat")
+    recipient_id = stage_session(target)
+    recipient = session_store.get(recipient_id) if recipient_id else None
+    if (
+        recipient is None
+        or recipient.project_id != task.project_id
+        or recipient.machine_id != author.machine_id
+        or recipient.status not in LIVE_SESSION_STATUSES
+    ):
+        raise ValueError(f"claim flow stage {target!r} needs its live pipeline seat")
     LocalTaskManager(db).claim_task_for_agent(
         task.id, recipient.id, expected_owner=record.session_id, handed=True
     )
