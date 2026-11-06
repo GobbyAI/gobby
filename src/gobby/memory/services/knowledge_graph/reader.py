@@ -212,7 +212,7 @@ class KnowledgeGraphReader:
             if entity_keys and memory_link_limit > 0:
                 try:
                     mem_rows = await self._falkor.query(
-                        "UNWIND $entity_keys AS entity_key "
+                        "UNWIND $entity_keys AS entity_key WITH entity_key "
                         "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                         "OR ($include_global AND e.is_global = true)) "
@@ -548,7 +548,7 @@ class KnowledgeGraphReader:
         excluded_keys = list(dict.fromkeys([*seed_keys, *related_entity_keys]))
         try:
             rows = await self._falkor.query(
-                "UNWIND $source_keys AS source_key "
+                "UNWIND $source_keys AS source_key WITH source_key "
                 "MATCH (source:_Entity {entity_key: source_key}) "
                 "WHERE ((source.project_id = $project_id AND source.is_global = false) "
                 "OR ($include_global AND source.is_global = true)) "
@@ -716,7 +716,7 @@ class KnowledgeGraphReader:
             return {}
 
         rows = await self._falkor.query(
-            "UNWIND $entity_keys AS entity_key "
+            "UNWIND $entity_keys AS entity_key WITH entity_key "
             "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
             "WHERE m.memory_id IN $memory_ids "
             "AND ((e.project_id = $project_id AND e.is_global = false) "
@@ -863,7 +863,7 @@ class KnowledgeGraphReader:
             return {}
         try:
             rows = await self._falkor.query(
-                "UNWIND $entity_keys AS entity_key "
+                "UNWIND $entity_keys AS entity_key WITH entity_key "
                 "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                 "OR ($include_global AND e.is_global = true)) "

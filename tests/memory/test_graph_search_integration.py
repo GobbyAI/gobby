@@ -15,6 +15,7 @@ from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphService,
 )
+from gobby.memory.services.knowledge_graph.reader import KnowledgeGraphReader
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -586,6 +587,103 @@ class TestFindRelatedMemoryIds:
         """find_related_memory_ids returns empty for empty entity names."""
         result = await service.find_related_memory_ids(entity_keys=[])
         assert result.memory_ids == []
+
+
+class TestGraphReadsMaterializeRowsBeforeIndexedMatch:
+    """Every UNWIND-driven read passes a WITH barrier before its indexed entity MATCH.
+
+    Without the barrier FalkorDB scans _Entity once per row, which is what made the
+    live entity hop take 1.5-5 s. The real-server regression is in
+    tests/memory/test_graph_traversal_live.py.
+    """
+
+    async def test_entity_vector_memory_links_materialize_rows_first(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        key = entity_key(PERSONAL_PROJECT_ID, "Python")
+        mock_falkor.vector_search = AsyncMock(
+            return_value=[
+                {
+                    "entity_key": key,
+                    "name": "Python",
+                    "entity_type": "tool",
+                    "project_id": None,
+                    "labels": [],
+                    "score": 0.9,
+                    "props": {},
+                },
+            ]
+        )
+
+        await service.search_entities_by_vector(query_embedding=[0.1, 0.2, 0.3], limit=5)
+
+        query, _params = mock_falkor.query.await_args.args
+        assert (
+            "UNWIND $entity_keys AS entity_key WITH entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+        ) in query
+
+    async def test_edge_component_attribution_materializes_rows_first(
+        self,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        reader = KnowledgeGraphReader(mock_falkor, None, embedding_dim=8)
+
+        await reader._attribute_edge_components(
+            memory_ids=["mem-1"],
+            components_by_entity={"k1": {"edge_cosine": 0.8}},
+            admission_score_by_entity={"k1": 0.9},
+            project_id="project-a",
+            include_global=False,
+        )
+
+        query, _params = mock_falkor.query.await_args.args
+        assert (
+            "UNWIND $entity_keys AS entity_key WITH entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+        ) in query
+
+    async def test_entity_backing_lookup_materializes_rows_first(
+        self,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        reader = KnowledgeGraphReader(mock_falkor, None, embedding_dim=8)
+
+        await reader._entity_backing_memories(["k1"], "project-a", include_global=False)
+
+        query, _params = mock_falkor.query.await_args.args
+        assert (
+            "UNWIND $entity_keys AS entity_key WITH entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+        ) in query
+
+    async def test_cluster_expansion_materializes_rows_first(
+        self,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        reader = KnowledgeGraphReader(
+            mock_falkor,
+            None,
+            embedding_dim=8,
+            cluster_recall_expansion=True,
+            cluster_expansion_per_entity=3,
+        )
+
+        await reader._find_cluster_entity_keys(
+            source_keys=["k1"],
+            seed_keys=["k1"],
+            related_entity_keys=[],
+            project_id="project-a",
+            include_global=False,
+        )
+
+        query, _params = mock_falkor.query.await_args.args
+        assert (
+            "UNWIND $source_keys AS source_key WITH source_key "
+            "MATCH (source:_Entity {entity_key: source_key})"
+        ) in query
 
 
 class TestSearchGraphUpgraded:
