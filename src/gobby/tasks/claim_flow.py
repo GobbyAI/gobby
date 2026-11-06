@@ -67,10 +67,12 @@ def advance_claim_flow(
         (task.id, "task_claim_flow", team.team_id),
     ).fetchone()
     state = json.loads(prior["body"]) if prior else {}
-    name = state.get("stage") or next(iter(definition.claim_flow))
-    stage = definition.claim_flow[name]
     seat_steps = {step.id: step for step in definition.steps}
     steps = {step.step_id: step for step in executions.get_steps_for_execution(team.team_id)}
+
+    def seat_agent(stage_name: str) -> str | None:
+        step = seat_steps[definition.claim_flow[stage_name].seat]
+        return (step.mcp.arguments or {}).get("agent") if step.mcp else None
 
     def stage_session(stage_name: str) -> str | None:
         seat = definition.claim_flow[stage_name].seat
@@ -78,8 +80,7 @@ def advance_claim_flow(
         output = json.loads(step.output_json) if step and step.output_json else {}
         child = output.get("child_session_id")
         # Relaunches join the same admission; their active runs replace ended step outputs.
-        seat_step = seat_steps[seat]
-        agent = (seat_step.mcp.arguments or {}).get("agent") if seat_step.mcp else None
+        agent = seat_agent(stage_name)
         live: set[str] = set()
         if agent:
             rows = conn.execute(
@@ -113,8 +114,22 @@ def advance_claim_flow(
             raise ValueError(f"claim flow stage {stage_name!r} has ambiguous live pipeline seats")
         return next(iter(live)) if live else child
 
-    if stage_session(name) != record.session_id:
+    # The holder's own seat picks the stage. A direct claim or an explicit hand-off changes the
+    # holder without writing a claim-flow marker, so the marker's stage can name an old seat.
+    # Only stages whose seat runs the author's definition are resolved, so an ambiguous seat
+    # elsewhere in the flow cannot refuse this author's evidence.
+    holder_stages = [
+        stage_name
+        for stage_name in definition.claim_flow
+        if seat_agent(stage_name) == record.agent_definition
+        and stage_session(stage_name) == record.session_id
+    ]
+    if not holder_stages:
         return
+    if len(holder_stages) > 1:
+        raise ValueError(f"claim flow seat {record.session_id} holds more than one stage")
+    name = holder_stages[0]
+    stage = definition.claim_flow[name]
     superseded = {item.supersedes_id for item in records if item.supersedes_id}
     active = {
         item.kind: item
