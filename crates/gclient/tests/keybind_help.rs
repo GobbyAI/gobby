@@ -156,17 +156,27 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
         .collect();
     assert_eq!(legend[0], " Legend");
     let states = [
-        ("⍾ needs you", "need you", "an error it cannot pass"),
-        ("▶ active", "active", "running a turn"),
         (
-            "○ idle",
-            "idle",
-            "at its prompt, or ended its turn on an armed wait or background work",
+            "⍾ needs you",
+            "needs you",
+            "waiting on you: a question, a plan approval or a permission prompt",
         ),
-        ("◆ output unseen", "idle", "clears when its pane is focused"),
-        ("‖ held", "idle", "paused on purpose or interrupted by you"),
-        ("◌ gone", "n gone", "shown only when not zero"),
-        ("· no state yet", "idle", "before the daemon has a state"),
+        (
+            "▶ active",
+            "active",
+            "mid-turn, or between turns while waiting on a child run it started",
+        ),
+        (
+            "‖ paused",
+            "idle",
+            "alive but stopped: paused on purpose or interrupted by you",
+        ),
+        (
+            "✕ no live agents",
+            "gone",
+            "agents are assigned but all are dead, or the machine's daemon is unreachable",
+        ),
+        ("  blank", "idle", "nothing is assigned or being worked"),
     ];
     for ((state, counts_as, means), row) in states.iter().zip(&legend[2..]) {
         assert!(row.starts_with(&format!(" {state} ")), "{row:?}");
@@ -187,5 +197,5 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
     chrome.keybind_help.query = "split".to_string();
     let searched = rendered_help(&chrome, 120, 40);
     assert!(!searched.contains("needs you"), "{searched}");
-    assert!(!searched.contains("running a turn"), "{searched}");
+    assert!(!searched.contains("waiting on a child run"), "{searched}");
 }

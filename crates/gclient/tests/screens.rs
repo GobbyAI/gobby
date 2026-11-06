@@ -871,7 +871,7 @@ fn agent_rows_golden() {
     );
     let terminal = rows
         .iter()
-        .position(|row| row.contains("○ nvim"))
+        .position(|row| row.contains("nvim"))
         .expect("bare terminal row");
     assert!(
         rows[terminal].contains("gclient"),
@@ -940,10 +940,10 @@ fn projects_agents_golden() {
     );
     assert!(machines < projects, "the machines sit above the projects");
     // alpha carries the most urgent state of its bound agents: needs you.
-    let alpha = row_containing("⍾ alpha");
+    let alpha = row_containing("⍾ ⍾1 alpha");
     assert_eq!(alpha, projects + 1, "the card follows the one-row band");
     assert!(
-        rows[alpha].starts_with(" ⍾ alpha (main ↑2 ↓1)") && rows[alpha].trim_end().ends_with('▸'),
+        rows[alpha].starts_with(" ⍾ ⍾1 alpha") && rows[alpha].trim_end().ends_with('▸'),
         "folded card: {:?}",
         rows[alpha]
     );
@@ -952,7 +952,7 @@ fn projects_agents_golden() {
         "a folded card lists no worktree\n{rendered}"
     );
     assert!(
-        rendered.contains("○ beta"),
+        rendered.contains("beta (~)"),
         "all-projects scope includes a project with nothing live\n{rendered}"
     );
     let sessions = row_containing(" Agents");

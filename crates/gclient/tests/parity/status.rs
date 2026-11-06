@@ -58,20 +58,18 @@ parity_tests! {
     "src/ui/status.rs" => {
         fn state_dots_use_aligned_static_workspace_marks() {
             let palette = palette();
-            // herdr (AgentState, seen) pairs map onto gclient RowState:
-            // Blocked -> Attention, Working -> Working, Idle unseen -> Unseen,
-            // Idle seen -> Idle, Unknown -> Unknown. herdr's `●` in three
+            // herdr (AgentState) pairs map onto gclient RowState:
+            // Blocked -> Attention, Working -> Working, Idle (seen or
+            // unseen) -> Blank, orphaned -> NoLive. herdr's `●` in three
             // colours is gclient's one distinct glyph per state: `⍾` needs
-            // you (warning), `▶` working (accent), `◆` unseen (info), `○`
-            // idle, `·` unknown, `◌` orphaned (destructive).
+            // you (warning), `▶` active (accent), `‖` paused (overlay1),
+            // `✕` no live agents (destructive), and blank otherwise.
             for (state, symbol, color) in [
                 (RowState::Attention, "⍾", palette.peach),
                 (RowState::Working, "▶", palette.accent),
-                (RowState::Unseen, "◆", palette.teal),
-                (RowState::Idle, "○", palette.overlay0),
-                (RowState::Unknown, "·", palette.overlay0),
-                (RowState::Orphaned, "◌", palette.red),
                 (RowState::Paused, "‖", palette.overlay1),
+                (RowState::NoLive, "✕", palette.red),
+                (RowState::Blank, " ", palette.overlay0),
             ] {
                 let (actual_symbol, actual_color) = state_dot(state, &palette);
                 assert_eq!(actual_symbol, symbol);
@@ -162,7 +160,7 @@ fn control_indicator_is_a_button() {
     assert_eq!(indicator, None, "focus is not a button");
     assert_eq!(
         rect_rows(&focused, Rect::new(0, 0, 23, 1)),
-        vec![" ○ term-alpha · Focused".to_string()]
+        vec!["   term-alpha · Focused".to_string()]
     );
 
     ws.pane_mut(pane).control = ControlState::LeaseLost;
@@ -171,7 +169,7 @@ fn control_indicator_is_a_button() {
         indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator;
     });
     let indicator = indicator.expect("an exception draws the indicator");
-    let button = vec![" ○ term-alpha · Read-only".to_string()];
+    let button = vec!["   term-alpha · Read-only".to_string()];
     let words = || indicator.x + 1..indicator.right();
     let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
         words()
@@ -213,7 +211,7 @@ fn control_indicator_is_a_button() {
         render_status_line(frame, frame.area(), &ws, &chrome);
     });
     assert!(
-        rect_rows(&uncertain, Rect::new(0, 0, 25, 1))[0].starts_with(" ○ term-alpha · Uncertain"),
+        rect_rows(&uncertain, Rect::new(0, 0, 25, 1))[0].starts_with("   term-alpha · Uncertain"),
         "Uncertain reads apart from Read-only"
     );
 
@@ -498,11 +496,11 @@ fn status_counts_every_agent_on_this_machine_by_class() {
     });
     let line = &rect_rows(&status, Rect::new(0, 0, 120, 1))[0];
     assert!(
-        line.starts_with(" ⍾ 3 need you │ 2 idle │ 1 active │ ◌ 1 gone  "),
+        line.starts_with(" ⍾ 3 need you │ 2 idle │ 1 active │ ✕ 1 gone  "),
         "{line:?}"
     );
     let gone = line
-        .find('◌')
+        .find('✕')
         .map(|byte| line[..byte].chars().count())
         .expect("gone count");
     let gone = u16::try_from(gone).expect("gone column");

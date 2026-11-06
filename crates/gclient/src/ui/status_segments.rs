@@ -3,10 +3,8 @@
 //! counted by legend class. Health and the needs-you count stay in the fixed
 //! slot.
 
-use crate::app::sidebar_model::state_class;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::pane_chrome::pane_corners;
-use crate::ui::sidebar::agents::agent_state;
 use crate::ui::status::focused_overflow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,11 +46,11 @@ pub fn agent_counts<W: WorkspaceView>(ws: &W) -> AgentCounts {
         .iter()
         .filter(|agent| model.local_machine.is_empty() || agent.machine_id == model.local_machine)
     {
-        match state_class(agent_state(ws, agent)) {
+        match agent.state {
             RowState::Attention => counts.need_you += 1,
-            RowState::Orphaned => counts.gone += 1,
+            RowState::NoLive => counts.gone += 1,
             RowState::Working => counts.active += 1,
-            _ => counts.idle += 1,
+            RowState::Paused | RowState::Blank => counts.idle += 1,
         }
     }
     counts

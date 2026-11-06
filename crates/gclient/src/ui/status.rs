@@ -83,33 +83,29 @@ pub struct ActiveToast {
 }
 
 /// Glyph plus colour for a roster row state, one shape per state so the
-/// rows read without colour: `▶` active (accent), `⍾` needs you (warning),
-/// `◆` output unseen (info), `○` idle, `‖` held, `◌` gone (destructive),
-/// `·` no state yet.
+/// rows read without colour: `⍾` needs you (warning), `▶` active (accent),
+/// `‖` paused, `✕` no live agents (destructive), and a blank cell for nothing
+/// assigned or being worked.
 pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
         RowState::Attention => ("⍾", p.peach),
-        RowState::Orphaned => ("◌", p.red),
+        RowState::Working => ("▶", p.accent),
         // U+2016, one cell in a mono face; the emoji pause would not be.
         RowState::Paused => ("‖", p.overlay1),
-        RowState::Working => ("▶", p.accent),
-        RowState::Unseen => ("◆", p.teal),
-        RowState::Idle => ("○", p.overlay0),
-        RowState::Unknown => ("·", p.overlay0),
+        RowState::NoLive => ("✕", p.red),
+        RowState::Blank => (" ", p.overlay0),
     }
 }
 
-/// herdr `state_label`: the word beside a row's glyph where a surface
-/// spells the state out, and the Help legend's words.
+/// The word beside a row's glyph where a surface spells the state out, and
+/// the Help legend's words.
 pub fn state_label(state: RowState) -> &'static str {
     match state {
         RowState::Attention => "needs you",
-        RowState::Orphaned => "gone",
-        RowState::Paused => "held",
         RowState::Working => "active",
-        RowState::Unseen => "output unseen",
-        RowState::Idle => "idle",
-        RowState::Unknown => "no state yet",
+        RowState::Paused => "paused",
+        RowState::NoLive => "no live agents",
+        RowState::Blank => "blank",
     }
 }
 
@@ -448,7 +444,7 @@ pub fn render_status_line<W: WorkspaceView>(
     // the left slot before the informational counts on a narrow row. A
     // count of zero draws nothing.
     if focused_overflow(ws, chrome).is_none() {
-        let (gone, gone_color) = state_dot(RowState::Orphaned, p);
+        let (gone, gone_color) = state_dot(RowState::NoLive, p);
         for (count, text, color) in [
             (counts.idle, format!("{} idle", counts.idle), p.subtext0),
             (
@@ -853,7 +849,7 @@ mod tests {
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" ○ term-beta · Focused{:>58}", "prefix ctrl+b ")
+            format!("   term-beta · Focused{:>58}", "prefix ctrl+b ")
         );
         assert_eq!(indicator, None);
 
@@ -862,9 +858,9 @@ mod tests {
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" ○ term-beta · Read-only{:>56}", "prefix ctrl+b ")
+            format!("   term-beta · Read-only{:>56}", "prefix ctrl+b ")
         );
-        let width = display_width_u16("○ term-beta · Read-only") + 1;
+        let width = display_width_u16("  term-beta · Read-only") + 1;
         assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
         assert_eq!(
             crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome),

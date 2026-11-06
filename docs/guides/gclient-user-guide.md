@@ -51,7 +51,7 @@ Logs go to `~/.gobby/logs/gclient.log`.
 ```text
  0 | Gobby  File  Edit  View  Window  Agent  Help
  1 | tab-0:0:0  tab-0:0:1 Z │ +
- 2 |┌ ○ zsh · Focused ─────────────┐┌ ○ #1742: Codex ──────────────────┐
+ 2 |┌   zsh · Focused ─────────────┐┌   #1742: Codex ──────────────────┐
  3 |│  pane (focused)              ││  pane                            │
  4 |│                              ││                                  │
  5 |│                              ││                                  │
@@ -129,7 +129,7 @@ client's own chrome in grays: every token of the theme in force keeps its
 lightness and drops its hue. Pane contents keep their own colours. The choice is saved as
 `monochrome = true` under `[ui]` in `~/.gobby/client/prefs.toml`. The glyph
 carries the state: several states share a gray (in Dark, active and needs
-you sit at the same lightness), so read `⍾`, `▶`, `○`, and the rest, and
+you sit at the same lightness), so read `⍾`, `▶`, `‖`, `✕`, and the rest, and
 the `needs you` words, rather than the shade.
 
 The Dark and Light appearances paint their own ground: every cell and every
@@ -250,21 +250,23 @@ first in the keybinding help as the attention legend:
 
 | Glyph | State | Counts as | Means |
 | --- | --- | --- | --- |
-| `⍾` | needs you | need you | waiting on you: an approval, a question, an error it cannot pass; the row's first line also carries the words `needs you` when they fit beside the title |
-| `▶` | active | active | running a turn |
-| `○` | idle | idle | at its prompt, or ended its turn on an armed wait or background work |
-| `◆` | output unseen | idle | finished since you last looked; clears when its pane is focused |
-| `‖` | held | idle | paused on purpose or interrupted by you |
-| `◌` | gone | gone | process or relay missing (see *Orphaned terminals*) |
-| `·` | no state yet | idle | the first seconds after a spawn, before the daemon has a state |
+| `⍾` | needs you | need you | waiting on you: a question, a plan approval or a permission prompt; the row's first line also carries the words `needs you` when they fit beside the title |
+| `▶` | active | active | mid-turn, or between turns while waiting on a child run it started |
+| `‖` | paused | idle | alive but stopped: paused on purpose or interrupted by you |
+| `✕` | no live agents | gone | agents are assigned but all are dead, or the machine's daemon is unreachable |
+| (blank) | blank | idle | nothing is assigned or being worked |
+
+Project and machine rows show their needs-you and no-live counts beside the
+glyph, as in `▶ ✕2`. A rollup takes the most urgent state of its members in the
+order needs you, active, paused, no live agents, blank.
 
 A machine, project, or worktree row shows the most urgent state among its
-agents: needs you, then gone, then held, then active, then idle. A held run
-still waits on someone, so it outranks work. Output unseen and no state yet
-roll up as idle. A machine or project with no agents is idle; a worktree with
-no agents shows no glyph. The seven states display on agent rows and pane
-corners; machine, project, and worktree rows show the rolled-up five, and
-tabs show only `⍾`.
+agents: needs you, then active, then paused, then no live agents, then blank.
+A paused run still waits on someone, so it outranks work that is not waiting.
+A machine, project, or worktree with no agents is blank and draws no glyph.
+Project and machine rows also show their needs-you and no-live counts beside
+the glyph, as in `▶ ✕2`. The five states display on agent rows and pane
+corners, and tabs show only `⍾`.
 
 Only needs-you rows carry a word. A font without U+237E shows a box in place of
 `⍾`; the words still identify the row.
@@ -290,12 +292,13 @@ settings.
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
 A pane's top-left corner names who sits in it: the agent's state glyph, its
-session reference, and its definition, as in `○ #1742: Codex`. A session named
-by hand shows that name in the definition's place, as in `○ #14069: Assistant`,
-without repeating the `project#seq:` prefix the title carries. The project
-leads the reference (`○ gobby#1742: Codex`) only in the all-projects priority
-view. A seat with no definition names its provider, such as `○ Claude Code`,
-and a bare shell shows its name, such as `○ zsh`. The focused pane appends
+session reference, and its definition, as in `▶ #1742: Codex`; an idle seat
+leaves that cell blank. A session named by hand shows that name in the
+definition's place, as in `▶ #14069: Assistant`, without repeating the
+`project#seq:` prefix the title carries. The project leads the reference
+(`▶ gobby#1742: Codex`) only in the all-projects priority view. A seat with no
+definition names its provider, such as `▶ Claude Code`, and a bare shell shows
+its name, such as `zsh`, behind the same blank cell. The focused pane appends
 ` · Focused`, or ` · Read-only` / ` · Uncertain` when typing is unsafe;
 unfocused panes carry no condition word. The focused title is bold in the
 accent, a seat that needs you reads in the warning hue, and a read-only or
@@ -339,8 +342,8 @@ drew it and leaves Codex's launch settings unchanged.
 
 **Status line.** The left counts every agent on this machine by its legend
 state, whatever the sidebar shows: `⍾ 1 needs you` or `⍾ N need you`, then
-`N idle`, `N active`, and `◌ N gone`, separated by `│`. Output unseen, held, and
-no state yet count as idle, so the counts sum to the agents on this machine. A
+`N idle`, `N active`, and `✕ N gone`, separated by `│`. Paused and blank agents
+count as idle, so the counts sum to the agents on this machine. A
 count of zero draws nothing. Clicking the needs-you count opens the sidebar in
 navigate mode. An outage leads the line with
 `× Daemon unreachable · retrying in <n> s`, and the last known counts stay

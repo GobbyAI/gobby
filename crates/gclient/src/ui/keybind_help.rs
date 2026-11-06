@@ -189,37 +189,31 @@ pub fn help_rows(chrome: &Chrome, width: u16) -> Vec<Line<'static>> {
 /// The attention legend Help opens with, in the Attention board's order:
 /// each state's glyph and word, what the status counts file it under, and
 /// what it means.
-const LEGEND: [(RowState, &str, &str); 7] = [
+const LEGEND: [(RowState, &str, &str); 5] = [
     (
         RowState::Attention,
-        "need you",
-        "waiting on you: an approval, a question, an error it cannot pass",
-    ),
-    (RowState::Working, "active", "running a turn"),
-    (
-        RowState::Idle,
-        "idle",
-        "at its prompt, or ended its turn on an armed wait or background work",
+        "needs you",
+        "waiting on you: a question, a plan approval or a permission prompt",
     ),
     (
-        RowState::Unseen,
-        "idle",
-        "finished since you last looked; clears when its pane is focused",
+        RowState::Working,
+        "active",
+        "mid-turn, or between turns while waiting on a child run it started",
     ),
     (
         RowState::Paused,
         "idle",
-        "paused on purpose or interrupted by you",
+        "alive but stopped: paused on purpose or interrupted by you",
     ),
     (
-        RowState::Orphaned,
-        "n gone",
-        "process or relay missing; its own count, shown only when not zero",
+        RowState::NoLive,
+        "gone",
+        "agents are assigned but all are dead, or the machine's daemon is unreachable",
     ),
     (
-        RowState::Unknown,
+        RowState::Blank,
         "idle",
-        "the first seconds after a spawn, before the daemon has a state",
+        "nothing is assigned or being worked",
     ),
 ];
 const LEGEND_STATE_WIDTH: usize = 15;
