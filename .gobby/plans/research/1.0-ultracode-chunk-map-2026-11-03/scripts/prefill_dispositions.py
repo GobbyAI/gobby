@@ -15,13 +15,16 @@ Reviewers confirm or override every item; the prefill is a default, not a verdic
 
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I drops the script dir
-from mapcheck import load_nodes, norm_ref  # noqa: E402
+_mapcheck = importlib.import_module("mapcheck")
+load_nodes = _mapcheck.load_nodes
+norm_ref = _mapcheck.norm_ref
 
 
 def main() -> int:
