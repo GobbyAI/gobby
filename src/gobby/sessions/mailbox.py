@@ -17,7 +17,6 @@ from gobby.agents.team_communications import (
     relaunched_seat,
 )
 from gobby.sessions.clear_continuation import resolve_clear_successor
-from gobby.sessions.fanout_wake import parked_without_claim_session_ids
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
 from gobby.storage.sessions import (
@@ -240,18 +239,7 @@ class MailboxService:
                 )
             if wake is None:
                 wake = not resolution.fanout or resolution.target == "global"
-            parked: frozenset[str] = frozenset()
-            if wake and resolution.fanout:
-                parked = parked_without_claim_session_ids(self._db, recipient_ids)
-                if parked:
-                    resolution = replace(
-                        resolution,
-                        selector_metadata={
-                            **resolution.selector_metadata,
-                            "parked_recipients": len(parked),
-                        },
-                    )
-            wake_session_ids = [r for r in recipient_ids if r not in parked] if wake else []
+            wake_session_ids = list(recipient_ids) if wake else []
             owed_wake = frozenset(wake_session_ids)
             if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
                 raise ValueError("message_id requires exactly one direct recipient")

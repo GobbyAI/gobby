@@ -243,7 +243,11 @@ class TestWakeDispatch:
         ism_manager: MagicMock,
         tmux_sender: AsyncMock,
     ) -> None:
-        """An explicitly urgent completion keeps the immediate wake path."""
+        """An urgent completion never types into an active turn (#25830).
+
+        Typed input steers the running turn whatever the priority, so the urgent
+        notification persists for the hook mailbox and no terminal write happens.
+        """
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
@@ -263,10 +267,10 @@ class TestWakeDispatch:
             {"status": "failed", "priority": "urgent"},
         )
 
-        assert result["delivered"] is True
-        assert result["method"] == "terminal"
+        assert result["delivered"] is False
+        assert result["skipped"] == "session_active"
         assert result["ism_persisted"] is True
-        tmux_sender.assert_awaited_once()
+        tmux_sender.assert_not_awaited()
         assert ism_manager.create_message.call_args.kwargs["priority"] == "urgent"
 
     @pytest.mark.asyncio

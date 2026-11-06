@@ -25,14 +25,17 @@ Everything in this directory is a **template**, not active enforcement.
 
 Cross-session message content has no wake semantics. Omitting `wake` requests
 immediate processing for direct `session`, `parent`, and `agent` targets. Fanout
-(`global`, and `project` with `wake=true`) live-wakes only active recipients and
-recipients holding a claimed task; an idle, paused, or waiting recipient with no
-claimed task keeps its message queued for its next turn. Otherwise `project` fanout
-stays queued without live wakes, and `wake=false` queues any target without a live
-wake. `wake=true` on a direct target requests immediate processing and may steer an
-active turn. Sessions that are interrupted, awaiting input, awaiting approval, or
-awaiting handoff retain the durable mailbox row without daemon input until provider
-evidence makes wake safe.
+(`global`, and `project` with `wake=true`) applies the same rule to each recipient,
+with no claimed-task filter. A wake types `[Gobby] Check messages` only into a seat
+that is idle, paused, or waiting, with no open turn and a composer the terminal ledger
+confirms empty; that seat then processes its queue without operator input. An active
+turn takes no typed input at any priority; its message arrives through the hook
+mailbox on its next tool call. A draft, held, or unconfirmed composer, and an
+interrupted, input-, approval-, or handoff-waiting seat, also take no typed input, so
+the message stays queued until the seat is safe to wake. The one handoff exception is
+the `get_handoff` continuation of an awaiting-handoff terminal with a confirmed compact
+boundary and an empty composer. Otherwise `project` fanout stays queued without live
+wakes, and `wake=false` queues any target without a live wake.
 
 Recipient admission comes from installed agent definitions. A recipient's
 `message_sender_capabilities` requires any listed capability from the sender's
@@ -40,9 +43,8 @@ definition; an empty list admits every sender. The daemon's system sender and
 the operator's own unspawned terminal are exempt. The bundled Orchestrator
 requires `message_restricted_seats`, granted to the Assistant, Triage and
 Orchestrator definitions. A refused direct send returns
-`message_recipient_not_allowed`; fanout withholds that recipient. Triage sends
-every message to the Orchestrator with `wake=true`, including digests. Omitted
-`wake` follows the ordinary direct-target default for every definition.
+`message_recipient_not_allowed`; fanout withholds that recipient. Omitted `wake`
+follows the ordinary direct-target default for every definition.
 
 Use a targetless `project` broadcast for coordination inside the current repository.
 Use targetless `global` only for machine-local coordination across projects. The

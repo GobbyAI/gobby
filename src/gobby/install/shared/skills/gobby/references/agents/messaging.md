@@ -19,15 +19,19 @@ broadcast/wake failures before retrying.
 
 Content never implies wake. Omitting `wake` requests immediate processing for direct
 `session`, `parent`, and `agent` targets. Fanout (`global`, and `project` with
-`wake=true`) live-wakes only active recipients and recipients holding a claimed task;
-an idle, paused, or waiting recipient with no claimed task keeps its message queued
-for its next turn, so send it a direct message to wake it. Otherwise `project` fanout
-stays queued without live wakes, and `wake=false` queues any target without a live
-wake. The daemon sends restart and cutover notices itself as system globals: a hold
-before it stops and DAEMON BACK once healthy. Active seats and seats holding a claimed
-task wake on them. Never compose them by hand. A requested wake may steer active work;
-interrupted or input/approval/handoff-waiting sessions retain the message without
-unsafe daemon input. A successful send is durable queuing, not evidence that the
+`wake=true`) applies that same rule to each recipient, with no claimed-task filter. A
+wake types `[Gobby] Check messages` only into an idle, paused, or waiting seat whose
+composer the terminal ledger confirms empty and that has no open turn; the seat then
+processes its queue without operator input. An active turn takes no typed input at any
+priority: its message arrives through the hook mailbox on its next tool call. A draft,
+held, or unconfirmed composer, and an interrupted, input-, approval-, or
+handoff-waiting seat, take no typed input either, so the message stays queued until the
+seat is safe to wake. The one handoff exception is the `get_handoff` continuation of an
+awaiting-handoff terminal with a confirmed compact boundary and an empty composer.
+Otherwise `project` fanout stays queued without live wakes, and `wake=false` queues any
+target without a live wake. The daemon sends restart and cutover notices itself as
+system globals: a hold before it stops and DAEMON BACK once healthy. Never compose them
+by hand. A successful send is durable queuing, not evidence that the
 recipient read or acted on it. Use `get_inter_session_message` for a message ID
 and `get_inter_session_messages` for supported bounded mailbox filters. Read all
 needed windows; lists are not automatically exhaustive.
@@ -114,5 +118,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 2.2.0_
-_Last verified: 2026-11-04_
+_Version: 2.3.0_
+_Last verified: 2026-11-06_

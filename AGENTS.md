@@ -90,13 +90,18 @@ how the system behaves so you can work with it instead of being surprised by it.
     the applicable `wait_for_*` primitive and yield the turn. Reserve sleeps,
     repeated status calls, and repeated `capture_output` for bounded diagnostics.
     Message text never wakes a session. Omitting `wake` requests immediate processing
-    for direct `session`, `parent`, and `agent` targets. Fanout (`global`, and `project`
-    with `wake=true`) live-wakes only active recipients and recipients holding a claimed
-    task; an idle, paused, or waiting recipient with no claimed task keeps its message
-    queued for its next turn. Otherwise `project` fanout stays queued without live
-    wakes, and `wake=false` queues any target without a live wake. A wake may
-    steer active work; interrupted, input/approval-waiting, and handoff-waiting
-    sessions keep the durable message queued without daemon input.
+    for direct `session`, `parent`, and `agent` targets, and fanout (`global`, and
+    `project` with `wake=true`) applies the same rule to each recipient, with no
+    claimed-task filter. A wake types `[Gobby] Check messages` only into a seat that is
+    idle, paused, or waiting, with no open turn and a composer the terminal ledger
+    confirms empty; that seat then processes its queue without operator input. An
+    active turn takes no typed input at any priority; its message arrives through the
+    hook mailbox on its next tool call. A draft, held, or unconfirmed composer, and an
+    interrupted, input-, approval-, or handoff-waiting seat, also take no typed input,
+    so the message stays queued until the seat is safe to wake. The one handoff
+    exception is the `get_handoff` continuation of an awaiting-handoff terminal with a
+    confirmed compact boundary and an empty composer. Otherwise `project` fanout stays
+    queued without live wakes, and `wake=false` queues any target without a live wake.
     Use one targetless `project` send for repository coordination and `global` for
     machine-local coordination across projects. The daemon sends restart and cutover
     announcements itself. Recipient admission follows installed definitions:
@@ -104,8 +109,8 @@ how the system behaves so you can work with it instead of being surprised by it.
     the daemon and the operator's own unspawned terminal are exempt. Refused direct
     sends return `message_recipient_not_allowed`, and fanout withholds that recipient.
     The bundled Orchestrator requires `message_restricted_seats`; other seats report
-    to Triage or their Dev Team Lead. Triage sends to the Orchestrator with `wake=true`.
-    Omitted `wake` follows the same direct-target default for every definition.
+    to Triage or their Dev Team Lead. Omitted `wake` follows the same direct-target
+    default for every definition.
 13. A denied call is about that call, never a standing policy. Approval prompts
     do not always name the tool being invoked, so a rejection can mean "not that,
     not now" or simply a misread. Adjust and continue. If you decide to stop

@@ -392,7 +392,7 @@ class TestMailboxDirectSend:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("priority", ["normal", "urgent"])
-    async def test_active_mailbox_wake_uses_shared_priority_policy(
+    async def test_active_mailbox_wake_types_nothing_at_any_priority(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -424,33 +424,21 @@ class TestMailboxDirectSend:
             priority=priority,
         )
 
-        if priority == "normal":
-            assert result.wake_results == [
-                {
-                    "session_id": recipient.id,
-                    "delivered": False,
-                    "method": "next_call_context",
-                    "skipped": "session_active",
-                    "decline_reason": "session_active",
-                    "ism_persisted": True,
-                    "session_status": "active",
-                    "message_id": result.message_ids[0],
-                }
-            ]
-            native_sender.assert_not_awaited()
-        else:
-            assert result.wake_results == [
-                {
-                    "session_id": recipient.id,
-                    "delivered": True,
-                    "method": "terminal",
-                    "session_status": "active",
-                    "message_id": result.message_ids[0],
-                }
-            ]
-            native_sender.assert_awaited_once()
-            assert native_sender.await_args is not None
-            assert native_sender.await_args.args[0] == terminal.id
+        # An active turn takes no typed input at any priority (#25830); the message
+        # waits in the hook mailbox.
+        assert result.wake_results == [
+            {
+                "session_id": recipient.id,
+                "delivered": False,
+                "method": "next_call_context",
+                "skipped": "session_active",
+                "decline_reason": "session_active",
+                "ism_persisted": True,
+                "session_status": "active",
+                "message_id": result.message_ids[0],
+            }
+        ]
+        native_sender.assert_not_awaited()
         rows = temp_db.fetchall("SELECT id, priority FROM inter_session_messages")
         assert rows == [{"id": result.message_ids[0], "priority": priority}]
 
@@ -1075,9 +1063,10 @@ class TestMailboxBroadcast:
             priority="urgent",
         )
 
-        # child-paused is parked with no claimed task: its durable row owes no live wake.
+        # child-paused is parked with no claimed task; it gets the same per-recipient live
+        # wake as every other fanout recipient (#25830).
         assert ids["child-paused"] in result.recipient_session_ids
-        assert ids["child-paused"] not in result.wake_session_ids
+        assert ids["child-paused"] in result.wake_session_ids
         assert dispatcher.calls == []
         assert dispatcher.batch_calls == [(result.wake_session_ids, "urgent")]
         assert dispatcher.durable_seen is True
@@ -1271,7 +1260,6 @@ class TestMailboxBroadcast:
                 "machine_id": sender.machine_id,
                 "project_id": None,
             },
-            "parked_recipients": 1,
             "recipient_states": [
                 {"session_id": active.id, "status": "active"},
                 {"session_id": paused.id, "status": "paused"},

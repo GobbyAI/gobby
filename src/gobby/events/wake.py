@@ -576,9 +576,9 @@ class WakeDispatcher:
 
         # Context-capable hooks inject the durable message on the next model call.
         # Submitting terminal input while a provider is active would steer that turn
-        # and cancel its in-flight tool batch. Check after acquiring the lock and
-        # refreshing lifecycle state for both mailbox and completion wakes.
-        if getattr(session, "status", None) == "active" and priority != "urgent":
+        # and cancel its in-flight tool batch, so an active turn takes no typed input at
+        # any priority. Check after acquiring the lock and refreshing lifecycle state.
+        if getattr(session, "status", None) == "active":
             if self._activity_probe is not None and self._restart_horizon_ms is not None:
                 terminal_route = await self._terminal_route_for_session(session)
                 reconciled = await reconcile_restart_stale_session(
@@ -720,7 +720,7 @@ class WakeDispatcher:
                 error_message=f"Session {session_id} not found",
             )
         status = getattr(session, "status", None)
-        if status == "active" and priority != "urgent":
+        if status == "active":
             return session, {
                 "session_id": session_id,
                 "delivered": False,
@@ -769,15 +769,15 @@ class WakeDispatcher:
         Returns the withheld outcome (``None`` to deliver) and whether the composer
         was confirmed empty; only an unconfirmed delivery keeps the drain.
 
-        ``empty`` authorizes typing, and ``held`` daemon text is drained first. A
-        human ``draft`` blocks, and so does ``unknown``: a blocked or untracked
-        entry (a gap, an interrupt, a provider limit, a tmux pane) whose composer
-        only a submit or an operator release vouches for again. Its durable
-        messages arrive through hook context on its next tool call instead. A
-        missing probe has no safer read to offer, so it stays on its existing
-        path; a probe *error* withholds and retries. Priority remains on the
-        durable notification; it never authorizes typing over a draft. No
-        debounce record is written, so the next wake probes again.
+        ``empty`` alone authorizes typing. A ``held`` composer (daemon text staged
+        and unsubmitted) and a human ``draft`` block, and so does ``unknown``: a
+        blocked or untracked entry (a gap, an interrupt, a provider limit, a tmux
+        pane, a permission or credential prompt) whose composer only a submit or an
+        operator release vouches for again. Its durable messages arrive through hook
+        context on its next tool call instead. A missing probe has no safer read to
+        offer, so it stays on its existing path; a probe *error* withholds and
+        retries. Priority never authorizes typing, and no debounce record is written,
+        so the next wake probes again.
 
         An open transcript turn blocks even on an ``empty`` composer: the row was
         reconciled idle earlier, so a turn that started since then would be
@@ -839,8 +839,8 @@ class WakeDispatcher:
             # False forces the existing clear-before-submit path, even on an empty ledger.
             return None, False
         state = activity.composer.state
-        if state in {"empty", "held"}:
-            return None, state == "empty"
+        if state == "empty":
+            return None, True
         if state == "draft":
             logger.warning(
                 "wake for session %s deferred: composer holds an operator draft", session_id

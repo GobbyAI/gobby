@@ -80,7 +80,7 @@ async def dispatch_live_wakes(
             # rechecks, so use the single-recipient path instead of the batch's
             # common check-messages payload.
             status = getattr(session, "status", None)
-            if status == "awaiting_handoff" or (status == "active" and priority != "urgent"):
+            if status in {"active", "awaiting_handoff"}:
                 fallback.append((session_id, session))
                 continue
             if (
