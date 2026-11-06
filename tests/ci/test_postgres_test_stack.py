@@ -752,6 +752,7 @@ def test_falkor_live_tests_default_to_the_test_stack_port(repo_root: Path) -> No
     for relative in (
         "tests/memory/test_recall_benchmark.py",
         "tests/memory/test_recall_benchmark_e2e.py",
+        "tests/memory/test_graph_traversal_live.py",
     ):
         text = (repo_root / relative).read_text()
         assert '"GOBBY_TEST_FALKOR_PORT", "26379"' in text, relative

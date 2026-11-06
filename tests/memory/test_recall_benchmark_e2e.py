@@ -320,7 +320,7 @@ async def _build_service(
         )
         for mem in corpus
     }
-    service._extractor = _StubExtractor(by_content)  # type: ignore[assignment]
+    service._extractor = _StubExtractor(by_content)
 
     for mem in corpus:
         result = await service.add_to_graph(

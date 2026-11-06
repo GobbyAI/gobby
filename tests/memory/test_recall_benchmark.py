@@ -143,7 +143,7 @@ async def _run_arm(
         cluster_min_cluster_size=cluster_min_cluster_size,
         cluster_min_samples=cluster_min_samples,
     )
-    service._extractor = _StubExtractor(by_content)  # type: ignore[assignment]
+    service._extractor = _StubExtractor(by_content)
 
     for mem in corpus:
         result = await service.add_to_graph(
