@@ -1,12 +1,19 @@
 use super::super::{
-    Inventory, MissingClass, MissingGroup, OrphanClass, inventory, inventory_digest,
+    Inventory, MissingClass, MissingGroup, OrphanClass, ReconcileReceipt, apply,
+    apply_with_persist, inventory, inventory_digest,
 };
-use crate::config::{CodeVectorSettings, Context, ProjectIndexScope, QdrantConfig};
+use crate::config::{
+    CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, Context, ProjectIndexScope, QdrantConfig,
+};
 use crate::db;
+use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::models::{CODE_INDEX_UUID_NAMESPACE, Symbol};
+use crate::vector::code_symbols;
 use crate::vector::code_symbols::tests::spawn_http_responses;
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// A project with seeded PostgreSQL versions, symbols and machine references.
@@ -427,5 +434,756 @@ fn dry_run_treats_missing_collection_as_empty() -> anyhow::Result<()> {
             symbols: 2,
         },
     );
+    Ok(())
+}
+
+fn orphan_points(count: usize) -> Vec<(String, Value)> {
+    (0..count)
+        .map(|_| (Uuid::new_v4().to_string(), json!({})))
+        .collect()
+}
+
+/// One synced version whose only symbol is absent from Qdrant, plus one orphan point.
+/// Apply resets the version and deletes the orphan.
+fn seed_reset_and_orphan(fixture: &mut Fixture) -> anyhow::Result<(Vec<(String, Value)>, String)> {
+    let hash = "e".repeat(64);
+    let version = fixture.version("src/reset.rs", &hash, true)?;
+    fixture.reference("src/reset.rs", &hash)?;
+    fixture.symbol("src/reset.rs", &hash, "reset1", "function", 0)?;
+    Ok((orphan_points(1), version))
+}
+
+fn dry_run(fixture: &Fixture, points: Vec<(String, Value)>) -> anyhow::Result<Inventory> {
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    let report = inventory(&fixture.context(url))?;
+    handle.join().expect("qdrant test server");
+    Ok(report)
+}
+
+fn delete_ok() -> (u16, Value) {
+    (
+        200,
+        json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok", "time": 0.0}),
+    )
+}
+
+fn delete_failed() -> (u16, Value) {
+    (
+        500,
+        json!({"status": {"error": "injected delete failure"}, "time": 0.0}),
+    )
+}
+
+fn delete_requests(requests: &[String]) -> Vec<&String> {
+    requests
+        .iter()
+        .filter(|request| request.contains("/points/delete"))
+        .collect()
+}
+
+/// Point IDs named by one `/points/delete` request.
+fn deleted_ids(request: &str) -> Vec<String> {
+    let body = request
+        .split("\r\n\r\n")
+        .nth(1)
+        .expect("delete request has a body");
+    let body: Value = serde_json::from_str(body).expect("delete body is JSON");
+    body["points"]
+        .as_array()
+        .expect("delete body names points")
+        .iter()
+        .map(|id| id.as_str().expect("point ID is a string").to_string())
+        .collect()
+}
+
+fn receipt_on_disk(path: &Path) -> ReconcileReceipt {
+    let text = std::fs::read_to_string(path).expect("receipt is on disk");
+    serde_json::from_str(&text).expect("receipt parses")
+}
+
+#[derive(Clone, Copy)]
+enum WriteFailure {
+    BeforeRecord,
+    AfterRecord,
+}
+
+/// Receipt writer double. Write numbers are 1-based and count every receipt write.
+#[derive(Default)]
+struct Recorder {
+    writes: usize,
+    failure: Option<(usize, WriteFailure)>,
+    recorded: Vec<ReconcileReceipt>,
+}
+
+impl Recorder {
+    fn failing(write: usize, failure: WriteFailure) -> Self {
+        Self {
+            failure: Some((write, failure)),
+            ..Self::default()
+        }
+    }
+
+    fn persist(&mut self, receipt: &ReconcileReceipt) -> anyhow::Result<()> {
+        self.writes += 1;
+        let failure = self
+            .failure
+            .and_then(|(write, failure)| (write == self.writes).then_some(failure));
+        match failure {
+            Some(WriteFailure::BeforeRecord) => {
+                anyhow::bail!("injected receipt write failure before recording")
+            }
+            Some(WriteFailure::AfterRecord) => {
+                self.recorded.push(receipt.clone());
+                anyhow::bail!("injected receipt write failure after publishing")
+            }
+            None => {
+                self.recorded.push(receipt.clone());
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_deletes_only_disowned_ids_and_writes_receipt() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    // Synced and referenced, one of two symbol points missing: apply resets it.
+    let a_hash = "a".repeat(64);
+    let a_version = fixture.version("src/a.rs", &a_hash, true)?;
+    fixture.reference("src/a.rs", &a_hash)?;
+    let a_present = fixture.symbol("src/a.rs", &a_hash, "a1", "function", 0)?;
+    fixture.symbol("src/a.rs", &a_hash, "a2", "function", 10)?;
+
+    // Synced with every symbol point present: apply leaves it alone.
+    let e_hash = "e".repeat(64);
+    let e_version = fixture.version("src/e.rs", &e_hash, true)?;
+    fixture.reference("src/e.rs", &e_hash)?;
+    let e_symbol = fixture.symbol("src/e.rs", &e_hash, "e1", "function", 0)?;
+
+    // Pending with a missing symbol point: already unsynced, not reset.
+    let c_hash = "c".repeat(64);
+    let c_version = fixture.version("src/c.rs", &c_hash, false)?;
+    fixture.reference("src/c.rs", &c_hash)?;
+    fixture.symbol("src/c.rs", &c_hash, "c1", "function", 0)?;
+
+    let live = vec![
+        (a_present, payload("src/a.rs", "a1", "function", 0)),
+        (e_symbol, payload("src/e.rs", "e1", "function", 0)),
+    ];
+    let legacy_id = Uuid::new_v4().to_string();
+    let unattributed_id = Uuid::new_v4().to_string();
+    let mut points = live.clone();
+    points.push((legacy_id.clone(), json!({})));
+    points.push((
+        unattributed_id.clone(),
+        payload("src/none.rs", "x", "function", 1),
+    ));
+
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
+    let receipt = apply(&fixture.context(url), &digest, &receipt_path)?;
+    let requests = handle.join().expect("qdrant test server");
+
+    let deletes = delete_requests(&requests);
+    assert_eq!(deletes.len(), 1, "both orphans fit one batch: {requests:?}");
+    let mut sent = deleted_ids(deletes[0]);
+    sent.sort();
+    let mut orphans = vec![legacy_id, unattributed_id];
+    orphans.sort();
+    assert_eq!(sent, orphans, "only disowned IDs are deleted");
+
+    assert!(receipt.complete, "the apply run completes");
+    assert_eq!(
+        receipt,
+        receipt_on_disk(&receipt_path),
+        "the receipt on disk is the returned one"
+    );
+    assert_eq!(receipt.digest, digest);
+    assert_eq!(receipt.versions_reset, vec![a_version.clone()]);
+    let mut recorded: Vec<String> = receipt.deleted.iter().flatten().cloned().collect();
+    recorded.sort();
+    assert_eq!(
+        recorded, orphans,
+        "the receipt records every deleted orphan"
+    );
+    assert!(
+        !fixture.vectors_synced(&a_version)?,
+        "the synced-missing version is reset"
+    );
+    assert!(
+        fixture.vectors_synced(&e_version)?,
+        "a complete version keeps its flag"
+    );
+    assert!(
+        !fixture.vectors_synced(&c_version)?,
+        "a pending version stays pending"
+    );
+
+    let after = dry_run(&fixture, live)?;
+    assert!(
+        after.orphans.values().all(Vec::is_empty),
+        "an immediate dry run finds no orphans"
+    );
+    assert!(
+        after.missing[&MissingClass::SyncedMissingCurrent]
+            .version_ids
+            .is_empty()
+            && after.missing[&MissingClass::SyncedMissingRetained]
+                .version_ids
+                .is_empty(),
+        "an immediate dry run finds no synced-missing versions",
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_is_busy_without_mutation_when_lease_is_held() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let hash = "d".repeat(64);
+    let version = fixture.version("src/busy.rs", &hash, true)?;
+    fixture.reference("src/busy.rs", &hash)?;
+    fixture.symbol("src/busy.rs", &hash, "busy1", "function", 0)?;
+    fixture.symbol("src/busy.rs", &hash, "busy2", "function", 10)?;
+
+    // Another session holds the project's maintenance lease.
+    let mut holder = db::connect_readwrite(&fixture.database_url)?;
+    let _held = lease_project_lock(
+        &mut holder,
+        &fixture.project_id,
+        IndexLockPolicy::maintenance_try(),
+    )?
+    .expect("the holder takes the lease first");
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![]);
+    let error = apply(
+        &fixture.context(url),
+        &format!("sha256:{}", "0".repeat(64)),
+        &receipt_path,
+    )
+    .expect_err("a held lease refuses the apply");
+    let requests = handle.join().expect("qdrant test server");
+
+    assert!(
+        error.to_string().contains("project index is busy"),
+        "unexpected refusal: {error:#}",
+    );
+    assert!(
+        requests.is_empty(),
+        "no Qdrant request after a busy lease: {requests:?}"
+    );
+    assert!(!receipt_path.exists(), "no receipt is written");
+    assert!(fixture.vectors_synced(&version)?, "the flag stays synced");
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_refuses_when_inventory_changes_under_lease() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let steady_hash = "5".repeat(64);
+    let steady = fixture.version("src/steady.rs", &steady_hash, true)?;
+    fixture.reference("src/steady.rs", &steady_hash)?;
+    fixture.symbol("src/steady.rs", &steady_hash, "s1", "function", 0)?;
+
+    // A pending version whose symbol is not yet in PostgreSQL: its point is a
+    // reparsed-version orphan until the symbol row appears.
+    let gained_hash = "6".repeat(64);
+    fixture.version("src/gained.rs", &gained_hash, false)?;
+    let gained_id = Symbol::make_id(
+        &fixture.project_id,
+        "src/gained.rs",
+        &gained_hash,
+        "gained",
+        "function",
+        20,
+    );
+    let points = vec![(
+        gained_id,
+        payload("src/gained.rs", "gained", "function", 20),
+    )];
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    // The symbol gains the orphan's ID between the dry run and apply.
+    fixture.symbol("src/gained.rs", &gained_hash, "gained", "function", 20)?;
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    let error = apply(&fixture.context(url), &digest, &receipt_path)
+        .expect_err("a changed inventory refuses the apply");
+    let requests = handle.join().expect("qdrant test server");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&digest),
+        "refusal names the expected digest: {message}"
+    );
+    assert_eq!(
+        message.matches("sha256:").count(),
+        2,
+        "refusal names both digests: {message}"
+    );
+    assert_eq!(
+        requests.len(),
+        1,
+        "only the rebuilt inventory's scroll is sent: {requests:?}"
+    );
+    assert!(!receipt_path.exists(), "no receipt is written");
+    assert!(
+        fixture.vectors_synced(&steady)?,
+        "no flag changes under a refused apply"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_records_partial_receipt_on_qdrant_failure() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (mut points, version) = seed_reset_and_orphan(&mut fixture)?;
+    // 257 orphans: batches of 256 and 1.
+    points.extend(orphan_points(256));
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) =
+        spawn_http_responses(vec![scroll_page(points), delete_ok(), delete_failed()]);
+    let error = apply(&fixture.context(url), &digest, &receipt_path)
+        .expect_err("a failed Qdrant batch fails the run");
+    let requests = handle.join().expect("qdrant test server");
+
+    let deletes = delete_requests(&requests);
+    assert_eq!(deletes.len(), 2, "the run stops at the failed second batch");
+    let receipt = receipt_on_disk(&receipt_path);
+    assert!(!receipt.complete, "a partial run is not complete");
+    assert_eq!(
+        receipt.deleted,
+        vec![deleted_ids(deletes[0])],
+        "the receipt lists the batch that was deleted",
+    );
+    assert_eq!(receipt.versions_reset, vec![version]);
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&receipt_path.display().to_string()),
+        "the error names the receipt: {message}"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_resets_only_synced_missing_versions() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (mut points, reset_version) = seed_reset_and_orphan(&mut fixture)?;
+
+    // Pending with a missing symbol point: its flag is already false and it is not reset.
+    let pending_hash = "p".repeat(64);
+    let pending = fixture.version("src/pending.rs", &pending_hash, false)?;
+    fixture.reference("src/pending.rs", &pending_hash)?;
+    fixture.symbol("src/pending.rs", &pending_hash, "p1", "function", 0)?;
+
+    // Synced with every symbol point present.
+    let complete_hash = "k".repeat(64);
+    let complete = fixture.version("src/complete.rs", &complete_hash, true)?;
+    fixture.reference("src/complete.rs", &complete_hash)?;
+    let complete_symbol = fixture.symbol("src/complete.rs", &complete_hash, "k1", "function", 0)?;
+    points.push((
+        complete_symbol,
+        payload("src/complete.rs", "k1", "function", 0),
+    ));
+
+    // Another project's synced-missing version keeps its flag.
+    let mut other = Fixture::new()?;
+    let other_hash = "o".repeat(64);
+    let other_version = other.version("src/other.rs", &other_hash, true)?;
+    other.reference("src/other.rs", &other_hash)?;
+    other.symbol("src/other.rs", &other_hash, "o1", "function", 0)?;
+
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
+    let receipt = apply(&fixture.context(url), &digest, &receipt_path)?;
+    handle.join().expect("qdrant test server");
+
+    assert_eq!(receipt.planned_versions_reset, vec![reset_version.clone()]);
+    assert_eq!(receipt.versions_reset, vec![reset_version.clone()]);
+    assert!(!fixture.vectors_synced(&reset_version)?);
+    assert!(
+        !fixture.vectors_synced(&pending)?,
+        "a pending version stays unsynced"
+    );
+    assert!(
+        fixture.vectors_synced(&complete)?,
+        "a complete version keeps its flag"
+    );
+    assert!(
+        other.vectors_synced(&other_version)?,
+        "another project's version keeps its flag"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_makes_no_mutation_when_initial_receipt_write_fails() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (points, version) = seed_reset_and_orphan(&mut fixture)?;
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    // A private receipt directory the caller cannot write into.
+    let parent = tempfile::tempdir()?;
+    let locked = parent.path().join("receipts");
+    std::fs::create_dir(&locked)?;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500))?;
+    let receipt_path = locked.join("reconcile-receipt.json");
+
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    let error = apply(&fixture.context(url), &digest, &receipt_path)
+        .expect_err("an unwritable receipt refuses the apply");
+    let requests = handle.join().expect("qdrant test server");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700))?;
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&receipt_path.display().to_string()),
+        "the error names the receipt: {message}"
+    );
+    assert!(
+        delete_requests(&requests).is_empty(),
+        "no Qdrant delete is sent: {requests:?}"
+    );
+    assert!(fixture.vectors_synced(&version)?, "no flag is reset");
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_refuses_foreign_receipt_before_mutation() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (points, version) = seed_reset_and_orphan(&mut fixture)?;
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    // A receipt for the same project and collection but a different digest.
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let foreign = ReconcileReceipt {
+        digest: format!("sha256:{}", "f".repeat(64)),
+        project_id: fixture.project_id.clone(),
+        collection: code_symbols::collection_name(
+            CODE_SYMBOL_COLLECTION_PREFIX,
+            &fixture.project_id,
+        )?,
+        planned_orphans: BTreeMap::new(),
+        planned_versions_reset: Vec::new(),
+        versions_reset: Vec::new(),
+        deleted: Vec::new(),
+        complete: true,
+    };
+    std::fs::write(&receipt_path, serde_json::to_vec(&foreign)?)?;
+    std::fs::set_permissions(&receipt_path, std::fs::Permissions::from_mode(0o600))?;
+
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    let error = apply(&fixture.context(url), &digest, &receipt_path)
+        .expect_err("a foreign receipt refuses the apply");
+    let requests = handle.join().expect("qdrant test server");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&receipt_path.display().to_string()),
+        "the error names the receipt: {message}"
+    );
+    assert!(
+        delete_requests(&requests).is_empty(),
+        "no Qdrant delete is sent: {requests:?}"
+    );
+    assert_eq!(
+        receipt_on_disk(&receipt_path),
+        foreign,
+        "the foreign receipt is left as written"
+    );
+    assert!(fixture.vectors_synced(&version)?, "no flag is reset");
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_reset_survives_adoption_of_retained_version() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    // Synced, referenced by no machine, symbol absent: a retained version apply resets.
+    let hash = "r".repeat(64);
+    let retained = fixture.version("src/retained.rs", &hash, true)?;
+    fixture.symbol("src/retained.rs", &hash, "r1", "function", 0)?;
+    let points = orphan_points(1);
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
+    let receipt = apply(&fixture.context(url), &digest, &receipt_path)?;
+    handle.join().expect("qdrant test server");
+    assert_eq!(receipt.versions_reset, vec![retained.clone()]);
+
+    // This machine later adopts the same content. The reset flag must block adoption.
+    let adopted = crate::index::api::file_state::adopt_file_state(
+        &mut fixture.conn,
+        &fixture.machine_id,
+        &fixture.project_id,
+        "src/retained.rs",
+        &hash,
+        Path::new("/nonexistent/reconcile-adoption"),
+        crate::index::api::IndexWriteMode::Overlay,
+    )?;
+    assert!(!adopted, "an unsynced version is not adopted");
+    assert!(
+        !fixture.vectors_synced(&retained)?,
+        "the reset flag survives adoption"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_stops_before_deletes_when_reset_receipt_write_fails() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (points, version) = seed_reset_and_orphan(&mut fixture)?;
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    // Writes: 1 initial, 2 after the reset commit.
+    let mut recorder = Recorder::failing(2, WriteFailure::BeforeRecord);
+    let error = apply_with_persist(
+        &fixture.context(url),
+        &digest,
+        &receipt_path,
+        &mut |receipt| recorder.persist(receipt),
+    )
+    .expect_err("a failed reset receipt write refuses the run");
+    let requests = handle.join().expect("qdrant test server");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&receipt_path.display().to_string()),
+        "stderr names the receipt: {message}"
+    );
+    assert!(
+        message.contains("versions_reset: 1"),
+        "stderr gives the confirmed reset count: {message}"
+    );
+    assert!(
+        delete_requests(&requests).is_empty(),
+        "no delete follows the failed write: {requests:?}"
+    );
+    assert!(
+        !fixture.vectors_synced(&version)?,
+        "the committed reset stays"
+    );
+    assert_eq!(
+        recorder.recorded.len(),
+        1,
+        "only the initial receipt was recorded"
+    );
+    let last = &recorder.recorded[0];
+    assert!(
+        last.versions_reset.is_empty() && last.deleted.is_empty() && !last.complete,
+        "the last recorded receipt is the initial one: {last:?}",
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_stops_after_first_batch_when_receipt_write_fails() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (mut points, version) = seed_reset_and_orphan(&mut fixture)?;
+    // 257 orphans: batches of 256 and 1.
+    points.extend(orphan_points(256));
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
+    // Writes: 1 initial, 2 after the reset, 3 after the first batch.
+    let mut recorder = Recorder::failing(3, WriteFailure::BeforeRecord);
+    let error = apply_with_persist(
+        &fixture.context(url),
+        &digest,
+        &receipt_path,
+        &mut |receipt| recorder.persist(receipt),
+    )
+    .expect_err("a failed batch receipt write refuses the run");
+    let requests = handle.join().expect("qdrant test server");
+
+    let deletes = delete_requests(&requests);
+    assert_eq!(deletes.len(), 1, "no second batch is sent: {requests:?}");
+    let message = format!("{error:#}");
+    for id in deleted_ids(deletes[0]) {
+        assert!(
+            message.contains(&id),
+            "stderr lists the first batch's IDs: {id}"
+        );
+    }
+    let last = recorder
+        .recorded
+        .last()
+        .expect("the initial and reset receipts were recorded");
+    assert_eq!(last.versions_reset, vec![version]);
+    assert!(
+        last.deleted.is_empty(),
+        "the batch is not recorded: {last:?}"
+    );
+    assert!(!last.complete, "the recorded receipt is partial");
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_exits_nonzero_when_final_receipt_write_fails() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (points, _version) = seed_reset_and_orphan(&mut fixture)?;
+    let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+    let receipt_dir = tempfile::tempdir()?;
+    let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
+    // Writes: 1 initial, 2 after the reset, 3 after the batch, 4 final.
+    let mut recorder = Recorder::failing(4, WriteFailure::BeforeRecord);
+    let error = apply_with_persist(
+        &fixture.context(url),
+        &digest,
+        &receipt_path,
+        &mut |receipt| recorder.persist(receipt),
+    )
+    .expect_err("a failed final receipt write exits nonzero");
+    let requests = handle.join().expect("qdrant test server");
+
+    let deletes = delete_requests(&requests);
+    assert_eq!(
+        deletes.len(),
+        1,
+        "the batch was deleted before the final write"
+    );
+    let last = recorder
+        .recorded
+        .last()
+        .expect("earlier receipts were recorded");
+    assert!(!last.complete, "the last recorded receipt is not complete");
+    assert_eq!(last.deleted, vec![deleted_ids(deletes[0])]);
+    assert!(
+        format!("{error:#}").contains(&receipt_path.display().to_string()),
+        "the error names the receipt: {error:#}"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn apply_reports_unconfirmed_when_published_receipt_write_fails() -> anyhow::Result<()> {
+    // Each case publishes a receipt and then fails: the reset write (write 2) with no
+    // delete after it, and the final write (write 4) after the single batch.
+    for (write, expected_deletes) in [(2_usize, 0_usize), (4, 1)] {
+        let mut fixture = Fixture::new()?;
+        let (points, version) = seed_reset_and_orphan(&mut fixture)?;
+        let digest = dry_run(&fixture, points.clone())?.inventory_digest;
+
+        let receipt_dir = tempfile::tempdir()?;
+        let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
+        let mut responses = vec![scroll_page(points)];
+        if expected_deletes > 0 {
+            responses.push(delete_ok());
+        }
+        let (url, handle) = spawn_http_responses(responses);
+        let mut recorder = Recorder::failing(write, WriteFailure::AfterRecord);
+        let error = apply_with_persist(
+            &fixture.context(url),
+            &digest,
+            &receipt_path,
+            &mut |receipt| recorder.persist(receipt),
+        )
+        .expect_err("a failed receipt publish exits nonzero");
+        let requests = handle.join().expect("qdrant test server");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("unconfirmed"),
+            "write {write}: the publish is reported unconfirmed: {message}"
+        );
+        assert_eq!(
+            delete_requests(&requests).len(),
+            expected_deletes,
+            "write {write}: deletes sent: {requests:?}"
+        );
+        let last = recorder
+            .recorded
+            .last()
+            .expect("the failing write recorded before it failed");
+        if write == 4 {
+            assert!(last.complete, "write 4 records a complete receipt");
+        } else {
+            assert_eq!(last.versions_reset, vec![version.clone()]);
+            assert!(!last.complete, "write 2 records a partial receipt");
+        }
+        assert!(
+            !fixture.vectors_synced(&version)?,
+            "write {write}: the reset is committed"
+        );
+    }
     Ok(())
 }

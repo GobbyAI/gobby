@@ -4,7 +4,9 @@
 //! writes nothing and deletes nothing. Orphan classes are evidence only.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -288,6 +290,20 @@ pub(crate) fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     }
 }
 
+pub(crate) fn run_command(
+    ctx: &Context,
+    apply: bool,
+    expect_digest: Option<&str>,
+    receipt: Option<&Path>,
+    format: Format,
+) -> anyhow::Result<()> {
+    let _ = (expect_digest, receipt);
+    if apply {
+        anyhow::bail!("reconcile apply is not implemented");
+    }
+    run(ctx, format)
+}
+
 fn json_report(project_id: &str, collection: &str, report: &Inventory) -> Value {
     let orphans: serde_json::Map<String, Value> = report
         .orphans
@@ -324,6 +340,39 @@ fn json_report(project_id: &str, collection: &str, report: &Inventory) -> Value 
         "missing": missing,
         "inventory_digest": report.inventory_digest,
     })
+}
+
+/// Receipt for one guarded apply run. Planned fields are written before any mutation;
+/// confirmed fields change only after the mutation they name has committed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReconcileReceipt {
+    pub(crate) digest: String,
+    pub(crate) project_id: String,
+    pub(crate) collection: String,
+    pub(crate) planned_orphans: BTreeMap<String, Vec<String>>,
+    pub(crate) planned_versions_reset: Vec<String>,
+    pub(crate) versions_reset: Vec<String>,
+    pub(crate) deleted: Vec<Vec<String>>,
+    pub(crate) complete: bool,
+}
+
+pub(crate) fn apply(
+    ctx: &Context,
+    expect_digest: &str,
+    receipt_path: &Path,
+) -> anyhow::Result<ReconcileReceipt> {
+    let _ = (ctx, expect_digest, receipt_path);
+    anyhow::bail!("reconcile apply is not implemented")
+}
+
+pub(crate) fn apply_with_persist(
+    ctx: &Context,
+    expect_digest: &str,
+    receipt_path: &Path,
+    persist: &mut dyn FnMut(&ReconcileReceipt) -> anyhow::Result<()>,
+) -> anyhow::Result<ReconcileReceipt> {
+    let _ = (ctx, expect_digest, receipt_path, persist);
+    anyhow::bail!("reconcile apply is not implemented")
 }
 
 fn text_report(collection: &str, report: &Inventory) -> String {

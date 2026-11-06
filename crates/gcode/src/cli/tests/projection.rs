@@ -1,6 +1,77 @@
 use super::*;
 
 #[test]
+fn parse_vector_reconcile_apply_flags_require_each_other() {
+    let digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "vector",
+        "reconcile",
+        "--apply",
+        "--expect-digest",
+        digest,
+        "--receipt",
+        "/private/receipts/reconcile.json",
+    ])
+    .expect("vector reconcile apply parses with its digest and receipt");
+    match cli.command {
+        Command::Vector {
+            command:
+                VectorCommand::Reconcile {
+                    apply,
+                    expect_digest,
+                    receipt,
+                },
+        } => {
+            assert!(apply);
+            assert_eq!(expect_digest.as_deref(), Some(digest));
+            assert_eq!(receipt.as_deref(), Some("/private/receipts/reconcile.json"));
+        }
+        _ => panic!("expected vector reconcile command"),
+    }
+
+    assert!(
+        Cli::try_parse_from([
+            "gcode",
+            "vector",
+            "reconcile",
+            "--apply",
+            "--receipt",
+            "/private/receipts/reconcile.json",
+        ])
+        .is_err(),
+        "--apply without --expect-digest is refused",
+    );
+    assert!(
+        Cli::try_parse_from([
+            "gcode",
+            "vector",
+            "reconcile",
+            "--apply",
+            "--expect-digest",
+            digest,
+        ])
+        .is_err(),
+        "--apply without --receipt is refused",
+    );
+    assert!(
+        Cli::try_parse_from([
+            "gcode",
+            "vector",
+            "reconcile",
+            "--receipt",
+            "/private/receipts/reconcile.json",
+        ])
+        .is_err(),
+        "--receipt without --apply is refused",
+    );
+    assert!(
+        Cli::try_parse_from(["gcode", "vector", "reconcile", "--expect-digest", digest,]).is_err(),
+        "--expect-digest without --apply is refused",
+    );
+}
+
+#[test]
 fn parse_projection_lifecycle_commands() {
     let cli = Cli::try_parse_from([
         "gcode",
@@ -253,7 +324,11 @@ fn parse_projection_lifecycle_commands() {
     assert!(matches!(
         cli.command,
         Command::Vector {
-            command: VectorCommand::Reconcile
+            command: VectorCommand::Reconcile {
+                apply: false,
+                expect_digest: None,
+                receipt: None,
+            }
         }
     ));
     assert!(

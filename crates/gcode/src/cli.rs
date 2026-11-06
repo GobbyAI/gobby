@@ -549,8 +549,19 @@ pub(crate) enum VectorCommand {
         #[arg(long)]
         full: bool,
     },
-    /// Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing.
-    Reconcile,
+    /// Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing
+    /// unless --apply is given with the digest of a reviewed dry run.
+    Reconcile {
+        /// Apply the plan whose inventory digest matches --expect-digest
+        #[arg(long)]
+        apply: bool,
+        /// Inventory digest (sha256:...) from a dry run of the same project
+        #[arg(long)]
+        expect_digest: Option<String>,
+        /// Receipt file recording the apply run; must sit in a private directory outside the repository
+        #[arg(long)]
+        receipt: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
