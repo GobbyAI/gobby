@@ -67,7 +67,8 @@ def test_node_probe_retries_a_transient_spawn_failure(
 
     def flaky(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        if len(calls) == 1:
+        # Call 1 is the first-exec warm-up; call 2 is the timed probe, which fails transiently.
+        if len(calls) == 2:
             raise BlockingIOError(35, "Resource temporarily unavailable")
         return subprocess.CompletedProcess(command, 0, "v26.13.0\n", "")
 
@@ -76,7 +77,7 @@ def test_node_probe_retries_a_transient_spawn_failure(
 
     assert status.state == "healthy"
     assert status.installed_version == "26.13.0"
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 
 @pytest.mark.parametrize(
@@ -112,7 +113,8 @@ def test_node_probe_failure_reports_its_cause(
     assert status.path == str(node.resolve())
     assert cause in (status.error or "")
     assert "detected unavailable" not in (status.error or "")
-    assert len(calls) == 2
+    # The first-exec warm-up, then the timed probe and its one retry.
+    assert len(calls) == 3
 
 
 def test_node_probe_timeout_reuses_the_verified_unchanged_binary(
@@ -139,11 +141,13 @@ def test_node_probe_timeout_reuses_the_verified_unchanged_binary(
     reused = requirements.node_dependency_status()
     assert reused.state == "healthy"
     assert reused.installed_version == "26.13.0"
-    assert len(calls) == 1
+    # One warm-up and one probe for the first identity; the reused status makes no call.
+    assert len(calls) == 2
 
     node.write_text("replaced binary")
     changed = requirements.node_dependency_status()
-    assert len(calls) == 2
+    # A new identity pays its own warm-up and probe, both of which time out here.
+    assert len(calls) == 4
     assert changed.state == "invalid"
     assert "timed out" in (changed.error or "")
     assert "version is invalid" not in (changed.error or "")
