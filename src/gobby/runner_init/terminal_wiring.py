@@ -67,8 +67,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         and bootstrap.front_door.enabled
         and bootstrap.front_door.routes.get("terminal_ws") == "native"
     ):
-        # gdaemon owns Native control, leases and writes. Even a hello from a
-        # second supervisor would take the host's control-owner connection.
+        # gdaemon owns Native control, leases and writes, so Python starts no host supervisor.
         runner.terminal_host_manager = None
         runner.lease_registry = None
         runner.frame_client = None

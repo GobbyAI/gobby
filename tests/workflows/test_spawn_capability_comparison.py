@@ -14,7 +14,10 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.condition_helpers_sessions import spawn_target_allowed
+from gobby.workflows.condition_helpers_sessions import (
+    _FALLBACK_CHAIN_MAX_HOPS,
+    spawn_target_allowed,
+)
 from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
@@ -428,3 +431,314 @@ def test_hook_path_without_ambient_project_uses_the_caller_project(
         project_id=project_id,
     )
     assert spawn_capabilities_allowed(sessions, caller, "fixture-target") is allowed
+
+
+@pytest.mark.parametrize(
+    ("caller_capabilities", "spawnable", "expected"),
+    [
+        # Containment passes in every row; only the spawner requirement decides.
+        (["fixture_child_permission"], ["*"], False),
+        (["fixture_child_permission", "fixture_spawn_any"], ["*"], True),
+        (["fixture_child_permission"], ["fixture-guarded"], False),
+        (["fixture_child_permission", "fixture_spawn_any"], ["fixture-guarded"], True),
+    ],
+)
+def test_spawner_capabilities_gate_wildcard_and_finite_callers(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caller_capabilities: list[str],
+    spawnable: list[str],
+    expected: bool,
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(
+        temp_db, project_id, caller_capabilities, spawnable_agents=spawnable, spawned=True
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-guarded",
+        {
+            "capabilities": ["fixture_child_permission"],
+            "spawner_capabilities": ["fixture_spawn_any"],
+        },
+        project_id=project_id,
+    )
+    assert spawn_capabilities_allowed(sessions, caller, "fixture-guarded", None, caller) is expected
+
+
+def test_spawner_capabilities_hold_on_a_fallback_hop(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A guarded definition reached through a fallback is refused like a direct target."""
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(
+        temp_db, project_id, ["fixture_child_permission"], spawnable_agents=["*"], spawned=True
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-guarded",
+        {
+            "capabilities": ["fixture_child_permission"],
+            "spawner_capabilities": ["fixture_spawn_any"],
+        },
+        project_id=project_id,
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-entry",
+        {"capabilities": ["fixture_child_permission"], "fallback_agent": "fixture-guarded"},
+        project_id=project_id,
+    )
+    assert not spawn_capabilities_allowed(sessions, caller, "fixture-entry", None, caller)
+
+
+@pytest.mark.parametrize(
+    ("caller_kind", "target", "expected"),
+    [
+        # An unspawned default-role session with no stored definition holds no capabilities.
+        ("unspawned", "fixture-guarded", "block"),
+        # The operator exemption still covers a target that declares no spawner requirement.
+        ("unspawned", "fixture-target", "allow"),
+        # A caller holding the declared spawner capability is admitted.
+        ("holder", "fixture-guarded", "allow"),
+        ("holder", "fixture-target", "allow"),
+    ],
+)
+async def test_spawner_requirement_binds_unspawned_and_default_callers(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caller_kind: str,
+    target: str,
+    expected: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    if caller_kind == "holder":
+        sessions, caller = _caller(
+            temp_db,
+            project_id,
+            ["spawn_any_definition", "fixture_child_permission"],
+            spawnable_agents=["*"],
+        )
+    else:
+        sessions = SessionManager(temp_db)
+        caller = sessions.register(
+            "fixture-unspawned-rule", None, "claude", project_id=project_id
+        ).id
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-target",
+        {"capabilities": ["fixture_child_permission"]},
+        project_id=project_id,
+    )
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-guarded",
+        {
+            "capabilities": ["fixture_child_permission"],
+            "spawner_capabilities": ["spawn_any_definition"],
+        },
+        project_id=project_id,
+    )
+    _create_spawn_guard_rule(temp_db)
+    decision, reason = await _spawn_decision(temp_db, caller, target)
+    assert decision == expected
+    if expected == "block":
+        assert "fixture spawn boundary" in reason
+
+
+_SPAWN_GUARD_WHEN = (
+    "event.data.get('mcp_server') == 'gobby-agents' "
+    "and event.data.get('mcp_tool') == 'spawn_agent' "
+    "and ((not operator_session(event.metadata.get('_platform_session_id')) "
+    "and not spawn_capabilities_allowed(event.metadata.get('_platform_session_id'), "
+    "tool_input.get('agent'), tool_input.get('project_path'), "
+    "tool_input.get('parent_session_id'), 'spawn_any_definition')) "
+    "or not spawner_admitted(event.metadata.get('_platform_session_id'), "
+    "tool_input.get('agent'), tool_input.get('project_path'), "
+    "tool_input.get('parent_session_id')))"
+)
+
+
+def _create_spawn_guard_rule(db: HubDatabase) -> None:
+    RuleDefinitionManager(db).create(
+        "fixture-spawn-guard",
+        {
+            "event": "before_tool",
+            "mandatory": True,
+            "when": _SPAWN_GUARD_WHEN,
+            "effects": [{"type": "block", "reason": "fixture spawn boundary"}],
+        },
+    )
+
+
+async def _spawn_decision(
+    db: HubDatabase, caller: str, target: str, project_path: str | None = None
+) -> tuple[str, str]:
+    tool_input: dict[str, Any] = {"agent": target}
+    if project_path is not None:
+        tool_input["project_path"] = project_path
+    response = await RuleEngine(db).evaluate(
+        HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            source=SessionSource.CLAUDE,
+            session_id=caller,
+            timestamp=datetime.now(UTC),
+            metadata={"_platform_session_id": caller},
+            data={
+                "mcp_server": "gobby-agents",
+                "mcp_tool": "spawn_agent",
+                "tool_input": tool_input,
+            },
+        ),
+        session_id=caller,
+        variables={},
+    )
+    return response.decision, response.reason or ""
+
+
+def _chain_names(length: int) -> list[str]:
+    return [f"fixture-chain-{index}" for index in range(length)]
+
+
+def _define_chain(manager: AgentDefinitionManager, project_id: str, names: list[str]) -> None:
+    """Define a linear fallback chain in which each name falls back to the next."""
+    for index, name in enumerate(names):
+        body: dict[str, Any] = {"capabilities": []}
+        if index + 1 < len(names):
+            body["fallback_agent"] = names[index + 1]
+        _define(manager, name, body, project_id=project_id)
+
+
+@pytest.mark.parametrize(
+    ("length", "expected"),
+    [
+        # Every hop of a chain at the bound is checked before the chain ends.
+        (_FALLBACK_CHAIN_MAX_HOPS + 1, True),
+        # One hop past the bound would go unchecked, so the launch is refused.
+        (_FALLBACK_CHAIN_MAX_HOPS + 2, False),
+    ],
+)
+def test_overlong_fallback_chain_fails_closed_for_capabilities(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    length: int,
+    expected: bool,
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(temp_db, project_id, [], spawnable_agents=["*"])
+    names = _chain_names(length)
+    _define_chain(AgentDefinitionManager(temp_db), project_id, names)
+    assert spawn_capabilities_allowed(sessions, caller, names[0], None, caller) is expected
+
+
+@pytest.mark.parametrize("caller_kind", ["unspawned", "wildcard"])
+async def test_overlong_fallback_chain_is_refused_on_the_rule_path(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caller_kind: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    names = _chain_names(_FALLBACK_CHAIN_MAX_HOPS + 2)
+    _define_chain(AgentDefinitionManager(temp_db), project_id, names)
+    if caller_kind == "wildcard":
+        _, caller = _caller(temp_db, project_id, [], spawnable_agents=["*"])
+    else:
+        caller = (
+            SessionManager(temp_db)
+            .register("fixture-unspawned-chain", None, "claude", project_id=project_id)
+            .id
+        )
+    _create_spawn_guard_rule(temp_db)
+    decision, reason = await _spawn_decision(temp_db, caller, names[0])
+    assert decision == "block"
+    assert "fixture spawn boundary" in reason
+
+
+def test_overlong_fallback_chain_cannot_pass_the_spawnable_scope(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = str(sample_project["id"])
+    names = _chain_names(_FALLBACK_CHAIN_MAX_HOPS + 2)
+    sessions, caller = _caller(temp_db, project_id, [], spawnable_agents=names)
+    _define_chain(AgentDefinitionManager(temp_db), project_id, names)
+    with pytest.raises(ValueError, match="fallback chain"):
+        spawn_target_allowed(
+            sessions, caller, "spawn_agent", names[0], target_project_id=project_id
+        )
+
+
+@pytest.mark.parametrize(
+    ("guard", "expected"),
+    [
+        # A cycle revisits only hops already checked, so unguarded hops admit.
+        (None, True),
+        # A guarded hop reached around the cycle is still checked before the revisit.
+        (["fixture_never_held"], False),
+    ],
+)
+def test_fallback_cycle_checks_each_hop_before_revisiting(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    guard: list[str] | None,
+    expected: bool,
+) -> None:
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(temp_db, project_id, [], spawnable_agents=["*"])
+    manager = AgentDefinitionManager(temp_db)
+    _define(
+        manager,
+        "fixture-cycle-a",
+        {"capabilities": [], "fallback_agent": "fixture-cycle-b"},
+        project_id=project_id,
+    )
+    second: dict[str, Any] = {"capabilities": [], "fallback_agent": "fixture-cycle-a"}
+    if guard is not None:
+        second["spawner_capabilities"] = guard
+    _define(manager, "fixture-cycle-b", second, project_id=project_id)
+    assert spawn_capabilities_allowed(sessions, caller, "fixture-cycle-a", None, caller) is expected
+
+
+@pytest.mark.parametrize(
+    ("unregistered_path", "guard", "expected"),
+    [
+        # An unregistered project resolves its hops globally, as the launch does, so a
+        # global guarded target binds the unspawned default caller.
+        (True, ["spawn_any_definition"], "block"),
+        # The same guarded target with no project path is refused as well.
+        (False, ["spawn_any_definition"], "block"),
+        # A global target with no spawner requirement stays admitted on that path.
+        (True, None, "allow"),
+    ],
+)
+async def test_global_guarded_target_binds_unregistered_project_path(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    unregistered_path: bool,
+    guard: list[str] | None,
+    expected: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    body: dict[str, Any] = {
+        "prompts": {"agent": "Synthetic global fixture."},
+        "workflows": {"rule_selectors": {"include": []}},
+        "capabilities": ["fixture_child_permission"],
+    }
+    if guard is not None:
+        body["spawner_capabilities"] = guard
+    AgentDefinitionManager(temp_db).create("fixture-global-target", body, project_id=None)
+    _create_spawn_guard_rule(temp_db)
+    caller = (
+        SessionManager(temp_db)
+        .register("fixture-unspawned-global", None, "claude", project_id=project_id)
+        .id
+    )
+    project_path = None
+    if unregistered_path:
+        project_path = str(tmp_path / "unregistered-project")
+        Path(project_path).mkdir()
+    decision, reason = await _spawn_decision(temp_db, caller, "fixture-global-target", project_path)
+    assert decision == expected
+    if expected == "block":
+        assert "fixture spawn boundary" in reason

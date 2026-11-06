@@ -355,7 +355,7 @@ def start(ctx: click.Context, verbose: bool) -> None:
     )
     from gobby.storage.schema_divergence import binary_set_apply_refusal
 
-    if not ctx.meta.get(START_AFTER_OWN_STOP) and (refusal := agent_activation_refusal()):
+    if not ctx.meta.get(START_AFTER_OWN_STOP) and (refusal := agent_activation_refusal("start")):
         _step(f"Refusing to start: {refusal}", error=True)
         sys.exit(1)
 

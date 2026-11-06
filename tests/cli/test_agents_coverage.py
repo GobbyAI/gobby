@@ -103,6 +103,7 @@ class TestSpawnAgentCmd:
                 "task_id": "#42",
                 "provider": "codex",
                 "timeout": 120.0,
+                "claim": True,
             },
             headers={"Authorization": "test", "X-Gobby-CLI-Internal": "1"},
             timeout=30.0,

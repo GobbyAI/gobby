@@ -8,7 +8,7 @@ import os
 import re
 import stat
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,12 +17,14 @@ from gobby.ai.decisions import (
     BoxImage,
     BoxQuestion,
     ChoiceQuestion,
-    DecisionResult,
+    DecisionQuestion,
     DecisionService,
     DecisionsUnavailable,
+    QuestionOutcome,
     ScoreQuestion,
     get_decision_service,
 )
+from gobby.config.ai import DECISION_KINDS
 from gobby.config.app import DaemonConfig
 from gobby.llm.image_payloads import MAX_IMAGE_BYTES
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -102,29 +104,6 @@ _SHAPE_FIELDS: dict[str, frozenset[str]] = {
 
 class _InvalidRequest(ValueError):
     """A caller request that breaks the public contract; the detail names the rule only."""
-
-
-@dataclass(frozen=True)
-class _Choice:
-    questions: dict[str, ChoiceQuestion]
-
-
-@dataclass(frozen=True)
-class _Noul:
-    propositions: dict[str, str]
-
-
-@dataclass(frozen=True)
-class _Score:
-    questions: dict[str, ScoreQuestion]
-
-
-@dataclass(frozen=True)
-class _Box:
-    questions: dict[str, BoxQuestion]
-
-
-_Parsed = _Choice | _Noul | _Score | _Box
 
 
 def _non_empty(value: object) -> bool:
@@ -224,27 +203,27 @@ def _box(question: dict[str, Any]) -> BoxQuestion:
     return BoxQuestion(instructions=_instructions(question), image=image)
 
 
+def _question(key: str, question: Any) -> DecisionQuestion:
+    match _question_type(key, question):
+        case "choice":
+            return _choice(question)
+        case "noul":
+            return _instructions(question)
+        case "score":
+            return _score(question)
+        case _:
+            return _box(question)
+
+
 def _parse(
     state: object, questions: object, timeout_seconds: object
-) -> tuple[dict[str, Any], _Parsed, float | None]:
+) -> tuple[dict[str, Any], dict[str, DecisionQuestion], float | None]:
     if not isinstance(state, dict):
         raise _InvalidRequest("state must be an object")
     timeout = _timeout(timeout_seconds)
     if not isinstance(questions, dict) or not 1 <= len(questions) <= _MAX_QUESTIONS:
         raise _InvalidRequest("questions must hold 1 to 64 entries")
-    kinds = {_question_type(key, question) for key, question in questions.items()}
-    if len(kinds) != 1:
-        raise _InvalidRequest("every question in one call must have the same type")
-    match kinds.pop():
-        case "choice":
-            parsed: _Parsed = _Choice({k: _choice(q) for k, q in questions.items()})
-        case "noul":
-            parsed = _Noul({k: _instructions(q) for k, q in questions.items()})
-        case "score":
-            parsed = _Score({k: _score(q) for k, q in questions.items()})
-        case _:
-            parsed = _Box({k: _box(q) for k, q in questions.items()})
-    return state, parsed, timeout
+    return state, {key: _question(key, question) for key, question in questions.items()}, timeout
 
 
 def _failure(reason: str, detail: str) -> dict[str, Any]:
@@ -263,30 +242,37 @@ def _render(answer: Any) -> dict[str, Any]:
     return asdict(answer)
 
 
-def _answered(kind: str, result: DecisionResult[Any]) -> dict[str, Any]:
+def _outcome(outcome: QuestionOutcome) -> dict[str, Any]:
+    if outcome.error is not None:
+        return {
+            "type": outcome.kind,
+            "success": False,
+            "reason": outcome.error.reason,
+            "detail": outcome.error.detail,
+        }
     return {
+        "type": outcome.kind,
         "success": True,
-        "type": kind,
-        "answers": {key: _render(answer) for key, answer in result.answers.items()},
-        "response_model": result.response_model,
-        "backend_identity": result.backend_identity,
+        "answer": _render(outcome.answer),
+        "response_model": outcome.response_model,
+        "backend_identity": outcome.backend_identity,
     }
 
 
 async def _decide(
-    service: DecisionService, state: dict[str, Any], parsed: _Parsed, timeout: float | None
+    service: DecisionService,
+    state: dict[str, Any],
+    questions: dict[str, DecisionQuestion],
+    timeout: float | None,
 ) -> dict[str, Any]:
-    if isinstance(parsed, _Choice):
-        choice = await service.choose(CONSUMER, state, parsed.questions, timeout_seconds=timeout)
-        return _answered("choice", choice)
-    if isinstance(parsed, _Noul):
-        noul = await service.noul(CONSUMER, state, parsed.propositions, timeout_seconds=timeout)
-        return _answered("noul", noul)
-    if isinstance(parsed, _Score):
-        score = await service.score(CONSUMER, state, parsed.questions, timeout_seconds=timeout)
-        return _answered("score", score)
-    box = await service.box(CONSUMER, state, parsed.questions, timeout_seconds=timeout)
-    return _answered("box", box)
+    outcomes = await service.evaluate(CONSUMER, state, questions, timeout_seconds=timeout)
+    answers = {key: _outcome(o) for key, o in outcomes.items()}
+    # A call fails as a whole only when every question failed; a partial failure stays on
+    # its own questions, and the successful answers are still returned.
+    errors = [o.error for o in outcomes.values() if o.error is not None]
+    if len(errors) == len(outcomes):
+        return {**_failure(errors[0].reason, errors[0].detail), "answers": answers}
+    return {"success": True, "answers": answers}
 
 
 def create_decisions_registry(
@@ -303,24 +289,26 @@ def create_decisions_registry(
         timeout_seconds: object = None,
     ) -> dict[str, Any]:
         try:
-            state_map, parsed, timeout = _parse(state, questions, timeout_seconds)
+            state_map, question_map, timeout = _parse(state, questions, timeout_seconds)
         except _InvalidRequest as error:
             return _failure("invalid_request", str(error))
         config = config_resolver()
         decisions = None if config is None else config.ai.decisions
-        if decisions is None or decisions.api_base is None or decisions.model is None:
-            return _failure("unconfigured", "decisions api_base and model must both be set")
+        if decisions is None or all(
+            decisions.endpoint_for(kind) is None for kind in DECISION_KINDS
+        ):
+            return _failure("unconfigured", "no decisions endpoint is configured for any type")
         service = get_decision_service(decisions)
         try:
-            return await _decide(service, state_map, parsed, timeout)
+            return await _decide(service, state_map, question_map, timeout)
         except DecisionsUnavailable as error:
             return _failure(error.reason, error.detail)
 
     registry.register(
         name="evaluate",
         description=(
-            "Answer decision questions through the configured decision service. "
-            "Every question in one call shares a type: choice, noul, score, or box."
+            "Answer decision questions through the configured decision service. Each question "
+            "runs on the endpoint configured for its type: choice, noul, score, or box."
         ),
         input_schema=EVALUATE_INPUT_SCHEMA,
         func=evaluate,

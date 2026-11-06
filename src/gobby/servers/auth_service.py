@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import secrets
 import threading
@@ -13,6 +14,15 @@ from starlette.requests import HTTPConnection
 
 from gobby.config.bootstrap import is_loopback_host
 from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
+from gobby.runtime_grants.signed_request import (
+    SIGNED_MAC_HEADER,
+    SIGNED_NONCE_HEADER,
+    SIGNED_PAYLOAD_HEADER,
+    derive_signed_request_key,
+    signed_request_mac,
+    signed_request_nonces,
+    signed_route_operation,
+)
 from gobby.servers.browser_sessions import PREFIX as BROWSER_COOKIE_PREFIX
 from gobby.servers.browser_sessions import BrowserSessions, browser_route_allowed
 from gobby.servers.grant_auth import (
@@ -39,6 +49,7 @@ from gobby.utils.local_token import (
     daemon_bootstrap_path,
     read_managed_signing_key,
     verify_expired_agent_api_token,
+    verify_managed_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -461,8 +472,57 @@ class AuthService:
     def request_principal(
         self, request: HTTPConnection
     ) -> AgentApiTokenClaims | None | Literal[False]:
-        """Return live managed claims, None for an operator, or False when rejected."""
+        """Return live managed claims, None for an operator, or False when rejected.
+
+        Claims a signed request verified come first: that verification is the only authority
+        such a request carries, so it must never read as an operator.
+        """
+        signed: AgentApiTokenClaims | None = getattr(request.state, "managed_signed_claims", None)
+        if signed is not None:
+            return signed
         return self._accepted_bearer(request)
+
+    def admit_signed_request(self, request: HTTPConnection, body: bytes) -> AuthDecision:
+        """Admit a restart or protected-run request that carries a seat's signed proof.
+
+        The route names the operation, so a MAC made for one operation never verifies on another.
+        Verification runs before the nonce is spent, so a forged request cannot burn a seat's nonce.
+        """
+        method = str(request.scope.get("method", "GET"))
+        path = request_path(request)
+        operation = signed_route_operation(method, path)
+        if operation is None:
+            return AuthDecision(allowed=False, code="missing_auth", status_code=401)
+        payload = request.headers.get(SIGNED_PAYLOAD_HEADER, "")
+        nonce = request.headers.get(SIGNED_NONCE_HEADER, "")
+        mac = request.headers.get(SIGNED_MAC_HEADER, "")
+        verified = verify_managed_payload(payload, self.managed_signing_key()) if payload else None
+        if not (nonce and mac and verified is not None):
+            return AuthDecision(allowed=False, code="signed_request_rejected", status_code=401)
+        claims, signature = verified
+        if not self._managed_capability_is_live(claims):
+            return AuthDecision(allowed=False, code="run_inactive", status_code=401)
+        expected = signed_request_mac(
+            derive_signed_request_key(signature),
+            operation=operation,
+            method=method,
+            path=path,
+            query=tuple(request.query_params.multi_items()),
+            body=body,
+            nonce=nonce,
+            encoded_payload=payload,
+        )
+        if not hmac.compare_digest(expected, mac) or not signed_request_nonces.consume(
+            nonce, payload
+        ):
+            return AuthDecision(allowed=False, code="signed_request_rejected", status_code=401)
+        request.state.managed_signed_claims = claims
+        return AuthDecision(
+            allowed=True,
+            user_id=self._machine_owner(claims),
+            machine_id=claims.machine_id,
+            bearer_claims=claims,
+        )
 
     def _accepted_bearer(
         self, request: HTTPConnection

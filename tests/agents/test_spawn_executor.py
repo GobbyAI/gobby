@@ -916,9 +916,15 @@ class TestExecuteSpawn:
             # startup. It is typed into the composer post-launch instead.
             assert request.prompt not in command
             mock_codex_prompt_delivery.assert_called_once()
-            _coordinator, terminal, prompt, run_id, delivery_run_manager, _cleanup_agent = (
-                mock_codex_prompt_delivery.call_args.args
-            )
+            (
+                _coordinator,
+                terminal,
+                prompt,
+                run_id,
+                delivery_run_manager,
+                _cleanup_agent,
+                _placement_releaser,
+            ) = mock_codex_prompt_delivery.call_args.args
             assert terminal.id == result.terminal_id
             assert prompt == "Test"
             assert run_id == "run-abc123def456"
@@ -2797,6 +2803,28 @@ class TestCodexPromptDelivery:
         assert terminal.id in runtime.killed_ids
 
     @pytest.mark.asyncio
+    async def test_exit_reports_output_read_after_the_terminal_died(self) -> None:
+        # The first poll sees an empty pane; the host drops the terminal at
+        # exit, so only a snapshot taken after the exit can show the error.
+        runtime = FakeRuntime()
+        runtime.snapshot_effects = ["", "codex: usage limit reached"]
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+
+        with (
+            _fast_codex_delivery(),
+            patch.object(runtime, "is_live", new=AsyncMock(return_value=False)),
+        ):
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        assert runtime.write_log == []
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        assert error.startswith("codex_terminal_exited_before_composer:")
+        assert "codex: usage limit reached" in error
+        assert "no startup pane snapshot was captured" not in error
+        assert terminal.id in runtime.killed_ids
+
+    @pytest.mark.asyncio
     async def test_exit_before_first_snapshot_reports_unavailable_evidence(self) -> None:
         runtime = FakeRuntime()
         runtime.snapshot_effects = [RuntimeError("pane gone")]
@@ -2862,6 +2890,77 @@ class TestCodexPromptDelivery:
 
         run_manager.fail_uninitialized_prompt_delivery.assert_called_once()
         assert not runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_late_failure_releases_the_placed_pane_after_termination(self) -> None:
+        # The spawn already reported success, so its placed pane is released here,
+        # once the terminal is terminated and the run has failed.
+        runtime = FakeRuntime()
+        _coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        run_manager.fail_uninitialized_prompt_delivery.return_value = object()
+        killed_at_release: list[bool] = []
+
+        async def release(terminal_id: str) -> None:
+            killed_at_release.append(terminal_id in runtime.killed_ids)
+
+        releaser = AsyncMock(side_effect=release)
+        await spawn_executor_support._fail_codex_prompt_delivery(
+            runtime,
+            terminal,
+            "run-1",
+            run_manager,
+            "codex_composer_not_ready: safe diagnostic",
+            placement_releaser=releaser,
+        )
+
+        releaser.assert_awaited_once_with(terminal.id)
+        assert killed_at_release == [True]
+
+    @pytest.mark.asyncio
+    async def test_stale_failure_leaves_the_placed_pane_to_its_owner(self) -> None:
+        runtime = FakeRuntime()
+        _coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        run_manager.fail_uninitialized_prompt_delivery.return_value = None
+        releaser = AsyncMock()
+
+        await spawn_executor_support._fail_codex_prompt_delivery(
+            runtime,
+            terminal,
+            "run-1",
+            run_manager,
+            "codex_composer_not_ready: safe diagnostic",
+            placement_releaser=releaser,
+        )
+
+        releaser.assert_not_awaited()
+        assert not runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_failed_placement_release_logs_only_exception_type(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        marker = "private marker"
+        runtime = FakeRuntime()
+        _coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        run_manager.fail_uninitialized_prompt_delivery.return_value = object()
+        releaser = AsyncMock(side_effect=RuntimeError(marker))
+
+        with caplog.at_level(logging.ERROR, logger="gobby.agents.spawn_executor_support"):
+            await spawn_executor_support._fail_codex_prompt_delivery(
+                runtime,
+                terminal,
+                "run-1",
+                run_manager,
+                "codex_composer_not_ready: safe diagnostic",
+                placement_releaser=releaser,
+            )
+
+        releaser.assert_awaited_once_with(terminal.id)
+        assert "RuntimeError" in caplog.text
+        assert marker not in caplog.text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("phase", ["persistence", "termination", "cleanup"])
@@ -3138,6 +3237,49 @@ class TestCodexPromptDelivery:
         schedule.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_spawn_hands_the_placement_releaser_to_delivery(self) -> None:
+        from gobby.agents import spawn_executor_codex
+
+        plan = MagicMock(codex_prompt="Go", inject_persona=False, agent_run_id="run-1")
+        result = SpawnResult(True, "run-1", "child-1", "running", terminal_id="terminal-1")
+        manager = MagicMock()
+        manager.get.return_value = MagicMock(id="terminal-1")
+        releaser = AsyncMock()
+        request = cast(
+            SpawnRequest,
+            MagicMock(
+                write_coordinator=MagicMock(),
+                terminal_manager=manager,
+                run_manager=MagicMock(),
+                placement_releaser=releaser,
+            ),
+        )
+
+        with (
+            patch.object(
+                spawn_executor_codex, "prepare_codex_spawn", new=AsyncMock(return_value=plan)
+            ),
+            patch("gobby.agents.spawn_executor._runtime_spawn", new=AsyncMock(return_value=result)),
+            patch.object(
+                spawn_executor_codex, "schedule_codex_prompt_delivery", return_value=True
+            ) as schedule,
+        ):
+            returned = await spawn_executor_codex._spawn_codex_terminal(request)
+
+        assert returned is result and returned.success is True
+        (
+            _coordinator,
+            terminal,
+            prompt,
+            run_id,
+            _run_manager,
+            _cleanup_agent,
+            delivered_releaser,
+        ) = schedule.call_args.args
+        assert (terminal.id, prompt, run_id) == ("terminal-1", "Go", "run-1")
+        assert delivered_releaser is releaser
+
+    @pytest.mark.asyncio
     async def test_schedule_tracks_and_releases_the_delivery_task(self) -> None:
         coordinator = MagicMock()
         terminal = MagicMock()
@@ -3154,7 +3296,9 @@ class TestCodexPromptDelivery:
             assert pending
             await asyncio.gather(*pending)
 
-        deliver.assert_awaited_once_with(coordinator, terminal, "Go", "run-1", run_manager, None)
+        deliver.assert_awaited_once_with(
+            coordinator, terminal, "Go", "run-1", run_manager, None, None
+        )
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
 
     @pytest.mark.asyncio

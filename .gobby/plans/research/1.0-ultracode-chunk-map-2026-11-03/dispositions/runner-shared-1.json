@@ -1,0 +1,193 @@
+{
+ "dispositions": [
+  {
+   "ref": "#25467",
+   "disposition": "chunk",
+   "target": "R-RETIRE",
+   "rationale": "Audit verdict rewrite (upheld, verify §2.2): its criteria are 'R0-R7 are closed' and runner: rust 'proven by R7's dual-mode smoke', and its 'next planning launch' text is stale. D31 moves it to R-RETIRE, whose goal starts after CP-RUNNER-CUT closes with outcome 1 or 2, removes the Python runner launch path and 'closes the runner epic #25467'; criterion 2's dual-mode proof is replaced by CP-RUNNER-CUT's three-outcome window (ruling 16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R-RETIRE",
+   "changed": false
+  },
+  {
+   "ref": "#25468",
+   "disposition": "chunk",
+   "target": "R0",
+   "rationale": "Audit keep (upheld, verify §3.1): R0 already has a decision-complete stamped plan (.gobby/plans/task-25468.md, M1 8877284c44) with leaves 1.1-1.4 and nothing implemented. R0's goal ports that plan as written, pins runner_lifecycle*.py per the verifier's pin-scope finding, and records the needs-planning label as stale.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R0",
+   "changed": false
+  },
+  {
+   "ref": "#25582",
+   "disposition": "chunk",
+   "target": "R0",
+   "rationale": "Audit verdict done (upheld with caveats, verify §2.3): the criterion is met (attestation 4d7a4153 on M1 8877284c44), but independent-review and validation attestations and a named closer are missing. R0's goal says R0's session closes it with those attestations, and D31 names #25582 among the done closes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R0",
+   "changed": false
+  },
+  {
+   "ref": "#25469",
+   "disposition": "superseded",
+   "target": "R1",
+   "rationale": "Override of chunk R1 to superseded R1: criteria 1 (bootstrap key runner: python|rust, default python) and 3 (isolated spawns under both selectors) are the runtime runner switch that ruling 16 forbids, and the verifier made R1's fate depend on that dual-mode question (verify §2.4). R1's goal is #25469 'cut down' to the worker handshake, the incompatible-GOBBY_BACKEND_COMMAND guard, the one-owner proof and the node guard, so R1's reduced design replaces the selector approach and the node closes as superseded.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R1",
+   "changed": true
+  },
+  {
+   "ref": "#25470",
+   "disposition": "chunk",
+   "target": "R2",
+   "rationale": "Audit keep: matches #25351:70 (Rust sequences the phase calls, content refusal before publishing, config epoch before construction, HTTP readiness distinct from recovery). R2's goal carries those criteria and owns the startup-progress row.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R2",
+   "changed": false
+  },
+  {
+   "ref": "#25471",
+   "disposition": "chunk",
+   "target": "R3",
+   "rationale": "Audit keep: the durable recovery order (hook barrier; sessions, handoffs and wakes; agents and pipelines) per #25351:71, E9 and G4, L-sized, with runner_lifecycle_subsystems.py (863 lines) to decompose. R3's goal carries that order in three checkpoints, with native families registering their recovery steps in the same order.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R3",
+   "changed": false
+  },
+  {
+   "ref": "#25472",
+   "disposition": "chunk",
+   "target": "R4",
+   "rationale": "Audit rewrite (upheld, verify §2.5): a per-job ownership model must reconcile ROADMAP decision 18 with the Cron #25032 and memory #25557 takeovers. R4's goal settles it inside the chunk: one Rust scheduler whose Python one-iteration ops families swap for native jobs through the same registry, jobs registering only when their family is active (D37), and A1-RUNTIME's rotate_due registered on it (D12).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R4",
+   "changed": false
+  },
+  {
+   "ref": "#25473",
+   "disposition": "chunk",
+   "target": "R5",
+   "rationale": "Audit keep: Rust owns admission and the start, drain and stop of the hook pipeline, MCP proxy, chat and WS bridge worker services (#25351:73, E10-E12), with /api/hooks/execute proxied until #24151's flip. R5's goal carries this unchanged, with streaming, callbacks and thread-to-loop effects bounded.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R5",
+   "changed": false
+  },
+  {
+   "ref": "#25474",
+   "disposition": "chunk",
+   "target": "R6",
+   "rationale": "Audit keep (upheld, verify §3.5): ordered stop, predecessor fencing, terminals surviving an ordinary restart and WS SESSION_END before the hook worker closes, with runner_lifecycle_shutdown.py (916 lines) to decompose. R6's goal carries those criteria and owns the restart, shutdown and lease-handoff rows.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "R6",
+   "changed": false
+  },
+  {
+   "ref": "#25475",
+   "disposition": "superseded",
+   "target": "CP-RUNNER-CUT",
+   "rationale": "Override of chunk to superseded, keeping D31's target: its criteria are an isolated dual-mode matrix with one selector change per restart (1), an installed-binary canary (3) and promoting the default to rust when R7 closes (5), which the audit and verifier flag against the 0.9.0 model (verify §2.6). Rulings 16 and 20 replace them with CP-RUNNER-CUT's one-way switchover, whose activation commit sets the Rust runner default ('#25475, R7's runner landing, is this chunk's activation commit') under the three-outcome window and the pinned generation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CP-RUNNER-CUT",
+   "changed": true
+  },
+  {
+   "ref": "#24659",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit needs-josh (upheld, verify §2.11): escalated since 2026-10-21 for Josh's exact-byte approval, its verifier scope moved to #24967 on 2026-10-25, and Josh's 2026-10-18 'after hub-node' deferral now lands after Python is gone (decision 26). The map settles that placement: D3 builds the verifier in SEAM-CALLERS before the pilot and lands #24659 in CIX-1 (gdaemon verifies the web UI cookie on the code-graph routes and Python's code-index cookie path retires), and rulings 1 and 5 fold the plan approval into the one map approval.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24910",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "Audit keep (upheld, verify §3.4): retargeted 2026-11-01 onto native admission after #24967; its restraint-deferral label is the Orchestrator's #24908 ceiling ruling, not a Josh deferral, so it stays in scope. SEAM-CALLERS' goal lists per-object cross-project isolation on browser routes (#24910) beside the cookie verifier it needs, with security review in the chunk, so its route-inventory test runs on that front-door admission path.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-CALLERS",
+   "changed": false
+  },
+  {
+   "ref": "#24964",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "Audit keep (upheld, verify §3.2): the Python CORS contract is pinned (app_factory.py:154-185), Rust has none, and the needs-planning label is stale. SEAM-CALLERS' goal builds shared CORS and preflight (#24964) ahead of B0-CLOSE's key-caller leaf #25521.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-CALLERS",
+   "changed": false
+  },
+  {
+   "ref": "#24967",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "Audit needs-josh (upheld, verify §2.9): its design source (the #24659 amendment pass) is parked and class-2 browser-testing sessions are process-bound (browser_sessions.py:27-33). The map settles it: D3 builds #24967 now in SEAM-CALLERS before the pilot, whose goal takes the cookie-verifier design into its own brief because that amendment pass will not run, with security review in the chunk.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-CALLERS",
+   "changed": false
+  },
+  {
+   "ref": "#24968",
+   "disposition": "chunk",
+   "target": "SEAM-CALLERS",
+   "rationale": "Audit edge-fix (upheld, verify §2.10): the design is approved in Projects plan §1.3, but its home crate did not exist and the required edge on #25044 was missing. SEAM-CALLERS lists files_home safe I/O (#24968) and depends on PROJ-1, which builds the Projects family crate (#25044), so the map's DAG carries that edge.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-CALLERS",
+   "changed": false
+  },
+  {
+   "ref": "#25068",
+   "disposition": "chunk",
+   "target": "A1-RUNTIME",
+   "rationale": "map review: #25068 is blocked by #24457, which A1-RUNTIME builds, and A1-RUNTIME depends on SEAM-CALLERS, so SEAM-CALLERS cannot own it. A1-RUNTIME now lists #25068 and adds its runtime-grant class on #24452 and #24457, and the node closes as superseded by that chunk's task (D31). SEAM-CALLERS still lands the leaf's agent-token class, which GW-1 and GW-2 need from CP-MCP-CUT, as A1-RUNTIME's and SEAM-CALLERS' goals say. The leaf's blocked tasks #25106 (AI-1B) and #25558 (MEM-1) reach A1-RUNTIME.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "SEAM-CALLERS",
+   "changed": true,
+   "history": [
+    {
+     "disposition": "chunk",
+     "target": "SEAM-CALLERS",
+     "rationale": "Audit keep (upheld, verify §3.3): the admission contract is drafted (AI providers plan §5.1) but was blocked through the Projects chain #25046, #25045, #25044, and the audit asked to hoist the reusable admission type. SEAM-CALLERS' goal builds agent-token and runtime-grant admission (#25068 via #25046, with #24452) on PROJ-1's reusable native admission, with security review in the chunk.",
+     "by": "reviewer"
+    }
+   ],
+   "reviewer_rationale": "Audit keep (upheld, verify §3.3): the admission contract is drafted (AI providers plan §5.1) but was blocked through the Projects chain #25046, #25045, #25044, and the audit asked to hoist the reusable admission type. SEAM-CALLERS' goal builds agent-token and runtime-grant admission (#25068 via #25046, with #24452) on PROJ-1's reusable native admission, with security review in the chunk."
+  },
+  {
+   "ref": "#25486",
+   "disposition": "start_gate",
+   "target": "tmux purge #25486 finishes on 0.5.0 before the cut (ruling 8; start_gate[2]): plan task-25486.md executed, its stale needs-planning label and HOLD text cleared",
+   "rationale": "Prefill null (orphan). Ruling 8 puts the tmux purge on 0.5.0 as part of the start gate (no 0.9.0 chunk carries tmux), and start_gate[2] requires it finished before the cut with its stale needs-planning label and HOLD text cleared. The audit and verifier (verify §2.7) found its stamped plan task-25486.md (M1 463b7c2ff9) awaiting Josh's expansion approval (criterion 1), which is 0.5.0 work.",
+   "prefill_disposition": null,
+   "prefill_target": null,
+   "changed": true
+  },
+  {
+   "ref": "#25577",
+   "disposition": "start_gate",
+   "target": "#25577 closed done on 0.5.0 by the session that holds #25486, before the cut (start_gate[2]; D31 done close)",
+   "rationale": "Prefill null (orphan). The verifier corrected it to done (verify §2.8): claim released, approved attestation 9d651d38 on M1 463b7c2ff9, plan unchanged since. start_gate[2] has the session that holds #25486 close it on 0.5.0 with independent-review and validation attestations, and D31 names it among the done closes.",
+   "prefill_disposition": null,
+   "prefill_target": null,
+   "changed": true
+  },
+  {
+   "ref": "#25597",
+   "disposition": "decision",
+   "target": "D2",
+   "rationale": "Prefill null (orphan). It is Josh's operator-directed 2026-11-02 reorder (comms early, rollback to a prior binary), which conflicts with his 2026-10-25 'make comms wait' edges, so its criteria 1 and 4 cannot both hold (verify §2.12). D2's default does not adopt it, because GEN-ROLLBACK's retained generations give every checkpoint that rollback (D38), so Josh decides at map approval; coverage_selfcheck lists it as decision (D2, not adopted).",
+   "prefill_disposition": null,
+   "prefill_target": null,
+   "changed": true
+  },
+  {
+   "ref": "#25629",
+   "disposition": "start_gate",
+   "target": "#25629 closes on 0.5.0 with Josh's map approval (start_gate[9], ruling 23), before the cut; the map-approval commit carrying docs/port/ (start_gate[15]) follows in start_gate[20]'s order, under its own task",
+   "rationale": "Prefill null (orphan). This is the chunk-map research spike itself: its deliverable is the map, and its validation needs a disposition for every open #21542 node and Josh's approval (audit). It finishes on 0.5.0 with Josh's one approval (start_gate[9], ruling 5), given on 2026-11-05 (ruling 23). The map-approval commit that carries docs/port/ (start_gate[15]) follows in start_gate[20]'s order, because its line-cite recheck has to run right before it, and coverage_selfcheck lists this node as start gate.",
+   "prefill_disposition": null,
+   "prefill_target": null,
+   "changed": true
+  }
+ ]
+}

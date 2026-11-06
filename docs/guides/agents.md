@@ -179,6 +179,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `capabilities` | Explicit permissions and workflow opt-ins; a definition's name grants no authority. Rule applicability and exemptions belong in `workflows.rule_selectors`. |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
+| `spawner_capabilities` | Capabilities a caller must hold, any one of them, to spawn this definition, whatever the caller's `spawnable_agents` or capability set says; empty (the default) admits every caller. A fallback hop to this definition is checked the same way. The bundled Assistant requires `spawn_any_definition`, so only the Orchestrator can spawn it. |
 | `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`, and a single-task team's manager relaunches only a seat type its team recorded and no longer runs. |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
@@ -242,8 +243,9 @@ terminal backend. The researcher additionally declares `idle_ttl_seconds: 900`.
 
 Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
 rule group. The `no-send-keys` rule (default tag, so every bundled definition
-selects it) withholds `send_keys` from every definition except the Orchestrator
-and Assistant, which carry the `send_keys` capability. It does not withhold
+selects it) withholds `send_keys` from every definition except the Orchestrator,
+which carries the `send_keys` capability. The Assistant carries `send_wake` instead,
+which `no-send-wake` gates the same way. It does not withhold
 `capture_output`. Dev Team Leads, the Recovery Steward and Triage report stalled
 seats to Triage, which relays each resume to the Orchestrator. Spawn and
 pipeline-launch restrictions prevent seats from bypassing their assigned role.

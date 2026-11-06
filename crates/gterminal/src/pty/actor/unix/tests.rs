@@ -267,6 +267,48 @@ fn actor_delivers_fd_reads_to_callback() {
 }
 
 #[test]
+fn output_drain_delivers_everything_queued_before_it_replies() {
+    let (actor_socket, mut peer) = UnixStream::pair().expect("socket pair");
+    actor_socket
+        .set_nonblocking(true)
+        .expect("actor socket nonblocking");
+    let owned = unsafe { OwnedFd::from_raw_fd(actor_socket.into_raw_fd()) };
+    let (read_tx, read_rx) = std_mpsc::channel();
+    let handle = PtyIoActor::spawn(PtyIoActorConfig {
+        pane_id: 1,
+        master_fd: owned,
+        initially_quiesced: false,
+        on_read: Box::new(move |bytes| {
+            // A slow first read keeps the reader busy while the drain is requested,
+            // so the rest of the queued output is still unread when it arrives.
+            std::thread::sleep(Duration::from_millis(50));
+            read_tx
+                .send(Bytes::copy_from_slice(bytes))
+                .expect("read callback receiver alive");
+            PtyReadResult::empty()
+        }),
+        on_reader_exit: None,
+    })
+    .expect("actor spawn");
+
+    // Several 8 KiB reads' worth, still queued when the drain is requested and
+    // the peer stays open: the drain must not wait for EOF.
+    let output = vec![0xCC; 3 * 8192 + 17];
+    peer.write_all(&output).expect("peer write");
+
+    let drained = handle
+        .request_output_drain()
+        .expect("actor accepts an output drain");
+    drained
+        .blocking_recv()
+        .expect("actor replies after draining");
+
+    let delivered: usize = read_rx.try_iter().map(|bytes| bytes.len()).sum();
+    assert_eq!(delivered, output.len());
+    handle.shutdown();
+}
+
+#[test]
 fn begin_handoff_stops_reads_and_rejects_user_writes_until_rollback() {
     let (handle, mut peer, read_rx) = actor_with_socket_pair(false);
 

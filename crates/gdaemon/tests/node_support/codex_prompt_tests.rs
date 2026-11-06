@@ -30,6 +30,8 @@ struct PromptFixture {
     home: NodeHome,
     host: fake_gterm::FakeGterm,
     hub: fake_hub::FakeHub,
+    // Paused-clock time when the fixture was built. Schedules are measured from here.
+    origin: tokio::time::Instant,
 }
 
 impl Drop for PromptFixture {
@@ -61,7 +63,25 @@ impl PromptFixture {
         );
         state.commit(&agents.home, &agents.changed)?;
         drop(state);
-        Ok(Self { home, host, hub })
+        Ok(Self {
+            home,
+            host,
+            hub,
+            origin: tokio::time::Instant::now(),
+        })
+    }
+
+    // Receipt times of one gterm method, in milliseconds since the fixture was built.
+    fn times(&self, method: &str) -> Vec<u128> {
+        self.host
+            .request_times(method)
+            .into_iter()
+            .map(|at| self.elapsed_ms(at))
+            .collect()
+    }
+
+    fn elapsed_ms(&self, at: tokio::time::Instant) -> u128 {
+        at.duration_since(self.origin).as_millis()
     }
 
     fn start(&self, prompt: &str) -> JoinHandle<()> {
@@ -99,18 +119,40 @@ impl PromptFixture {
     }
 }
 
-// Keep the runtime runnable while the OS polls the isolated sockets. Thus paused
-// time moves only at an explicit advance(), never because a request waits for I/O.
-async fn pump() {
-    let until = std::time::Instant::now() + Duration::from_millis(50);
-    while std::time::Instant::now() < until {
+// The fake hub, fake gterm and node exchange real sockets while the test clock is paused.
+// A positive wait busy-yields until the state it awaits holds, then drains the runtime, so any
+// assertion after it runs with the delivery parked. The real-time bound only catches a hang;
+// it is far above any load delay.
+const SETTLE_BOUND: Duration = Duration::from_secs(30);
+
+async fn settle_until(what: &str, mut done: impl FnMut() -> bool) {
+    let started = std::time::Instant::now();
+    while !done() {
+        assert!(
+            started.elapsed() < SETTLE_BOUND,
+            "timed out waiting for {what}"
+        );
+        tokio::task::yield_now().await;
+    }
+    drain().await;
+}
+
+// Each yield runs every ready task and polls the loopback reactor once. A reply the fakes have
+// written reaches the delivery within a few cycles, so the bound is far above the hop depth.
+const DRAIN_CYCLES: usize = 256;
+
+// The delivery arms its next paused-clock timer only after it reads the previous reply. Moving the
+// clock before that point shifts every later poll, so drain first and again after the move.
+async fn drain() {
+    for _ in 0..DRAIN_CYCLES {
         tokio::task::yield_now().await;
     }
 }
 
 async fn advance(millis: u64) {
+    drain().await;
     tokio::time::advance(Duration::from_millis(millis)).await;
-    pump().await;
+    drain().await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -118,29 +160,25 @@ async fn codex_prompt_typed_after_composer() -> Result<()> {
     let mut fixture = PromptFixture::new().await?;
     fixture.host.set_pane("MCP servers are starting");
     let delivery = fixture.start(PROMPT);
-    pump().await;
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
     assert_eq!(
         fixture.requests("snapshot").len(),
         1,
         "delivery must probe the composer"
     );
-    assert!(fixture.requests("write").is_empty());
     advance(999).await;
-    assert_eq!(
-        fixture.requests("snapshot").len(),
-        1,
-        "polls are one second apart"
-    );
     fixture.host.set_pane("Ready\n› ");
     advance(1).await;
-    assert_eq!(fixture.requests("snapshot").len(), 2);
-    assert!(
-        fixture.requests("write").is_empty(),
-        "marker still needs one settle second"
-    );
+    settle_until("the second composer probe", || {
+        fixture.requests("snapshot").len() == 2
+    })
+    .await;
     advance(999).await;
-    assert!(fixture.requests("write").is_empty());
     advance(1).await;
+    settle_until("the text write", || fixture.requests("write").len() == 1).await;
     let writes = fixture.requests("write");
     assert_eq!(writes.len(), 1, "text must land after the settle second");
     assert_eq!(writes[0]["host_terminal_id"], HOST);
@@ -149,18 +187,21 @@ async fn codex_prompt_typed_after_composer() -> Result<()> {
     assert_eq!(writes[0]["data"], BASE64.encode(PROMPT));
     assert_eq!(writes[0]["submit"], false);
     advance(2999).await;
-    assert_eq!(
-        fixture.requests("write").len(),
-        1,
-        "Enter must wait three full seconds"
-    );
     advance(1).await;
+    settle_until("the Enter key write", || {
+        fixture.requests("write").len() == 2
+    })
+    .await;
     let writes = fixture.requests("write");
     assert_eq!(writes.len(), 2);
     assert_eq!(writes[1]["kind"], "key");
     assert_eq!(writes[1]["data"], BASE64.encode("enter"));
-    assert!(delivery.is_finished());
+    settle_until("the delivery to finish", || delivery.is_finished()).await;
     delivery.await?;
+    // Exact receipt times, checked only after the delivery has finished: probes at 0 and 1 s, the
+    // text one settle second after the ready probe, and Enter three seconds after the text.
+    assert_eq!(fixture.times("snapshot"), vec![0, 1000]);
+    assert_eq!(fixture.times("write"), vec![2000, 5000]);
     for request in fixture.requests("snapshot") {
         assert_eq!(request["host_terminal_id"], HOST);
         assert_eq!(request["mode"], "text");
@@ -177,10 +218,10 @@ async fn codex_prompt_typed_after_composer() -> Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn codex_prompt_failures_post_to_hub() -> Result<()> {
-    for (cause, code) in [
-        ("deadline", "codex_composer_not_ready"),
-        ("exited", "codex_terminal_exited_before_composer"),
-        ("refused", "codex_prompt_delivery_failed"),
+    for (cause, code, posted_at_ms) in [
+        ("deadline", "codex_composer_not_ready", 105_000),
+        ("exited", "codex_terminal_exited_before_composer", 1_000),
+        ("refused", "codex_prompt_delivery_failed", 2_000),
     ] {
         for status in [
             StatusCode::OK,
@@ -195,18 +236,16 @@ async fn codex_prompt_failures_post_to_hub() -> Result<()> {
                 .hub
                 .script(FAILURE, vec![(status, json!({"transitioned":true}))]);
             let delivery = fixture.start(PROMPT);
-            pump().await;
+            settle_until("the first composer probe", || {
+                !fixture.requests("snapshot").is_empty()
+            })
+            .await;
             match cause {
                 "deadline" => {
                     fixture.host.set_pane("");
-                    for _ in 0..104 {
+                    for _ in 0..105 {
                         advance(1000).await;
                     }
-                    assert!(
-                        fixture.hub.requests().is_empty(),
-                        "105-second budget must include retry window"
-                    );
-                    advance(1000).await;
                 }
                 "exited" => {
                     fixture.host.set_pane("");
@@ -221,6 +260,7 @@ async fn codex_prompt_failures_post_to_hub() -> Result<()> {
                 }
                 _ => unreachable!(),
             }
+            settle_until("the failure post", || !fixture.hub.requests().is_empty()).await;
             let requests = fixture.hub.requests();
             assert_eq!(
                 requests.len(),
@@ -253,9 +293,16 @@ async fn codex_prompt_failures_post_to_hub() -> Result<()> {
                     assert!(detail.contains(counter), "missing {counter} in {detail}");
                 }
             }
-            pump().await;
-            assert!(delivery.is_finished(), "failure response must end delivery");
+            settle_until("the failure response to end delivery", || {
+                delivery.is_finished()
+            })
+            .await;
             delivery.await?;
+            assert_eq!(
+                fixture.elapsed_ms(fixture.hub.receipts()[0]),
+                posted_at_ms,
+                "{cause}/{status}: the failure posts on the schedule"
+            );
             fixture.assert_no_signal().await?;
         }
     }
@@ -264,11 +311,16 @@ async fn codex_prompt_failures_post_to_hub() -> Result<()> {
     fixture.host.set_pane("still starting");
     fixture.hub.disconnect();
     let delivery = fixture.start(PROMPT);
-    pump().await;
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
     fixture.host.clear_inventory();
     advance(1000).await;
-    pump().await;
-    assert!(delivery.is_finished());
+    settle_until("the hub-disconnected delivery to end", || {
+        delivery.is_finished()
+    })
+    .await;
     delivery.await?;
     fixture.assert_no_signal().await
 }
@@ -279,18 +331,25 @@ async fn codex_prompt_skips() -> Result<()> {
     fixture.host.set_pane("› ");
     fixture.host.disconnect_next_write();
     let delivery = fixture.start(PROMPT);
-    pump().await;
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
     advance(1000).await;
+    settle_until("the write before disconnect", || {
+        fixture.requests("write").len() == 1
+    })
+    .await;
     assert_eq!(
         fixture.requests("write").len(),
         1,
         "exercise a write sent before disconnect"
     );
     advance(5000).await;
-    assert!(
-        delivery.is_finished(),
-        "indeterminate write must not be retried"
-    );
+    settle_until("the indeterminate write to end delivery", || {
+        delivery.is_finished()
+    })
+    .await;
     delivery.await?;
     assert_eq!(fixture.requests("write").len(), 1);
     assert!(
@@ -302,7 +361,10 @@ async fn codex_prompt_skips() -> Result<()> {
     let mut fixture = PromptFixture::new().await?;
     fixture.host.set_pane("loading");
     let delivery = fixture.start(PROMPT);
-    pump().await;
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
     assert_eq!(fixture.requests("snapshot").len(), 1);
     {
         let agents = &fixture.home.node.agents;
@@ -312,7 +374,7 @@ async fn codex_prompt_skips() -> Result<()> {
     }
     fixture.host.set_pane("› ");
     advance(105_000).await;
-    assert!(delivery.is_finished());
+    settle_until("the cancelled delivery to end", || delivery.is_finished()).await;
     delivery.await?;
     assert!(
         fixture.requests("write").is_empty(),
@@ -349,19 +411,33 @@ async fn codex_prompt_held_inventory_fails_at_deadline() -> Result<()> {
         vec![(StatusCode::OK, json!({"transitioned":true}))],
     );
     let delivery = fixture.start(PROMPT);
-    pump().await;
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
     advance_secs(103).await;
     // The liveness probe begun at 104 s is held. The budget still ends at 105 s.
     fixture.host.pause_next_list_reply();
     advance(1000).await;
     advance(1000).await;
+    settle_until("the budget failure post", || {
+        !fixture.hub.requests().is_empty()
+    })
+    .await;
     let requests = fixture.hub.requests();
     assert_eq!(requests.len(), 1, "the budget ends at 105 s: {requests:?}");
     assert_eq!(requests[0].body["code"], "codex_composer_not_ready");
     fixture.host.release_list_reply();
-    pump().await;
-    assert!(delivery.is_finished(), "the budget must end delivery");
+    settle_until("the held list reply to end delivery", || {
+        delivery.is_finished()
+    })
+    .await;
     delivery.await?;
+    assert_eq!(
+        fixture.elapsed_ms(fixture.hub.receipts()[0]),
+        105_000,
+        "the budget ends at 105 s"
+    );
     assert!(fixture.requests("write").is_empty());
     fixture.assert_no_signal().await
 }
@@ -384,40 +460,30 @@ async fn codex_prompt_late_inventory_preserves_deadline_failure() -> Result<()> 
         PROMPT.into(),
     ));
     let mut context = Context::from_waker(std::task::Waker::noop());
-    for _ in 0..20 {
+    settle_until("the first inventory", || {
         assert!(delivery.as_mut().poll(&mut context).is_pending());
-        pump().await;
-        if fixture.requests("list").len() == 1 {
-            break;
-        }
-    }
+        fixture.requests("list").len() == 1
+    })
+    .await;
     assert_eq!(fixture.requests("list").len(), 1);
     // Finish the first inventory, then start a missing-terminal probe at 104 s.
     assert!(delivery.as_mut().poll(&mut context).is_pending());
     fixture.host.clear_inventory();
     fixture.host.pause_next_list_reply();
-    tokio::time::advance(Duration::from_secs(104)).await;
-    for _ in 0..20 {
+    advance(104_000).await;
+    settle_until("the held 104 s inventory", || {
         assert!(delivery.as_mut().poll(&mut context).is_pending());
-        pump().await;
-        if fixture.requests("list").len() == 2 {
-            break;
-        }
-    }
+        fixture.requests("list").len() == 2
+    })
+    .await;
     assert_eq!(fixture.requests("list").len(), 2);
     fixture.host.wait_for_list_snapshot().await;
     fixture.host.release_list_reply();
-    pump().await;
-    tokio::time::advance(Duration::from_secs(1)).await;
-    let mut finished = false;
-    for _ in 0..20 {
-        if delivery.as_mut().poll(&mut context).is_ready() {
-            finished = true;
-            break;
-        }
-        pump().await;
-    }
-    assert!(finished, "the failure report must finish delivery");
+    advance(1000).await;
+    settle_until("the failure report to finish delivery", || {
+        delivery.as_mut().poll(&mut context).is_ready()
+    })
+    .await;
 
     let requests = fixture.hub.requests();
     assert_eq!(requests.len(), 1);
@@ -427,6 +493,7 @@ async fn codex_prompt_late_inventory_preserves_deadline_failure() -> Result<()> 
     for counter in ["captures=2", "snapshot_errors=0", "liveness_errors=0"] {
         assert!(detail.contains(counter), "missing {counter} in {detail}");
     }
+    assert_eq!(fixture.elapsed_ms(fixture.hub.receipts()[0]), 105_000);
     assert!(fixture.requests("write").is_empty());
     fixture.assert_no_signal().await
 }
@@ -440,7 +507,10 @@ async fn codex_prompt_held_snapshot_fails_at_deadline() -> Result<()> {
         vec![(StatusCode::OK, json!({"transitioned":true}))],
     );
     let delivery = fixture.start(PROMPT);
-    pump().await;
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
     advance_secs(103).await;
     // The snapshot begun at 104 s is held with the composer marker in its reply. The budget still
     // ends at 105 s, and the late marker must not start a write.
@@ -448,14 +518,69 @@ async fn codex_prompt_held_snapshot_fails_at_deadline() -> Result<()> {
     fixture.host.set_pane("›");
     advance(1000).await;
     advance(1000).await;
+    settle_until("the budget failure post", || {
+        !fixture.hub.requests().is_empty()
+    })
+    .await;
     let requests = fixture.hub.requests();
     assert_eq!(requests.len(), 1, "the budget ends at 105 s: {requests:?}");
     assert_eq!(requests[0].body["code"], "codex_composer_not_ready");
     fixture.host.release_snapshot_reply();
-    pump().await;
-    assert!(delivery.is_finished(), "the budget must end delivery");
+    settle_until("the held snapshot reply to end delivery", || {
+        delivery.is_finished()
+    })
+    .await;
     delivery.await?;
+    assert_eq!(
+        fixture.elapsed_ms(fixture.hub.receipts()[0]),
+        105_000,
+        "the budget ends at 105 s"
+    );
     assert!(fixture.requests("write").is_empty());
+    fixture.assert_no_signal().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn codex_prompt_exit_reports_output_printed_after_the_last_poll() -> Result<()> {
+    let mut fixture = PromptFixture::new().await?;
+    let exit_output = "codex: usage limit reached";
+    fixture.hub.script(
+        FAILURE,
+        vec![(StatusCode::OK, json!({"transitioned":true}))],
+    );
+    let delivery = fixture.start(PROMPT);
+    settle_until("the first composer probe", || {
+        !fixture.requests("snapshot").is_empty()
+    })
+    .await;
+    // The poll at 1 s reads an empty pane, and that reply is held. The process prints its error
+    // and leaves the inventory before the reply lands, so only a read after the exit can carry it.
+    fixture.host.pause_next_snapshot_reply();
+    advance(1000).await;
+    settle_until("the held 1 s snapshot", || {
+        fixture.requests("snapshot").len() == 2
+    })
+    .await;
+    fixture.host.set_pane(exit_output);
+    fixture.host.clear_inventory();
+    fixture.host.release_snapshot_reply();
+    settle_until("the exit to end delivery", || delivery.is_finished()).await;
+    delivery.await?;
+    let requests = fixture.hub.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "the exit posts one failure: {requests:?}"
+    );
+    assert_eq!(
+        requests[0].body["code"],
+        "codex_terminal_exited_before_composer"
+    );
+    assert_eq!(
+        requests[0].body["pane"], exit_output,
+        "the failure must carry the process's own output"
+    );
+    assert_eq!(fixture.elapsed_ms(fixture.hub.receipts()[0]), 1_000);
     fixture.assert_no_signal().await
 }
 

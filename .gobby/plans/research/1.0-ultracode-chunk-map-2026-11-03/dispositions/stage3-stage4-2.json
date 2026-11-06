@@ -1,0 +1,338 @@
+{
+ "dispositions": [
+  {
+   "ref": "#25245",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Josh-ruling node. Audit: keep: measure after hub-node and set budgets from the data (memory 83a9445f). S4-PROOF's goal names latency by workflow class, which keeps Josh's placement under #24593.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#25246",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Josh-ruling node. The audit kept it; the verifier refutes that to rewrite, because of the stale sentence 'Windows (F11, #21579) is a later 1.0 obligation'. S4-PROOF's goal names the node parity inventory and the smoke checklist, and S4-NODE's goal corrects the Windows text, so Josh's placement stands.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#25329",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Josh approved this proof on 2026-10-29 under #24593. The audit's edge_fix (it is blocked only by superseded #25328) was refuted to needs_josh, because criterion 2, a hub-invoked call running on the node, contradicts #21566 Decision 5. D35's default settles it: S4-PROOF keeps the proof and rewrites criterion 2 to Decision 5's rule, which Josh confirms with the map approval. The #25328 edge drops under D31, and the Rust pair harness replaces the pytest pair fixtures.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#25332",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "This is Josh's ruling of 2026-10-29: a runbook or pipeline runs on the machine that owns the launching pane. The audit's merge into Stage 2 was refuted, because seam (b) needs a new node workspace.create command and seam (d) needs #24597. So it stays in Stage 4 as a rewrite onto the Rust successors of its Python seams. S4-PROOF's goal re-targets #25332 'onto the Rust families behind #24597', which keeps Josh's Stage 4 placement.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#21576",
+   "disposition": "decision",
+   "target": "D21",
+   "rationale": "Josh placed #21576 in Stage 4 through ROADMAP S4.8 (2026-10-18), and verify-stage3-stage4 section 4.8 marks it needs_josh. D21 has no resolved_by, and its own rationale says the reversal 'needs Josh', so the map does not settle it. Under D21's default the disposition is chunk COMMS-2, as G3 wrote; it applies if Josh approves that default with the map.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "COMMS-2",
+   "changed": true,
+   "reviewer_rationale": "Josh placed this in Stage 4 (ROADMAP S4.8, after #21585 only, 2026-10-18), and the verifier refuted the audit's merge to needs_josh because the merge reverses that placement. D21's default settles the move, and Josh confirms the reversal with the map approval. S3-DELETE removes the Python comms surfaces before Stage 4 starts, so COMMS-2 (tree_nodes #21576) moves the attachments onto PROJ-2's files_home documents once PROJ-2 has landed. Moving it after the hub-documents child, not with it, still meets the node's own concern that moving it earlier 'would mean migrating the same bytes twice'."
+  },
+  {
+   "ref": "#23276",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "The audit rates it rewrite: 'Delivered within Stage 2' and the needs-planning label are stale, since P1-P4 are expanded and 5 P1 leaves are closed. S4-CIX lists #23276: the node code-index routes, read parity, projection sync and node-local embeddings.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24661",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Holder for code-index-family P1 (audit: keep). S4-CIX's goal names its node code-index routes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24674",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 1.5); its Python refs are no-edit consumers plus the pin bump. S4-CIX's goal names overlay index plan and apply.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24676",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 1.7). S4-CIX's goal names brokered access with the typed refusal.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24677",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 1.8). S4-CIX's goal names gcode's node client.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24678",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "The audit rates it rewrite. It creates crates/gcodeindex and CodeIndexNodeFamily, its 1.9.6 'honors proxy' half dies with Python, and its crate scaffold was a hidden Stage 2 dependency of #24694. The Stage 2 side of that hazard falls to CIX-1's #21586 P5-P9 replan (task-25460 Decision 10). S4-CIX's goal names 'the gobby-codeindex family serving node routes', so the node-route half lands there.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24679",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "The audit rates it rewrite: 1.10.1 runs the Python test_vectors_match_python_capabilities, and its golden sits under tests/runtime_grants/golden/. It waits on Stage 2 #24712, which CIX-2 carries. S3-FREEZE freezes every Python-produced golden before S3-DELETE, and S4-CIX's goal names the remote grant shape.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24680",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "The audit rates it rewrite: its only target is the pytest e2e test in tests/e2e/test_hub_node_pair.py (1.11.1). The scenario stays on the Rust pair harness, and S4-CIX's oracle names the E2E preflight through the hub routes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24662",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Holder for code-index-family P2, node read parity (audit: keep). S4-CIX's goal names node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24681",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.1). Machine-explicit read paths are the base of S4-CIX's node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24682",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.2). Node freshness is part of S4-CIX's node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24683",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.3). S4-CIX's goal names search in its node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24684",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.4). S4-CIX's goal names grep in its node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24685",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.5). S4-CIX's goal names symbol navigation in its node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24686",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.6). S4-CIX's goal names graph navigation in its node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24687",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.7). S4-CIX's goal names reports in its node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24688",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 2.8). S4-CIX's goal names evidence in its node read parity.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24689",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "The audit rates it rewrite: its only target is the pytest e2e test 2.9.1 in tests/e2e/test_hub_node_pair.py. The scenario stays, the Rust pair harness replaces the fixture, and S4-CIX's oracle runs gcode's read tests through the hub routes against a node.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24663",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Holder for code-index-family P3 (audit: keep). S4-CIX's goal names projection sync per machine.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24690",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 3.1). S4-CIX's goal names projection sync per machine.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24664",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Holder for code-index-family P4 (audit: keep). S4-CIX's goal names node-local embeddings.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24691",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 4.1). The verifier confirmed its prefix rules against embeddings.py and that it does not depend on the old default model. S4-CIX's goal names node-local embeddings.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24692",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "The audit rates it rewrite: 4.2.8 runs the Python tests/skills/test_reference_library.py, and it edits a bundled skill reference under src/gobby/install/shared/. Under ruling 7 that check is rewritten from the contract, and after S3-DELETE the reference lives under assets/shared (D15). Vector sync belongs to the node-local embedding that S4-CIX's goal names.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24693",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Audit: keep, Rust (code-index-family 4.3). Heartbeat vector sync completes the node-local embedding (P4) that S4-CIX's goal names.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-CIX",
+   "changed": false
+  },
+  {
+   "ref": "#24148",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "The audit rates it rewrite: '#21564 now depends on this epic' is stale, the S2.7 label sits on a Stage 4 epic, and 57 ledger notes co-cite it. S4-NODE lists #24148, the node half of agent spawn and worktrees, and AG-4's goal keeps node-local checkouts in gdaemon nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#24362",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "Holder for node-halves P2 (audit: keep; 5 open, 14 closed). S4-NODE's goal names its node agent duties: the code-index preflight, the pane monitor, sandbox reaping and records, the chokepoint gaps and remote delegation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#24380",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "Audit: keep, Rust (node-halves 2.11). S4-NODE's goal names the code-index preflight. Its old edge on #24678 (in S4-CIX, which depends on S4-NODE) drops under D31: the task's own text has node gcode reach the hub routes that #21586 adds in Stage 2, its tests are node_agents.rs unit tests, and S4-CIX's #24680 E2E proves the pair once both have landed.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#24383",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "Audit: keep: Rust with no Python test (node-halves 2.14). S4-NODE's goal names the pane monitor, and AG-2's goal keeps the node pane monitor in S4-NODE and drops agents 4.1's edge on it.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#24384",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "The audit rates it rewrite: 2.15.1 generates a corpus from Python that does not exist yet, and the verifier says it must be produced, not copied. S3-FREEZE produces #24384's sandbox reaping and records corpus before S3-DELETE, and S4-NODE's goal and size make that frozen corpus its oracle.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#25364",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "Audit: keep. These are Rust launch-chokepoint leftovers from node-halves 2.5 after #24374 closed, and no other leaf owns them. S4-NODE's goal names the launch chokepoint gaps (#25364).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#25423",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "Restraint deferral. Audit: keep, because lifting it needs a node-side ACK/grant RPC, which is Stage 4 Rust work; the hub-side fail-closed refusal must survive the Stage 2 spawn port. S4-NODE's goal names run-backed remote delegation (#25423).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#24150",
+   "disposition": "chunk",
+   "target": "S4-HOOKS",
+   "rationale": "The audit rates it rewrite: '#21569 depends' is stale, P1 hook ingress is done, and only the #23277 subtree remains. S4-HOOKS lists #24150, the node-local envelope ledger that forwards hooks to HOOK-3.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HOOKS",
+   "changed": false
+  }
+ ]
+}

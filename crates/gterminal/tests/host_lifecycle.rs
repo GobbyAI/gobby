@@ -585,6 +585,54 @@ fn leader_exit_under_kill_emits_no_terminal_exited() {
 }
 
 #[test]
+fn leader_that_exits_before_commit_emits_one_terminal_exited() {
+    let token = "control-token-exit-before-commit";
+    let (dir, mut host, mut stream) = test_host(token);
+    let mut events = connect(&dir.path().join(CONTROL_SOCKET));
+    assert_eq!(hello(&mut events, token)["ok"], true);
+    send_json(&mut events, &json!({"method": "subscribe_events"}));
+    assert_eq!(recv_json(&mut events)["gap"], false);
+    let (terminal_id, spawn_key, _, _) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "exit-before-commit",
+        &["/bin/sh", "-c", "exit 7"],
+        BTreeMap::from([("GTERM_TEST_WAIT_FOR_CHILD_EXIT_BEFORE_STATUS", "1")]),
+    );
+    // The status waits for the leader's exit, so commit finds it exited and
+    // removes its slot for that exit. The exit watcher must emit exactly once.
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    assert_eq!(response["terminal_state"], "exited", "{response}");
+    events
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("read timeout");
+    let mut reader = BufReader::with_capacity(1, &events);
+    let mut exits = Vec::new();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) if line.contains("\"terminal_exited\"") => exits.push(line),
+            Ok(_) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break
+            }
+            Err(err) => panic!("event stream failed: {err}"),
+        }
+    }
+    assert_eq!(exits.len(), 1, "expected one terminal_exited: {exits:?}");
+    assert!(exits[0].contains("\"exit_code\":7"), "{exits:?}");
+    assert_no_terminals(&mut stream);
+}
+
+#[test]
 fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
     let (_dir, mut host, mut stream) = test_host("control-token-preexec-faults");
     let (terminal_id, spawn_key, _, _) = prepare_terminal(
@@ -695,6 +743,88 @@ fn fast_exit_after_exec_is_committed_then_exited() {
         assert_ne!(response["error"], "exec_failed", "{response}");
         assert_no_terminals(&mut stream);
     }
+}
+
+#[test]
+fn exited_terminal_keeps_its_final_output_for_snapshot() {
+    // A process that dies right after printing its error must still be
+    // readable once the host has dropped its slot; the daemon names that
+    // error in the run's failure.
+    let (_dir, mut host, mut stream) = test_host("control-token-exit-tail");
+    let (terminal_id, spawn_key, host_terminal_id, _) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "exit-tail",
+        &[
+            "/bin/sh",
+            "-c",
+            "printf 'codex: usage limit reached\\n' >&2; exit 1",
+        ],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    wait_for_no_terminals(&mut stream);
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "snapshot",
+            "host_terminal_id": host_terminal_id,
+            "mode": "text",
+            "max_lines": 40,
+        }),
+    );
+    let snapshot = recv_json(&mut stream);
+    assert_eq!(snapshot["ok"], true, "{snapshot}");
+    assert!(
+        snapshot["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("codex: usage limit reached")),
+        "{snapshot}"
+    );
+}
+
+#[test]
+fn exit_tail_keeps_output_written_just_before_the_exit() {
+    // Far more than one PTY read of output, with the last line written right
+    // before the exit. The retained tail must end with that line, so the
+    // exit has to wait for the reader to take what the child already wrote.
+    let (_dir, mut host, mut stream) = test_host("control-token-exit-drain");
+    let (terminal_id, spawn_key, host_terminal_id, _) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "exit-drain",
+        &[
+            "/bin/sh",
+            "-c",
+            "i=0; while [ $i -lt 4000 ]; do printf 'row %04d padding padding padding\\n' $i; i=$((i+1)); done; printf 'codex: final marker\\n'; exit 1",
+        ],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    wait_for_no_terminals(&mut stream);
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "snapshot",
+            "host_terminal_id": host_terminal_id,
+            "mode": "text",
+            "max_lines": 40,
+        }),
+    );
+    let snapshot = recv_json(&mut stream);
+    assert_eq!(snapshot["ok"], true, "{snapshot}");
+    let text = snapshot["text"].as_str().unwrap_or_default();
+    assert_eq!(
+        text.lines().last(),
+        Some("codex: final marker"),
+        "{snapshot}"
+    );
 }
 
 #[test]

@@ -81,6 +81,8 @@ enum PaneRuntimeIo {
     TestChannel {
         sender: mpsc::Sender<Bytes>,
         resize_tx: tokio::sync::watch::Sender<(u16, u16, u32, u32)>,
+        // Held open until the runtime drops, so removing the slot ends a drain.
+        drain: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     },
 }
 
@@ -278,6 +280,20 @@ impl PaneRuntime {
             completed: self.child_wait_completed.as_ref()?.clone(),
             notify: self.child_exit_notify.as_ref()?.clone(),
         })
+    }
+
+    /// Asks the PTY reader to take the output the child already wrote. `None`
+    /// when there is no PTY reader to ask.
+    pub(crate) fn request_output_drain(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        match &self.io {
+            PaneRuntimeIo::Actor(actor) => actor.request_output_drain(),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { drain, .. } => {
+                let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+                *drain.lock().expect("drain gate") = Some(done_tx);
+                Some(done_rx)
+            }
+        }
     }
 
     /// Leaves an exit that arrives from now on unreaped, so it survives an
@@ -744,6 +760,7 @@ impl PaneRuntime {
                 io: PaneRuntimeIo::TestChannel {
                     sender: tx,
                     resize_tx,
+                    drain: std::sync::Mutex::new(None),
                 },
                 current_size: Cell::new((rows, cols, 0, 0)),
                 child_pid: Arc::new(AtomicU32::new(0)),

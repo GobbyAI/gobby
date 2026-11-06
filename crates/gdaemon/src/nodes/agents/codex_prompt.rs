@@ -172,6 +172,13 @@ async fn wait_for_composer(
         }
         match inventory(node, probe_limit(deadline)).await {
             Ok(inventory) if Instant::now() < deadline && !is_live(&inventory, terminal_id) => {
+                // The host keeps a retired terminal's final text, so one read after the exit
+                // carries the process's own output into the failure report.
+                if let Ok(text) = snapshot(node, host_terminal_id, probe_limit(deadline)).await
+                    && !text.is_empty()
+                {
+                    probe.pane = text;
+                }
                 return Err(Stop::Failed {
                     code: "codex_terminal_exited_before_composer",
                     detail: format!("terminal {terminal_id} left the host inventory"),
