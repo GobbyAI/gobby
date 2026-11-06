@@ -31,9 +31,9 @@ def installed_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[
         binary.write_text(script, encoding="utf-8")
         binary.chmod(0o755)
     (bin_dir / ".gdaemon-schema-identity.json").write_text("{}", encoding="utf-8")
-    # A freshly written executable can take longer than the 10s version probe on its first
-    # run on this host. Run it once here, under a longer bound, so the probe measures only
-    # the probe and the cache tests stop depending on first-run latency.
+    # A freshly written executable can stall on its first exec on this host: 3 of 300 first
+    # execs measured 50 to 60 seconds, against about 0.15 seconds typical. Run it once here
+    # under a longer bound, so the probe measures only the probe.
     subprocess.run(
         [str(bin_dir / "node"), "--version"], capture_output=True, check=True, timeout=120
     )
