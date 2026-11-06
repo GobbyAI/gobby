@@ -569,16 +569,16 @@ def _quota_lines(snapshot: Mapping[str, Any]) -> list[str]:
     ]
     for window in snapshot["windows"]:
         lines.append(
-            f"  {window['label']}: {_used_percent(window)} used,"
-            f" resets {_or_na(window['resets_at'])}"
+            f"  {window['label']}: used={_or_na(window['used'])}"
+            f" limit={_or_na(window['limit'])} used_percent={_used_percent(window)}"
+            f" resets={_or_na(window['resets_at'])}"
         )
     for key, component in snapshot["details"].get("components", {}).items():
-        stale = component["stale_reason"]
-        suffix = "" if stale is None else f" stale_reason={stale}"
-        lines.append(
-            f"  component {key}: state={component['state']} fresh={_flag(component['fresh'])}"
-            f" resets={_or_na(component['resets_at'])}{suffix}"
+        fields = " ".join(
+            f"{name}={_flag(value) if isinstance(value, bool) else _or_na(value)}"
+            for name, value in component.items()
         )
+        lines.append(f"  component {key}: {fields}")
     return lines
 
 
