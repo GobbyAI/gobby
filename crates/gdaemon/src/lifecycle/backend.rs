@@ -502,3 +502,16 @@ fn publish_line(line: &mut Vec<u8>, last: &watch::Sender<String>) {
     }
     line.clear();
 }
+
+/// Takes the lease lock. Behavior-free stub: reporting is added with the fix.
+async fn lock_reporting<'a, T>(
+    lock: &'a Mutex<T>,
+    _interval: Duration,
+    _reporter: &(dyn Fn(&str) + Send + Sync),
+) -> tokio::sync::MutexGuard<'a, T> {
+    lock.lock().await
+}
+
+#[cfg(test)]
+#[path = "backend/tests.rs"]
+mod tests;

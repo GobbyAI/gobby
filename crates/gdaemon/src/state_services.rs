@@ -235,6 +235,9 @@ mod tests {
                 drain_timeout: Duration::from_secs(17),
                 heartbeat_interval: Duration::from_secs(1),
                 write_token: gobby_terminals::write_api::TokenSlot::default(),
+                exit_grace: Duration::from_secs(60),
+                report_interval: Duration::from_secs(60),
+                reporter: Arc::new(|line: &str| eprintln!("{line}")),
             };
             for key in ["UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR"] {
                 let path = std::path::PathBuf::from(

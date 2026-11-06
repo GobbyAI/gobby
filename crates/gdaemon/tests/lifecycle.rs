@@ -972,12 +972,16 @@ async fn silent_backend_wait_is_reported_each_interval() -> Result<()> {
         let lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let sink = Arc::clone(&lines);
         let mut supervisor = db
-            .supervisor_with(home.path(), "import time\ntime.sleep(3600)\n", move |config| {
-                config.report_interval = Duration::from_millis(100);
-                config.reporter = Arc::new(move |line: &str| {
-                    sink.lock().expect("report sink").push(line.to_owned());
-                });
-            })
+            .supervisor_with(
+                home.path(),
+                "import time\ntime.sleep(3600)\n",
+                move |config| {
+                    config.report_interval = Duration::from_millis(100);
+                    config.reporter = Arc::new(move |line: &str| {
+                        sink.lock().expect("report sink").push(line.to_owned());
+                    });
+                },
+            )
             .await?;
         let (stop, rx) = watch::channel(false);
         let task = tokio::spawn(async move { supervisor.run(rx).await });
