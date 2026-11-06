@@ -179,8 +179,10 @@ def test_operator_keystroke_answers_while_the_default_executor_is_held() -> None
     )
 
     async def type_one_key() -> object:
-        # A gclient pane is always writable: its keystroke needs no take or lease.
-        await leases.attach(terminal.id, attachment_id="att-1")
+        # Daemon-written web input holds the writer lease before delivery.
+        await leases.attach(terminal.id, attachment_id="att-1", terminal=terminal, viewer="web")
+        taken = await leases.take_control(terminal.id, "att-1")
+        assert taken.granted
         return await coordinator.write(
             WriteRequest(
                 terminal_id=terminal.id,
@@ -189,7 +191,7 @@ def test_operator_keystroke_answers_while_the_default_executor_is_held() -> None
                 kind="input",
                 payload="x",
                 attachment_id="att-1",
-                expected_lease_generation=None,
+                expected_lease_generation=taken.lease_generation,
                 terminal=terminal,
             )
         )
