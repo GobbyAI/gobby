@@ -1,5 +1,5 @@
 name: docs-reviewer
-version: "3.2.0"
+version: "3.3.0"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
@@ -48,6 +48,8 @@ prompts:
     and files intact. Do not edit, format or commit the implementation.
     Read the task with get_task(brief=false) and judge the candidate against every validation
     criterion: cite each criterion in your review; an unmet criterion blocks approval.
+    When the review target is an epic, load gobby:references/review/epic.md through
+    get_skill_file completely, then perform its holistic epic review.
 
     ## Verdict
     Record gobby-tasks:record_attestation(kind=independent-review, result=approved or rejected)
