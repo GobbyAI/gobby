@@ -7,7 +7,7 @@ tests drive the production reader against a real server.
 
 They need GOBBY_TEST_FALKOR_PASSWORD (and optionally GOBBY_TEST_FALKOR_HOST and
 GOBBY_TEST_FALKOR_PORT) and skip otherwise, like the recall benchmarks. Each run
-uses its own graph and deletes its contents afterwards.
+uses its own graph and deletes that graph afterwards.
 
 Run against the isolated test service:
     GOBBY_TEST_FALKOR_PASSWORD=... GOBBY_TEST_PROTECT=1 \\
@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
@@ -27,6 +28,38 @@ if TYPE_CHECKING:
     from gobby.memory.falkor_client import FalkorClient
 
 pytestmark = [pytest.mark.integration]
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_live_fixture_installs_schema_and_always_closes(
+    monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
+) -> None:
+    monkeypatch.setenv("GOBBY_TEST_FALKOR_PASSWORD", "fixture-test-only")
+    client = AsyncMock()
+    if cleanup_fails:
+        client._execute_command.side_effect = RuntimeError("cleanup failed")
+    with patch("gobby.memory.falkor_client.FalkorClient", return_value=client):
+        fixture_factory = cast(
+            "Callable[[], AsyncGenerator[FalkorClient]]", live_client._get_wrapped_function()
+        )
+        fixture = fixture_factory()
+        assert await anext(fixture) is client
+        if cleanup_fails:
+            with pytest.raises(RuntimeError, match="cleanup failed"):
+                await fixture.aclose()
+        else:
+            await fixture.aclose()
+        client.assert_has_calls(
+            [
+                call.ensure_memory_graph_schema(),
+                call.query(
+                    _SEED_CYPHER, {"hub": HUB_KEY, "pid": PROJECT_ID, "count": NEIGHBOR_COUNT}
+                ),
+            ]
+        )
+        client._execute_command.assert_awaited_once_with("GRAPH.DELETE", client._graph_name)
+        client.close.assert_awaited_once_with()
+
 
 PROJECT_ID = "traversal-live-project"
 HUB_KEY = "traversal-live:hub"
@@ -63,14 +96,18 @@ async def live_client() -> AsyncIterator[FalkorClient]:
     try:
         if not await client.ping():
             pytest.fail("FalkorDB not reachable for the traversal regression")
-        await client.query("MATCH (n) DETACH DELETE n")
+        # Schema setup waits for both unique constraints to become OPERATIONAL,
+        # which requires their supporting entity-key and memory-id indexes ready.
+        await client.ensure_memory_graph_schema()
         await client.query(
             _SEED_CYPHER, {"hub": HUB_KEY, "pid": PROJECT_ID, "count": NEIGHBOR_COUNT}
         )
         yield client
     finally:
-        await client.query("MATCH (n) DETACH DELETE n")
-        await client.close()
+        try:
+            await client._execute_command("GRAPH.DELETE", client._graph_name)
+        finally:
+            await client.close()
 
 
 async def test_hop_admits_seeded_neighbors_and_their_memories(live_client: FalkorClient) -> None:
