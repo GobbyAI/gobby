@@ -6956,7 +6956,7 @@
     },
     {
       "name": "sessions.sessions_status_line_check",
-      "definition": "CHECK (status_line IS NULL OR btrim(status_line) <> ''::text AND length(status_line) <= 120)"
+      "definition": "CHECK (status_line IS NULL OR btrim(status_line) <> ''::text AND length(status_line) <= 120 AND status_line !~ '[\\x01-\\x1F\\x7F-\\x9F]'::text)"
     },
     {
       "name": "sessions.sessions_transcript_processing_failure_count_check",

@@ -549,7 +549,7 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
                     display_width(&title),
                     budget.saturating_sub(display_width(&lead)),
                 ),
-                None => status_line(row).map_or(0, |text| overrun(display_width(text), budget)),
+                None => status_line(row).map_or(0, |text| overrun(display_width(&text), budget)),
             };
             name.max(line_three)
         }
@@ -605,12 +605,18 @@ pub fn claim_mark(holds_claim: bool, nerd_glyphs: bool) -> Option<&'static str> 
     }
 }
 
-/// The agent's status line for line three when it holds no task; blank text counts as none.
-fn status_line(row: &SidebarRow) -> Option<&str> {
-    row.status_line
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
+/// The agent's status line for line three when it holds no task. Control
+/// characters (ESC, C0, DEL, C1) are dropped before trimming, so a stored value
+/// draws as inert text; blank text counts as none.
+fn status_line(row: &SidebarRow) -> Option<String> {
+    let printable: String = row
+        .status_line
+        .as_deref()?
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    let trimmed = printable.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -800,7 +806,7 @@ pub(crate) fn row_third_line_with_travel<'a>(
         // With no task held, the status line fills line three and scrolls alone.
         if budget > 0 {
             spans.extend(ticker_spans(
-                &[(text, style)],
+                &[(&text, style)],
                 budget,
                 chrome.ticker,
                 max_travel,

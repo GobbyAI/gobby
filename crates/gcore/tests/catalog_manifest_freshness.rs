@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use gobby_core::schema::{
     CATALOG_MANIFEST_JSON, SchemaRunner, catalog_manifest, render_catalog_manifest, schema_identity,
 };
+use postgres::error::SqlState;
 use postgres::{Client, Config, NoTls};
 use uuid::Uuid;
 
@@ -423,6 +424,75 @@ fn migration_drops_stored_session_titles() -> anyhow::Result<()> {
         )?
         .get(0);
     assert_eq!(stored_title_columns, 0);
+    Ok(())
+}
+
+#[test]
+fn migration_refuses_control_characters_in_status_line() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    client.batch_execute(
+        "
+        INSERT INTO users (id, email, name, password_hash)
+        VALUES ('99999999-9999-4999-8999-999999999999', 'schema@test.local', 'schema-test', 'x');
+        INSERT INTO machines (id, hostname, owner_user_id)
+        VALUES (
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'status-line-test',
+            '99999999-9999-4999-8999-999999999999'
+        );
+        INSERT INTO projects (id, name)
+        VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'status-line-test');
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id)
+        VALUES (
+            'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            'status-line-test',
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'test',
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        );
+        ",
+    )?;
+    for value in [
+        "\u{1b}[31mred\u{1b}[0m",
+        "bell\u{7}",
+        "carriage\rreturn",
+        "tab\tstop",
+        "c1\u{85}next",
+        "delete\u{7f}",
+    ] {
+        let refused = client.execute(
+            "UPDATE sessions SET status_line = $1 \
+             WHERE id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'",
+            &[&value],
+        );
+        let Err(error) = refused else {
+            panic!("control character was stored: {value:?}");
+        };
+        assert_eq!(
+            error.code(),
+            Some(&SqlState::CHECK_VIOLATION),
+            "{value:?} must fail the status_line check: {error}"
+        );
+    }
+    client.execute(
+        "UPDATE sessions SET status_line = $1 \
+         WHERE id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'",
+        &[&"Reviewing the ticker"],
+    )?;
+    let stored: String = client
+        .query_one(
+            "SELECT status_line FROM sessions \
+             WHERE id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(stored, "Reviewing the ticker");
     Ok(())
 }
 
