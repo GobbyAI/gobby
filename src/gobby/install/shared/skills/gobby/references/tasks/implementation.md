@@ -39,12 +39,14 @@ call ran in:
   attributed when its process ends, at your next tool call. If its output file is gone,
   its paths stay foreign.
 - If another session's call overlapped yours in the same worktree and changed a path,
-  that path stays foreign to every session, including yours, for as long as it stays
-  dirty. This holds even when your task already owns the path: an overlapping rewrite of
-  it is refused too. A structured Edit or Write in flight counts as overlap for a Bash
-  call, so a Bash call that overlaps it does not attribute the paths it changed. The other
-  call finishing does not release the path; only its return to a clean state does, which
-  Triage arranges as below.
+  that path stays foreign to every session, including yours, while any Bash call in that
+  worktree is still running. This holds even when your task already owns the path: an
+  overlapping rewrite of it is refused too. A structured Edit or Write in flight counts as
+  overlap for a Bash call, so a Bash call that overlaps it does not attribute the paths it
+  changed. A background call whose process has exited no longer counts, even before its
+  owner settles it. Once no Bash call in the worktree is running, edit the path with the
+  native Edit or Write tool: that edit reclaims it for your session. A Bash write to the
+  path does not reclaim it.
 - In the main or a shared checkout, script writes stay unattributed and nothing changes.
   `block-cross-session-foreign-dirty-edit` refuses later edits to those paths with the
   reason "no live session owns it".
@@ -86,6 +88,6 @@ prior evidence stale; committing does not.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [Tests-first Development](../../../../../../../../docs/guides/tdd-enforcement.md).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
 
-_Last verified: 2026-10-27_
+_Last verified: 2026-11-05_

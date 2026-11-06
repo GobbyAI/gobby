@@ -1944,6 +1944,60 @@ async def test_overlap_holder_native_write_ignores_a_stale_call_from_another_ses
 
 
 @pytest.mark.asyncio
+async def test_overlap_holder_native_write_ignores_a_finished_background_call_from_another_session(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    """A background call whose process exited no longer blocks the holder's native write.
+
+    Its owner settles it only on that session's next tool call, so an idle owner must not
+    strand the holder's overlap record.
+    """
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    manager = SessionVariableManager(h.db)
+    manager.begin_worktree_shell_call(
+        h.foreign_session.id,
+        str(h.repo),
+        "foreign-bg",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+    output = tmp_path / "foreign-bg.out"
+    output.write_text("built\n[exited with code 0]\n", encoding="utf-8")
+    manager.defer_worktree_shell_call(h.foreign_session.id, "foreign-bg", output_path=str(output))
+
+    assert await _dirty_edit_reason(h, _native_write(h, "owned.txt")) == ""
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_stays_refused_while_a_background_call_runs(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    """A background call whose process has not exited can still write the path."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    manager = SessionVariableManager(h.db)
+    manager.begin_worktree_shell_call(
+        h.foreign_session.id,
+        str(h.repo),
+        "foreign-bg",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+    output = tmp_path / "foreign-bg.out"
+    output.write_text("still building\n", encoding="utf-8")
+    manager.defer_worktree_shell_call(h.foreign_session.id, "foreign-bg", output_path=str(output))
+
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt"))
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
+    assert "native Edit or Write tool" in reason
+
+
+@pytest.mark.asyncio
 async def test_overlap_holder_native_write_clears_record_and_unblocks_merge_commit(
     guard_harness: GuardHarness,
 ) -> None:

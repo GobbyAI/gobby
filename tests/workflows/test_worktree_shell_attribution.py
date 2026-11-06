@@ -194,6 +194,33 @@ async def test_running_background_call_stays_in_flight(
     assert set(manager.worktree_shell_call_entries(S1)) == {"bg-1"}
 
 
+def test_has_calls_in_flight_ignores_a_background_call_whose_process_exited(
+    db: Any, tmp_path: Path
+) -> None:
+    """An exited background call is not running, though its owner has not settled it yet."""
+    manager = SessionVariableManager(db)
+    manager.begin_worktree_shell_call(
+        S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
+    )
+    manager.defer_worktree_shell_call(
+        S1, "bg-1", output_path=_output(tmp_path, "bg-1.out", "done\n[exited with code 0]\n")
+    )
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is False
+
+
+def test_has_calls_in_flight_counts_a_background_call_still_running(
+    db: Any, tmp_path: Path
+) -> None:
+    manager = SessionVariableManager(db)
+    manager.begin_worktree_shell_call(
+        S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
+    )
+    manager.defer_worktree_shell_call(
+        S1, "bg-1", output_path=_output(tmp_path, "bg-1.out", "still building\n")
+    )
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is True
+
+
 async def test_background_call_whose_output_is_gone_drops_without_attribution(
     db: Any,
     tmp_path: Path,
