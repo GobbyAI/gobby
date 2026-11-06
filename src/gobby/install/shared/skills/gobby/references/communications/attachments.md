@@ -45,5 +45,12 @@ See [attachment sends](../../../../../../../../docs/guides/telegram.md#mcp-sends
 and [provider limits](../../../../../../../../docs/guides/telegram.md#limits-and-dependencies).
 Documenting an attachment workflow does not authorize uploading user files.
 
-_Version: 2.0.0_
-_Last verified: 2026-11-04_
+The operator status report is a daemon-run attachment. The bundled status-report
+pipeline calls `gobby-communications:compose_status_report`, which builds the report
+from hub evidence, git and live agent runs and writes it under the project's reports
+directory; the pipeline then delivers the returned `file_path` with
+`send_operator_attachment`. The tool refuses any caller outside a daemon-run step, so
+agents never call it.
+
+_Version: 2.1.0_
+_Last verified: 2026-11-06_
