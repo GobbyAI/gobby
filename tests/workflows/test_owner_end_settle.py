@@ -26,6 +26,7 @@ from tests.fixtures.owner_process import (
     live_processes,
     start_holder,
     start_owner,
+    start_owner_with_two_groups,
     stop_holder,
     stop_owner,
 )
@@ -103,8 +104,19 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
 
 @pytest.fixture
-def owner() -> Iterator[tuple[subprocess.Popen[bytes], dict[str, Any]]]:
-    process, context = start_owner()
+def owner(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes], dict[str, Any]]]:
+    process, context = start_owner(tmp_path / "bg-1.out")
+    try:
+        yield process, context
+    finally:
+        stop_owner(process)
+
+
+@pytest.fixture
+def two_jobs_owner(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes], dict[str, Any]]]:
+    process, context = start_owner_with_two_groups(
+        tmp_path / "git-1.out", tmp_path / "claimed-1.out"
+    )
     try:
         yield process, context
     finally:
@@ -133,9 +145,9 @@ def _background_call(
     )
 
 
-def _recorded(context: Mapping[str, Any]) -> dict[str, Any]:
-    """The owner's job tree as a call records it when its receipt arrives."""
-    tree = capture_job_tree(context)
+def _recorded(context: Mapping[str, Any], output: Path) -> dict[str, Any]:
+    """The job tree of the call whose output file is ``output``, as its receipt records it."""
+    tree = capture_job_tree(context, str(output))
     assert tree is not None
     return tree.record()
 
@@ -150,7 +162,9 @@ def test_graceful_end_settles_the_call_once_its_tree_is_stopped_and_empty(
     process, context = owner
     descendants = psutil.Process(process.pid).children(recursive=True)
     manager = SessionVariableManager(db)
-    _background_call(manager, tmp_path / "bg-1.out", job_tree=_recorded(context))
+    _background_call(
+        manager, tmp_path / "bg-1.out", job_tree=_recorded(context, tmp_path / "bg-1.out")
+    )
     digests.update({"src/a.py": "new", "src/b.py": None})
 
     settled = settle_graceful_owner_end(manager, S1, context, loop=None, logger=LOG)
@@ -180,7 +194,7 @@ def test_graceful_end_settles_the_call_although_a_process_outside_the_owner_hold
     _, context = owner
     manager = SessionVariableManager(db)
     output = tmp_path / "bg-1.out"
-    _background_call(manager, output, job_tree=_recorded(context))
+    _background_call(manager, output, job_tree=_recorded(context, tmp_path / "bg-1.out"))
     digests.update({"src/a.py": "new", "src/b.py": None})
     holder = start_holder(output)
     try:
@@ -232,7 +246,9 @@ def test_a_call_without_a_recorded_tree_stays_foreign_beside_a_settled_call(
 ) -> None:
     _, context = owner
     manager = SessionVariableManager(db)
-    _background_call(manager, tmp_path / "bg-1.out", job_tree=_recorded(context))
+    _background_call(
+        manager, tmp_path / "bg-1.out", job_tree=_recorded(context, tmp_path / "bg-1.out")
+    )
     _background_call(manager, tmp_path / "bg-2.out", call_id="bg-2")
     digests.update({"src/a.py": "new", "src/b.py": None})
 
@@ -247,11 +263,12 @@ def test_graceful_end_settles_a_pending_git_operation_and_a_claimed_shell_call(
     tmp_path: Path,
     digests: dict[str, str | None],
     recorded: list[dict[str, Any]],
-    owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    two_jobs_owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
 ) -> None:
-    _, context = owner
+    _, context = two_jobs_owner
     manager = SessionVariableManager(db)
-    tree = _recorded(context)
+    git_tree = _recorded(context, tmp_path / "git-1.out")
+    shell_tree = _recorded(context, tmp_path / "claimed-1.out")
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     git_output = tmp_path / "git-1.out"
@@ -267,7 +284,7 @@ def test_graceful_end_settles_a_pending_git_operation_and_a_claimed_shell_call(
                 "call_id": "git-1",
                 "output_path": str(git_output),
                 "job_id": JOB,
-                "job_tree": tree,
+                "job_tree": git_tree,
                 "started_at": time.time(),
             }
         },
@@ -281,7 +298,7 @@ def test_graceful_end_settles_a_pending_git_operation_and_a_claimed_shell_call(
                 "owned": {},
                 "output_path": str(shell_output),
                 "job_id": JOB,
-                "job_tree": tree,
+                "job_tree": shell_tree,
             }
         },
     )

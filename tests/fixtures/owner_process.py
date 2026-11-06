@@ -18,16 +18,24 @@ import psutil
 
 _SLEEP = "import time; time.sleep(600)"
 
-SHELL_SCRIPT = (
-    "import subprocess, sys, time\n"
-    f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}])\n"
-    "time.sleep(600)\n"
-)
-OWNER_SCRIPT = (
-    "import subprocess, sys, time\n"
-    f"subprocess.Popen([sys.executable, '-c', {SHELL_SCRIPT!r}], start_new_session=True)\n"
-    "time.sleep(600)\n"
-)
+
+def _shell_script(output: Path) -> str:
+    """A shell that holds ``output`` open, as a Bash call's shell does, and starts a job on it."""
+    return (
+        "import subprocess, sys, time\n"
+        f"out = open({str(output)!r}, 'ab')\n"
+        f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}], stdout=out)\n"
+        "time.sleep(600)\n"
+    )
+
+
+def _owner_script(output: Path) -> str:
+    shell = _shell_script(output)
+    return (
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {shell!r}], start_new_session=True)\n"
+        "time.sleep(600)\n"
+    )
 
 
 def wait_for(predicate: Callable[[], bool]) -> None:
@@ -58,15 +66,20 @@ def _context(process: subprocess.Popen[bytes]) -> dict[str, Any]:
     }
 
 
-def start_owner() -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
-    """An owner whose shell leads a group that holds one job and the job's child."""
-    process = subprocess.Popen([sys.executable, "-c", OWNER_SCRIPT])
+def start_owner(output: Path) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
+    """An owner whose shell leads a group that holds one job and the job's child.
+
+    The shell and its job hold ``output`` open, as a Bash call's shell and job hold its file.
+    """
+    process = subprocess.Popen([sys.executable, "-c", _owner_script(output)])
     owner = psutil.Process(process.pid)
     wait_for(lambda: len(owner.children(recursive=True)) >= 2)
     return process, _context(process)
 
 
-def start_owner_with_orphan(pid_file: Path) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
+def start_owner_with_orphan(
+    pid_file: Path, output: Path
+) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
     """An owner whose job starts a child and exits, so the child is reparented.
 
     The child writes its pid to ``pid_file``. Once the job has exited, the child is no longer a
@@ -79,7 +92,8 @@ def start_owner_with_orphan(pid_file: Path) -> tuple[subprocess.Popen[bytes], di
     )
     shell = (
         "import subprocess, sys, time\n"
-        f"subprocess.Popen([sys.executable, '-c', {job!r}]).wait()\n"
+        f"out = open({str(output)!r}, 'ab')\n"
+        f"subprocess.Popen([sys.executable, '-c', {job!r}], stdout=out).wait()\n"
         "time.sleep(600)\n"
     )
     owner_script = (
@@ -92,16 +106,60 @@ def start_owner_with_orphan(pid_file: Path) -> tuple[subprocess.Popen[bytes], di
     return process, _context(process)
 
 
-def start_owner_without_a_job_group() -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
-    """An owner whose job shares the owner's own group, which the owner does not lead."""
+def start_owner_without_a_job_group(
+    output: Path,
+) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
+    """An owner whose job shares the owner's own group, which the owner does not lead.
+
+    The job holds ``output`` open, so its call's receipt names a job that has no group of its own.
+    """
     script = (
         "import subprocess, sys, time\n"
-        f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}])\n"
+        f"out = open({str(output)!r}, 'ab')\n"
+        f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}], stdout=out)\n"
         "time.sleep(600)\n"
     )
     process = subprocess.Popen([sys.executable, "-c", script])
     owner = psutil.Process(process.pid)
     wait_for(lambda: bool(owner.children(recursive=True)))
+    return process, _context(process)
+
+
+def start_owner_with_writer_and_sibling(
+    output: Path,
+) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
+    """An owner with a writer that shares its group and holds ``output``, and a sibling job.
+
+    The sibling leads its own group and holds no output file: it is another call's job.
+    """
+    script = (
+        "import subprocess, sys, time\n"
+        f"out = open({str(output)!r}, 'ab')\n"
+        f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}], stdout=out)\n"
+        f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}], start_new_session=True)\n"
+        "time.sleep(600)\n"
+    )
+    process = subprocess.Popen([sys.executable, "-c", script])
+    owner = psutil.Process(process.pid)
+    wait_for(lambda: len(owner.children(recursive=True)) >= 2)
+    return process, _context(process)
+
+
+def start_owner_with_two_groups(
+    first: Path, second: Path
+) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
+    """An owner with two shells, each leading its own group and holding its own output file."""
+    first_shell = _shell_script(first)
+    second_shell = _shell_script(second)
+    script = (
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {first_shell!r}], start_new_session=True)\n"
+        f"subprocess.Popen([sys.executable, '-c', {second_shell!r}], start_new_session=True)\n"
+        "time.sleep(600)\n"
+    )
+    process = subprocess.Popen([sys.executable, "-c", script])
+    owner = psutil.Process(process.pid)
+    wait_for(lambda: len(owner.children(recursive=True)) >= 4)
     return process, _context(process)
 
 
@@ -152,7 +210,7 @@ def start_unrelated_process(*, own_session: bool) -> subprocess.Popen[bytes]:
 
 
 def start_owner_with_orphaned_group(
-    go_file: Path, pid_file: Path
+    go_file: Path, pid_file: Path, output: Path
 ) -> tuple[subprocess.Popen[bytes], dict[str, Any]]:
     """An owner whose job shell exits once ``go_file`` exists, leaving its grandchild running.
 
@@ -164,7 +222,8 @@ def start_owner_with_orphaned_group(
     )
     shell = (
         "import os, subprocess, sys, time\n"
-        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
+        f"out = open({str(output)!r}, 'ab')\n"
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}], stdout=out)\n"
         f"while not os.path.exists({str(go_file)!r}):\n"
         "    time.sleep(0.05)\n"
     )

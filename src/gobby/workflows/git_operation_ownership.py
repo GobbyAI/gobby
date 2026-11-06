@@ -269,13 +269,13 @@ class GitOperationRegistry(ABC):
         self,
         session_id: str,
         call_id: str,
-        output_path: str,
+        output_path: str | None,
         *,
         job_id: str | None = None,
         job_tree: Mapping[str, Any] | None = None,
     ) -> None:
         """Keep a Claude background call pending until its owner's transcript notice, or its
-        recorded jobs, end."""
+        recorded jobs, end. A call whose output file is unnamed stays pending: no notice matches."""
 
         def defer(variables: dict[str, Any]) -> tuple[None, bool]:
             entries = _entries(variables)

@@ -201,11 +201,10 @@ class Checkout:
 
 @pytest.fixture
 def checkout(
-    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, throwaway_repo: Path
 ) -> Checkout:
-    repo = tmp_path / "repo"
+    repo = throwaway_repo
     (repo / "pkg").mkdir(parents=True)
-    _git(repo, "init", "-q")
     project = isolated_checkout_factory(temp_db, "opaque-writes", root=repo).project
     for name in (
         "base.txt",

@@ -61,3 +61,40 @@ def test_each_background_receipt_shape_yields_its_output_path_and_job(text: str)
     assert receipt is not None
     assert receipt.job_id == "bq76hb30g"
     assert receipt.output_path == "/scratch/tasks/bq76hb30g.output"
+
+
+PRINTED_BEFORE_RECEIPT = (
+    "     680\n"
+    "Command did not complete within its 120s timeout and was moved to the background "
+    "(ID: bev9oynfh). Output is being written to: /scratch/tasks/bev9oynfh.output. "
+    "You will be notified when it completes."
+)
+
+
+def test_a_background_result_names_its_receipt_after_other_stdout() -> None:
+    # The harness backgrounded a compound command whose own stdout printed before the receipt.
+    data = {"tool_response": {"backgroundTaskId": "bev9oynfh", "stdout": PRINTED_BEFORE_RECEIPT}}
+
+    receipt = background_receipt(data)
+
+    assert receipt is not None
+    assert receipt.job_id == "bev9oynfh"
+    assert receipt.output_path == "/scratch/tasks/bev9oynfh.output"
+
+
+def test_a_background_result_without_its_receipt_text_stays_unidentified() -> None:
+    # The structured result names the job, but its receipt sentence is not in the stdout. The
+    # call is still background: it keeps its paths in flight, with no output file to settle on.
+    data = {
+        "tool_response": {
+            "backgroundTaskId": "bev9oynfh",
+            "stdout": "     680",
+            "interrupted": False,
+        }
+    }
+
+    receipt = background_receipt(data)
+
+    assert receipt is not None
+    assert receipt.job_id == "bev9oynfh"
+    assert receipt.output_path is None

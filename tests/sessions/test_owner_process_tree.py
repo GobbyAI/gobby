@@ -23,6 +23,8 @@ from tests.fixtures.owner_process import (
     live_processes,
     start_owner,
     start_owner_with_orphaned_group,
+    start_owner_with_two_groups,
+    start_owner_with_writer_and_sibling,
     start_owner_without_a_job_group,
     start_unrelated_process,
     stop_owner,
@@ -41,10 +43,18 @@ def _oldest(processes: list[psutil.Process]) -> psutil.Process:
     return min(processes, key=lambda process: process.create_time())
 
 
-def _recorded(context: dict[str, Any]) -> JobTree:
-    tree = capture_job_tree(context)
+def _recorded(context: dict[str, Any], output: Path) -> JobTree:
+    tree = capture_job_tree(context, str(output))
     assert tree is not None
     return tree
+
+
+def _group_holding(owner_pid: int, output: Path) -> int:
+    """The group of the owner's job that holds ``output`` open."""
+    for job in psutil.Process(owner_pid).children(recursive=True):
+        if any(item.path == str(output) for item in job.open_files()):
+            return os.getpgid(job.pid)
+    raise AssertionError("no job of the owner holds the output file")
 
 
 def _exited(pid: int) -> bool:
@@ -77,8 +87,14 @@ class _KernelPid:
 
 
 @pytest.fixture
-def owner() -> Iterator[tuple[subprocess.Popen[bytes], dict[str, Any]]]:
-    process, context = start_owner()
+def job_output(tmp_path: Path) -> Path:
+    """The file the owner's job writes, which a backgrounded call's receipt names."""
+    return tmp_path / "job.output"
+
+
+@pytest.fixture
+def owner(job_output: Path) -> Iterator[tuple[subprocess.Popen[bytes], dict[str, Any]]]:
+    process, context = start_owner(job_output)
     try:
         yield process, context
     finally:
@@ -87,33 +103,73 @@ def owner() -> Iterator[tuple[subprocess.Popen[bytes], dict[str, Any]]]:
 
 def test_capture_records_the_group_its_shell_leads(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
 ) -> None:
     process, context = owner
     shell = _oldest(psutil.Process(process.pid).children(recursive=True))
 
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
 
     assert shell.pid in {pid for pid, _ in tree.groups}
 
 
 @pytest.mark.parametrize("context", [{}, {"parent_pid": "not-a-pid"}], ids=["none", "invalid"])
 def test_capture_names_nothing_for_an_unverifiable_owner(context: dict[str, Any]) -> None:
-    assert capture_job_tree(context) is None
+    assert capture_job_tree(context, "job.output") is None
 
 
 def test_capture_names_nothing_for_a_reused_owner_pid(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
 ) -> None:
     _, context = owner
     stale = {**context, "parent_create_time": context["parent_create_time"] + 1000.0}
 
-    assert capture_job_tree(stale) is None
+    assert capture_job_tree(stale, str(job_output)) is None
 
 
-def test_capture_names_nothing_when_no_job_leads_a_group() -> None:
-    process, context = start_owner_without_a_job_group()
+def test_capture_names_nothing_when_no_job_leads_a_group(tmp_path: Path) -> None:
+    output = tmp_path / "job.output"
+    process, context = start_owner_without_a_job_group(output)
     try:
-        assert capture_job_tree(context) is None
+        assert capture_job_tree(context, str(output)) is None
+    finally:
+        stop_owner(process)
+
+
+def test_capture_names_nothing_for_a_call_whose_output_is_unnamed(
+    owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+) -> None:
+    _, context = owner
+
+    assert capture_job_tree(context, None) is None
+
+
+def test_a_writer_sharing_the_owners_group_is_not_recorded_beside_a_sibling(
+    tmp_path: Path,
+) -> None:
+    # The writer is the call's job and shares the owner's group. The sibling leads a group of its
+    # own but holds nothing: it is another job, so no tree is recorded for the writer's call.
+    output = tmp_path / "job.output"
+    process, context = start_owner_with_writer_and_sibling(output)
+    jobs = psutil.Process(process.pid).children(recursive=True)
+    try:
+        assert capture_job_tree(context, str(output)) is None
+        assert stop_recorded_job_trees(context, {}) == frozenset()
+        assert len(live_processes(jobs)) == 2
+    finally:
+        stop_owner(process)
+
+
+def test_capture_records_only_the_group_whose_job_holds_the_output(tmp_path: Path) -> None:
+    first = tmp_path / "first.output"
+    second = tmp_path / "second.output"
+    process, context = start_owner_with_two_groups(first, second)
+    try:
+        tree = _recorded(context, first)
+
+        assert {pid for pid, _ in tree.groups} == {_group_holding(process.pid, first)}
+        assert _group_holding(process.pid, second) not in {pid for pid, _ in tree.groups}
     finally:
         stop_owner(process)
 
@@ -131,10 +187,11 @@ def test_a_recorded_tree_round_trips_and_a_malformed_one_is_refused() -> None:
 
 def test_stops_the_recorded_jobs_and_passes_their_call(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
 ) -> None:
     process, context = owner
     jobs = psutil.Process(process.pid).children(recursive=True)
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
 
     assert stop_recorded_job_trees(context, {"call": tree}) == frozenset({"call"})
 
@@ -147,10 +204,11 @@ def test_a_job_orphaned_after_its_shell_exited_is_stopped_and_its_call_passes(
 ) -> None:
     go_file = tmp_path / "go"
     pid_file = tmp_path / "grandchild.pid"
-    process, context = start_owner_with_orphaned_group(go_file, pid_file)
+    output = tmp_path / "job.output"
+    process, context = start_owner_with_orphaned_group(go_file, pid_file, output)
     grandchild = psutil.Process(int(pid_file.read_text(encoding="utf-8")))
     try:
-        tree = _recorded(context)
+        tree = _recorded(context, output)
         shell_pid = psutil.Process(process.pid).children()[0].pid
         go_file.write_text("", encoding="utf-8")
         wait_for(lambda: _exited(shell_pid))
@@ -173,11 +231,12 @@ def test_a_job_orphaned_after_its_shell_exited_is_stopped_and_its_call_passes(
 
 def test_a_job_that_survives_the_kill_does_not_pass(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process, context = owner
     survivor = _youngest(psutil.Process(process.pid).children(recursive=True)).pid
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
     real_kill = psutil.Process.kill
     real_terminate = psutil.Process.terminate
 
@@ -201,11 +260,12 @@ def test_a_job_that_survives_the_kill_does_not_pass(
 
 def test_a_job_the_kernel_refuses_to_signal_does_not_stop_the_sweep(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process, context = owner
     jobs = psutil.Process(process.pid).children(recursive=True)
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
     refused = _oldest(jobs).pid
     stopped = _youngest(jobs)
     real_kill = psutil.Process.kill
@@ -238,11 +298,12 @@ def test_a_job_the_kernel_refuses_to_signal_does_not_stop_the_sweep(
 
 def test_a_member_whose_group_cannot_be_read_does_not_pass(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process, context = owner
     jobs = psutil.Process(process.pid).children(recursive=True)
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
     unreadable = _youngest(jobs).pid
     real_getpgid = os.getpgid
 
@@ -275,11 +336,12 @@ def test_a_recorded_leader_now_naming_another_process_is_not_signalled() -> None
 
 def test_a_member_that_dies_unreaped_does_not_keep_its_call_from_passing(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
 ) -> None:
     # The owner never reaps its shell or the job, so each stays a zombie once it dies.
     process, context = owner
     jobs = psutil.Process(process.pid).children(recursive=True)
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
 
     assert stop_recorded_job_trees(context, {"call": tree}) == frozenset({"call"})
 
@@ -288,10 +350,11 @@ def test_a_member_that_dies_unreaped_does_not_keep_its_call_from_passing(
 
 def test_the_kernel_pid_zero_is_never_signalled(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process, context = owner
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
     kernel = _KernelPid()
     real_iter = psutil.process_iter
     real_getpgid = os.getpgid
@@ -314,9 +377,10 @@ def test_the_kernel_pid_zero_is_never_signalled(
 
 def test_a_process_outside_the_recorded_groups_is_left_alone(
     owner: tuple[subprocess.Popen[bytes], dict[str, Any]],
+    job_output: Path,
 ) -> None:
     _, context = owner
-    tree = _recorded(context)
+    tree = _recorded(context, job_output)
     own_group = start_unrelated_process(own_session=True)
     shared_group = start_unrelated_process(own_session=False)
     try:

@@ -38,14 +38,14 @@ _CHUNK_BYTES = 64 * 1024
 
 @dataclass(frozen=True)
 class BackgroundReceipt:
-    """The output file Claude announced for a backgrounded command, and its job id when named.
+    """A backgrounded command's job id and output file, each when the response names it.
 
-    A receipt without a job id is still a background call: it stays in flight, because no
-    notice can be matched to it.
+    A receipt missing either is still a background call: it stays in flight, because no notice
+    can be matched to it.
     """
 
     job_id: str | None
-    output_path: str
+    output_path: str | None
 
 
 @dataclass(frozen=True)
@@ -70,21 +70,46 @@ def _stdout_of(response: Any) -> str | None:
     return None
 
 
+def _structured_job_id(response: Any) -> str | None:
+    if isinstance(response, Mapping):
+        job_id = response.get("backgroundTaskId")
+        if isinstance(job_id, str) and job_id:
+            return job_id
+    return None
+
+
+def _all_text(response: Any) -> str:
+    if isinstance(response, str):
+        return response
+    return json.dumps(response, default=str)
+
+
 def background_receipt(data: Mapping[str, Any]) -> BackgroundReceipt | None:
     """Read the background receipt from a hook payload's tool response, when it has one.
 
-    A receipt is the output's first sentence. A foreground command that prints the sentence after
-    other text, such as a grep of a file that holds it, started no job and has no receipt.
+    A structured response that names a background task is a background call, whatever its stdout
+    printed before the receipt: its receipt is searched in the whole response. When the output
+    file is not named, the call still counts, with no output path, so it stays in flight.
+    Other output is a background call only when the receipt is its first sentence. A foreground
+    command that prints the sentence after other text, such as a grep of a file that holds it,
+    started no job and has no receipt.
     """
     response = data.get("tool_output", data.get("tool_response", data.get("tool_result")))
+    structured_job = _structured_job_id(response)
+    if structured_job is not None:
+        output = _RECEIPT_OUTPUT.search(_all_text(response))
+        return BackgroundReceipt(
+            job_id=structured_job, output_path=output.group(1) if output else None
+        )
     text = _stdout_of(response)
     if text is None or _RECEIPT_START.match(text) is None:
         return None
     output = _RECEIPT_OUTPUT.search(text)
-    if output is None:
-        return None
     job = _RECEIPT_JOB.search(text)
-    return BackgroundReceipt(job_id=job.group(1) if job else None, output_path=output.group(1))
+    return BackgroundReceipt(
+        job_id=job.group(1) if job else None,
+        output_path=output.group(1) if output else None,
+    )
 
 
 def notice_fields(content: str, fields: tuple[str, ...] = NOTICE_FIELDS) -> dict[str, str] | None:
@@ -112,7 +137,12 @@ def resolve_background_notice(
     this call cannot precede it. Zero matches, several matches, an unreadable transcript, or
     a row that is not Claude's notice all return None, so the call stays in flight.
     """
-    if not transcript_path or not tool_use_id or receipt.job_id is None:
+    if (
+        not transcript_path
+        or not tool_use_id
+        or receipt.job_id is None
+        or receipt.output_path is None
+    ):
         return None
     needle = tool_use_id.encode()
     matches: list[BackgroundNotice] = []
@@ -185,7 +215,7 @@ def _notice_of(
     if not isinstance(origin, Mapping) or origin.get("kind") != _NOTICE_ORIGIN:
         return None
     fields = notice_fields(content)
-    if fields is None or receipt.job_id is None:
+    if fields is None or receipt.job_id is None or receipt.output_path is None:
         return None
     if (
         fields["tool-use-id"] != tool_use_id

@@ -648,11 +648,14 @@ class ToolEventHandlerMixin(EventHandlersBase):
         A graceful owner end stops only the jobs recorded here, so a receipt that records none
         leaves its call foreign.
         """
-        if background_receipt(event.data) is None or self._session_manager is None:
+        receipt = background_receipt(event.data)
+        if receipt is None or self._session_manager is None:
             return None
         try:
             session = self._session_manager.get(session_id)
-            tree = capture_job_tree(session.terminal_context if session is not None else None)
+            tree = capture_job_tree(
+                session.terminal_context if session is not None else None, receipt.output_path
+            )
         except Exception:
             self.logger.warning("Failed to record the jobs of a background call", exc_info=True)
             return None

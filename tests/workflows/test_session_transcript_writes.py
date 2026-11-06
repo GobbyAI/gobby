@@ -3,6 +3,10 @@
 A background call settles only on a notice row the CLI appends to its owner's transcript.
 An agent that writes a transcript itself can forge that row, so the write gate refuses
 every transcript, not only another session's.
+
+The behaviour tests evaluate a synthetic definition that carries the gate's condition. The
+bundled definitions are enumerated generically: each file parses, each rule passes the
+engine's dry run, and each rule whose condition is the transcript gate blocks before a tool.
 """
 
 from __future__ import annotations
@@ -12,22 +16,39 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.condition_helpers_paths import session_transcript_write
+from gobby.workflows.rule_validation_yaml import normalize_rule_yaml_entry, validate_rule_yaml
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.sync_rules import get_bundled_rules_paths
 
 pytestmark = pytest.mark.unit
 
-RULE_NAME = "block-session-transcript-writes"
-RULE_FILE = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/rules/task-enforcement/block-session-transcript-writes.yaml"
-)
+GATE = "session_transcript_write"
+SYNTHETIC_DEFINITION: dict[str, Any] = {
+    "event": "before_tool",
+    "enabled": True,
+    "when": f"{GATE}(event.data, tool_input)",
+    "effects": [{"type": "block", "reason": "Session transcripts are written only by their CLI."}],
+}
 OWN_SESSION = "11111111-1111-4111-8111-111111111111"
 OTHER_SESSION = "22222222-2222-4222-8222-222222222222"
 PROJECT_DIR = "-Users-josh-worktrees-gobby-task-25793"
+
+
+def _bundled_rule_files() -> list[Path]:
+    """Every active bundled rule file, enumerated as the sync reads them."""
+    files: list[Path] = []
+    for root in get_bundled_rules_paths():
+        for path in sorted(root.rglob("*.yaml")):
+            if "deprecated" not in path.relative_to(root).parts:
+                files.append(path)
+    return files
+
+
+BUNDLED_RULE_FILES = _bundled_rule_files()
 
 
 @pytest.fixture
@@ -48,8 +69,7 @@ def _event(home: Path, tool: str, file_path: str) -> dict[str, Any]:
 
 
 def _rule_when(event_data: dict[str, Any], file_path: str) -> bool:
-    """Evaluate the bundled rule's condition the way the engine does, with its helpers."""
-    rule = yaml.safe_load(RULE_FILE.read_text(encoding="utf-8"))["rules"][RULE_NAME]
+    """Evaluate the synthetic definition's condition the way the engine does, with its helpers."""
     evaluator = SafeExpressionEvaluator(
         {
             "event": SimpleNamespace(data=event_data),
@@ -57,7 +77,41 @@ def _rule_when(event_data: dict[str, Any], file_path: str) -> bool:
         },
         build_condition_helpers(),
     )
-    return bool(evaluator.evaluate(rule["when"]))
+    return bool(evaluator.evaluate(SYNTHETIC_DEFINITION["when"]))
+
+
+def _bundled_rules() -> list[tuple[Path, str, dict[str, Any], dict[str, Any]]]:
+    """Each bundled rule as the sync reads it: file defaults applied, row metadata split out."""
+    rules = []
+    for path in BUNDLED_RULE_FILES:
+        data = load_strict_yaml(path.read_text(encoding="utf-8"))
+        for name, rule in data["rules"].items():
+            body, metadata = normalize_rule_yaml_entry(rule, defaults=data)
+            rules.append((path, str(name), body, metadata))
+    return rules
+
+
+@pytest.mark.parametrize("path", BUNDLED_RULE_FILES, ids=lambda path: path.name)
+def test_bundled_rule_file_parses_and_passes_the_engine_dry_run(path: Path) -> None:
+    reports = validate_rule_yaml(path.read_text(encoding="utf-8"), source=str(path))
+
+    assert reports, path
+    for report in reports:
+        report.raise_for_errors()
+
+
+def test_each_bundled_rule_gating_transcripts_blocks_before_a_tool() -> None:
+    gates = [
+        (path, name, body, metadata)
+        for path, name, body, metadata in _bundled_rules()
+        if GATE in str(body.get("when", ""))
+    ]
+
+    assert gates, "no bundled rule gates session transcripts"
+    for path, name, body, metadata in gates:
+        assert body["event"] == "before_tool", (path, name)
+        assert metadata.get("enabled", True) is True, (path, name)
+        assert [effect["type"] for effect in body["effects"]] == ["block"], (path, name)
 
 
 def test_helper_refuses_transcripts_under_the_configured_claude_config_dir(
@@ -138,13 +192,3 @@ def test_helper_refuses_a_transcript_whose_suffix_or_root_differs_only_in_case(h
     for path in variants:
         event = _event(home, "Write", str(path))
         assert session_transcript_write(event, {"file_path": str(path)}) is True, path
-
-
-def test_rule_file_refuses_transcripts_through_the_engine_helpers(home: Path) -> None:
-    rule = yaml.safe_load(RULE_FILE.read_text(encoding="utf-8"))
-    body = rule["rules"][RULE_NAME]
-
-    assert body["event"] == "before_tool"
-    assert body["enabled"] is True
-    assert [effect["type"] for effect in body["effects"]] == ["block"]
-    assert "session_transcript_write" in body["when"]

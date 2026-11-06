@@ -1,8 +1,8 @@
-"""Rule 3's unowned-dirt refusal names its likely cause and routes recovery to Triage (#24956).
+"""The unowned-dirt refusal names its likely cause and routes recovery to a coordinator (#24956).
 
 A seat that rewrites a repository file through an interpreter script in a main or
 shared checkout leaves the change unattributed, so its own next Edit is refused as
-unowned dirt. The refusal must name that cause and route recovery to Triage. It must
+unowned dirt. The refusal must name that cause and route recovery to a coordinator. It must
 not name the operator-only approval command.
 """
 

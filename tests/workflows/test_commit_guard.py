@@ -1062,17 +1062,14 @@ def _content_ledger(
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    _git(repo_path, "init", "-q")
-    _git(repo_path, "config", "user.email", "tests@gobby.local")
-    _git(repo_path, "config", "user.name", "Gobby Tests")
-    (repo_path / "owned.txt").write_text("base owned\n", encoding="utf-8")
-    (repo_path / "foreign.txt").write_text("base foreign\n", encoding="utf-8")
-    _git(repo_path, "add", "--", "owned.txt", "foreign.txt")
-    _git(repo_path, "commit", "-q", "-m", "base")
-    return repo_path
+def repo(throwaway_repo: Path) -> Path:
+    _git(throwaway_repo, "config", "user.email", "tests@gobby.local")
+    _git(throwaway_repo, "config", "user.name", "Gobby Tests")
+    (throwaway_repo / "owned.txt").write_text("base owned\n", encoding="utf-8")
+    (throwaway_repo / "foreign.txt").write_text("base foreign\n", encoding="utf-8")
+    _git(throwaway_repo, "add", "--", "owned.txt", "foreign.txt")
+    _git(throwaway_repo, "commit", "-q", "-m", "base")
+    return throwaway_repo
 
 
 @dataclass(frozen=True)

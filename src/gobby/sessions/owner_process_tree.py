@@ -59,35 +59,52 @@ def job_tree_of(value: Any) -> JobTree | None:
     return JobTree(groups, sessions)
 
 
-def capture_job_tree(terminal_context: Mapping[str, Any] | None) -> JobTree | None:
-    """Record the groups and sessions the owner's live jobs lead; None when none can be named.
+def _holds_output(process: psutil.Process, target: str) -> bool:
+    """Whether the process holds ``target`` open; a process that has exited holds nothing."""
+    try:
+        return any(os.path.realpath(item.path) == target for item in process.open_files())
+    except psutil.NoSuchProcess:
+        return False
+
+
+def capture_job_tree(
+    terminal_context: Mapping[str, Any] | None, output_path: str | None
+) -> JobTree | None:
+    """Record the group and session of the owner's job that holds ``output_path`` open.
 
     Read once, when a background call's receipt arrives. The owner must still be the process the
-    session recorded. The owner and this process are never recorded, and a job that shares the
-    owner's own group names no job of its own.
+    session recorded. Only the owner's descendants are read, and only those holding the call's
+    output file open name its job. None names nothing, so the call stays foreign: no output path,
+    no holder, a holder that shares the owner's group, or a holder whose group leader is not a
+    descendant. The owner and this process are never recorded.
     """
     context: Mapping[str, Any] = terminal_context or {}
     pid = _owner_pid(context.get("parent_pid"))
-    if pid is None or not process_identity_matches(pid, context):
+    if pid is None or output_path is None or not process_identity_matches(pid, context):
         return None
+    target = os.path.realpath(output_path)
     groups: dict[int, float] = {}
     sessions: dict[int, float] = {}
     try:
-        for process in psutil.Process(pid).children(recursive=True):
-            if process.pid == os.getpid():
-                continue
-            try:
-                group = os.getpgid(process.pid)
-                session = os.getsid(process.pid)
-            except ProcessLookupError:
-                continue
-            if group == process.pid:
-                groups[process.pid] = process.create_time()
-            if session == process.pid:
-                sessions[process.pid] = process.create_time()
+        owner_group = os.getpgid(pid)
+        descendants = {
+            process.pid: process
+            for process in psutil.Process(pid).children(recursive=True)
+            if process.pid != os.getpid()
+        }
+        holders = [item for item in descendants.values() if _holds_output(item, target)]
+        if not holders:
+            return None
+        for holder in holders:
+            group = os.getpgid(holder.pid)
+            leader = descendants.get(group)
+            if group == owner_group or leader is None:
+                return None
+            groups[group] = leader.create_time()
+            led = descendants.get(os.getsid(holder.pid))
+            if led is not None:
+                sessions[led.pid] = led.create_time()
     except (psutil.Error, OSError):
-        return None
-    if not groups and not sessions:
         return None
     return JobTree(tuple(sorted(groups.items())), tuple(sorted(sessions.items())))
 
