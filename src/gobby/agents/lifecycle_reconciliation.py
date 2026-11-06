@@ -20,6 +20,7 @@ from gobby.storage.agents import (
     LocalAgentRunManager,
     TerminalAction,
 )
+from gobby.storage.daemon_resume_keys import SPAWN_LEASE_RUN_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.tasks._dispatch_mutex import MutexRenewal
@@ -302,13 +303,16 @@ class LifecycleReconciliation:
                 if not run.task_id:
                     skipped += 1
                     continue
-                # Only a lease this run took itself is renewed; a free lease is left for spawns.
+                # Only a lease this run took itself is renewed or restored; a free lease is left
+                # for spawns.
+                metadata = getattr(run, "resume_metadata_json", None) or {}
                 outcome = storage.renew_owned_for_run(
                     run.task_id,
                     run.id,
                     ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
+                    restore=metadata.get(SPAWN_LEASE_RUN_KEY) == run.id,
                 )
-                if outcome is MutexRenewal.RENEWED:
+                if outcome in (MutexRenewal.RENEWED, MutexRenewal.RESTORED):
                     refreshed += 1
                 else:
                     skipped += 1

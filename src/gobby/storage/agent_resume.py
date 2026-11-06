@@ -35,6 +35,9 @@ from gobby.storage.daemon_resume_keys import (
 from gobby.storage.daemon_resume_keys import (
     RESUMED_FROM_RUN_ID_KEY as _RESUMED_FROM_RUN_ID_KEY,
 )
+from gobby.storage.daemon_resume_keys import (
+    SPAWN_LEASE_RUN_KEY as _SPAWN_LEASE_RUN_KEY,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
@@ -332,6 +335,20 @@ def finalize_daemon_resume(
                 task_id=str(original["task_id"]),
                 successor_run_id=successor_run_id,
                 now=now,
+            )
+            # The successor now holds the lease from its predecessor's spawn; record it there
+            # so restart recovery can restore the lease for the successor too.
+            conn.execute(
+                """
+                UPDATE agent_runs
+                   SET resume_metadata_json =
+                       COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb
+                 WHERE id = %s
+                """,
+                (
+                    dump_resume_metadata({_SPAWN_LEASE_RUN_KEY: successor_run_id}),
+                    successor_run_id,
+                ),
             )
         subscriber_rows = conn.execute(
             """

@@ -17,6 +17,7 @@ from gobby.storage.agent_resume import (
     rollback_prepared_daemon_resume,
 )
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.daemon_resume_keys import SPAWN_LEASE_RUN_KEY
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
@@ -332,6 +333,10 @@ def test_finalize_daemon_resume_hands_spawn_lease_to_successor(
         assert mutex.renew_owned_for_run(task.id, successor.id, ttl_seconds=600) is (
             MutexRenewal.RENEWED
         )
+        # The successor now owns the lease from its predecessor's spawn, so it can restore it.
+        successor_row = LocalAgentRunManager(temp_db).get(successor.id)
+        assert successor_row is not None
+        assert (successor_row.resume_metadata_json or {}).get(SPAWN_LEASE_RUN_KEY) == successor.id
 
 
 def test_finalize_daemon_resume_repeat_call_is_idempotent(

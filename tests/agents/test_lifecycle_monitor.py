@@ -39,6 +39,7 @@ from gobby.sessions import activity as session_activity
 from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.daemon_resume_keys import SPAWN_LEASE_RUN_KEY
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -829,6 +830,48 @@ async def test_refresh_active_run_dispatch_mutexes_skips_mutex_bound_to_other_ru
     assert after is not None
     assert after.run_id == other_run_id
     assert after.lease_until == stale.lease_until
+
+
+@pytest.mark.asyncio
+async def test_refresh_active_run_dispatch_mutexes_restores_lost_lease_for_its_spawn_owner(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict[str, Any],
+    sample_project: dict[str, Any],
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-restore-owned-dispatch-mutex",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task, run, mutexes = _make_dispatched_stage_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=LocalTaskManager(temp_db),
+        temp_db=temp_db,
+        sample_project=sample_project,
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        run_id=_rid("run-restore-owned-dispatch-mutex"),
+        terminal_id="gobby-restore-owned-dispatch-mutex",
+    )
+    assert mutexes.clear_by_run_id(run.id) == 1
+    # The run's own spawn attached the lease, so the periodic refresh restores it.
+    agent_run_manager.merge_resume_metadata(run.id, {SPAWN_LEASE_RUN_KEY: run.id})
+
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
+    restored = mutexes.get_mutex(task.id)
+    assert restored is not None
+    assert str(restored.run_id) == run.id
 
 
 @pytest.mark.asyncio

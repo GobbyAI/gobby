@@ -39,6 +39,7 @@ from gobby.runner_lifecycle_reconcile import (
     _resolve_provisional_daemon_resumes,
 )
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.daemon_resume_keys import SPAWN_LEASE_RUN_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -930,6 +931,68 @@ class TestAgentRestartReconciliation:
         lease = TaskSpawnLease(db=temp_db, task_id=task.id)
         assert lease.acquire() is None
         lease.release_unattached()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner_marked", [True, False])
+    async def test_periodic_recovery_restores_lost_lease_only_for_its_spawn_owner(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+        owner_marked: bool,
+    ) -> None:
+        task = LocalTaskManager(temp_db).create_task(
+            sample_project["id"],
+            "Lost spawn lease restart task",
+            category="code",
+            validation_criteria="Restart restores a lost lease only for the run that spawned it.",
+            implementation_domain="backend",
+        )
+        parent = SessionManager(temp_db).register(
+            external_id=f"parent-lost-lease-{owner_marked}",
+            machine_id=require_machine_id(),
+            source="test",
+            project_id=sample_project["id"],
+        )
+        run_storage = LocalAgentRunManager(temp_db)
+        run = run_storage.create(
+            parent_session_id=parent.id,
+            provider="codex",
+            prompt="work",
+            task_id=task.id,
+        )
+        started_run = run_storage.start(run.id)
+        assert started_run is not None
+        metadata: dict[str, Any] = {"reconciliation_pending": True}
+        if owner_marked:
+            metadata[SPAWN_LEASE_RUN_KEY] = run.id
+        run_storage.merge_resume_metadata(run.id, metadata)
+        mutexes = TaskDispatchMutexManager(temp_db)
+        assert mutexes.get_mutex(task.id) is None
+
+        runner = self._runner(run_storage, db=temp_db)
+        with patch(
+            "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
+            new=AsyncMock(return_value=SAFE_BARRIER),
+        ):
+            await _reclassify_reconciliation_pending_runs(runner)
+
+        recovered = run_storage.get(run.id)
+        assert recovered is not None
+        assert recovered.resume_metadata_json is not None
+        assert recovered.resume_metadata_json["reconciliation_pending"] is False
+        lease = mutexes.get_mutex(task.id)
+        replacement = TaskSpawnLease(db=temp_db, task_id=task.id)
+        if owner_marked:
+            # The surviving developer gets its own lease back, so a replacement is refused.
+            assert lease is not None
+            assert str(lease.run_id) == run.id
+            refusal = replacement.acquire()
+            assert refusal is not None
+            assert "already has an agent spawn in progress" in refusal["error"]
+        else:
+            assert lease is None
+            assert replacement.acquire() is None
+            replacement.release_unattached()
 
     @pytest.mark.asyncio
     async def test_periodic_recovery_releases_heartbeat_signed_mutex_and_clears_fence(

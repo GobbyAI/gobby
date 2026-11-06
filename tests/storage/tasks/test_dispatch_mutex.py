@@ -206,6 +206,50 @@ def test_force_release(temp_db, sample_project) -> None:
     assert manager.force_release(task.id) is False
 
 
+def test_renew_owned_for_run_restores_lost_row_for_owner_and_never_steals(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Restore lost spawn lease",
+        validation_criteria="Test task completion is observable.",
+    )
+    manager = _manager_class()(temp_db)
+    run_a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    run_b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    # Without the owner marker a lost row stays free for the next spawn.
+    assert manager.renew_owned_for_run(task.id, run_a, ttl_seconds=30) is MutexRenewal.FREE
+    assert manager.get_mutex(task.id) is None
+
+    # With the owner marker the surviving run gets its lease back.
+    assert (
+        manager.renew_owned_for_run(task.id, run_a, ttl_seconds=30, restore=True)
+        is MutexRenewal.RESTORED
+    )
+    restored = manager.get_mutex(task.id)
+    assert restored is not None
+    assert str(restored.run_id) == run_a
+    assert restored.action_kind == "spawn_agent"
+
+    # A live lease held by another run is never taken over by restore.
+    assert manager.clear_by_run_id(run_a) == 1
+    assert manager.acquire_mutex(
+        task.id,
+        holder=f"spawn-agent:{run_b}",
+        kind="spawn_agent",
+        run_id=run_b,
+        ttl_seconds=30,
+    )
+    assert (
+        manager.renew_owned_for_run(task.id, run_a, ttl_seconds=30, restore=True)
+        is MutexRenewal.FOREIGN
+    )
+    rival = manager.get_mutex(task.id)
+    assert rival is not None
+    assert str(rival.run_id) == run_b
+
+
 def test_renew_owned_for_run_renews_only_spawn_rows_and_releases_heartbeat_rows(
     temp_db, sample_project
 ) -> None:

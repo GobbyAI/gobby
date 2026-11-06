@@ -18,6 +18,7 @@ from gobby.storage.agents import (
     TERMINAL_AGENT_RUN_STATUSES,
     LocalAgentRunManager,
 )
+from gobby.storage.daemon_resume_keys import SPAWN_LEASE_RUN_KEY
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.tasks._dispatch_mutex import MutexRenewal, TaskDispatchMutexManager
 from gobby.utils.machine_id import require_machine_id
@@ -272,11 +273,13 @@ def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> MutexRe
     if db is None:
         return None
 
+    metadata = getattr(run, "resume_metadata_json", None) or {}
     try:
         return TaskDispatchMutexManager(db).renew_owned_for_run(
             str(task_id),
             str(run_id),
             ttl_seconds=600,
+            restore=metadata.get(SPAWN_LEASE_RUN_KEY) == str(run_id),
         )
     except Exception as e:
         logger.warning(

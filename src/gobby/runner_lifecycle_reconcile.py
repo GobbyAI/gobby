@@ -27,8 +27,10 @@ logger = logging.getLogger("gobby.runner_lifecycle")
 
 # Lease outcomes that leave nothing to restore, so the run's restart fence can clear.
 _SETTLED_MUTEX_OUTCOMES = frozenset(
-    {MutexRenewal.RENEWED, MutexRenewal.RELEASED_LEGACY, MutexRenewal.FREE}
+    {MutexRenewal.RENEWED, MutexRenewal.RESTORED, MutexRenewal.RELEASED_LEGACY, MutexRenewal.FREE}
 )
+# Outcomes that hold a live lease for the run after this pass.
+_LIVE_MUTEX_OUTCOMES = frozenset({MutexRenewal.RENEWED, MutexRenewal.RESTORED})
 
 # Per-process marker deduplicating parent recovery notifications: reconnect
 # messages fire once per daemon boot, not once per reconciliation pass.
@@ -205,7 +207,7 @@ async def _refresh_surviving_run(
     settled = outcome in _SETTLED_MUTEX_OUTCOMES or not getattr(run, "task_id", None)
     if resolved_run_ids is not None and settled:
         resolved_run_ids.add(str(run.id))
-    return 1 if outcome is MutexRenewal.RENEWED else 0
+    return 1 if outcome in _LIVE_MUTEX_OUTCOMES else 0
 
 
 async def _reconcile_native_runs(

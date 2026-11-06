@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.daemon_resume_keys import DISPATCH_LEASE_HELD_KEY
+from gobby.storage.daemon_resume_keys import DISPATCH_LEASE_HELD_KEY, SPAWN_LEASE_RUN_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -81,6 +81,15 @@ def cleanup_agent_runtime_state(
             dispatch_mutex_rows = TaskDispatchMutexManager(db).clear_by_run_id(run_id)
         except Exception as exc:
             message = f"dispatch mutex cleanup failed for run {run_id}: {exc}"
+            logger.warning(message)
+            errors.append(message)
+        try:
+            from gobby.storage.agents import LocalAgentRunManager
+
+            # The lease is released, so the run must not restore it later.
+            LocalAgentRunManager(db).merge_resume_metadata(run_id, {SPAWN_LEASE_RUN_KEY: None})
+        except Exception as exc:
+            message = f"spawn lease marker cleanup failed for run {run_id}: {exc}"
             logger.warning(message)
             errors.append(message)
 

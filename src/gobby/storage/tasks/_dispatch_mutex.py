@@ -19,6 +19,7 @@ class MutexRenewal(StrEnum):
     """Outcome of a heartbeat asking to renew the lease bound to one run."""
 
     RENEWED = "renewed"
+    RESTORED = "restored"
     RELEASED_LEGACY = "released_legacy"
     FREE = "free"
     FOREIGN = "foreign"
@@ -210,12 +211,16 @@ class TaskDispatchMutexManager:
         run_id: str,
         ttl_seconds: int,
         now: datetime | str | None = None,
+        *,
+        restore: bool = False,
     ) -> MutexRenewal:
         """Renew only a lease that ``run_id`` already holds; never take a free one.
 
         A free task lease belongs to the next spawn, so a live run that did not take
-        it leaves it free. A heartbeat-signed row is a leftover of the retired fallback
-        and is released, not renewed.
+        it leaves it free. With ``restore``, a run whose own spawn attached the lease
+        gets it back when the row is gone; a row held by any other run is never taken.
+        A heartbeat-signed row is a leftover of the retired fallback and is released,
+        not renewed.
         """
         now_value = _coerce_timestamp(now)
         lease_until = now_value + timedelta(seconds=ttl_seconds)
@@ -230,7 +235,24 @@ class TaskDispatchMutexManager:
                 (task_id,),
             ).fetchone()
             if row is None:
-                return MutexRenewal.FREE
+                if not restore:
+                    return MutexRenewal.FREE
+                conn.execute(
+                    """
+                    INSERT INTO task_dispatch_mutex (
+                        task_id, lease_until, lease_holder, run_id, action_kind, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, 'spawn_agent', %s)
+                    """,
+                    (
+                        task_id,
+                        lease_until,
+                        f"spawn-agent:restore:{run_id}",
+                        run_id,
+                        now_value,
+                    ),
+                )
+                return MutexRenewal.RESTORED
             if str(row["run_id"]) != str(run_id) or not row["lease_holder"]:
                 return MutexRenewal.FOREIGN
             if row["action_kind"] == LEGACY_HEARTBEAT_ACTION_KIND:
