@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.compaction_ownership import COMPACT_BOUNDARY_SUBTYPE
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
@@ -69,22 +70,37 @@ def _claude_compact_error_cursor(session: Any) -> TranscriptTailCursor | None:
         return None
 
 
-def _fresh_compact_error(cursor: TranscriptTailCursor | None) -> str | None:
+def _fresh_claude_compact_records(cursor: TranscriptTailCursor | None) -> tuple[str | None, bool]:
+    """One pass over the fresh parent transcript: a compact error, and whether a boundary landed.
+
+    The boundary is the parent's own compact_boundary record, the same one the route's
+    settle counts, so a subagent's boundary in its own transcript never reaches this cursor.
+    """
     if cursor is None:
-        return None
+        return None, False
+    error: str | None = None
+    boundary = False
     try:
         for record in cursor.fresh_records():
-            if record.get("type") != "system" or record.get("subtype") != "local_command":
+            if record.get("subtype") == COMPACT_BOUNDARY_SUBTYPE:
+                boundary = True
+            if error is not None or record.get("type") != "system":
+                continue
+            if record.get("subtype") != "local_command":
                 continue
             content = record.get("content")
             if not isinstance(content, str):
                 continue
             stderr = content.removeprefix("<local-command-stderr>")
             if stderr.startswith(_COMPACT_ERROR_PREFIX):
-                return stderr.split("</local-command-stderr>", 1)[0]
+                error = stderr.split("</local-command-stderr>", 1)[0]
     except TranscriptObservationError:
         logger.debug("Compact error transcript observation ended", exc_info=True)
-    return None
+    return error, boundary
+
+
+def _fresh_compact_error(cursor: TranscriptTailCursor | None) -> str | None:
+    return _fresh_claude_compact_records(cursor)[0]
 
 
 def _compact_receipt_exists(db: HubDatabase, handoff_record_id: str, attempt_id: str) -> bool:
@@ -106,11 +122,13 @@ async def _wait_for_compact_boundary(
     command: str | None = None,
     codex_cursor: CodexRolloutCursor | None = None,
     on_codex_boundary: Callable[[], bool] | None = None,
+    on_claude_boundary: Callable[[], object] | None = None,
 ) -> str | None:
     """Return an error or wait for one boundary within this delivery operation."""
     deadline = asyncio.get_running_loop().time() + (
         _COMPACT_BOUNDARY_CONFIRM_SECONDS if timeout_seconds is None else timeout_seconds
     )
+    claude_boundary_seen = False
     while not waiter.event.is_set():
         if codex_cursor is not None:
             try:
@@ -125,7 +143,18 @@ async def _wait_for_compact_boundary(
             except TranscriptObservationError:
                 logger.warning("Codex compact rollout observation ended", exc_info=True)
                 codex_cursor = None
-        error = await asyncio.to_thread(_fresh_compact_error, cursor) if cursor else None
+        error, boundary = (
+            await asyncio.to_thread(_fresh_claude_compact_records, cursor)
+            if cursor
+            else (None, False)
+        )
+        if boundary and not claude_boundary_seen:
+            claude_boundary_seen = True
+            if on_claude_boundary is not None:
+                try:
+                    await asyncio.to_thread(on_claude_boundary)
+                except Exception:
+                    logger.warning("Failed settling Claude compact boundary", exc_info=True)
         if error is not None:
             return error
         try:
@@ -264,6 +293,20 @@ async def deliver_staged_compact_handoff(
                 failure_result.update(detail)
         elif ok:
             delivery_loop = asyncio.get_running_loop()
+
+            def continue_after_boundary() -> bool:
+                # The boundary this delivery observed is the continuation's trigger; it must
+                # not wait for a held PostCompact or SessionStart replay, which only a main
+                # event can release, and the continuation's own BEFORE_AGENT is that event.
+                return consume_and_schedule_handoff_compact_continuation(
+                    db,
+                    pending_session_id=session_id,
+                    target_session=session,
+                    loop=delivery_loop,
+                    terminal_manager=terminal_manager,
+                    terminal_runtime_registry=terminal_runtime_registry,
+                )
+
             failure = await _wait_for_compact_boundary(
                 waiter,
                 pane,
@@ -271,14 +314,8 @@ async def deliver_staged_compact_handoff(
                 cursor,
                 command=command,
                 codex_cursor=codex_cursor,
-                on_codex_boundary=lambda: consume_and_schedule_handoff_compact_continuation(
-                    db,
-                    pending_session_id=session_id,
-                    target_session=session,
-                    loop=delivery_loop,
-                    terminal_manager=terminal_manager,
-                    terminal_runtime_registry=terminal_runtime_registry,
-                ),
+                on_codex_boundary=continue_after_boundary,
+                on_claude_boundary=continue_after_boundary,
             )
             if (
                 failure is not None

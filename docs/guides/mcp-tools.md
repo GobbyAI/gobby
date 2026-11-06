@@ -252,7 +252,7 @@ capability guides and agent reference library.
 | `gobby-skills` | Installed instructions and hubs |
 | `gobby-cron` | Scheduled operations |
 | `gobby-communications` | External channels and identities |
-| `gobby-decisions` | Decision classifier over the configured `ai.decisions` wire. Read-only. `evaluate` takes one question type per call (Choice, Noul, Score, or Box) and returns typed answers with provenance, or `success: false` with a typed `reason`: `invalid_request`, `unconfigured`, `oversize`, `cooldown`, `timeout`, `transport`, `http_status`, `parse`, or `truncated`. See [configuration.md](configuration.md#decision-classifier-aidecisions) |
+| `gobby-decisions` | Decision classifier over the configured `ai.decisions` endpoints. Read-only. `evaluate` takes questions of mixed types (Choice, Noul, Score, or Box), each answered by the endpoint configured for its type. It returns `success` with `answers` keyed by question, each answer carrying its own `success`, `answer` or typed `reason`, and provenance. A call returns `success: false` with a top-level typed `reason` only when every question fails: `invalid_request`, `unconfigured`, `oversize`, `cooldown`, `timeout`, `transport`, `http_status`, `parse`, or `truncated`. See [configuration.md](configuration.md#decision-classifier-aidecisions) |
 
 Guarded tools can be hidden from ordinary discovery. A registry's existence is
 not permission to use its internal stage operations.

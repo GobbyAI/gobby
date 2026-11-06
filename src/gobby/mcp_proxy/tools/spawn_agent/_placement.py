@@ -181,7 +181,11 @@ async def run_placed_spawn(
                 launch_terminal_id = None
             raise
 
+    async def release_terminal(terminal_id: str) -> None:
+        await reserver.release(reserved, terminal_id=terminal_id, timeout=placed.wait_seconds)
+
     phase.spawn_request.placement_binder = bind
+    phase.spawn_request.placement_releaser = release_terminal
     refs = {
         "workspace": f"{placed.resolved.node_ref}:{placed.resolved.workspace_ref}",
         "tab_ref": reserved.tab_ref,

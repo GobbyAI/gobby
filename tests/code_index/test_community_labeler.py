@@ -855,6 +855,41 @@ async def test_gate_batches_fit_the_question_context_ceiling(
             assert service.estimate_request_tokens(body["state"], {key: question}) <= 1024
 
 
+async def test_mismatch_warning_follows_the_routed_choice_cooldown(
+    code_storage: CodeIndexStorage,
+    decision_wire: DecisionWire,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The warning window comes from the endpoint that serves Choice, not the default."""
+    caplog.set_level(logging.DEBUG)
+    communities = [_area(code_storage, community_id) for community_id in range(40, 42)]
+    decision_wire.choices = {f"c{c.community_id}": ("deterministic_0", 0.95) for c in communities}
+    routed_choice = {
+        "api_base": "https://decide.test",
+        "model": DECISION_MODEL,
+        "identity_contract": "response_version",
+        "failure_cooldown_seconds": 0,
+    }
+    config = _decisions(
+        failure_cooldown_seconds=3600,
+        overrides={"choice": routed_choice},
+        community_label=_consumer("enforce", evaluated_model="jev-1.13"),
+    )
+    labeler = _gated_labeler(_generates(*communities), lambda: config)
+
+    def mismatch_warnings() -> int:
+        return sum(
+            record.levelno == logging.WARNING
+            and "evaluated_backend_mismatch" in record.getMessage()
+            for record in caplog.records
+        )
+
+    for community in communities:
+        await labeler.label_batch(PROJECT_ID, [community], storage=code_storage, run_db=_run_db)
+
+    assert mismatch_warnings() == 2
+
+
 async def test_enforce_without_matching_evaluation_runs_as_shadow(
     code_storage: CodeIndexStorage,
     decision_wire: DecisionWire,

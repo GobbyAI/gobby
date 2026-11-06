@@ -1,0 +1,339 @@
+{
+ "dispositions": [
+  {
+   "ref": "#21545",
+   "disposition": "container",
+   "target": "map-root",
+   "rationale": "Stage 3 root epic. The audit rates it rewrite: its text still lists closed #21572 as an upcoming step and states no exit (1,082 ledger rows, 1,073 proxied). Its work is fully decomposed into V1A-V5B, S3-FREEZE, S3-NAME, CP-PREDELETE-REVIEW/CUT and S3-DELETE, and map-v2's coverage_selfcheck names #21545 as a container dispositioned outside chunks.",
+   "prefill_disposition": "container",
+   "prefill_target": "map-root",
+   "changed": false
+  },
+  {
+   "ref": "#21571",
+   "disposition": "chunk",
+   "target": "V1A",
+   "rationale": "Gap at review time, since closed in the map: partial. The audit rates #21571 rewrite: 46 CLI ledger rows, D1 lifecycle verbs to replan runner-first, and 1.7 as the last gate. V1A lists it in tree_nodes and carries its status verb, the D1 lifecycle verbs, the 1.6 docs and the 1.7 inventory parity gate (with the edge on node-mode 2.7 cut); V2's and V5B's ledger selectors carry its 1.3 tasks and 1.2 projects verbs (D16), and gport's ledger supersedes the 1.5 inventory. Plan item 1.4 `gclient config get|set` (client-operator-verbs.md:702) is a new verb with no 'CLI gobby config' ledger row, so no selector catches it and V1A's goal does not name it.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V1A",
+   "changed": false
+  },
+  {
+   "ref": "#21573",
+   "disposition": "chunk",
+   "target": "S3-NAME",
+   "rationale": "Gap at review time, since closed in the map: partial. S3-NAME lists #21573 and carries gclient's build under the gobby name (binary, install path, completions), the console-script removal and the docs and AGENTS.md edits; CP-PREDELETE-CUT's commits A and B make the switch live, the pin authority goes to V1A (D15), and the deletion child #21574 goes to S3-DELETE (audit: rewrite, no plan, S3.2 handoff). But #21573's own change set also names 'Homebrew, the release workflows (including .github/workflows/release-gclient.yml)', which no chunk covers: release.yml's v* job runs uv build, publishes to PyPI and dispatches the GobbyAI/homebrew-tap update, so it cannot build after S3-DELETE, and release-gclient.yml still ships gclient-<target>.tar.gz.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-NAME",
+   "changed": false
+  },
+  {
+   "ref": "#21574",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "The audit rates it rewrite: it has no plan, its premise that every row is already resolved is false (1,073 of 1,082 rows proxied), it owns the /_gobby/ws/bridge row, and it leaves the templates' fate (F14) and front-door Proxy/Compare (F12) open. S3-DELETE lists #21574 and covers all of that: it deletes src/gobby and the Python tests in one commit after S3-FREEZE's ledger closure, owns the ws/bridge ledger row, moves the templates to assets/shared (D15) and removes the Python backend from gdaemon's lifecycle.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  },
+  {
+   "ref": "#21546",
+   "disposition": "container",
+   "target": "map-root",
+   "rationale": "Stage 4 root epic. The audit rates it rewrite: it carries Python-node text and the deferred tasks-family 3.8.1-3.8.5, which the verifier found no leaf owns (G5). Its work is decomposed into the eight S4-* chunks plus the Stage 2 relocations (NODEHUB, TERM-1, TERM-HOST, COMMS-2), S4-HOOKS takes tasks-family 3.8.1-3.8.5, and coverage_selfcheck names #21546 as a container.",
+   "prefill_disposition": "container",
+   "prefill_target": "map-root",
+   "changed": false
+  },
+  {
+   "ref": "#17436",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "The audit rates it rewrite: its windows, multi-platform and deferred labels and its Windows validation conflict with decision 22, #25249 and memory 83a9445f, and the verifier adds its stale 'One child' text. S4-NODE lists #17436 and builds node mode, the per-machine daemon that holds no datastore credentials, with Windows kept post-1.0.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#21579",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "The audit rates it rewrite: F11.1's pre-1.0 Windows node is stale, and F11.3 cites #25247, which closed as superseded. S4-NODE's goal names 'node duties #21579' under #17436, so it closes with S4-NODE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false
+  },
+  {
+   "ref": "#25328",
+   "disposition": "decision",
+   "target": "D35",
+   "rationale": "Josh approved #25328 on 2026-10-29 (verify-stage3-stage4 section 4.4, needs_josh). D35 has no resolved_by. Its default would close #25328 as superseded by #21566 P3/P4 in S4-NODE, which replaces his approved approach, and the #25247 precedent needed his explicit approval for exactly such a superseded close. Under D35's default the disposition is superseded S4-NODE (G3). #25329 stays chunk S4-PROOF, because its placement holds under either D35 outcome and only its criterion 2 changes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": true,
+   "reviewer_rationale": "Josh approved this carve-out on 2026-10-29 so that node parity could skip Stage 2. The audit says superseded, because decision 26 moots that premise; the verifier says needs_josh, because Josh approved it. D35's default settles the move: #21566's node MCP work (P3/P4) moves into S4-NODE, 'where #25328 closes as superseded by it', SKILLS carries the node-local skill boundary in Stage 2, and Josh confirms it with the map approval. The prefill's chunk kind is wrong because no carve-out leaf is ever built."
+  },
+  {
+   "ref": "#25258",
+   "disposition": "chunk",
+   "target": "S4-NODE",
+   "rationale": "#25258 has 4 linked commits (77798bc4ed, ae9a2039d5, 237cef4b33 and cbafbe253f), all ancestors of 0.5.0. Linked commits do not block superseded (D31). Ruling 1 and settled item 7 retire its unmet plan-stamp criteria, so it closes as superseded by S4-NODE's task.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-NODE",
+   "changed": false,
+   "reviewer_rationale": "This is a planning task. Its criterion 1 requires node-mode.md 'committed on 0.5.0, stamped by its Plan Adversary ... passes validate_plan_file'. The audit rates it rewrite: the plan is unexpanded, and its P2 2.1-2.4 and 2.7 duplicate #21571's verbs. Ruling 1 and decisions.md settled item 7 retire plan-stamp and gobby-plan criteria for port work, so S4-NODE's brief, which names 'plan #25258' and keeps node-mode's node-only parts, replaces it. node-mode.md (M1 cbafbe253f) stays as evidence, but the criterion is unmet, so the task closes superseded, not done."
+  },
+  {
+   "ref": "#19652",
+   "disposition": "post_1_0",
+   "target": "post-1.0 backlog outside the #21542 tree (D6): the Docker-hosted central transcript archive research spike, which has no 1.0 consumer; 1.0 keeps per-machine transcript_archive_dir archives",
+   "rationale": "The audit rates it needs_josh: an unlabeled research spike with no consumer task. The verifier corrects the reason: the real conflict is ROADMAP S4.6 versus sessions-family.md:364 ('Transcript archives stay in each machine's transcript_archive_dir'), and the spike is not a Stage 4 exit gate. D6's default moves it post-1.0. It has no deferral label, so Josh confirms the move at map approval; map-v2's coverage_selfcheck already counts it as post-1.0.",
+   "prefill_disposition": null,
+   "prefill_target": null,
+   "changed": true
+  },
+  {
+   "ref": "#20202",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "The audit rates it rewrite: it still says it is blocked by #19600, which closed wont_do, and remote-terminal-attach.md's D1-D5 await approval. S4-ATTACH lists #20202 and carries P1-P5, apart from #25276, which goes to TERM-HOST: the contract, the relay executor, relay tokens and the endpoint, the remote link, the hub-wide inventory, remote attach, gclient, the ROADMAP corrections and the live proof.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25202",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Holder epic for remote-terminal-attach P1 (audit: keep). Its children #25207-#25209 are the node-commands contract and the node relay half that S4-ATTACH's goal names.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25207",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "The audit rates it rewrite: drop the Python half (the src/gobby/hub/node_commands.py mirror and tests/hub/test_node_command_parity.py) and keep Rust items 1.1.1, 1.1.3 and 1.1.6. S4-ATTACH's goal names #25207 and has its contract version take the next free number at landing. D35 resolves the verifier's Stage 2 hazard (#21566 3.1 waiting on v5), and D31 cuts that edge, which is an edge drop, not a disposition.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25208",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep. It is Rust only (remote-terminal-attach 1.2), and its one Python item is the pin bump that V1A's Rust pin authority replaces. S4-ATTACH's goal names the node relay executor.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25209",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, Rust only (remote-terminal-attach 1.3). S4-ATTACH's goal carries terminal.resize in the node-commands contract and its node executor.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25203",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Holder epic for remote-terminal-attach P2 (audit: keep). Its children #25210 and #25211 are the relay tokens, the hub relay endpoint and the remote link that S4-ATTACH's goal names.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25210",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, Rust only (remote-terminal-attach 2.1). S4-ATTACH's goal names relay tokens and the hub relay endpoint.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25211",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, Rust only (remote-terminal-attach 2.2). S4-ATTACH's goal names the remote terminal link.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25204",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Holder epic for remote-terminal-attach P3 (audit: keep). Its children #25212-#25214 are S4-ATTACH's inventory, remote attach, input and sizing. Its child #25276 is disposed to TERM-HOST, which lands earlier, so it does not hold this node open.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25212",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, Rust (remote-terminal-attach 3.1), blocked by the Stage 2 terminal leaves #24575 and #24577. S4-ATTACH's goal names the owner-scoped hub-wide inventory. The chunk depends on TERM-HOST, which comes after TERM-1's terminal family.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25213",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, Rust (remote-terminal-attach 3.2), blocked by Stage 2 #24578 and #24580. S4-ATTACH's goal names remote attach through the hub relay.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25214",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, Rust (remote-terminal-attach 3.3), blocked by Stage 2 #24579. S4-ATTACH's goal names remote input and sizing through node commands.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25276",
+   "disposition": "superseded",
+   "target": "TERM-HOST",
+   "rationale": "This is a planning task. Its criteria require 'a plan section or plan file' on which 'validate_plan_file passes' and that the Orchestrator presents before expansion. The audit rates it move: the Sessions release-composer rows need a Stage 2 owner for the composer ledger, a Stage 2-to-Stage 4 hazard. TERM-HOST lists #25276 and builds the native composer ledger (#24571, plan #25276) in Stage 2 wave 5; ruling 1 and decisions.md settled item 7 retire the plan-file criteria, so the plan deliverable is replaced, not done.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "TERM-HOST",
+   "changed": true
+  },
+  {
+   "ref": "#25205",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Holder epic for remote-terminal-attach P4 (audit: keep). Its child #25215 is gclient opening another machine's terminal, which S4-ATTACH's goal names.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25215",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep, gclient Rust (remote-terminal-attach 4.1). S4-ATTACH's goal names gclient opening another machine's terminal in its owning workspace.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25206",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Holder epic for remote-terminal-attach P5 (audit: keep). Its children #25216 and #25217 are the ROADMAP corrections and the live proof that S4-ATTACH's goal names.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25216",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "Audit: keep. Items 5.1.1-5.1.3 are unapplied: #19600 is still cited at ROADMAP.md:41, :55, :201, :219 and :336, plus :405 per the verifier. S4-ATTACH's goal names 'ROADMAP corrections', and the map has no separate ROADMAP rewrite that could take them.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#25217",
+   "disposition": "chunk",
+   "target": "S4-ATTACH",
+   "rationale": "The audit rates it rewrite: its oracle is the pytest pair harness (test_remote_terminal_attach_live.py, pair_hub and pair_node), which dies at S3-DELETE. The scenario stays and the Rust hub-and-node pair harness replaces the fixtures; S4-ATTACH's goal names 'the live proof'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-ATTACH",
+   "changed": false
+  },
+  {
+   "ref": "#21575",
+   "disposition": "chunk",
+   "target": "S4-HUBVIEW",
+   "rationale": "The audit rates it rewrite. hub-mode.md frames hub mode as Python hub routes (src/gobby/hub, which NODEHUB ports in Stage 2); P1-P3 are done, and #24597, #24601, #24603 and the P5 proofs remain. S4-HUBVIEW lists #21575 ('hub mode as the datastore owner') together with P4. Its P5 child #24593 is disposed to S4-PROOF, which depends on S4-HUBVIEW.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HUBVIEW",
+   "changed": false
+  },
+  {
+   "ref": "#24592",
+   "disposition": "chunk",
+   "target": "S4-HUBVIEW",
+   "rationale": "Holder for hub-mode P4 (audit: keep): #24597, #24601 and #24603 are open and five leaves are closed. S4-HUBVIEW lists #24592 for the remote workspaces and the gclient projects pane that follows the machine filter.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HUBVIEW",
+   "changed": false
+  },
+  {
+   "ref": "#24597",
+   "disposition": "chunk",
+   "target": "S4-HUBVIEW",
+   "rationale": "Audit: keep. All 8 acceptance items are Rust (node_workspace_finish.rs), and commands.rs::admit still answers unknown_command for workspace.*. S4-HUBVIEW's goal names node workspace.merge and workspace.remove.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HUBVIEW",
+   "changed": false
+  },
+  {
+   "ref": "#24601",
+   "disposition": "chunk",
+   "target": "S4-HUBVIEW",
+   "rationale": "The audit rates it rewrite, because 4.6.3 compares against the Python parser. The verifier notes that the golden is already a Rust fixture (crates/gdaemon/tests/fixtures/node_commands/upstream_track.json), so only 4.6.3 needs to be dropped or re-pointed. S4-HUBVIEW's goal names checkout.status.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HUBVIEW",
+   "changed": false
+  },
+  {
+   "ref": "#24603",
+   "disposition": "chunk",
+   "target": "S4-HUBVIEW",
+   "rationale": "Audit: keep. It is gclient work with 25 targets, and WIP commits 2569848a03 and 6d0883550e were discarded at reopen. The verifier flags two targets near the 1,000-line ceiling, so the chunk should budget for a decomposition. S4-HUBVIEW's goal names the gclient projects pane following the machine filter.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-HUBVIEW",
+   "changed": false
+  },
+  {
+   "ref": "#24593",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Holder for the hub-mode P5 proofs (audit: keep; 7 open children). S4-PROOF lists #24593 and carries every one of those proofs.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#24604",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "The audit rates it rewrite: 5.1.1-5.1.8 are pytest on the Python pair harness, so after S3-DELETE it needs a Rust two-daemon harness and Rust enrollment. S4-PROOF keeps the scenarios on the Rust hub-and-node pair, and its goal says #24604's rewrite carries #24863's real-hub enrollment proof (D7).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#25243",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Josh-ruling node. The audit rates it rewrite: its oracle is pytest (test_node_semantic_parity.py), and 'Windows is a later 1.0 obligation' is stale. S4-PROOF's goal names parity on a node for shared state, sessions, tasks, memory and skills, so the map keeps Josh's placement under #24593 and only the harness and that sentence change.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  },
+  {
+   "ref": "#25244",
+   "disposition": "chunk",
+   "target": "S4-PROOF",
+   "rationale": "Josh-ruling node. The audit rates it rewrite: its oracle is pytest, and it relies on #24872 and #24875 without an edge to them. S4-PROOF's goal names orchestration, messaging, rules and recovery parity, and S4-PROOF depends on S4-INSTALL, which carries #24872 and #24875. So the map keeps Josh's placement and supplies the missing order.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S4-PROOF",
+   "changed": false
+  }
+ ]
+}

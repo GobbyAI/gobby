@@ -153,6 +153,8 @@ pub(crate) struct Inner {
     pub(crate) reservations: HashMap<String, Reservation>,
     pub(crate) attachments: HashMap<u64, Attachment>,
     pub(crate) next_attachment: u64,
+    /// Final text of retired terminals; see `exit_tails`.
+    pub(crate) exit_tails: super::exit_tails::ExitTails,
     control_owners: HashSet<u64>,
 }
 
@@ -176,6 +178,7 @@ impl Inner {
             reservations,
             attachments: HashMap::new(),
             next_attachment,
+            exit_tails: Default::default(),
             control_owners: HashSet::new(),
         }
     }

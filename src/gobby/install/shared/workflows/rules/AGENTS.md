@@ -127,6 +127,6 @@ Each group uses its directory name as an identity tag. Cross-cutting tags such a
 
 ## Guides
 
-- [Rules](../../../docs/guides/rules.md) — Full rules reference
-- [Variables](../../../docs/guides/variables.md) — Session variables used in conditions
-- [Workflows Overview](../../../docs/guides/workflows-overview.md) — How rules fit the system
+- [Rules](../../../../../../docs/guides/rules.md) — Full rules reference
+- [Variables](../../../../../../docs/guides/variables.md) — Session variables used in conditions
+- [Workflows Overview](../../../../../../docs/guides/workflows-overview.md) — How rules fit the system

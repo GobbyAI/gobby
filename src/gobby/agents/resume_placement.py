@@ -218,7 +218,11 @@ async def launch_resume(
             await run_to_completion(park())
             raise
 
+    async def release_terminal(terminal_id: str) -> None:
+        await reserver.release(reserved, terminal_id=terminal_id)
+
     request.placement_binder = bind
+    request.placement_releaser = release_terminal
     try:
         result = await runtime_spawn(request, plan)
     except asyncio.CancelledError:

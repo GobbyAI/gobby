@@ -278,6 +278,23 @@ def _codex_prompt_failure_reason(
     return f"{code}: {detail}\nPane output:\n{redacted}"
 
 
+async def _exited_terminal_pane(
+    runtime: "TerminalRuntime", terminal: "Terminal", last_pane: str | None
+) -> str | None:
+    """Read what a terminal printed before the host dropped it.
+
+    The host keeps a retired terminal's final text briefly, so this read can
+    show output that arrived after the last poll. A failed read keeps that poll.
+    """
+    try:
+        async with asyncio.timeout(_CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS):
+            final = await runtime.snapshot(terminal, _CODEX_COMPOSER_CAPTURE_LINES)
+    except Exception as exc:
+        logger.debug("Failed to read exited Codex terminal output: %s", type(exc).__name__)
+        return last_pane
+    return final.text or last_pane
+
+
 async def _fail_codex_prompt_delivery(
     runtime: "TerminalRuntime",
     terminal: "Terminal",
@@ -285,6 +302,7 @@ async def _fail_codex_prompt_delivery(
     run_manager: "LocalAgentRunManager | None",
     error: str,
     cleanup_agent: Callable[..., Awaitable[None]] | None = None,
+    placement_releaser: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     """Fail a still-uninitialized run before terminating its Codex terminal.
 
@@ -334,6 +352,16 @@ async def _fail_codex_prompt_delivery(
         logger.error(
             "Codex prompt failure cleanup failed for run %s: %s", run_id, type(exc).__name__
         )
+    if placement_releaser is not None:
+        # The spawn already reported success, so its placed pane is released only here.
+        try:
+            await placement_releaser(terminal.id)
+        except Exception as exc:
+            logger.error(
+                "Cannot release placed pane after Codex prompt failure for run %s: %s",
+                run_id,
+                type(exc).__name__,
+            )
 
 
 def schedule_codex_prompt_delivery(
@@ -343,6 +371,7 @@ def schedule_codex_prompt_delivery(
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
     cleanup_agent: Callable[..., Awaitable[None]] | None = None,
+    placement_releaser: Callable[[str], Awaitable[None]] | None = None,
 ) -> bool:
     """Schedule a typed-paste prompt delivery to a spawned Codex terminal.
 
@@ -351,7 +380,15 @@ def schedule_codex_prompt_delivery(
     if not prompt or coordinator is None or terminal is None:
         return False
     task = asyncio.get_running_loop().create_task(
-        _deliver_codex_prompt(coordinator, terminal, prompt, run_id, run_manager, cleanup_agent)
+        _deliver_codex_prompt(
+            coordinator,
+            terminal,
+            prompt,
+            run_id,
+            run_manager,
+            cleanup_agent,
+            placement_releaser,
+        )
     )
     _CODEX_PROMPT_DELIVERY_TASKS.add(task)
 
@@ -381,6 +418,7 @@ async def _deliver_codex_prompt(
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
     cleanup_agent: Callable[..., Awaitable[None]] | None = None,
+    placement_releaser: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     from gobby.terminals.runtime import Delivered, IndeterminateWrite
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
@@ -437,6 +475,7 @@ async def _deliver_codex_prompt(
                         ),
                     ),
                     cleanup_agent=cleanup_agent,
+                    placement_releaser=placement_releaser,
                 )
                 return
             try:
@@ -454,6 +493,7 @@ async def _deliver_codex_prompt(
                 )
             else:
                 if not live:
+                    last_pane = await _exited_terminal_pane(runtime, terminal, last_pane)
                     await _fail_codex_prompt_delivery(
                         runtime,
                         terminal,
@@ -476,6 +516,7 @@ async def _deliver_codex_prompt(
                             ),
                         ),
                         cleanup_agent=cleanup_agent,
+                        placement_releaser=placement_releaser,
                     )
                     return
                 if not retry_announced and loop.time() >= retry_at:
@@ -545,6 +586,7 @@ async def _deliver_codex_prompt(
                     ),
                 ),
                 cleanup_agent=cleanup_agent,
+                placement_releaser=placement_releaser,
             )
             return
         logger.info(
@@ -577,6 +619,7 @@ async def _deliver_codex_prompt(
                 ),
             ),
             cleanup_agent=cleanup_agent,
+            placement_releaser=placement_releaser,
         )
 
 

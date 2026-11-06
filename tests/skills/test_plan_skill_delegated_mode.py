@@ -123,7 +123,7 @@ def test_checkpoint_choices_and_active_handoff() -> None:
     )
     assert "Stop preserves the current authority and starts no next phase" in draft
     approval = _body("plan/approval.md")
-    assert "while an enhancer or reviewer is active, mark it pending" in approval
+    assert "while a Plan Advocate or reviewer is active, mark it pending" in approval
     assert "finish the run, votes, accepted edits and checkpoints" in approval
     assert "launch no new optional round" in approval
 

@@ -183,6 +183,21 @@ async def evaluate_spawn(
 
     result.agent_found = True
 
+    # The same surface gate the real spawn applies, so a refusal here is a refusal there.
+    if not agent_body.supports_surface("spawn"):
+        result.can_spawn = False
+        result.items.append(
+            EvaluationItem(
+                layer="agent",
+                level="error",
+                code="SURFACE_UNSUPPORTED",
+                message=(
+                    f"Agent {agent_body.name!r} does not support the 'spawn' surface; it runs "
+                    "only in an operator-opened pane via apply_agent_definition"
+                ),
+            )
+        )
+
     # The same project policy the real spawn resolves with. An unreadable policy refuses the spawn
     # before any launch model is chosen, so no model is reported as resolved here either.
     model_defaults = ModelDefaults()

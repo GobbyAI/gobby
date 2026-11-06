@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 
 # Operator directive, 2026-11-02: no daemon restart or cutover during this project's
 # quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): 04:00-05:00
@@ -21,5 +21,5 @@ rules:
       - type: block
         tools: [Bash]
         mask_quoted: true
-        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|do\s+|then\s+|else\s+)*(?:[^\s;&|]*/)?(?:gobby\s+(?:start|stop|restart|cutover)\b|python[0-9.]*\s+-m\s+gobby\.runner\b|curl\b.*/api/admin/(?:restart|shutdown))'
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|do\s+|then\s+|else\s+|(?:[^\s;&|]*/)?env\s+(?:(?:-[^\s;&|]+(?:\s+[^\s;&|=-][^\s;&|=]*)?|[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*)\s+)*?|(?:[^\s;&|]*/)?uv\s+(?:-[^\s;&|]+(?:\s+[^\s;&|-][^\s;&|]*)?\s+)*?run\s+(?:-[^\s;&|]+(?:\s+[^\s;&|-][^\s;&|]*)?\s+)*?)*(?:[^\s;&|]*/)?(?:gobby\s+(?:start|stop|restart|cutover)\b|python[0-9.]*\s+-m\s+gobby\.runner\b|curl\b.*/api/admin/(?:restart|shutdown))'
         reason: "Project quiet hours (04:00-05:00 America/Chicago daily; 04:00-06:00 on Mondays): no daemon start, stop, restart or cutover. Retry after the window closes."

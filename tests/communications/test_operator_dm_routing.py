@@ -15,6 +15,7 @@ from gobby.communications.telegram_fallback import fallback_telegram_targets
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.mailbox import MailboxService
 from gobby.sessions.status_events import SessionStatusTransition
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -126,6 +127,33 @@ def test_automatic_operator_target_uses_definition_capability(
     seat = env.assistant(definition)
     target = reconcile_operator_target(env.manager, env.channel)
     expected = seat.id if enabled and granted else None
+    assert target == expected
+    assert env.manager.attached_session(env.channel.id, "dm:42") == expected
+
+
+@pytest.mark.parametrize("granted", [False, True])
+def test_spawned_seat_auto_attaches_only_with_definition_grant(
+    operator_dm: OperatorEnvironment, granted: bool
+) -> None:
+    env = operator_dm
+    definition = "spawned-inbox"
+    seed_seat(
+        env.sessions.db,
+        definition,
+        capabilities=["auto_attach_operator_conversations"] if granted else [],
+    )
+    seat = env.sessions.register("spawned-seat", None, "claude", env.project_id, agent_depth=1)
+    spawner = env.sessions.register("spawned-seat-spawner", None, "claude", env.project_id)
+    run = LocalAgentRunManager(env.sessions.db).create(
+        parent_session_id=spawner.id,
+        child_session_id=seat.id,
+        provider="claude",
+        prompt="spawned seat",
+    )
+    env.sessions.update_terminal_pickup_metadata(seat.id, agent_run_id=run.id)
+    SessionVariableManager(env.sessions.db).set_variable(seat.id, "_agent_type", definition)
+    target = reconcile_operator_target(env.manager, env.channel)
+    expected = seat.id if granted else None
     assert target == expected
     assert env.manager.attached_session(env.channel.id, "dm:42") == expected
 

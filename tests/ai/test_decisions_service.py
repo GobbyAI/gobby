@@ -7,7 +7,6 @@ import asyncio
 import base64
 import json
 import logging
-import re
 import struct
 import time
 import zlib
@@ -18,7 +17,7 @@ from typing import Any
 import httpx
 import pytest
 
-from gobby.ai import decisions
+from gobby.ai import decisions, decisions_wire
 from gobby.ai.decisions import (
     BoxAnswer,
     BoxImage,
@@ -125,6 +124,22 @@ def _wire_config(wire_api: str, **overrides: Any) -> DecisionsConfig:
     if wire_api == "workers-ai":
         values |= {"api_base": "https://cf.test/client/v4/accounts/acct-1", "model": "clef"}
     return _config(**(values | overrides))
+
+
+def _box_config(**overrides: Any) -> DecisionsConfig:
+    """The only wire that serves Box is OpenRouter's decisions wire."""
+    return _wire_config("openrouter-decisions", model=BOX_MODEL, **overrides)
+
+
+def _split_config(**overrides: Any) -> DecisionsConfig:
+    """Choice and Noul on systemone, Box on OpenRouter; a byte limit applies to both endpoints."""
+    box: dict[str, Any] = {
+        "wire_api": "openrouter-decisions",
+        "api_base": "https://openrouter.test/api",
+        "model": BOX_MODEL,
+        "max_request_bytes": overrides.get("max_request_bytes"),
+    }
+    return _config(**overrides, overrides={"box": box})
 
 
 def _echo_answers(sent: Mapping[str, Any]) -> dict[str, Any]:
@@ -494,6 +509,20 @@ async def test_question_context_limit_is_separate_from_request_budget(wire: Fake
         await service.choose("test", {"text": "x" * 128000}, QUESTIONS)
     assert error.value.reason == "oversize"
     assert len(wire.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_model_card_get_carries_the_endpoint_bearer_token(wire: FakeWire) -> None:
+    wire.handler = _card_handler(lambda: _card("/models/kev-a"))
+    service = DecisionService(_config(api_key="key-one", identity_contract="model_card"))
+
+    result = await service.choose("test", STATE, QUESTIONS)
+
+    card_requests = [r for r in wire.requests if r.url.path == "/v1/models"]
+    assert card_requests, "the model card was never fetched"
+    assert result.backend_identity is not None
+    for request in card_requests:
+        assert request.headers.get("authorization") == "Bearer key-one"
 
 
 @pytest.mark.asyncio
@@ -1421,50 +1450,15 @@ async def test_box_returns_edges_by_key_per_wire_transport(wire: FakeWire) -> No
     assert result.response_model == "typesafe/jev-1.14-20261014"
     assert result.backend_identity == "response:typesafe/jev-1.14-20261014"
 
-    # systemone: each image is a whole-value asset reference behind the danger-zone header.
-    seen_refs: set[str] = set()
-    for _ in range(2):
+    # systemone and Workers AI cannot serve Box: refused before dialing, naming OpenRouter.
+    for other in (_config(model="jev-1.14"), _wire_config("workers-ai")):
         wire.requests.clear()
-        wire.handler = _json_reply(_shape_fixture("systemone", "box"))
-        result = await DecisionService(_config(model="jev-1.14")).box(
-            "evaluate", STATE, BOX_QUESTIONS
-        )
-        request = wire.requests[0]
-        sent = json.loads(request.content)
-        assert str(request.url) == SYSTEMONE_URL
-        assert request.headers["typesafe-danger-zone-images"] == "true"
-        refs: dict[str, str] = {}
-        for key, question in BOX_QUESTIONS.items():
-            sent_question = sent["questions"][key]
-            assert sent_question["type"] == "box"
-            text, ref = sent_question["instructions"]
-            assert text == question.instructions
-            assert re.fullmatch(r"gobby-image-[0-9a-f]{32}", ref)
-            refs[key] = ref
-        assert sent["assets"] == {
-            refs["logo"]: {
-                "type": "image",
-                "format": "png",
-                "data_base64": BOX_QUESTIONS["logo"].image.data_base64,
-            },
-            refs["button"]: {
-                "type": "image",
-                "format": "jpeg",
-                "data_base64": BOX_QUESTIONS["button"].image.data_base64,
-            },
-        }
-        assert result.answers == BOX_ANSWERS
-        assert seen_refs.isdisjoint(refs.values())
-        seen_refs.update(refs.values())
-    assert len(seen_refs) == 4
-
-    # Workers AI has no Box in Clef's schema: refused before dialing.
-    wire.requests.clear()
-    wire.handler = _must_not_dial
-    with pytest.raises(DecisionsUnavailable) as caught:
-        await DecisionService(_wire_config("workers-ai")).box("evaluate", STATE, BOX_QUESTIONS)
-    assert caught.value.reason == "invalid_request"
-    assert wire.requests == []
+        wire.handler = _must_not_dial
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await DecisionService(other).box("evaluate", STATE, BOX_QUESTIONS)
+        assert caught.value.reason == "unconfigured"
+        assert "openrouter-decisions" in caught.value.detail
+        assert wire.requests == []
 
     # Image bytes never count toward the estimate; their token cost is unknown.
     probe = DecisionService(openrouter)
@@ -1508,7 +1502,7 @@ def _invalid_box_requests() -> dict[str, dict[str, BoxQuestion]]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+@pytest.mark.parametrize("wire_api", ["openrouter-decisions"])
 async def test_box_rejects_invalid_images_before_dialing(
     wire: FakeWire, clock: FakeClock, wire_api: str
 ) -> None:
@@ -1559,9 +1553,9 @@ MALFORMED_BOX_ANSWERS: dict[str, Callable[[dict[str, Any]], None]] = {
 
 @pytest.mark.asyncio
 async def test_box_rejects_malformed_answers_as_parse(wire: FakeWire) -> None:
-    service_config = _config(model="jev-1.14")
+    service_config = _box_config()
     for name, mutate in MALFORMED_BOX_ANSWERS.items():
-        body = _shape_fixture("systemone", "box")
+        body = _shape_fixture("openrouter-decisions", "box")
         mutate(body)
         wire.handler = _raw_reply(body)
         with pytest.raises(DecisionsUnavailable) as caught:
@@ -1599,9 +1593,9 @@ def _require_max_request_bytes() -> None:
 async def test_full_utf8_body_byte_limit_before_dispatch(wire: FakeWire) -> None:
     _require_max_request_bytes()
     questions = _large_logo()
-    wire.handler = _shape_responder("systemone")
+    wire.handler = _shape_responder("openrouter-decisions")
 
-    unbounded = DecisionService(_config())
+    unbounded = DecisionService(_box_config())
     await unbounded.box("test", UTF8_STATE, questions)
     sent = wire.requests[0].content
     size = len(sent)
@@ -1611,13 +1605,13 @@ async def test_full_utf8_body_byte_limit_before_dispatch(wire: FakeWire) -> None
     assert len(sent.decode()) < size
     assert len(json.dumps(json.loads(sent))) != size
 
-    at_cap = DecisionService(_config(max_request_bytes=size))
+    at_cap = DecisionService(_box_config(max_request_bytes=size))
     assert at_cap.request_fits(UTF8_STATE, questions)
     await at_cap.box("test", UTF8_STATE, questions)
     assert len(wire.requests) == 2
     assert len(wire.requests[1].content) == size
 
-    over_cap = DecisionService(_config(max_request_bytes=size - 1))
+    over_cap = DecisionService(_box_config(max_request_bytes=size - 1))
     assert not over_cap.request_fits(UTF8_STATE, questions)
     wire.handler = _must_not_dial
     with pytest.raises(DecisionsUnavailable) as caught:
@@ -1646,7 +1640,7 @@ async def test_http_413_is_unavailable_without_retry_and_opens_cooldown(wire: Fa
     assert len(wire.requests) == 1
 
     # A local preflight oversize builds no client and leaves the service available.
-    preflight = DecisionService(_config(max_request_bytes=DEFAULT_BYTE_FLOOR))
+    preflight = DecisionService(_split_config(max_request_bytes=DEFAULT_BYTE_FLOOR))
     wire.requests.clear()
     wire.client_kwargs.clear()
     wire.handler = _must_not_dial
@@ -1722,8 +1716,8 @@ async def test_oversize_constructs_no_client_card_or_post(
     poisoned = {"on": True}
     real_client, real_post, real_card = (
         httpx.AsyncClient,
-        decisions._post,
-        decisions._fetch_card_identity,
+        decisions_wire._post,
+        decisions_wire._fetch_card_identity,
     )
 
     def guard(name: str) -> None:
@@ -1748,7 +1742,7 @@ async def test_oversize_constructs_no_client_card_or_post(
     if limit == "bytes":
         _require_max_request_bytes()
         service = DecisionService(
-            _config(identity_contract=identity_contract, max_request_bytes=DEFAULT_BYTE_FLOOR)
+            _split_config(identity_contract=identity_contract, max_request_bytes=DEFAULT_BYTE_FLOOR)
         )
     else:
         service = DecisionService(

@@ -36,6 +36,7 @@ from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.runtime_config import create_runtime_config_router
 from gobby.servers.routes.runtime_handshake import create_runtime_handshake_router
 from gobby.servers.routes.sessions import create_sessions_router
+from gobby.servers.routes.signed_request import create_signed_request_router
 from gobby.servers.routes.skills import create_skills_router
 from gobby.servers.routes.source_control import create_source_control_router
 from gobby.servers.routes.tasks import create_tasks_router
@@ -75,6 +76,7 @@ __all__ = [
     "create_runtime_config_router",
     "create_runtime_handshake_router",
     "create_sessions_router",
+    "create_signed_request_router",
     "create_skills_router",
     "create_source_control_router",
     "create_tasks_router",
