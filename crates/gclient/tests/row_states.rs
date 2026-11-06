@@ -363,6 +363,28 @@ fn unreachable_local_daemon_shows_its_machine_as_no_live() {
     assert_eq!(local_machine_state(&model, false), RowState::NoLive);
 }
 
+#[test]
+fn machine_row_counts_its_needs_you_and_no_live_agents() {
+    let waiting = with_lifecycle(running("a", "s-a", "t-a"), "awaiting_input");
+    let gone_one = dead(running("b", "s-b", "t-b"));
+    let gone_two = dead(running("c", "s-c", "t-c"));
+    let model = build_model(
+        &rows_with(vec![], vec![]),
+        &[waiting, gone_one, gone_two],
+        &[],
+    );
+    let view = DaemonView {
+        model: &model,
+        reachable: true,
+    };
+    let machine = machine_rows(&view, &Chrome::dark())
+        .into_iter()
+        .find(|row| row.id == LOCAL_MACHINE)
+        .expect("the local machine row");
+    assert_eq!(machine.needs_you, 1);
+    assert_eq!(machine.no_live, 2);
+}
+
 /// A worktree whose every bound agent is dead rolls up to ✕, not blank.
 #[test]
 fn worktree_whose_bound_agents_are_all_dead_is_no_live() {
