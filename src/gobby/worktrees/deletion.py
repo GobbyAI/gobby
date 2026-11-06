@@ -437,12 +437,17 @@ async def probe_missing_worktree_git_state(
     """Confirm a missing checkout and branch need no repeated Git deletion.
 
     Returns ``(True, None)`` only after confirming the Git registration is gone.
-    A detached registration needs an explicit landing target and Git's recorded HEAD.
+    A registration Git still lists needs an explicit landing target and Git's recorded HEAD.
     A present path or branch returns ``(False, None)`` so normal deletion still runs.
     """
     if Path(worktree_path).exists():
         return False, None
     if not branch_name:
+        absent, error = await worktree_registration_is_absent(git_manager, Path(worktree_path))
+        if absent:
+            return True, None
+        if error is not None:
+            return False, error
         if merged_into is not None:
             return await _remove_missing_detached_worktree(
                 git_manager, Path(worktree_path), merged_into

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -19,6 +20,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees import git as worktree_git
 from gobby.worktrees.containment import path_is_within
 from gobby.worktrees.creation import create_worktree as create_worktree_record
+from gobby.worktrees.creation import resolve_managed_worktree_path
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
@@ -27,8 +29,18 @@ from gobby.worktrees.deletion import (
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+    from gobby.storage.worktrees import Worktree
 
 type GitRefValidator = Callable[[str, str], None]
+
+
+def _managed_rows(worktrees: list[Worktree]) -> list[Worktree]:
+    """Keep rows inside the managed root; older scratch trees are not listed in gclient."""
+    return [
+        worktree
+        for worktree in worktrees
+        if resolve_managed_worktree_path(worktree.worktree_path) is not None
+    ]
 
 
 class CreateClientWorktreeRequest(BaseModel):
@@ -124,7 +136,8 @@ def create_source_control_worktrees_router(
             project_id=project_id,
             status=status,
         )
-        return {"worktrees": [worktree.to_dict() for worktree in worktrees]}
+        managed = await asyncio.to_thread(_managed_rows, worktrees)
+        return {"worktrees": [worktree.to_dict() for worktree in managed]}
 
     @router.post("/worktrees")
     async def create_client_worktree(body: CreateClientWorktreeRequest) -> dict[str, Any]:

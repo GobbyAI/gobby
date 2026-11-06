@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,12 @@ def deletion_registry(
     storage.resolve_reference.side_effect = lambda ref: ref
     storage.get.return_value = worktree
     storage.delete.return_value = True
+
+    @contextmanager
+    def lock_for_removal(worktree_id: str) -> Iterator[Worktree | None]:
+        yield storage.get(worktree_id)
+
+    storage.lock_for_removal.side_effect = lock_for_removal
     executor = WorktreeDeleteExecutor()
     try:
         with patch("gobby.worktrees.deletion.emit_worktree_event"):
@@ -248,6 +255,30 @@ async def test_missing_detached_checkout_is_removed_only_after_landing_proof(
     _git(Path(worktree.worktree_path), "checkout", "--detach")
     worktree.branch_name = None
     shutil.rmtree(worktree.worktree_path)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into=target)
+
+    assert result["success"] is True, result
+    storage.delete.assert_called_once_with(worktree.id)
+    assert worktree.worktree_path not in _git(repo, "worktree", "list", "--porcelain")
+    assert _git(repo, "branch", "--list", "child") == "child"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", [None, "0.5.0"])
+async def test_missing_detached_checkout_with_pruned_registration_is_retired(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    target: str | None,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(Path(worktree.worktree_path), "checkout", "--detach")
+    worktree.branch_name = None
+    shutil.rmtree(worktree.worktree_path)
+    _git(repo, "worktree", "prune")
     delete = registry.get_tool("delete_worktree")
     assert delete is not None
 
