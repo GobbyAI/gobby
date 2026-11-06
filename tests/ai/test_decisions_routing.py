@@ -30,6 +30,7 @@ REAL_ASYNC_CLIENT = httpx.AsyncClient
 DEFAULT_HOST = "ollama.test"
 BOX_HOST = "openrouter.test"
 BOX_MODEL = "typesafe/jev-1.14"
+TWIN_HOST = "twin.test"
 STATE: dict[str, Any] = {"finding": "unused import in module foo"}
 TRIAGE = ChoiceQuestion(instructions="Pick one.", criteria={"fix": "Fix it", "defer": "Defer"})
 
@@ -173,6 +174,46 @@ async def test_choice_and_noul_on_one_endpoint_share_one_request(endpoints: Endp
     assert isinstance(outcomes["triage"].answer, ChoiceAnswer)
     assert isinstance(outcomes["carry"].answer, NoulAnswer)
     assert all(outcome.error is None for outcome in outcomes.values())
+
+
+def _twin_config() -> DecisionsConfig:
+    """Choice and Noul each route to their own copy of one endpoint config."""
+    twin = {"api_base": f"http://{TWIN_HOST}", "wire_api": "systemone", "model": "clef:27b"}
+    return DecisionsConfig(
+        api_base=f"http://{DEFAULT_HOST}",
+        wire_api="systemone",
+        model="clef:27b",
+        overrides={"choice": dict(twin), "noul": dict(twin)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_equal_endpoint_configs_share_one_request(endpoints: Endpoints) -> None:
+    # Equal full configs are one endpoint: one request carries both types.
+    endpoints.routes = {TWIN_HOST: _reply}
+    service = DecisionService(_twin_config())
+
+    outcomes = await service.evaluate("test", STATE, {"triage": TRIAGE, "carry": "Is it used?"})
+
+    assert endpoints.hosts() == [TWIN_HOST]
+    assert isinstance(outcomes["triage"].answer, ChoiceAnswer)
+    assert isinstance(outcomes["carry"].answer, NoulAnswer)
+    assert all(outcome.error is None for outcome in outcomes.values())
+
+
+@pytest.mark.asyncio
+async def test_equal_endpoint_configs_share_one_cooldown(endpoints: Endpoints) -> None:
+    endpoints.routes = {TWIN_HOST: _status(401)}
+    service = DecisionService(_twin_config())
+
+    with pytest.raises(DecisionsUnavailable) as first:
+        await service.choose("test", STATE, {"triage": TRIAGE})
+    with pytest.raises(DecisionsUnavailable) as second:
+        await service.noul("test", STATE, {"carry": "Is it used?"})
+
+    assert first.value.reason == "http_status"
+    assert second.value.reason == "cooldown"
+    assert endpoints.hosts() == [TWIN_HOST]
 
 
 @pytest.mark.asyncio

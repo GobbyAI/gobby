@@ -97,9 +97,9 @@ class QuestionOutcome:
 
 @dataclass(frozen=True)
 class _Route:
-    """The endpoint that serves one decision type. ``slot`` keys its cooldown and logs."""
+    """The endpoint that serves one decision type. Equal endpoint configs share a ``slot``."""
 
-    slot: str
+    slot: tuple[object, ...]
     endpoint: DecisionEndpointConfig
     base: str
     model: str
@@ -143,9 +143,7 @@ def get_decision_service(config: DecisionsConfig) -> "DecisionService":
     return _service_cache[1]
 
 
-def _endpoint_identity(endpoint: DecisionEndpointConfig | None) -> tuple[object, ...] | None:
-    if endpoint is None:
-        return None
+def _endpoint_identity(endpoint: DecisionEndpointConfig) -> tuple[object, ...]:
     key_digest = hashlib.sha256((endpoint.api_key or "").encode()).hexdigest()
     return (
         endpoint.api_base,
@@ -165,9 +163,10 @@ def _endpoint_identity(endpoint: DecisionEndpointConfig | None) -> tuple[object,
 
 def _fingerprint(config: DecisionsConfig) -> tuple[object, ...]:
     """Identity of the default endpoint and every per-type override."""
+    overrides = (config.overrides.endpoint(kind) for kind in DECISION_KINDS)
     return (
         _endpoint_identity(config),
-        *(_endpoint_identity(config.overrides.endpoint(kind)) for kind in DECISION_KINDS),
+        *(None if endpoint is None else _endpoint_identity(endpoint) for endpoint in overrides),
     )
 
 
@@ -182,7 +181,7 @@ class DecisionService:
     ) -> None:
         self._config = config
         self._exchange_observer = exchange_observer
-        self._cooldowns: dict[str, float] = {}
+        self._cooldowns: dict[tuple[object, ...], float] = {}
 
     async def choose(
         self,
@@ -249,7 +248,7 @@ class DecisionService:
             raise DecisionsUnavailable(
                 "invalid_request", f"{len(questions)} questions; 1 to {_MAX_QUESTIONS} allowed"
             )
-        groups: dict[str, tuple[_Route, dict[str, DecisionQuestion]]] = {}
+        groups: dict[tuple[object, ...], tuple[_Route, dict[str, DecisionQuestion]]] = {}
         merged: dict[str, QuestionOutcome] = {}
         for key, question in questions.items():
             kind = _kind(question)
@@ -345,8 +344,7 @@ class DecisionService:
         endpoint = self._config.endpoint_for(kind)
         if endpoint is None or endpoint.api_base is None or endpoint.model is None:
             return None
-        slot = "default" if endpoint is self._config else kind
-        return _Route(slot, endpoint, endpoint.api_base, endpoint.model)
+        return _Route(_endpoint_identity(endpoint), endpoint, endpoint.api_base, endpoint.model)
 
     async def _request(
         self,
@@ -377,10 +375,10 @@ class DecisionService:
             raise
         finally:
             logger.debug(
-                "decisions.call consumer=%s slot=%s model=%s question_count=%d schema_hash=%s "
+                "decisions.call consumer=%s base=%s model=%s question_count=%d schema_hash=%s "
                 "estimated_tokens=%d latency_ms=%d outcome=%s",
                 consumer,
-                route.slot,
+                route.base,
                 route.model,
                 len(questions),
                 _schema_hash(questions),
@@ -458,7 +456,7 @@ class DecisionService:
                 self._cooldowns[route.slot] = now + config.failure_cooldown_seconds
                 logger.warning(
                     "decisions cooldown opened for %s after %s; calls fail fast for %ss",
-                    route.slot,
+                    route.base,
                     failure.reason,
                     config.failure_cooldown_seconds,
                 )
