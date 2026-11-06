@@ -1648,6 +1648,23 @@ changes no configuration file.
   same sweep, 2.4.5 now say that the two `wire_api` parameters select the
   default endpoint only and Box is always overridden to the `openrouter-decisions`
   fake endpoint. No test, leaf or mechanism is added.
+- 2026-11-05: Consensus, replacing the consensus on
+  `9f725f1e614ee6dbc2953c97924717b90862348d` and the M1 stamp at
+  `109243edc9cdb1896e9236e481426fd1d6559b83`, both superseded by the #25789
+  ruling. The Plan Writer gobby#19935 and the resumed Adversary gobby#20142
+  reached technical consensus on plan commit
+  `d9820605d47cf133407e7e4a9def1a5436cf672c` (plan SHA-256
+  `9d35ca6f426919f4084fad6eb7d93bb1725f410542cb8dba866dccadb2c08fb3`), with
+  project-aware base validation passing for both. GP-20261105-05 through
+  GP-20261105-07 are resolved, and GP-20261105-01 through GP-20261105-04 stay
+  resolved. The Adversary found every routing decision fixed: 2.4 waits on
+  #25789, only Box crosses `gobby-decisions:evaluate`, 2.5 waits on 2.4 and
+  #25789, and the wire-parametrized failure tests name a supported Box
+  endpoint. The sole TBD text is the historical account of #24222's undelivered
+  report, whose decision Decision 2 resolves. The Plan Advocate gobby#19939
+  converged with no suggestions on `5942a307faf590933ff3364a97544baa8dd26ab1`
+  and was sent the later revisions. No open decision or blocking finding
+  remains.
 
 ## V2: Verification
 `kind: verification`
