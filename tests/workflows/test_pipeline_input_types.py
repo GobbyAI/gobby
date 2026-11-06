@@ -130,3 +130,48 @@ async def test_string_defaults_and_native_overrides_are_normalized(
         await executor.execute(pipeline, inputs, "11111111-1111-4111-8111-111111111111")
 
     assert received == [{"value": expected} if expected is not None else {}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("inputs", "expected"), [({}, 1800), ({"window": 900}, 900)])
+async def test_integer_inputs_keep_native_values_in_mcp_arguments(
+    mock_db: MagicMock,
+    mock_execution_manager: MagicMock,
+    mock_llm_service: MagicMock,
+    inputs: dict[str, Any],
+    expected: int,
+) -> None:
+    pipeline = PipelineDefinition(
+        name="integer-input",
+        inputs={"window": {"type": "integer", "default": 1800}},
+        steps=[
+            PipelineStep(
+                id="echo",
+                mcp=MCPStepConfig(
+                    server="example", tool="echo", arguments={"window": "${{ inputs.window }}"}
+                ),
+            )
+        ],
+    )
+    received: list[dict[str, Any]] = []
+
+    async def echo(
+        server: str, tool: str, arguments: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        received.append(arguments)
+        return {"success": True}
+
+    proxy = MagicMock()
+    proxy.call_tool = AsyncMock(side_effect=echo)
+    executor = PipelineExecutor(
+        db=mock_db,
+        execution_manager=mock_execution_manager,
+        llm_service=mock_llm_service,
+        template_engine=TemplateEngine(),
+        tool_proxy_getter=lambda: proxy,
+    )
+    with patch("gobby.utils.project_context.get_project_context", return_value=None):
+        await executor.execute(pipeline, inputs, "11111111-1111-4111-8111-111111111111")
+
+    assert received == [{"window": expected}]
+    assert isinstance(received[0]["window"], int)

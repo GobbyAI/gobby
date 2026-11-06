@@ -103,11 +103,13 @@ implement stage to review, back on rejected independent-review, then to validate
 One validation kind carries stage and criteria [{criterion, met, how}], judged
 against task.validation_criteria. The lead validates the integrated SHA after
 landing before recording closing. Superseded records remain in all_attestations;
-policy reads the active set. Developers never land, merge, close or delete trees.
+policy reads the active set. Developers never land, merge into the integration
+branch, close or delete trees; a base merge into their own tree, when the lead
+asks, is theirs under their claim.
 Security paths force approval at land even without a label. Filers label obvious
 trust-boundary work; leads inspect the diff and add security-review when needed.
 Only the operator or authorized policy owner removes that label.
 
-_Version: 3.0.1_
+_Version: 4.0.0_
 
-_Last verified: 2026-11-03_
+_Last verified: 2026-11-05_

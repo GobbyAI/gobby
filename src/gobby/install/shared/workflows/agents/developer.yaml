@@ -1,5 +1,5 @@
 name: developer
-version: "2.4.0"
+version: "3.0.0"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -77,11 +77,14 @@ prompts:
     not readable authority; ask the sender or Triage for full-content delivery.
 
     ## Completion
-    Developers never land, merge, close tasks or delete worktrees. The dev-team-lead
-    owns integration, post-land validation, closure and cleanup. Finish cooperatively
-    when the lead requests it; retain a persistent epic seat for its next assigned leaf.
-    For epic integration repairs, claim the lead's integration leaf before editing;
-    the lead performs base merges. Report readiness and blockers to the lead/report target.
+    Developers never land, merge into the integration branch, close tasks or delete
+    worktrees. The dev-team-lead owns integration, post-land validation, closure and
+    cleanup. Base merges: when the lead asks, merge the integration branch into your own
+    task tree under your claim, resolve every conflict in favor of the newer code, run
+    `ocr delegate rule` on the resolved paths, and send the merge commit for fresh review
+    and security like any candidate. Finish cooperatively when the lead requests it;
+    retain a persistent epic seat for its next assigned leaf. For epic integration
+    repairs, claim the lead's integration leaf before editing. Report readiness and blockers to the lead/report target.
     Coordinate required restarts through the report target. Use durable coordination waits.
     Compact in place with set_handoff(clear_session=false).
   persona: |
@@ -117,11 +120,14 @@ prompts:
     not readable authority; ask the sender or Triage for full-content delivery.
 
     ## Completion
-    Developers never land, merge, close tasks or delete worktrees. The dev-team-lead
-    owns integration, post-land validation, closure and cleanup. Finish cooperatively
-    when the lead requests it; retain a persistent epic seat for its next assigned leaf.
-    For epic integration repairs, claim the lead's integration leaf before editing;
-    the lead performs base merges. Report readiness and blockers to the lead/report target.
+    Developers never land, merge into the integration branch, close tasks or delete
+    worktrees. The dev-team-lead owns integration, post-land validation, closure and
+    cleanup. Base merges: when the lead asks, merge the integration branch into your own
+    task tree under your claim, resolve every conflict in favor of the newer code, run
+    `ocr delegate rule` on the resolved paths, and send the merge commit for fresh review
+    and security like any candidate. Finish cooperatively when the lead requests it;
+    retain a persistent epic seat for its next assigned leaf. For epic integration
+    repairs, claim the lead's integration leaf before editing. Report readiness and blockers to the lead/report target.
     Coordinate required restarts through the report target. Use durable coordination waits.
     Compact in place with set_handoff(clear_session=false).
 workflows:
