@@ -217,11 +217,12 @@ def _recover_index_lock(
     if lock.is_symlink() or time.time() - before.st_mtime < minimum_age:
         return False
     try:
-        holders = subprocess.run(
+        # lsof walks every process's descriptors: 2 to 3.5 s on macOS, so 5 s was too tight.
+        holders = spawn.run(
             ["lsof", "-w", "-t", "--", str(lock)],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
