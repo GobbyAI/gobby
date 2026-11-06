@@ -407,3 +407,49 @@ def test_plan_mode_returns_before_turn_accounting() -> None:
     assert "turns_since_compact" not in variables
     assert variables[PRESSURE_BAND_VARIABLE] == "none"
     assert variables[BLOCK_MESSAGE_VARIABLE] == ""
+
+
+def test_pending_reset_within_the_compaction_turn_still_suppresses_mid_turn_band() -> None:
+    variables = _variables(pending_context_reset=True, turns_since_compact=0)
+
+    _after_tool(variables, _SessionManager(260_000, 1_000_000))
+
+    assert variables[PRESSURE_BAND_VARIABLE] == "none"
+    assert variables["pending_context_reset"] is True
+
+
+def test_first_turn_after_compaction_computes_band_though_reset_was_left_pending() -> None:
+    variables = _variables(
+        pending_context_reset=True,
+        parent_turn_seq=10,
+        last_compacted_turn_seq=10,
+    )
+
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+
+    assert variables["context_compact_guidance_kind"] == "warn"
+    assert variables[PRESSURE_BAND_VARIABLE] == "warn"
+    assert variables["pending_context_reset"] is False
+
+
+def test_stale_pending_reset_stops_suppressing_turn_start_band() -> None:
+    variables = _variables(
+        pending_context_reset=True,
+        parent_turn_seq=10,
+        last_compacted_turn_seq=7,
+    )
+
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+
+    assert variables["context_compact_guidance_kind"] == "warn"
+    assert variables[PRESSURE_BAND_VARIABLE] == "warn"
+    assert variables["pending_context_reset"] is False
+
+
+def test_stale_pending_reset_stops_suppressing_mid_turn_band() -> None:
+    variables = _variables(pending_context_reset=True, turns_since_compact=1)
+
+    _after_tool(variables, _SessionManager(260_000, 1_000_000))
+
+    assert variables[PRESSURE_BAND_VARIABLE] == "warn"
+    assert variables["pending_context_reset"] is False

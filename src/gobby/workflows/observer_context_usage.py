@@ -88,6 +88,8 @@ def detect_context_compact_guidance(
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
     gate = _handoff_gate(variables)
+    turns_since_compact = _turns_since_compact(variables)
+    _clear_stale_pending_reset(variables, turns_since_compact)
     skip_session_lookup = (
         gate in {"pending", "failed"}
         or variables.get("pending_context_reset") is True
@@ -118,15 +120,6 @@ def detect_context_compact_guidance(
         _write_band(variables, "none", None, None)
         return
 
-    turn_seq = _next_turn_seq(variables)
-    last_compacted = _int_or_none(variables.get("last_compacted_turn_seq"))
-    if last_compacted is not None:
-        turns_since_compact = max(0, turn_seq - last_compacted)
-    else:
-        previous_turns_since_compact = (
-            _int_or_none(variables.get("turns_since_compact"), default=0) or 0
-        )
-        turns_since_compact = previous_turns_since_compact + 1
     variables["turns_since_compact"] = turns_since_compact
 
     used = _used_tokens_from_session(session)
@@ -169,6 +162,8 @@ def detect_mid_turn_context_compact_guidance(
     _record_handoff_result(event, variables)
 
     gate = _handoff_gate(variables)
+    stored_turns = _int_or_none(variables.get("turns_since_compact"), default=0) or 0
+    _clear_stale_pending_reset(variables, stored_turns)
     if (
         variables.get("pending_context_reset") is True
         or _is_plan_mode(variables)
@@ -436,6 +431,27 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
     current = previous + 1
     variables["_context_usage_turn_seq"] = current
     return current
+
+
+def _turns_since_compact(variables: dict[str, Any]) -> int:
+    """Turn starts since the last compaction. Consumes one turn seq, so call it once per turn."""
+    turn_seq = _next_turn_seq(variables)
+    last_compacted = _int_or_none(variables.get("last_compacted_turn_seq"))
+    if last_compacted is not None:
+        return max(0, turn_seq - last_compacted)
+    previous = _int_or_none(variables.get("turns_since_compact"), default=0) or 0
+    return previous + 1
+
+
+def _clear_stale_pending_reset(variables: dict[str, Any], turns_since_compact: int) -> None:
+    """Clear a pending reset that outlived its compaction turn, so it cannot mute the band forever.
+
+    The reset clears when the compaction's SessionStart replays, and a dropped replay leaves it set.
+    Within the compaction turn the reset still suppresses the band, because the usage it would
+    compare resets only at PostCompact. From the next turn on, a reset still set is stale.
+    """
+    if variables.get("pending_context_reset") is True and turns_since_compact > 0:
+        variables["pending_context_reset"] = False
 
 
 def _pressure_band(used: int, warn_threshold: int, block_threshold: int) -> str:

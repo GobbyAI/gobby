@@ -102,6 +102,27 @@ SYNTHETIC_RULES: list[tuple[str, dict[str, Any]]] = [
             "effects": [{"type": "inject_context", "template": HANDOFF_MARKER}],
         },
     ),
+    (
+        "flag-pending-reset-on-pre-compact",
+        {
+            "event": "pre_compact",
+            "priority": 5,
+            "effects": [
+                {"type": "set_variable", "variable": "pending_context_reset", "value": True}
+            ],
+        },
+    ),
+    (
+        "unflag-pending-reset-on-compact-start",
+        {
+            "event": "session_start",
+            "when": "variables.get('pending_context_reset')",
+            "priority": 100,
+            "effects": [
+                {"type": "set_variable", "variable": "pending_context_reset", "value": False}
+            ],
+        },
+    ),
 ]
 
 
@@ -389,8 +410,26 @@ def test_boundaries_written_before_the_buffer_began_are_not_replayed(
     send(session.event(START, source="compact"))
     send(session.event(BEFORE, prompt="parent-compacted"))
 
-    assert session.kinds == [BEFORE, START, BEFORE]
+    assert session.kinds == [BEFORE, PRE, START, BEFORE]
     assert session.variables["unlocked_tools"] == []
+
+
+def test_a_manual_compaction_whose_boundary_flushes_late_still_clears_the_pending_reset(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # A manual PreCompact runs its rules at once, so it is the compaction that sets the flag.
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(START, source="compact"))
+    assert session.variables["pending_context_reset"] is True
+
+    # The settling event lands before Claude flushes the compact_boundary record.
+    send(session.event(BEFORE, prompt="early"))
+    assert session.variables["pending_context_reset"] is True
+
+    session.parent_boundary("boundary-1")
+    send(session.event(BEFORE, prompt="late"))
+
+    assert session.variables["pending_context_reset"] is False
 
 
 def test_a_verified_parent_boundary_is_not_replayed_again(
