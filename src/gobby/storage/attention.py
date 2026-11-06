@@ -184,6 +184,7 @@ class AttentionRosterRow:
     terminal: AttentionRosterTerminal | None
     task_title: str | None = None
     definition_title: str | None = None
+    definition_name: str | None = None
     machine_id: str | None = None
     project_id: str | None = None
 
@@ -226,6 +227,9 @@ class AttentionRosterRow:
             task_title=str(row["task_title"]) if row.get("task_title") is not None else None,
             definition_title=(
                 str(row["definition_title"]) if row.get("definition_title") is not None else None
+            ),
+            definition_name=(
+                str(row["definition_name"]) if row.get("definition_name") is not None else None
             ),
             machine_id=str(row["machine_id"]) if row.get("machine_id") is not None else None,
             project_id=str(row["project_id"]) if row.get("project_id") is not None else None,
@@ -304,7 +308,11 @@ class AttentionStateManager:
                 'run' AS roster_kind,
                 run.id::text AS source_id,
                 run.child_session_id::text AS session_id,
-                COALESCE(child.status, run.status) AS lifecycle_status,
+                CASE
+                    WHEN claimed.id IS NOT NULL AND NOT (child.status = ANY(%s))
+                        THEN 'dead'::text
+                    ELSE COALESCE(child.status, run.status)::text
+                END AS lifecycle_status,
                 task.id::text AS task_id,
                 CASE
                     WHEN task.id IS NULL THEN NULL
@@ -331,6 +339,11 @@ class AttentionStateManager:
                          THEN NULLIF(BTRIM(run.resume_metadata_json->'placement'->>'title'), '') END,
                     NULLIF(BTRIM(run.agent_name), '')
                 ) AS definition_title,
+                COALESCE(
+                    CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
+                         THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END,
+                    NULLIF(BTRIM(run.agent_name), '')
+                ) AS definition_name,
                 run.machine_id::text AS machine_id,
                 COALESCE(child.project_id, parent.project_id)::text AS project_id
             FROM agent_runs run
@@ -349,6 +362,7 @@ class AttentionStateManager:
             LEFT JOIN tasks task ON task.id = COALESCE(claimed.id, run.task_id)
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
             WHERE run.status IN ('queued', 'running', 'pending')
+               OR (claimed.id IS NOT NULL AND NOT (child.status = ANY(%s)))
 
             UNION ALL
 
@@ -356,7 +370,11 @@ class AttentionStateManager:
                 'session' AS roster_kind,
                 session.id::text AS source_id,
                 session.id::text AS session_id,
-                session.status AS lifecycle_status,
+                CASE
+                    WHEN claimed.id IS NOT NULL AND NOT (session.status = ANY(%s))
+                        THEN 'dead'::text
+                    ELSE session.status::text
+                END AS lifecycle_status,
                 claimed.id::text AS task_id,
                 CASE
                     WHEN claimed.id IS NULL THEN NULL
@@ -382,6 +400,8 @@ class AttentionStateManager:
                     CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
                          THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END
                 ) AS definition_title,
+                CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
+                     THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition_name,
                 session.machine_id::text AS machine_id,
                 session.project_id::text AS project_id
             FROM sessions session
@@ -420,11 +440,13 @@ class AttentionStateManager:
                          owned.updated_at DESC, owned.id
                 LIMIT 1
             ) claimed ON TRUE
-            WHERE session.status = ANY(%s)
+            WHERE session.status = ANY(%s) OR claimed.id IS NOT NULL
 
             ORDER BY roster_kind, source_id
             """,
-            (list(live_session_statuses),),
+            # One placeholder per live-status test, in statement order: run lifecycle,
+            # run retention, session lifecycle, session retention.
+            (list(live_session_statuses),) * 4,
         )
         return [AttentionRosterRow.from_row(row) for row in rows]
 

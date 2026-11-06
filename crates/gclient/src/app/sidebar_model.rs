@@ -109,6 +109,9 @@ pub struct AgentEntry {
     pub name: String,
     /// The run's agent definition (`backend-developer`); no rung of `name`.
     pub agent_definition_name: Option<String>,
+    /// The seat's definition identity, the one the needs-you log names; a missing
+    /// identity is the default definition.
+    pub definition_name: Option<String>,
     /// The session's manual or definition title without its ref prefix; it takes the
     /// definition's place in the row's line 1 and the pane header.
     pub identity_title: Option<String>,
@@ -303,7 +306,20 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
         .roster
         .iter()
         .filter_map(|entry| {
-            let terminal = entry.terminal.as_ref()?;
+            // An ended assignment keeps its row without a terminal: the daemon drops the
+            // terminal with the session, and the row must still roll up as no-live. Its
+            // empty terminal id matches no pane and gives focus nothing to open.
+            let (terminal_id, backend, terminal_state) = match entry.terminal.as_ref() {
+                Some(terminal) => (
+                    terminal.terminal_id.as_str(),
+                    terminal.backend,
+                    terminal.state.clone(),
+                ),
+                None if entry.lifecycle_status.as_deref() == Some("dead") => {
+                    ("", Backend::default(), None)
+                }
+                None => return None,
+            };
             let session = entry.session_id.as_deref().and_then(|id| {
                 rows.sessions.iter().find_map(|(project, sessions)| {
                     let session = sessions.iter().find(|session| session.id == id)?;
@@ -320,7 +336,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .panes
                 .iter()
                 .copied()
-                .find(|pane| pane.terminal_id == terminal.terminal_id);
+                .find(|pane| pane.terminal_id == terminal_id);
             // The roster places every entry on the hub; the fetched rows only
             // cover the local windows, so they are the fallback.
             let project_id = entry
@@ -354,6 +370,23 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     run.and_then(|(_, run)| run.agent_name.clone())
                         .filter(|name| !name.trim().is_empty())
                 });
+            let definition_name = entry
+                .definition_name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .or_else(|| {
+                    run.and_then(|(_, run)| run.agent_name.clone())
+                        .filter(|name| !name.trim().is_empty())
+                });
+            let anchor = if terminal_id.is_empty() {
+                entry
+                    .session_id
+                    .as_deref()
+                    .or(entry.run_id.as_deref())
+                    .unwrap_or(&entry.entry_id)
+            } else {
+                terminal_id
+            };
             let name = session_title
                 .or_else(|| agent_definition_name.clone())
                 .or_else(|| {
@@ -363,7 +396,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                         .filter(|name| !name.is_empty())
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
-                .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
+                .unwrap_or_else(|| short_terminal_id(anchor).to_string());
             let identity_title = session
                 .and_then(|(project, session)| {
                     let name = rows
@@ -389,10 +422,11 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 entry_id: entry.entry_id.clone(),
                 project_id: project_id.to_string(),
                 machine_id,
-                terminal_id: terminal.terminal_id.clone(),
-                backend: terminal.backend,
+                terminal_id: terminal_id.to_string(),
+                backend,
                 name,
                 agent_definition_name,
+                definition_name,
                 identity_title,
                 provider: provider.unwrap_or_default(),
                 model: concrete_model(entry.model.as_deref())
@@ -425,7 +459,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     .and_then(|(_, run)| run.worktree_id.clone())
                     .or_else(|| session.and_then(|(_, session)| session.worktree_id.clone())),
                 lifecycle_status: entry.lifecycle_status.clone(),
-                terminal_state: terminal.state.clone(),
+                terminal_state,
                 state: agent_state(entry),
                 attention: entry.attention.clone(),
                 last_activity_at: entry.last_activity_at.clone(),
@@ -499,13 +533,20 @@ pub fn log_needs_you_transitions(previous: &SidebarModel, current: &SidebarModel
             .agents
             .iter()
             .any(|old| old.entry_id == agent.entry_id && old.state == RowState::Attention);
-        if already || agent.agent_definition_name.as_deref() == Some("default") {
+        let definition = agent.definition_name.as_deref().unwrap_or("default");
+        if already || definition == "default" {
             continue;
         }
+        // A roster-only session has no fetched ref; its id still names it.
+        let session = agent
+            .session_ref
+            .as_deref()
+            .or(agent.session_id.as_deref())
+            .unwrap_or("");
         tracing::warn!(
             entry_id = %agent.entry_id,
-            session_ref = agent.session_ref.as_deref().unwrap_or(""),
-            agent_definition = agent.agent_definition_name.as_deref().unwrap_or(""),
+            session_ref = session,
+            agent_definition = definition,
             "agent needs you"
         );
     }
@@ -589,7 +630,8 @@ pub fn worktree_focus_target<'a>(
     model
         .agents
         .iter()
-        .filter(|agent| is_bound_to(agent, worktree_id, task_id))
+        // An assignment with no terminal has no pane to focus; the row opens the worktree.
+        .filter(|agent| !agent.terminal_id.is_empty() && is_bound_to(agent, worktree_id, task_id))
         .min_by_key(|agent| Reverse(urgency(agent.state)))
 }
 
@@ -634,6 +676,10 @@ pub fn is_orphaned(terminal_state: Option<&str>) -> bool {
 }
 
 fn resolve_state(blocked: bool, orphaned: bool, lifecycle_status: Option<&str>) -> RowState {
+    // An ended assignment holds no live work, whatever attention it still carries.
+    if lifecycle_status == Some("dead") {
+        return RowState::NoLive;
+    }
     if blocked
         || lifecycle_status
             .is_some_and(|status| matches!(status, "awaiting_input" | "awaiting_approval"))

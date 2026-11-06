@@ -526,45 +526,125 @@ impl Visit for FieldText<'_> {
     }
 }
 
+/// Runs the needs-you transition log over one roster change and returns its lines.
+fn needs_you_warnings(
+    rows: &SidebarRows,
+    before: &[RosterEntry],
+    after: &[RosterEntry],
+) -> Vec<String> {
+    let log = EventLog::default();
+    let subscriber = tracing_subscriber::registry().with(log.clone());
+    tracing::subscriber::with_default(subscriber, || {
+        let before = build_model(rows, before, &[]);
+        let after = build_model(rows, after, &[]);
+        log_needs_you_transitions(&before, &after);
+        log_needs_you_transitions(&after, &after);
+    });
+    let lines = log.0.lock().expect("log lock").clone();
+    lines
+}
+
 /// A non-default agent that comes to need you logs one warning naming its
 /// session and definition. The default definition logs nothing, and an agent
 /// that already needed you is not logged again.
 #[test]
 fn non_default_needs_you_logs_a_warning_on_transition_only() {
-    let log = EventLog::default();
-    let subscriber = tracing_subscriber::registry().with(log.clone());
-    tracing::subscriber::with_default(subscriber, || {
-        let rows = rows_with(
-            vec![],
-            vec![
-                SessionRow {
-                    id: "s-custom".to_string(),
-                    reference: Some("#42".to_string()),
-                    ..Default::default()
-                },
-                SessionRow {
-                    id: "s-plain".to_string(),
-                    reference: Some("#43".to_string()),
-                    ..Default::default()
-                },
-            ],
-        );
-        let custom = RosterEntry {
-            definition_title: Some("custom-seat".to_string()),
-            ..with_lifecycle(running("custom", "s-custom", "t-custom"), "awaiting_input")
-        };
-        let plain = RosterEntry {
-            definition_title: Some("default".to_string()),
-            ..with_lifecycle(running("plain", "s-plain", "t-plain"), "awaiting_input")
-        };
-        let before = build_model(&rows, &[], &[]);
-        let after = build_model(&rows, &[custom, plain], &[]);
-        log_needs_you_transitions(&before, &after);
-        log_needs_you_transitions(&after, &after);
-    });
-    let lines = log.0.lock().expect("log lock").clone();
+    let rows = rows_with(
+        vec![],
+        vec![
+            SessionRow {
+                id: "s-custom".to_string(),
+                reference: Some("#42".to_string()),
+                ..Default::default()
+            },
+            SessionRow {
+                id: "s-plain".to_string(),
+                reference: Some("#43".to_string()),
+                ..Default::default()
+            },
+        ],
+    );
+    // The display title reads "default"; only the definition identity decides.
+    let custom = RosterEntry {
+        definition_name: Some("custom-seat".to_string()),
+        definition_title: Some("default".to_string()),
+        ..with_lifecycle(running("custom", "s-custom", "t-custom"), "awaiting_input")
+    };
+    let plain = RosterEntry {
+        definition_name: Some("default".to_string()),
+        definition_title: Some("Lane 2 Seat".to_string()),
+        ..with_lifecycle(running("plain", "s-plain", "t-plain"), "awaiting_input")
+    };
+    let lines = needs_you_warnings(&rows, &[], &[custom, plain]);
     assert_eq!(lines.len(), 1, "one transition, one line: {lines:?}");
     assert!(lines[0].starts_with("WARN"), "{}", lines[0]);
     assert!(lines[0].contains("custom-seat"), "{}", lines[0]);
     assert!(lines[0].contains("#42"), "{}", lines[0]);
+}
+
+#[test]
+fn needs_you_log_names_the_session_id_when_the_session_is_not_fetched() {
+    let entry = RosterEntry {
+        definition_name: Some("custom-seat".to_string()),
+        ..with_lifecycle(running("bare", "s-bare", "t-bare"), "awaiting_input")
+    };
+    let lines = needs_you_warnings(&rows_with(vec![], vec![]), &[], &[entry]);
+    assert_eq!(lines.len(), 1, "one transition, one line: {lines:?}");
+    assert!(lines[0].contains("s-bare"), "{}", lines[0]);
+}
+
+#[test]
+fn ended_assignment_without_a_terminal_is_no_live_in_its_project() {
+    let ended = RosterEntry {
+        terminal: None,
+        task: Some(TaskRef {
+            id: "task-ended".to_string(),
+            reference: Some("#7".to_string()),
+            title: None,
+        }),
+        ..with_lifecycle(running("ended", "s-ended", "t-unused"), "dead")
+    };
+    let model = build_model(&rows_with(vec![], vec![]), &[ended], &[]);
+    assert_eq!(model.agents.len(), 1, "a dead assignment keeps its row");
+    assert_eq!(model.agents[0].state, RowState::NoLive);
+    let project = &model.projects[0];
+    assert_eq!(project.state, RowState::NoLive);
+    assert_eq!(project.no_live, 1);
+}
+
+#[test]
+fn epic_tree_whose_terminal_less_leads_are_dead_is_no_live() {
+    let previous = RosterEntry {
+        terminal: None,
+        ..with_lifecycle(task_lead("previous"), "dead")
+    };
+    let current = RosterEntry {
+        terminal: None,
+        ..with_lifecycle(task_lead("current"), "dead")
+    };
+    let model = build_model(&epic_rows(), &[previous, current], &[]);
+    assert_eq!(epic_tree_state(&model), RowState::NoLive);
+}
+
+#[test]
+fn worktree_focus_skips_an_ended_assignment_that_has_no_terminal() {
+    let worktrees = vec![WorktreeRow {
+        id: "w-gone".to_string(),
+        project_id: PROJECT.to_string(),
+        worktree_path: "/wt/gone".to_string(),
+        ..Default::default()
+    }];
+    let sessions = vec![SessionRow {
+        id: "s-gone".to_string(),
+        worktree_id: Some("w-gone".to_string()),
+        ..Default::default()
+    }];
+    let ended = RosterEntry {
+        terminal: None,
+        ..with_lifecycle(running("gone", "s-gone", "t-gone"), "dead")
+    };
+    let model = build_model(&rows_with(worktrees, sessions), &[ended], &[]);
+    assert_eq!(model.agents.len(), 1, "a dead assignment keeps its row");
+    // Focus would otherwise hand the row's empty terminal id to the daemon.
+    assert!(worktree_focus_target(&model, "w-gone").is_none());
 }

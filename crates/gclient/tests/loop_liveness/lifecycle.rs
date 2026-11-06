@@ -94,35 +94,17 @@ async fn assert_direct_progress_while_held(
         tokio::time::sleep(RENDER_TICK).await;
     }
     probe.key(KeyCode::Char('v'), KeyModifiers::NONE).await;
-    // Wait for the three effects, bounded, rather than for a fixed interval:
-    // a fixed sleep misses them on a loaded host. The asserts below still
-    // name whichever effect never arrived.
-    let mut typed = false;
-    let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
-        loop {
-            typed |= host
-                .drain()
-                .iter()
-                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"v"));
-            let rendered = probe
-                .frames
-                .lock()
-                .expect("frames")
-                .last()
-                .is_some_and(|frame| frame.contains(&tag));
-            if typed && rendered && probe.draws.load(Ordering::SeqCst) > before {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
     let rendered = probe
         .frames
         .lock()
         .expect("frames")
         .last()
         .is_some_and(|frame| frame.contains(&tag));
+    let typed = host
+        .drain()
+        .iter()
+        .any(|message| matches!(message, ClientMessage::Input { data } if data == b"v"));
     let drew = probe.draws.load(Ordering::SeqCst) > before;
     release.notify_one();
     assert!(
