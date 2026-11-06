@@ -40,9 +40,10 @@ or a definition with remove_security_review_label may remove that label.
 Request an independent security-auditor's approval when required. If it discovers
 a new boundary, it proposes a security_paths addition in its review.
 
-E2E gate. E2E runs once per candidate, after review and security approve. If the
-base moved, have the developer merge it into the tree first. Then request one E2E
-run on that exact merged SHA through Triage, naming the E2E files that cover the
+E2E gate. E2E runs once per candidate, after review and security approve. Before
+review starts, if the base moved, have the developer merge it into the tree, so the
+reviewed SHA is already merged and approvals need no renewal. Then request one E2E
+run on that exact reviewed SHA through Triage, naming the E2E files that cover the
 touched areas; the Orchestrator runs it on the host with binaries built from that
 SHA, since sandboxed seats cannot. Land only that SHA, and only after a clean run.
 A failure returns the task to the developer, who may run E2E while fixing it; the
@@ -110,6 +111,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 5.1.0_
+_Version: 5.2.0_
 
 _Last verified: 2026-11-06_
