@@ -33,6 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+from gobby.utils import spawn
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:
@@ -143,7 +144,7 @@ def _init_git_dir(project_id: str) -> None:
         ("config", "core.worktree", str(anchor.resolve())),
     ):
         try:
-            result = subprocess.run(
+            result = spawn.run(
                 ["git", f"--git-dir={gitdir}", f"--work-tree={anchor}", *args],
                 capture_output=True,
                 text=True,
