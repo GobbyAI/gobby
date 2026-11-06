@@ -117,10 +117,12 @@ class PipelineStep(BaseModel):
 
 
 class ClaimStage(BaseModel):
-    """Evidence required from a seat identified by its pipeline step ID."""
+    """Evidence required from one seat: a pipeline step ID, or an agent the team spawns outside
+    the steps (its sessions are found through the team's live runs)."""
 
     model_config = ConfigDict(extra="forbid")
-    seat: str = Field(min_length=1)
+    seat: str | None = Field(default=None, min_length=1)
+    agent: str | None = Field(default=None, min_length=1)
     done_when: list[str] = Field(default_factory=list)
     next: str | None = None
     on_rejected: str | None = None
@@ -198,7 +200,9 @@ class PipelineDefinition(BaseModel):
             raise ValueError("Pipeline requires at least one step")
         seats = {step.id for step in self.steps}
         for stage in self.claim_flow.values():
-            if stage.seat not in seats:
+            if (stage.seat is None) == (stage.agent is None):
+                raise ValueError("Claim flow stage must name exactly one of seat or agent")
+            if stage.seat is not None and stage.seat not in seats:
                 raise ValueError(f"Claim flow seat {stage.seat!r} is not a pipeline step")
             for target in (stage.next, stage.on_rejected):
                 if target is not None and target not in self.claim_flow:

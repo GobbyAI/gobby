@@ -39,6 +39,8 @@ IMPLEMENT = "implement"
 REVIEW = "review"
 VALIDATE = "validate"
 AGENTS = {"build": "builder-agent", "check": "checker-agent", "close": "closer-agent"}
+DOC_WRITER = "writer-agent"
+DOC_REVIEWER = "reviewer-agent"
 
 
 def _flow(closer_seat: str = "close") -> PipelineDefinition:
@@ -84,14 +86,50 @@ def _flow(closer_seat: str = "close") -> PipelineDefinition:
     )
 
 
-def _seat_kinds(definition: PipelineDefinition, seat: str) -> list[str]:
+def _seat_key(stage: ClaimStage) -> str:
+    """Session key for a stage: its pipeline seat, or the agent it names outside the steps."""
+    key = stage.seat if stage.seat is not None else stage.agent
+    assert key is not None
+    return key
+
+
+def _agent_name(stage: ClaimStage) -> str:
+    if stage.agent is not None:
+        return stage.agent
+    assert stage.seat is not None
+    return AGENTS[stage.seat]
+
+
+def _seat_kinds(definition: PipelineDefinition, key: str) -> list[str]:
     kinds = [
         kind
         for stage in definition.claim_flow.values()
-        if stage.seat == seat
+        if _seat_key(stage) == key
         for kind in stage.done_when
     ]
     return list(dict.fromkeys(kinds))
+
+
+def _docs_flow() -> PipelineDefinition:
+    """A docs task: the writer and reviewer are agents the lead spawns, not pipeline steps."""
+    definition = _flow()
+    base = definition.claim_flow
+    return definition.model_copy(
+        update={
+            "claim_flow": {
+                IMPLEMENT: ClaimStage(
+                    agent=DOC_WRITER, done_when=base[IMPLEMENT].done_when, next=REVIEW
+                ),
+                REVIEW: ClaimStage(
+                    agent=DOC_REVIEWER,
+                    done_when=["independent-review"],
+                    next=VALIDATE,
+                    on_rejected=IMPLEMENT,
+                ),
+                VALIDATE: base[VALIDATE],
+            }
+        }
+    )
 
 
 @dataclass
@@ -102,9 +140,10 @@ class _Team:
     parent: str
     seats: AgentSessions
     sessions: dict[str, str]
+    agents: dict[str, str]
 
     def session(self, stage: str) -> str:
-        return self.sessions[self.definition.claim_flow[stage].seat]
+        return self.sessions[_seat_key(self.definition.claim_flow[stage])]
 
     def holder(self) -> str:
         return str(LocalTaskManager(self.db).get_task(self.task_id).claimed_by_session_id)
@@ -155,21 +194,21 @@ class _Team:
 
     def relaunch(self, stage: str) -> str:
         """Starts a new live session for the stage's seat and ends the old seat's run."""
-        seat = self.definition.claim_flow[stage].seat
-        fresh = self.seats.add(AGENTS[seat], _seat_kinds(self.definition, seat))
+        key = _seat_key(self.definition.claim_flow[stage])
+        fresh = self.seats.add(self.agents[key], _seat_kinds(self.definition, key))
         self.db.execute(
             "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (self.parent, fresh)
         )
         self.db.execute(
             "UPDATE agent_runs SET status = 'completed' WHERE child_session_id = %s",
-            (self.sessions[seat],),
+            (self.sessions[key],),
         )
         runs = LocalAgentRunManager(self.db)
         run = runs.create(
             self.parent,
             "claude",
-            f"Relaunched seat {seat}",
-            agent_name=AGENTS[seat],
+            f"Relaunched seat {key}",
+            agent_name=self.agents[key],
             child_session_id=fresh,
         )
         runs.start(run.id)
@@ -185,7 +224,16 @@ class _Team:
 
 
 def _team(db: HubDatabase, sample_project: dict[str, Any], closer_seat: str = "close") -> _Team:
-    definition = _flow(closer_seat)
+    return _build_team(db, sample_project, _flow(closer_seat))
+
+
+def _docs_team(db: HubDatabase, sample_project: dict[str, Any]) -> _Team:
+    return _build_team(db, sample_project, _docs_flow())
+
+
+def _build_team(
+    db: HubDatabase, sample_project: dict[str, Any], definition: PipelineDefinition
+) -> _Team:
     project = sample_project["id"]
     task = LocalTaskManager(db).create_task(project, "Probe", validation_criteria="Works.")
     executions = LocalPipelineExecutionManager(db, project)
@@ -200,10 +248,8 @@ def _team(db: HubDatabase, sample_project: dict[str, Any], closer_seat: str = "c
         project_id=project,
     )
     seats = AgentSessions(db, project)
-    sessions = {
-        seat: seats.add(AGENTS[seat], _seat_kinds(definition, seat))
-        for seat in sorted({stage.seat for stage in definition.claim_flow.values()})
-    }
+    agents = {_seat_key(stage): _agent_name(stage) for stage in definition.claim_flow.values()}
+    sessions = {key: seats.add(agents[key], _seat_kinds(definition, key)) for key in sorted(agents)}
     binding = TeamBinding(execution.id, task.id, project, "single", "main", None, None)
     admit = executions.create_step_execution(execution.id, ADMISSION_STEP)
     executions.update_step_execution(
@@ -211,23 +257,25 @@ def _team(db: HubDatabase, sample_project: dict[str, Any], closer_seat: str = "c
         status=StepStatus.COMPLETED,
         output_json=json.dumps({"team": asdict(binding)}),
     )
-    for seat, sid in sessions.items():
+    seat_keys = sorted({stage.seat for stage in definition.claim_flow.values() if stage.seat})
+    for seat in seat_keys:
         step = executions.create_step_execution(execution.id, seat)
         executions.update_step_execution(
             step.id,
             status=StepStatus.COMPLETED,
-            output_json=json.dumps({"child_session_id": sid}),
+            output_json=json.dumps({"child_session_id": sessions[seat]}),
         )
+    for sid in sessions.values():
         db.execute("UPDATE sessions SET parent_session_id = %s WHERE id = %s", (parent.id, sid))
     runs = LocalAgentRunManager(db)
-    for seat, sid in sessions.items():
+    for key, sid in sessions.items():
         run = runs.create(
-            parent.id, "claude", f"Seat {seat}", agent_name=AGENTS[seat], child_session_id=sid
+            parent.id, "claude", f"Seat {key}", agent_name=agents[key], child_session_id=sid
         )
         runs.start(run.id)
     db.execute("UPDATE sessions SET status = 'deleted' WHERE id = %s", (parent.id,))
-    LocalTaskManager(db).claim_task(task.id, sessions[definition.claim_flow[IMPLEMENT].seat])
-    return _Team(db, definition, task.id, str(parent.id), seats, sessions)
+    LocalTaskManager(db).claim_task(task.id, sessions[_seat_key(definition.claim_flow[IMPLEMENT])])
+    return _Team(db, definition, task.id, str(parent.id), seats, sessions, agents)
 
 
 def test_re_candidate_after_explicit_hand_off_moves_to_checker(
@@ -349,6 +397,110 @@ def test_closer_seat_that_also_builds_records_validation_without_refusal(
     team.attest(builder, "validation", VALIDATE, sha=C1)
 
     assert team.holder() == builder
+
+
+def test_docs_writer_and_reviewer_move_the_claim_to_the_closer_without_a_hand_off(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _docs_team(temp_db, sample_project)
+    writer, reviewer = team.session(IMPLEMENT), team.session(REVIEW)
+    closer = team.session(VALIDATE)
+    team.chain(writer, IMPLEMENT, C1)
+    assert team.holder() == reviewer
+
+    team.attest(reviewer, "independent-review", REVIEW, sha=C1)
+
+    assert team.holder() == closer
+
+
+def test_docs_reviewer_rejection_returns_the_claim_to_the_writer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _docs_team(temp_db, sample_project)
+    writer, reviewer = team.session(IMPLEMENT), team.session(REVIEW)
+    team.chain(writer, IMPLEMENT, C1)
+
+    team.attest(reviewer, "independent-review", REVIEW, result="rejected", sha=C1)
+
+    assert team.holder() == writer
+
+
+def test_correction_of_a_reviewed_candidate_after_a_return_moves_the_claim_to_validate(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A developer re-records one kind on the candidate validate already passed (#23838 shape)."""
+    team = _team(temp_db, sample_project)
+    builder, checker = team.session(IMPLEMENT), team.session(REVIEW)
+    closer = team.session(VALIDATE)
+    first = team.chain(builder, IMPLEMENT, C1)
+    team.chain(checker, REVIEW, C1, first_reference=C1)
+    team.hand_off(recipient=builder, holder=closer)
+    assert team.holder() == builder
+
+    team.attest(builder, "test-before", IMPLEMENT, supersedes_id=first[0])
+
+    assert team.holder() == closer
+
+
+def test_fresh_candidate_after_a_return_is_reviewed_before_validate(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _team(temp_db, sample_project)
+    builder, checker = team.session(IMPLEMENT), team.session(REVIEW)
+    closer = team.session(VALIDATE)
+    team.chain(builder, IMPLEMENT, C1)
+    team.chain(checker, REVIEW, C1, first_reference=C1)
+    team.hand_off(recipient=builder, holder=closer)
+
+    team.chain(builder, IMPLEMENT, C2)
+
+    assert team.holder() == checker
+
+
+def test_rejected_correction_after_a_return_keeps_the_claim_with_the_developer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _team(temp_db, sample_project)
+    builder, checker = team.session(IMPLEMENT), team.session(REVIEW)
+    closer = team.session(VALIDATE)
+    chain = team.chain(builder, IMPLEMENT, C1)
+    team.chain(checker, REVIEW, C1, first_reference=C1)
+    team.hand_off(recipient=builder, holder=closer)
+    self_review = chain[team.definition.claim_flow[IMPLEMENT].done_when.index("self-review")]
+
+    team.attest(
+        builder, "self-review", IMPLEMENT, result="rejected", sha=C1, supersedes_id=self_review
+    )
+
+    assert team.holder() == builder
+
+
+def test_correction_on_another_candidate_does_not_move_a_reviewed_candidate(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _team(temp_db, sample_project)
+    builder, checker = team.session(IMPLEMENT), team.session(REVIEW)
+    closer = team.session(VALIDATE)
+    first = team.chain(builder, IMPLEMENT, C1)
+    team.chain(checker, REVIEW, C1, first_reference=C1)
+    team.hand_off(recipient=builder, holder=closer)
+
+    team.attest(builder, "test-before", IMPLEMENT, sha=C2, supersedes_id=first[0])
+
+    assert team.holder() == builder
+
+
+def test_claim_stage_names_exactly_one_seat_or_agent() -> None:
+    with pytest.raises(ValueError, match="exactly one of seat or agent"):
+        PipelineDefinition(
+            name="synthetic-claim-flow",
+            steps=[
+                PipelineStep(
+                    id=ADMISSION_STEP, mcp=MCPStepConfig(server="synthetic", tool="admit_team")
+                )
+            ],
+            claim_flow={IMPLEMENT: ClaimStage(done_when=["test-before"])},
+        )
 
 
 def test_rejection_by_checker_relaunched_after_it_took_the_claim_returns_it(
