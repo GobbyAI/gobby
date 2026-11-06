@@ -532,7 +532,13 @@ impl<D: Daemon> Workspace<D> {
         else {
             return;
         };
-        pane.sized_by = match message.get("applied").and_then(Value::as_bool) {
+        let applied = message.get("applied").and_then(Value::as_bool);
+        if applied == Some(false) {
+            // The PTY kept its own size, so the recorded one is wrong. Forget it,
+            // or the next pass for this rect takes it as already sized.
+            pane.pty_size = None;
+        }
+        pane.sized_by = match applied {
             Some(false) => Some(
                 message
                     .get("owner_viewer")

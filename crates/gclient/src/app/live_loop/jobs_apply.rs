@@ -111,7 +111,17 @@ pub(super) fn apply_job_outcome(
                 chrome.notify(Toast::error(FrameError::from(error).to_string()));
             }
         },
-        JobResult::Resized { result, .. } | JobResult::Scrolled { result } => {
+        JobResult::Resized { pane, result } => {
+            if let Err(error) = result {
+                // The daemon never took the size, so the PTY keeps its old one.
+                // Forget the recorded size, or the same rect is never sent again.
+                if let Some(pane) = workspace.panes.get_mut(&pane) {
+                    pane.pty_size = None;
+                }
+                chrome.notify(Toast::error(FrameError::from(error).to_string()));
+            }
+        }
+        JobResult::Scrolled { result } => {
             if let Err(error) = result {
                 chrome.notify(Toast::error(FrameError::from(error).to_string()));
             }

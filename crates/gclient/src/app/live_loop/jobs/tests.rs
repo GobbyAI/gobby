@@ -341,6 +341,117 @@ fn a_pane_already_at_its_rect_is_not_resized() {
     assert_eq!(workspace.pane(PaneId(1)).pty_size, Some((30, 100)));
 }
 
+/// A refused resize leaves the PTY at its old size, so the same rect offered
+/// again must be sent again.
+#[test]
+fn a_refused_resize_is_sent_again_for_the_same_rect() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let (_, receiver) = daemon.subscribe();
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    let source =
+        ProxyFrameSource::from_attachment(daemon.clone(), "terminal-1", attachment, receiver)
+            .expect("proxy source");
+    pane.install_frame_source(PaneFrameSource::Proxy(source));
+    pane.pty_size = Some((24, 80));
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.daemon_ready = true;
+    workspace.panes.insert(pane.id, pane);
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    let first = workspace
+        .stage_geometry(PaneId(1), 30, 100)
+        .expect("stage geometry")
+        .expect("the proxy pane has a writer");
+    assert!(
+        first
+            .iter()
+            .any(|message| message["type"] == "terminal_resize"),
+        "the mismatched PTY is resized first: {first:?}"
+    );
+
+    let refused = JobOutcome {
+        tag: JobTag {
+            id: 1,
+            generation: daemon.generation(),
+            key: JobKey::Geometry(PaneId(1)),
+        },
+        result: JobResult::Resized {
+            pane: PaneId(1),
+            result: Err(crate::daemon::DaemonError::Protocol {
+                detail: "resize refused".into(),
+            }),
+        },
+    };
+    apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, refused);
+
+    let revisit = workspace
+        .stage_geometry(PaneId(1), 30, 100)
+        .expect("stage geometry")
+        .expect("the proxy pane has a writer");
+    assert!(
+        revisit
+            .iter()
+            .any(|message| message["type"] == "terminal_resize"),
+        "the PTY never took the refused size, so the same rect is sent again: {revisit:?}"
+    );
+}
+
+/// A resize another viewer did not apply leaves the PTY at its size, so the same
+/// rect offered again must be sent again.
+#[test]
+fn a_resize_another_viewer_did_not_apply_is_sent_again_for_the_same_rect() {
+    use serde_json::json;
+
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let (_, receiver) = daemon.subscribe();
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    let source =
+        ProxyFrameSource::from_attachment(daemon, "terminal-1", attachment.clone(), receiver)
+            .expect("proxy source");
+    pane.install_frame_source(PaneFrameSource::Proxy(source));
+    pane.pty_size = Some((24, 80));
+    let mut workspace = Workspace::scripted();
+    workspace.panes.insert(pane.id, pane);
+
+    let first = workspace
+        .stage_geometry(PaneId(1), 30, 100)
+        .expect("stage geometry")
+        .expect("the proxy pane has a writer");
+    assert!(
+        first
+            .iter()
+            .any(|message| message["type"] == "terminal_resize"),
+        "the mismatched PTY is resized first: {first:?}"
+    );
+
+    workspace.note_resize_result(&json!({
+        "attachment_id": attachment,
+        "applied": false,
+        "owner_viewer": "other-viewer",
+    }));
+    assert_eq!(
+        workspace.pane(PaneId(1)).sized_by.as_deref(),
+        Some("other-viewer"),
+        "the refusal names the owner"
+    );
+
+    let revisit = workspace
+        .stage_geometry(PaneId(1), 30, 100)
+        .expect("stage geometry")
+        .expect("the proxy pane has a writer");
+    assert!(
+        revisit
+            .iter()
+            .any(|message| message["type"] == "terminal_resize"),
+        "the owner kept its size, so the same rect is sent again: {revisit:?}"
+    );
+}
+
 /// A direct pane at its rect sends its viewport on its own socket and no daemon
 /// request. That is not a send the next pass must redo, so the size stays recorded.
 #[test]
