@@ -277,15 +277,18 @@ fn pane_writer<'a>(
     pane_id: PaneId,
 ) -> &'a mut Pane {
     let generation = workspace.daemon().generation();
-    let writer = (!workspace
-        .pane(pane_id)
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+    if !pane
         .writer
         .as_ref()
-        .is_some_and(|writer| writer.serves(generation)))
-    .then(|| PaneWriter::spawn(workspace.daemon(), outcomes, pane_id));
-    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    if writer.is_some() {
-        pane.writer = writer;
+        .is_some_and(|writer| writer.serves(generation))
+    {
+        pane.writer = Some(PaneWriter::spawn(
+            &workspace.daemon,
+            outcomes,
+            pane_id,
+            pane.writer_ready.take(),
+        ));
     }
     pane
 }

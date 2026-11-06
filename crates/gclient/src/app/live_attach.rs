@@ -500,6 +500,10 @@ async fn request_direct_attachment(
         .and_then(Value::as_str)
         .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
         .to_string();
+    // Frame delivery is independent of input: tmux keys still use the daemon writer.
+    if reply.get("backend").and_then(Value::as_str) == Some("tmux") {
+        claim_writer_lease(daemon, terminal_id, &attachment).await?;
+    }
     Ok((reply, attachment))
 }
 

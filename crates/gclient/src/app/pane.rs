@@ -155,6 +155,9 @@ pub struct Pane {
     pub in_flight_write: Option<u64>,
     /// The task that sends this pane's daemon writes in typed order (plan A2).
     pub(super) writer: Option<PaneWriter>,
+    /// A promoted tmux pane releases its proxy lease and claims the replacement
+    /// before its daemon writer sends queued input. Native input never waits here.
+    pub(super) writer_ready: Option<tokio::task::JoinHandle<Result<(), FrameError>>>,
     /// Keys and pastes typed while this pane's attachment is still coming up,
     /// kept in the order they were typed. A person typing into a pane that is
     /// reattaching is not asking to lose the first word, so this queue is
@@ -255,6 +258,7 @@ impl Pane {
             required_created_flag: false,
             in_flight_write: None,
             writer: None,
+            writer_ready: None,
             pending_input: Vec::new(),
             pending_input_bytes: 0,
             host_bound_attachment: None,

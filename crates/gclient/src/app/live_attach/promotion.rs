@@ -140,7 +140,33 @@ impl Workspace<LiveDaemon> {
             reason = "direct locator usable; host accepted the attach",
             "pane promoted to direct frame delivery"
         );
-        self.release_attachment(terminal_id, proxy_attachment);
+        if self.panes[&pane_id].backend == super::super::Backend::Tmux {
+            let daemon = self.daemon.clone();
+            let terminal_id = terminal_id.to_string();
+            let proxy_attachment = proxy_attachment.to_string();
+            let ready = tokio::spawn(async move {
+                // The new attachment's first claim could not displace its own proxy.
+                // Wait for finalization before claiming again, then permit queued writes.
+                let reply = daemon
+                    .send(json!({
+                        "type": "terminal_detach",
+                        "request_id": uuid::Uuid::new_v4().to_string(),
+                        "terminal_id": terminal_id,
+                        "attachment_id": proxy_attachment,
+                    }))
+                    .await?;
+                if reply.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                    return Err(FrameError::Protocol("replaced proxy detach refused".into()));
+                }
+                crate::frame_source::claim_writer_lease(&daemon, &terminal_id, &attachment).await
+            });
+            self.panes
+                .get_mut(&pane_id)
+                .expect("pane exists")
+                .writer_ready = Some(ready);
+        } else {
+            self.release_attachment(terminal_id, proxy_attachment);
+        }
         Ok(())
     }
 

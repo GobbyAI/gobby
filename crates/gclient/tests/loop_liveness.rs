@@ -18,6 +18,9 @@ mod mock_daemon;
 #[path = "loop_liveness/lifecycle.rs"]
 mod lifecycle;
 
+#[path = "loop_liveness/writer_leases.rs"]
+mod writer_leases;
+
 #[path = "mock_daemon/draw.rs"]
 mod draw;
 use draw::DrawRecorder;

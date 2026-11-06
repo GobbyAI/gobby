@@ -456,3 +456,7 @@ fn request_timed_out(request: &str) -> DaemonError {
 }
 #[path = "live_connect.rs"]
 mod live_connect;
+
+#[cfg(test)]
+#[path = "live/claim_cleanup_tests.rs"]
+mod claim_cleanup_tests;
