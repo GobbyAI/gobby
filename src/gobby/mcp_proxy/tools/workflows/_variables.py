@@ -181,6 +181,22 @@ def _variable_listing(
     return {"success": True, "session_id": session_id, "variables": variables, "scope": scope}
 
 
+def _lookup_variable(variables: dict[str, Any], name: str) -> tuple[bool, Any]:
+    """Resolve a name exactly, or as a dotted path through JSON-object values.
+
+    An exact top-level name wins, so a variable whose name contains a dot still reads.
+    A path returns only the nested value it names, never the object that holds it.
+    """
+    if name in variables:
+        return True, variables[name]
+    current: Any = variables
+    for key in name.split("."):
+        if not isinstance(current, dict) or key not in current:
+            return False, None
+        current = current[key]
+    return True, current
+
+
 def get_variable(
     session_manager: SessionManager,
     db: HubDatabase,
@@ -196,7 +212,8 @@ def get_variable(
 
     When `scope` is ``step``, reads from the single typed instance. When
     `scope` is ``session``, reads from session-scoped shared variables.
-    Without `name`, returns sorted names only unless `brief` is False.
+    Without `name`, returns sorted names only unless `brief` is False. A dotted
+    `name` such as `project_policy.role_guidance.developer` returns that one key.
     """
     # Require explicit session_id to prevent cross-session bleed
     if not session_id:
@@ -226,12 +243,13 @@ def get_variable(
             }
         variables = instance.variables
         if name:
+            found, value = _lookup_variable(variables, name)
             return {
                 "success": True,
                 "session_id": resolved_session_id,
                 "variable": name,
-                "value": variables.get(name),
-                "exists": name in variables,
+                "value": value,
+                "exists": found,
                 "scope": "step",
             }
         return _variable_listing(variables, resolved_session_id, "step", brief)
@@ -244,12 +262,13 @@ def get_variable(
 
     variables = session_var_manager.get_variables(resolved_session_id)
     if name:
+        found, value = _lookup_variable(variables, name)
         return {
             "success": True,
             "session_id": resolved_session_id,
             "variable": name,
-            "value": variables.get(name),
-            "exists": name in variables,
+            "value": value,
+            "exists": found,
             "scope": "session",
         }
     return _variable_listing(variables, resolved_session_id, "session", brief)

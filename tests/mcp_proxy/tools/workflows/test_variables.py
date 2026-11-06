@@ -394,6 +394,63 @@ class TestGetVariableScoped:
         assert result["exists"] is True
         mocks["session_var_manager"].get_variables.assert_called_once_with("uuid-session-1")
 
+    def test_get_variable_dotted_path_returns_only_that_key(self) -> None:
+        """A dotted name reads one key of a JSON-object variable, never the whole object."""
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+        policy = {
+            "role_guidance": {"consolidator": "Consolidate.", "developer": "Build it."},
+            "agent_model_defaults": {"developer": "model-a"},
+        }
+        mocks = _make_mocks(session_variables={"project_policy": policy})
+
+        result = get_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name="project_policy.role_guidance.developer",
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result["success"] is True
+        assert result["value"] == "Build it."
+        assert result["exists"] is True
+        assert "agent_model_defaults" not in str(result)
+        assert "Consolidate." not in str(result)
+
+    def test_get_variable_missing_dotted_path_reports_not_exists(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+        mocks = _make_mocks(session_variables={"project_policy": {"roots": []}})
+
+        result = get_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name="project_policy.role_guidance.ghost",
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result["success"] is True
+        assert result["value"] is None
+        assert result["exists"] is False
+
+    def test_get_variable_exact_dotted_name_wins_over_path(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+        mocks = _make_mocks(session_variables={"a.b": 1, "a": {"b": 2}})
+
+        result = get_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name="a.b",
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result["value"] == 1
+        assert result["exists"] is True
+
     def test_get_all_variables_with_step_scope(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import get_variable
 
