@@ -211,6 +211,7 @@ async def _set_context_for_request(
             SessionContext(
                 session_id=resolved_session.id,
                 conversation_id=resolved_session.external_id,
+                project_id=resolved_session.project_id,
             )
         )
         tokens.resolved_session_id = resolved_session.id
