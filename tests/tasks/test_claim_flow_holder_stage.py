@@ -41,6 +41,7 @@ VALIDATE = "validate"
 AGENTS = {"build": "builder-agent", "check": "checker-agent", "close": "closer-agent"}
 DOC_WRITER = "writer-agent"
 DOC_REVIEWER = "reviewer-agent"
+REVIEW_DOCS = "review-docs"
 
 
 def _flow(closer_seat: str = "close") -> PipelineDefinition:
@@ -214,6 +215,14 @@ class _Team:
         runs.start(run.id)
         return fresh
 
+    def retire(self, stage: str) -> None:
+        """Ends the stage's seat, so only an alternative stage can take the claim."""
+        session = self.session(stage)
+        self.db.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE child_session_id = %s", (session,)
+        )
+        self.db.execute("UPDATE sessions SET status = 'deleted' WHERE id = %s", (session,))
+
     def add_outsider(self) -> str:
         """A team member whose definition holds no claim-flow stage."""
         session = self.seats.add("outsider-agent", ["validation"])
@@ -221,6 +230,18 @@ class _Team:
             "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (self.parent, session)
         )
         return session
+
+
+def _alternate_review_flow() -> PipelineDefinition:
+    """A developer's implement stage is reviewed by the code reviewer seat or, when that seat is
+    not live, by an agent-only docs reviewer the lead spawns."""
+    definition = _flow()
+    stages = dict(definition.claim_flow)
+    stages[IMPLEMENT] = stages[IMPLEMENT].model_copy(update={"next": [REVIEW, REVIEW_DOCS]})
+    stages[REVIEW_DOCS] = ClaimStage(
+        agent=DOC_REVIEWER, done_when=["independent-review"], next=VALIDATE, on_rejected=IMPLEMENT
+    )
+    return definition.model_copy(update={"claim_flow": stages})
 
 
 def _team(db: HubDatabase, sample_project: dict[str, Any], closer_seat: str = "close") -> _Team:
@@ -486,6 +507,36 @@ def test_correction_on_another_candidate_does_not_move_a_reviewed_candidate(
     team.hand_off(recipient=builder, holder=closer)
 
     team.attest(builder, "test-before", IMPLEMENT, sha=C2, supersedes_id=first[0])
+
+    assert team.holder() == builder
+
+
+def test_developer_candidate_reviewed_by_docs_reviewer_moves_to_closer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """The code reviewer seat is not live, so the developer's completed stage routes to the docs
+    reviewer and its approval moves the claim to validate (#25802 lead repro)."""
+    team = _build_team(temp_db, sample_project, _alternate_review_flow())
+    team.retire(REVIEW)
+    builder, reviewer = team.session(IMPLEMENT), team.session(REVIEW_DOCS)
+    closer = team.session(VALIDATE)
+    team.chain(builder, IMPLEMENT, C1)
+    assert team.holder() == reviewer
+
+    team.chain(reviewer, REVIEW_DOCS, C1)
+
+    assert team.holder() == closer
+
+
+def test_docs_reviewer_rejection_of_developer_candidate_returns_claim_to_developer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_team(temp_db, sample_project, _alternate_review_flow())
+    team.retire(REVIEW)
+    builder, reviewer = team.session(IMPLEMENT), team.session(REVIEW_DOCS)
+    team.chain(builder, IMPLEMENT, C1)
+
+    team.attest(reviewer, "independent-review", REVIEW_DOCS, result="rejected", sha=C1)
 
     assert team.holder() == builder
 

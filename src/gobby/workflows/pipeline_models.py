@@ -124,10 +124,21 @@ class ClaimStage(BaseModel):
     seat: str | None = Field(default=None, min_length=1)
     agent: str | None = Field(default=None, min_length=1)
     done_when: list[str] = Field(default_factory=list)
-    next: str | None = None
-    on_rejected: str | None = None
+    # Alternatives in declared order; the first whose seat is live takes the claim.
+    next: list[str] = Field(default_factory=list)
+    on_rejected: list[str] = Field(default_factory=list)
     approved_result: str = "approved"
     rejected_result: str = "rejected"
+
+    @field_validator("next", "on_rejected", mode="before")
+    @classmethod
+    def coerce_targets(cls, value: Any) -> Any:
+        """Accept one stage name or a list of alternatives; null names none."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
 
 
 class PipelineDefinition(BaseModel):
@@ -204,8 +215,8 @@ class PipelineDefinition(BaseModel):
                 raise ValueError("Claim flow stage must name exactly one of seat or agent")
             if stage.seat is not None and stage.seat not in seats:
                 raise ValueError(f"Claim flow seat {stage.seat!r} is not a pipeline step")
-            for target in (stage.next, stage.on_rejected):
-                if target is not None and target not in self.claim_flow:
+            for target in (*stage.next, *stage.on_rejected):
+                if target not in self.claim_flow:
                     raise ValueError(f"Unknown claim flow stage {target!r}")
         return self
 

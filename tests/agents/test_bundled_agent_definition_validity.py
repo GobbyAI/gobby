@@ -213,7 +213,10 @@ def _review_stage_agents() -> set[str]:
         steps = {step["id"]: step for step in pipeline.get("steps") or []}
         for stage in pipeline["claim_flow"].values():
             if stage.get("on_rejected"):
-                agents |= _named_agents(steps[stage["seat"]])
+                if "seat" in stage:
+                    agents |= _named_agents(steps[stage["seat"]])
+                else:
+                    agents.add(stage["agent"])
     return agents
 
 

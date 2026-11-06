@@ -13,6 +13,9 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.pipeline_models import PipelineDefinition
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from gobby.storage.session_models import Session
     from gobby.tasks.attestations import TaskAttestation
 
 
@@ -26,6 +29,113 @@ def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
         and resolved[1].enabled
         and resolved[0].workflows.variables.get("team_manager") is True
     )
+
+
+def _reference_key(item: TaskAttestation) -> tuple[str, str] | None:
+    if item.reference is None:
+        return None
+    return (item.reference.scheme, item.reference.value)
+
+
+def _by_agent(agent: str) -> Callable[[TaskAttestation], bool]:
+    return lambda item: item.agent_definition == agent
+
+
+def _current_by_kind(
+    records: list[TaskAttestation], kinds: list[str], belongs: Callable[[TaskAttestation], bool]
+) -> dict[str, TaskAttestation]:
+    """The latest unsuperseded record per kind, among records the predicate admits."""
+    superseded = {item.supersedes_id for item in records if item.supersedes_id}
+    current: dict[str, TaskAttestation] = {}
+    for item in records:
+        if item.id not in superseded and item.kind in kinds and belongs(item):
+            current[item.kind] = item
+    return current
+
+
+def _approved_on(
+    current: dict[str, TaskAttestation],
+    kinds: list[str],
+    candidate: tuple[str, str],
+    approved: str,
+    unreferenced: str,
+) -> bool:
+    """Every kind is approved on the candidate. Only the record `unreferenced` may carry none."""
+    for kind in kinds:
+        item = current.get(kind)
+        if item is None or item.result != approved:
+            return False
+        key = _reference_key(item)
+        if key != candidate and not (key is None and item.id == unreferenced):
+            return False
+    return True
+
+
+def _paths_between(definition: PipelineDefinition, start: str, goal: str) -> list[list[str]]:
+    """Each run of stages strictly between start and goal along next edges, by every route."""
+    runs: list[list[str]] = []
+
+    def walk(current: str, between: list[str]) -> None:
+        for following in definition.claim_flow[current].next:
+            if following == goal:
+                runs.append(between)
+            elif following != start and following not in between:
+                walk(following, [*between, following])
+
+    walk(start, [])
+    return runs
+
+
+def _returned_stage(
+    definition: PipelineDefinition,
+    holder_stage: str,
+    marked: str,
+    correction: TaskAttestation,
+    records: list[TaskAttestation],
+    stage_agents: dict[str, str | None],
+) -> str | None:
+    """The marked stage when a correction re-records a kind on an already reviewed candidate.
+
+    The correction must supersede one of the holder's records. The candidate is the one reference
+    on which every done_when kind of the holder's stage is approved, and only the correction may
+    carry no reference. Each stage between the holder's stage and the marked stage must already be
+    approved on that candidate by its own writers. A fresh candidate fails that check, so it still
+    needs review.
+    """
+    holder_ids = {item.id for item in records if item.session_id == correction.session_id}
+    if correction.supersedes_id not in holder_ids:
+        return None
+    holder = definition.claim_flow[holder_stage]
+    if correction.kind not in holder.done_when:
+        return None
+    current = _current_by_kind(
+        records, holder.done_when, lambda item: item.session_id == correction.session_id
+    )
+    candidates: set[tuple[str, str]] = set()
+    for item in current.values():
+        key = _reference_key(item)
+        if key is not None and _approved_on(
+            current, holder.done_when, key, holder.approved_result, correction.id
+        ):
+            candidates.add(key)
+    if len(candidates) != 1:
+        return None
+    (candidate,) = candidates
+
+    def writers_approved(name: str) -> bool:
+        stage = definition.claim_flow[name]
+        writer = stage_agents.get(name)
+        if writer is None:
+            return False
+        current_stage = _current_by_kind(records, stage.done_when, _by_agent(writer))
+        return _approved_on(current_stage, stage.done_when, candidate, stage.approved_result, "")
+
+    # The marked stage must lie beyond at least one stage. Any route that passes only through
+    # stages approved on the candidate can carry the claim forward.
+    for between in _paths_between(definition, holder_stage, marked):
+        if between and all(writers_approved(name) for name in between):
+            return marked
+    return None
 
 
 def advance_claim_flow(
@@ -71,12 +181,15 @@ def advance_claim_flow(
     steps = {step.step_id: step for step in executions.get_steps_for_execution(team.team_id)}
 
     def seat_agent(stage_name: str) -> str | None:
-        step = seat_steps[definition.claim_flow[stage_name].seat]
+        stage = definition.claim_flow[stage_name]
+        if stage.seat is None:
+            return stage.agent
+        step = seat_steps[stage.seat]
         return (step.mcp.arguments or {}).get("agent") if step.mcp else None
 
     def stage_session(stage_name: str) -> str | None:
         seat = definition.claim_flow[stage_name].seat
-        step = steps.get(seat)
+        step = steps.get(seat) if seat is not None else None
         output = json.loads(step.output_json) if step and step.output_json else {}
         child = output.get("child_session_id")
         # Relaunches join the same admission; their active runs replace ended step outputs.
@@ -121,7 +234,9 @@ def advance_claim_flow(
     # marker, so the author's own seat picks the stage. Zero or several matches refuse the evidence
     # and roll it back; they never leave the claim silently unmoved.
     first = next(iter(definition.claim_flow))
+    stage_agents = {stage_name: seat_agent(stage_name) for stage_name in definition.claim_flow}
     marked = state.get("stage")
+    returned: str | None = None
     if (
         prior is not None
         and state.get("to_session_id") == record.session_id
@@ -146,6 +261,8 @@ def advance_claim_flow(
         if len(holder_stages) > 1:
             raise ValueError(f"claim flow seat {record.session_id} holds more than one stage")
         name = holder_stages[0]
+        if prior is not None and marked in definition.claim_flow:
+            returned = _returned_stage(definition, name, str(marked), record, records, stage_agents)
     stage = definition.claim_flow[name]
     superseded = {item.supersedes_id for item in records if item.supersedes_id}
     active = {
@@ -155,18 +272,20 @@ def advance_claim_flow(
         and item.session_id == record.session_id
         and item.sequence > state.get("after_sequence", 0)
     }
-    target = None
+    targets: list[str] = []
     references = {
         (item.reference.scheme, item.reference.value)
         for kind, item in active.items()
         if kind in stage.done_when and item.reference is not None
     }
-    if record.kind in stage.done_when and record.result == stage.rejected_result:
-        target = stage.on_rejected
+    if returned is not None:
+        targets = [returned]
+    elif record.kind in stage.done_when and record.result == stage.rejected_result:
+        targets = stage.on_rejected
     elif stage.done_when and all(
         kind in active and active[kind].result == stage.approved_result for kind in stage.done_when
     ):
-        if stage.next is not None and len(references) > 1:
+        if stage.next and len(references) > 1:
             latest = max(
                 (active[kind] for kind in stage.done_when if active[kind].reference is not None),
                 key=lambda item: item.sequence,
@@ -184,18 +303,25 @@ def advance_claim_flow(
                 f"Accepted reference for this attempt: {reference.scheme}:{reference.value}. "
                 f"Supersede conflicting records or omit references for unrelated evidence: {conflicting}"
             )
-        target = stage.next
-    if target is None:
+        targets = stage.next
+    if not targets:
         return
-    recipient_id = stage_session(target)
-    recipient = session_store.get(recipient_id) if recipient_id else None
-    if (
-        recipient is None
-        or recipient.project_id != task.project_id
-        or recipient.machine_id != author.machine_id
-        or recipient.status not in LIVE_SESSION_STATUSES
-    ):
-        raise ValueError(f"claim flow stage {target!r} needs its live pipeline seat")
+    # The first alternative whose seat is live takes the claim. None live refuses the evidence.
+    target = targets[0]
+    recipient: Session | None = None
+    for name in targets:
+        recipient_id = stage_session(name)
+        candidate = session_store.get(recipient_id) if recipient_id else None
+        if (
+            candidate is not None
+            and candidate.project_id == task.project_id
+            and candidate.machine_id == author.machine_id
+            and candidate.status in LIVE_SESSION_STATUSES
+        ):
+            target, recipient = name, candidate
+            break
+    if recipient is None:
+        raise ValueError(f"claim flow stage {targets[0]!r} needs its live pipeline seat")
     LocalTaskManager(db).claim_task_for_agent(
         task.id, recipient.id, expected_owner=record.session_id, handed=True
     )
