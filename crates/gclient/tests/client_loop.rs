@@ -3877,7 +3877,22 @@ async fn daemon_loss_keeps_a_native_pane_writable_until_recovery() {
 
         tokio::time::advance(Duration::from_millis(250)).await;
         tokio::time::resume();
-        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        // Re-registration keeps the existing host viewport. Observe the fresh
+        // daemon attachment's own resize and focus instead of a new stream.
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_focus")
+                .iter()
+                .any(|focus| {
+                    focus["focused"] == true
+                        && focus["attachment_id"]
+                            .as_str()
+                            .is_some_and(|id| id != old_attachment.as_str())
+                        && websocket_requests(&mock, "terminal_resize")
+                            .iter()
+                            .any(|resize| resize["attachment_id"] == focus["attachment_id"])
+                })
+        })
+        .await;
         wait_for_focus_reports(&mock, 2).await;
         let mut initial_generation_disconnects = 1;
         while let Ok(event) = observed_events.try_recv() {

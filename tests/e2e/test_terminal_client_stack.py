@@ -682,6 +682,16 @@ async def _assert_input_reaches(
     )
 
 
+async def _write_native_input(frames: FrameClient, text: str) -> None:
+    # ClientMessage::Input is tag 9, followed by a bincode byte vector. These
+    # short markers fit bincode's single-byte length; never use legacy tag 1.
+    data = text.encode("utf-8")
+    assert len(data) <= 250, "native test marker exceeds single-byte bincode length"
+    payload = b"\x09" + bytes([len(data)]) + data
+    frames._writer.write(len(payload).to_bytes(4, "little") + payload)
+    await asyncio.wait_for(frames._writer.drain(), timeout=8.0)
+
+
 @pytest.mark.asyncio
 async def test_terminal_client_stack_end_to_end(
     daemon_instance: DaemonInstance,
@@ -812,23 +822,21 @@ async def test_terminal_client_stack_end_to_end(
     assert all(item.get("type") in _FRAME_TYPES for item in native_seen)
     assert all(item.get("type") in _FRAME_TYPES for item in direct_seen)
 
-    gclient_ws = WsSession(daemon_instance)
+    direct_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
-    await gclient_ws.connect()
+    await direct_ws.connect()
     await web_ws.connect()
-    await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native")
+    await direct_ws.attach(native_id, delivery="direct", request_id="web-direct-native")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native")
-    gclient_direct = WsSession(daemon_instance)
-    await gclient_direct.connect()
-    await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct")
+    other_direct_ws = WsSession(daemon_instance)
+    await other_direct_ws.connect()
+    await other_direct_ws.attach(direct_id, delivery="direct", request_id="web-direct-other")
 
     native_marker = f"N-{uuid.uuid4().hex[:6]}"
     direct_marker = f"T-{uuid.uuid4().hex[:6]}"
-    delivered = await gclient_ws.write(native_id, native_marker + "\r")
-    assert delivered.get("outcome") == "delivered"
+    await _write_native_input(native_frames, native_marker + "\r")
     await _assert_input_reaches(native_frames, native_marker, description="native keystroke")
-    direct_delivered = await gclient_direct.write(direct_id, direct_marker + "\r")
-    assert direct_delivered.get("outcome") == "delivered"
+    await _write_native_input(direct_frames, direct_marker + "\r")
     await _assert_input_reaches(direct_frames, direct_marker, description="direct keystroke")
 
     await native_frames.detach()
@@ -877,10 +885,13 @@ async def test_terminal_client_stack_end_to_end(
     web_write = await web_ws.write(native_id, web_only + "\r")
     assert web_write.get("outcome") == "delivered"
     await _assert_input_reaches(native_frames, web_only, description="web holder input")
-    # A gclient pane is always writable: the web holder's lease does not gate it.
+    # Direct frame delivery over WS is still web and obeys the writer lease.
     back_marker = f"G-{uuid.uuid4().hex[:6]}"
-    back_write = await gclient_ws.write(native_id, back_marker + "\r")
-    assert back_write.get("outcome") == "delivered"
+    back_write = await direct_ws.write(native_id, back_marker + "\r")
+    assert back_write.get("outcome") == "refused", back_write
+    assert back_write.get("reason") == "held", back_write
+    # Native host-stream input remains writable beside that web holder.
+    await _write_native_input(native_frames, back_marker + "\r")
     await _assert_input_reaches(
         native_frames, back_marker, description="gclient input beside web holder"
     )
@@ -909,18 +920,18 @@ async def test_terminal_client_stack_end_to_end(
     client.close()
     client = _http(daemon_instance)
     _wait_for_host(client, daemon_instance)
-    await gclient_ws.close()
+    await direct_ws.close()
     await web_ws.close()
-    await gclient_direct.close()
-    gclient_ws = WsSession(daemon_instance)
+    await other_direct_ws.close()
+    direct_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
-    gclient_direct = WsSession(daemon_instance)
-    await gclient_ws.connect()
+    other_direct_ws = WsSession(daemon_instance)
+    await direct_ws.connect()
     await web_ws.connect()
-    await gclient_direct.connect()
-    await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native-2")
+    await other_direct_ws.connect()
+    await direct_ws.attach(native_id, delivery="direct", request_id="web-direct-native-2")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native-2")
-    await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct-2")
+    await other_direct_ws.attach(direct_id, delivery="direct", request_id="web-direct-other-2")
     await web_ws.wait_for(
         lambda item: item.get("type")
         in {"terminal_output", "terminal_attach_history", "terminal_attach_result"},
@@ -928,10 +939,12 @@ async def test_terminal_client_stack_end_to_end(
         description="web reattached after daemon return",
     )
 
+    direct_take = await direct_ws.take(native_id)
+    assert direct_take.get("granted") is True, direct_take
     fault_path = daemon_instance.gobby_home / WRITE_FAULT_NAME
     fault_path.write_text("1")
     try:
-        faulted = await gclient_ws.write(native_id, "FAULT-WRITE\r")
+        faulted = await direct_ws.write(native_id, "FAULT-WRITE\r")
         assert faulted.get("outcome") == "refused"
         assert faulted.get("reason") == "write_handler_fault"
         web_faulted = await web_ws.write(native_id, "FAULT-WEB\r")
@@ -978,36 +991,37 @@ async def test_terminal_client_stack_end_to_end(
         isolated.close()
 
     replay_payload = back_marker + "-dup\r"
-    replay = await gclient_ws.write(native_id, replay_payload)
+    replay = await direct_ws.write(native_id, replay_payload)
+    assert replay.get("outcome") == "delivered", replay
     first_seq = int(replay["client_write_seq"])
-    outcomes_before = len(gclient_ws.of_type("terminal_write_outcome"))
-    await gclient_ws.send(
+    outcomes_before = len(direct_ws.of_type("terminal_write_outcome"))
+    await direct_ws.send(
         {
             "type": "terminal_input",
             "terminal_id": native_id,
-            "attachment_id": gclient_ws.attachment_id,
+            "attachment_id": direct_ws.attachment_id,
             "data": replay_payload,
             "client_write_seq": first_seq,
         }
     )
-    replayed = await gclient_ws.wait_for(
+    replayed = await direct_ws.wait_for(
         lambda item: item.get("type") == "terminal_write_outcome"
         and item.get("client_write_seq") == first_seq
-        and len(gclient_ws.of_type("terminal_write_outcome")) > outcomes_before,
+        and len(direct_ws.of_type("terminal_write_outcome")) > outcomes_before,
         timeout=5.0,
         description="matching fingerprint replay",
     )
     assert replayed.get("outcome") == replay.get("outcome")
-    await gclient_ws.send(
+    await direct_ws.send(
         {
             "type": "terminal_input",
             "terminal_id": native_id,
-            "attachment_id": gclient_ws.attachment_id,
+            "attachment_id": direct_ws.attachment_id,
             "data": "CONFLICT-PAYLOAD\r",
             "client_write_seq": first_seq,
         }
     )
-    conflict = await gclient_ws.wait_for(
+    conflict = await direct_ws.wait_for(
         lambda item: item.get("type") == "terminal_write_outcome"
         and item.get("reason") == "write_seq_conflict",
         timeout=5.0,
@@ -1185,9 +1199,9 @@ async def test_terminal_client_stack_end_to_end(
     epoch_before = _wait_for_host(client, daemon_instance).get("host_epoch")
     await native_frames.close()
     await direct_frames.close()
-    await gclient_ws.close()
+    await direct_ws.close()
     await web_ws.close()
-    await gclient_direct.close()
+    await other_direct_ws.close()
     await control.close()
 
     _restart_daemon_preserving_host(daemon_instance)
