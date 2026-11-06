@@ -453,3 +453,67 @@ def test_stale_pending_reset_stops_suppressing_mid_turn_band() -> None:
 
     assert variables[PRESSURE_BAND_VARIABLE] == "warn"
     assert variables["pending_context_reset"] is False
+
+
+def _fallback_variables(**overrides: Any) -> dict[str, Any]:
+    """Variables of a session without parent_turn_seq, so the fallback turn counter runs alone."""
+    variables: dict[str, Any] = {
+        "chat_mode": "normal",
+        "_context_usage_turn_seq": 10,
+        "last_compacted_turn_seq": 7,
+        "turns_since_compact": 3,
+    }
+    variables.update(overrides)
+    return variables
+
+
+def test_failed_read_without_parent_turn_seq_leaves_the_fallback_counter_alone() -> None:
+    variables = _fallback_variables()
+
+    detect_context_compact_guidance(variables, SESSION_ID, _FailingSessionManager(None))
+    assert variables["_context_usage_turn_seq"] == 10
+    assert variables["turns_since_compact"] == 3
+
+    _turn_start(variables, _SessionManager(100_000, 1_000_000))
+    assert variables["turns_since_compact"] == 4
+    assert variables["_context_usage_turn_seq"] == 11
+
+
+def test_plan_mode_without_parent_turn_seq_leaves_the_fallback_counter_alone() -> None:
+    variables = _fallback_variables(plan_mode=True)
+
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+    assert variables["_context_usage_turn_seq"] == 10
+    assert variables["turns_since_compact"] == 3
+
+    variables["plan_mode"] = False
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+    assert variables["turns_since_compact"] == 4
+    assert variables["_context_usage_turn_seq"] == 11
+
+
+def test_gated_turn_without_parent_turn_seq_leaves_the_fallback_counter_alone() -> None:
+    variables = _fallback_variables()
+    variables[HANDOFF_RESULT_VARIABLE] = {"attempt_pending": True}
+
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+    assert variables["_context_usage_turn_seq"] == 10
+    assert variables["turns_since_compact"] == 3
+
+    variables[HANDOFF_RESULT_VARIABLE] = None
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+    assert variables["turns_since_compact"] == 4
+    assert variables["_context_usage_turn_seq"] == 11
+
+
+def test_failed_read_leaves_a_stale_reset_for_the_turn_that_accounts() -> None:
+    variables = _variables(
+        pending_context_reset=True, parent_turn_seq=10, last_compacted_turn_seq=7
+    )
+
+    detect_context_compact_guidance(variables, SESSION_ID, _FailingSessionManager(None))
+    assert variables["pending_context_reset"] is True
+
+    _turn_start(variables, _SessionManager(260_000, 1_000_000))
+    assert variables["pending_context_reset"] is False
+    assert variables[PRESSURE_BAND_VARIABLE] == "warn"

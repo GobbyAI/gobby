@@ -28,6 +28,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 
 pytestmark = pytest.mark.unit
 
@@ -172,11 +173,18 @@ class _Session:
         self.engine = _engine(db)
         self.variables: dict[str, Any] = {"unlocked_tools": ["mcp__gobby__call_tool"]}
         self.evaluated: list[HookEvent] = []
+        self._wire()
+
+    def _wire(self) -> None:
         self.manager = MagicMock()
         self.manager._compaction_ownership = CompactionOwnership()
         self.manager._handle_after_daemon_ready = self._evaluate
         for name in _HOOK_METHODS:
             setattr(self.manager, name, functools.partial(getattr(HookManager, name), self.manager))
+
+    def restart(self) -> None:
+        """A daemon restart: fresh in-memory ownership over the same rules and stored variables."""
+        self._wire()
 
     @property
     def kinds(self) -> list[HookEventType]:
@@ -430,6 +438,31 @@ def test_a_manual_compaction_whose_boundary_flushes_late_still_clears_the_pendin
     send(session.event(BEFORE, prompt="late"))
 
     assert session.variables["pending_context_reset"] is False
+
+
+def test_a_session_start_lost_to_a_restart_does_not_mute_the_next_turn_band(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # The manual PreCompact ran its rules at once and set the flag. Its held SessionStart lived in
+    # the old daemon process, so nothing replays the clear after the restart.
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(START, source="compact"))
+    assert session.variables["pending_context_reset"] is True
+
+    session.restart()
+    session.parent_boundary("boundary-after-restart")
+    session.send_sync(session.event(BEFORE, prompt="first turn after restart"))
+    assert session.variables["pending_context_reset"] is True
+
+    # The turn-start observer reads the same stored variables and computes the band on that turn.
+    sessions = MagicMock()
+    sessions.get.return_value = SimpleNamespace(
+        context_used_tokens=260_000, context_window=1_000_000
+    )
+    detect_context_compact_guidance(session.variables, "session-id", sessions)
+
+    assert session.variables["pending_context_reset"] is False
+    assert session.variables["context_compact_guidance_kind"] == "warn"
 
 
 def test_a_verified_parent_boundary_is_not_replayed_again(
