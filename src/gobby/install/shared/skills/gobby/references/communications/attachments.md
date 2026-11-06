@@ -29,6 +29,12 @@ workspace containment and delivery checks apply.
 Whole files and plans use `send_operator_attachment`, which sends the workspace
 file whole without redaction. The bundled `no-comms-attach` rule blocks the stdin attachment CLI for every seat whose definition does not exclude the rule by name. Other seats send operator reports that need attachments to the Assistant through `gobby-agents:send_message`, and the Assistant delivers them with `send_operator_attachment`. Its own message says what happened and when, never the log lines or a path.
 
+The daemon composes the operator status report with `compose_status_report`. It takes
+`integration_branch` and `operator_timezone`, with optional `window_seconds` and
+`load_threshold`. It writes the report under the project's `.gobby/reports` directory and
+returns `file_path` and `nominal`. Deliver that file with `send_operator_attachment`.
+Agents are refused with `forbidden`, because only daemon-run steps compose reports.
+
 To send text as a document without a file, operators use
 `gobby comms attach CHANNEL_NAME FILENAME`, which reads stdin, or the
 authenticated `POST /api/comms/attachment` endpoint. Both are content-fed and
@@ -45,5 +51,5 @@ See [attachment sends](../../../../../../../../docs/guides/telegram.md#mcp-sends
 and [provider limits](../../../../../../../../docs/guides/telegram.md#limits-and-dependencies).
 Documenting an attachment workflow does not authorize uploading user files.
 
-_Version: 2.0.0_
-_Last verified: 2026-11-04_
+_Version: 2.1.0_
+_Last verified: 2026-11-05_
