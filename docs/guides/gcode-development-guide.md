@@ -337,9 +337,12 @@ reads to `gcode`. Graph lifecycle operations are Rust-owned FalkorDB operations:
   (keeps a confirmation prompt unless `--force`). Plain `gcode prune` delegates
   to the daemon; `gcode --project <path-or-name> prune` runs one project. It
   sweeps no vector orphans. Content GC (`commands::status::content_gc`) lets
-  recent history protect a version only at its own path, and only while the
-  current config indexes that path; a root whose checkout is gone keeps its
-  versions, and a history error keeps the eligible ones.
+  recent history protect a version only at its own path, and only while
+  `HistoryPathEligibility::is_eligible` admits that path: it passes the
+  excludes and hidden rules, and, with `respect_gitignore` on, an existing
+  path is not gitignored (missing paths skip that check). A root whose
+  checkout is gone keeps its versions, and a history error keeps the eligible
+  ones.
 
 Graph clear uses `MATCH (n {project: $project})` plus the code-index label
 predicate (`CodeFile`, `CodeSymbol`, `CodeModule`, `UnresolvedCallee`,

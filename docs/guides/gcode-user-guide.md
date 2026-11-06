@@ -455,12 +455,15 @@ claiming cleanup finished.
 Content GC considers a version only when no machine's file state and no
 overlay pin references it, and its last reference is older than
 `--retention-days`. Recent Git history then protects a version only at
-its own path: a version is kept when a commit inside the retention window reached that
-same content at that same path. A path is protected by history only while it
-passes the current config's excludes, hidden-path, and gitignore rules. A path
-the config no longer indexes is collected without a history lookup. A root
-whose checkout is gone keeps all its versions. A history lookup error keeps the
-eligible versions of that root. GC deletes each collected version's graph and
+its own path: a version is kept when a commit inside the retention window
+reached that same content at that same path. A path is eligible for history
+protection only while it passes the current excludes and is not a hidden path
+outside the hidden allowlist. When `respect_gitignore` is on, a path that still
+exists must also not be gitignored; a missing path skips the gitignore check.
+Size limits do not apply, so missing and oversized files can still be kept by
+history. A path that fails these checks is collected without a history
+lookup. A root whose checkout is gone keeps all its versions. A history lookup
+error keeps the eligible versions of that root. GC deletes each collected version's graph and
 vector projections before its hub rows, then runs one graph orphan sweep per
 project whose graph facts it deleted. Prune never sweeps orphaned vector
 points; that is `gcode vector reconcile`.
