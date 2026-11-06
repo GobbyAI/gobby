@@ -120,6 +120,36 @@ async def test_surface_truncates_overlong_text() -> None:
     assert len(kwargs["query"]) == 2000
 
 
+async def test_surface_logs_the_stage_breakdown_of_each_recall(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every recall logs where its time went, so a slow turn start can be attributed."""
+    from gobby.memory import stage_timing
+
+    registry, memory_manager = _registry(candidates=[_memory(1)])
+
+    async def search_with_stages(**_kwargs: Any) -> list[SimpleNamespace]:
+        stage_timing.record("falkor_server", 0.0125)
+        return [_memory(1)]
+
+    memory_manager.search_memories = AsyncMock(side_effect=search_with_stages)
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.memory_surface"):
+        await registry.call(
+            "surface_memories",
+            {"text": "Handoff contract", "trigger": "task", "session_id": SESSION_ID},
+        )
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "gobby.mcp_proxy.tools.memory_surface"
+    ]
+    assert any(
+        "trigger=task" in message and "falkor_server=12ms/1" in message for message in messages
+    )
+
+
 async def test_surface_fails_open(caplog: pytest.LogCaptureFixture) -> None:
     registry, _memory_manager = _registry(search_error=RuntimeError("vector store unreachable"))
 

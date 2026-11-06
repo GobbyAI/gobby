@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_session import resolve_session
+from gobby.memory import stage_timing
 from gobby.memory.prompt_triage import is_substantive_prompt
 from gobby.memory.push_exclusion import PUSH_EXCLUDED_TAGS
 
@@ -33,10 +35,28 @@ TURN_MIN_PROMPT_WORDS = 6
 SURFACE_CALLER = "memory.surface"
 
 SurfaceTrigger = Literal["turn", "spawn_agent", "task", "handoff"]
+# A recall at or over this wall time is logged at INFO with its stage breakdown;
+# faster recalls log the same line at DEBUG.
+_SLOW_RECALL_SECONDS = 1.0
 
 
 def _empty(trigger: str) -> dict[str, Any]:
     return {"trigger": trigger, "count": 0, "memories": []}
+
+
+def _log_recall_stages(
+    trigger: str,
+    total_seconds: float,
+    timings: stage_timing.StageTimings,
+) -> None:
+    level = logging.INFO if total_seconds >= _SLOW_RECALL_SECONDS else logging.DEBUG
+    logger.log(
+        level,
+        "memory recall trigger=%s total=%.0fms stages: %s",
+        trigger,
+        total_seconds * 1000,
+        timings.render(),
+    )
 
 
 def _serialize(memory: Any) -> dict[str, Any]:
@@ -107,18 +127,21 @@ def register_memory_surface_tools(
                     return _empty(trigger)
 
             manager = memory_manager()
-            memories = await manager.search_memories(
-                # The search service embeds ``embed_text`` and hands ``query``
-                # to the keyword leg; passing the same text keeps both verbatim.
-                query=query,
-                embed_text=query,
-                project_id=project_id,
-                limit=SURFACE_LIMIT,
-                tags_none=list(PUSH_EXCLUDED_TAGS),
-                min_score=SURFACE_MIN_SCORE,
-                session_id=resolved_session_id,
-                caller=SURFACE_CALLER,
-            )
+            search_started = time.perf_counter()
+            with stage_timing.recording() as timings:
+                memories = await manager.search_memories(
+                    # The search service embeds ``embed_text`` and hands ``query``
+                    # to the keyword leg; passing the same text keeps both verbatim.
+                    query=query,
+                    embed_text=query,
+                    project_id=project_id,
+                    limit=SURFACE_LIMIT,
+                    tags_none=list(PUSH_EXCLUDED_TAGS),
+                    min_score=SURFACE_MIN_SCORE,
+                    session_id=resolved_session_id,
+                    caller=SURFACE_CALLER,
+                )
+            _log_recall_stages(trigger, time.perf_counter() - search_started, timings)
         except Exception:
             # Surfacing is unasked-for context; it never fails the caller's turn.
             logger.warning(
