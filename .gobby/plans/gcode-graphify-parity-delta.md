@@ -1293,8 +1293,14 @@ Consumers unchanged:
   `tests/scripts/conftest.py::openrouter_wire`, which answers Box and also resets
   `decisions._service_cache`:
   `::test_capture_box_failure_does_not_block_raw_probes` expects `box["finding"] ==
-  {"reason": "http_status", "detail": "HTTP 400"}` on both wires;
+  {"reason": "http_status", "detail": "HTTP 400"}`;
   `::test_capture_output_omits_key_and_image` expects the image's base64 absent;
+  `::test_capture_box_failure_does_not_block_raw_probes` and
+  `::test_capture_records_bounded_redacted_http_errors` are parametrized over `wire_api`
+  `systemone` and `openrouter-decisions`. After #25789, Box routed to `systemone` is refused at
+  configuration load, so in both tests `wire_api` selects only the default endpoint, which
+  serves Choice, Noul, Score and the raw probes. Box is always overridden to the supported
+  `openrouter-decisions` fake endpoint, whose HTTP 400 the Box record captures;
   `::test_capture_records_bounded_redacted_http_errors` reads the Box record's `exchanges`;
   `::test_capture_records_every_shape_and_probe` expects all four kinds sent. These four run on
   the test file as #25789 leaves it.
@@ -1337,9 +1343,9 @@ Consumers unchanged:
 
 - 2.4.1 - With Box routed to its own endpoint, the Box record names `consumer` `gobby-decisions:evaluate`, carries the tool's `questions` argument with the absolute `image_path`, the image's `image_sha256`, the tool's typed output with the Box endpoint's `response_model` and `backend_identity`, and one recorded exchange; one Box request reaches the Box endpoint and none the default endpoint, which still receives Choice, Noul and Score; and the service cache is restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
 - 2.4.2 - A GIF `--box-image` yields the tool's `invalid_request` finding with detail "image must be a PNG or JPEG file", sends no Box request, and the six probes still run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool`.
-- 2.4.3 - The tool's HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status", "detail": "HTTP 400"}` on both wires and does not block the probes. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
+- 2.4.3 - With the default endpoint on each of `systemone` and `openrouter-decisions` and Box always overridden to the `openrouter-decisions` fake endpoint, the tool's HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status", "detail": "HTTP 400"}` and the default endpoint's probes still run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
 - 2.4.4 - The capture section omits the key and the base64 of the image file's bytes, and the script imports none of `LIVE_CONFIG_MODULES`. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.
-- 2.4.5 - The Box record's failed exchanges stay bounded and redacted through the tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
+- 2.4.5 - With the default endpoint on each of `systemone` and `openrouter-decisions` and Box always overridden to the `openrouter-decisions` fake endpoint, the Box record's failed exchanges stay bounded and redacted through the tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
 - 2.4.6 - All four kinds still reach the wire, and the probe and cost records are unchanged. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.
 
 **Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
@@ -1635,6 +1641,13 @@ changes no configuration file.
     option (a). Only Box crosses it, and Choice, Noul and Score keep their
     direct `DecisionService` calls.
   - Decision 19, the Overview, the P2 granularity note and V2 item 7 now say so.
+- 2026-11-05: The Adversary's review of `b28c448ebcc97271b718be7e018fe64c007ad17a`
+  resolved GP-20261105-05 and -06 and raised GP-20261105-07: after #25789, Box
+  routed to `systemone` is refused at configuration load, so 2.4.3's HTTP 400
+  "on both wires" named an impossible route. 2.4's research, 2.4.3 and, by the
+  same sweep, 2.4.5 now say that the two `wire_api` parameters select the
+  default endpoint only and Box is always overridden to the `openrouter-decisions`
+  fake endpoint. No test, leaf or mechanism is added.
 
 ## V2: Verification
 `kind: verification`
