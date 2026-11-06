@@ -427,8 +427,11 @@ class KnowledgeGraphReader:
             if cached_rows is not None:
                 rows = cached_rows
             else:
+                # WITH barrier: materialize the UNWIND rows before the indexed
+                # entity MATCH. Without it the planner scans _Entity per hop (1.5-5 s
+                # on the live graph); with it the same rows return in milliseconds.
                 rows = await self._falkor.query(
-                    "UNWIND $source_keys AS source_key "
+                    "UNWIND $source_keys AS source_key WITH source_key "
                     "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity) "
                     "WHERE ((start.project_id = $project_id AND start.is_global = false) "
                     "OR ($include_global AND start.is_global = true)) "
@@ -643,7 +646,7 @@ class KnowledgeGraphReader:
                     return RelatedMemoryTraversal()
 
                 rows = await self._falkor.query(
-                    "UNWIND $entity_keys AS entity_key "
+                    "UNWIND $entity_keys AS entity_key WITH entity_key "
                     "MATCH (e:_Entity {entity_key: entity_key})"
                     "-[:MENTIONED_IN]->(m:Memory) "
                     "WHERE ((e.project_id = $project_id AND e.is_global = false) "

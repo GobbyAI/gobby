@@ -277,6 +277,46 @@ async def test_query_maps_query_timed_out_response_to_falkor_timeout_error(
     assert "FalkorDB query timed out" in str(exc_info.value)
 
 
+async def test_query_splits_round_trip_into_server_execution_and_wall_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server execution time is reported separately so client-side wait is visible."""
+    from gobby.memory import stage_timing
+
+    client = _client(monkeypatch)
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.next_result = types.SimpleNamespace(
+        header=[], result_set=[], statistics={}, run_time_ms=12.5
+    )
+
+    with stage_timing.recording() as timings:
+        await client.query("MATCH (n) RETURN n")
+
+    assert timings.calls == {"falkor_wall": 1, "falkor_server": 1}
+    assert timings.seconds["falkor_server"] == pytest.approx(0.0125)
+
+
+async def test_query_records_wall_time_even_when_the_round_trip_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import redis.exceptions
+
+    from gobby.memory import stage_timing
+    from gobby.memory.falkor_client import FalkorTimeoutError
+
+    client = _client(monkeypatch)
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.next_error = redis.exceptions.TimeoutError("Timeout reading from 127.0.0.1")
+
+    with stage_timing.recording() as timings:
+        with pytest.raises(FalkorTimeoutError):
+            await client.query("RETURN 1")
+
+    assert timings.calls == {"falkor_wall": 1}
+
+
 async def test_ensure_memory_graph_schema_gates_unique_constraints_with_indexes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

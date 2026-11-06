@@ -303,6 +303,40 @@ class TestFindRelatedMemoryIds:
         assert "coalesce(r.weight, 1.0) AS edge_weight" in cypher
         assert "r.updated_at AS updated_at" in cypher
 
+    async def test_traversal_materializes_unwind_rows_before_indexed_match(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        """UNWIND rows pass a WITH barrier before each indexed entity MATCH.
+
+        Without the barrier FalkorDB plans the entity MATCH as a scan and
+        filters the rows afterwards: 1.5-5 s per hop on the live graph, against
+        4-460 ms with the rows materialized first. The real-server regression
+        lives in tests/memory/test_graph_traversal_live.py.
+        """
+        python_key = entity_key(PERSONAL_PROJECT_ID, "Python")
+        mock_falkor.query = AsyncMock(
+            side_effect=[
+                [_neighbor_row(python_key, entity_key(PERSONAL_PROJECT_ID, "Django"))],
+                [{"memory_id": "mem-100"}],
+            ]
+        )
+
+        await service.find_related_memory_ids(entity_keys=[python_key], max_hops=1, limit=20)
+
+        cyphers = [call.args[0] for call in mock_falkor.query.call_args_list]
+        assert len(cyphers) == 2
+        hop_cypher, memory_cypher = cyphers
+        assert (
+            "UNWIND $source_keys AS source_key WITH source_key "
+            "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity)"
+        ) in hop_cypher
+        assert (
+            "UNWIND $entity_keys AS entity_key WITH entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+        ) in memory_cypher
+
     async def test_caps_seed_entities(
         self,
         service: KnowledgeGraphService,
