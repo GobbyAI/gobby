@@ -36,3 +36,17 @@ def test_rejects_unhashable_mapping_key() -> None:
 
 def test_plain_mapping_loads_unchanged() -> None:
     assert load_strict_yaml("a: 1\nb: [x, y]\n") == {"a": 1, "b": ["x", "y"]}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "x: !!python/object/apply:builtins.dict []\n",
+        "x: !!python/name:os.system\n",
+    ],
+)
+def test_refuses_non_safe_yaml_tags(text: str) -> None:
+    # The loader is safe only while it stays a yaml.SafeLoader subclass, so non-safe tags
+    # must keep failing to construct instead of resolving to Python objects.
+    with pytest.raises(yaml.YAMLError, match="could not determine a constructor"):
+        load_strict_yaml(text)
