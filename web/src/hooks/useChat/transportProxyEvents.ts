@@ -20,7 +20,6 @@ import type { UseChatTransportParams } from "./transportTypes";
 const UNKNOWN_SESSION_META = {
   ref: null,
   source: "unknown",
-  title: null,
   status: "unknown",
   canProxyAttach: false,
   model: null,

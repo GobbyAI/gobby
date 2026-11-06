@@ -7,7 +7,6 @@ import {
 } from "../ui/Dialog";
 import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
-import { getSessionTitleText } from "../../lib/sessionTitle";
 import { getSourceColorVar, SOURCE_LABELS } from "../shared/sourceTheme";
 import { Heading } from "../shared/Heading";
 import { Button } from "../ui/Button";
@@ -105,7 +104,6 @@ export function ResumeSessionModal({
     const q = search.toLowerCase();
     return sorted.filter(
       (s) =>
-        (s.title && s.title.toLowerCase().includes(q)) ||
         s.source.toLowerCase().includes(q) ||
         (s.ref && s.ref.toLowerCase().includes(q)),
     );
@@ -259,8 +257,7 @@ export function ResumeSessionModal({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {session.ref ? `${session.ref}: ` : ""}
-                    {getSessionTitleText(session.title)}
+                    {session.ref ?? ""}
                   </div>
                   <div
                     style={{

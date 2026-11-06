@@ -438,48 +438,6 @@ export function useSessionCatalog(
     });
   }, []);
 
-  const renameSession = useCallback(
-    async (id: string, title: string) => {
-      const previousSession = sessions.find((s) => s.id === id);
-      setSessions((prev) =>
-        prev.map((session) =>
-          session.id === id ? { ...session, title } : session,
-        ),
-      );
-
-      const restorePreviousTitle = () => {
-        if (!previousSession) {
-          return;
-        }
-        const previousTitle = previousSession.title;
-        setSessions((prev) =>
-          prev.map((session) =>
-            session.id === id ? { ...session, title: previousTitle } : session,
-          ),
-        );
-      };
-
-      try {
-        const baseUrl = getBaseUrl();
-        const response = await fetch(`${baseUrl}/api/sessions/${id}/rename`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title }),
-        });
-        if (!response.ok) {
-          console.error(`Rename failed: ${response.status}`);
-          restorePreviousTitle();
-          await refreshPageOne();
-        }
-      } catch (e) {
-        console.error("Failed to rename session:", e);
-        restorePreviousTitle();
-        await refreshPageOne();
-      }
-    },
-    [refreshPageOne, sessions],
-  );
-
   return {
     sessions: sortedSessions,
     isLoading,
@@ -493,6 +451,5 @@ export function useSessionCatalog(
     confirmSessionDeleted,
     restoreSession,
     deletingIds,
-    renameSession,
   };
 }

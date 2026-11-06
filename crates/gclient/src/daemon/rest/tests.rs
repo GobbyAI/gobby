@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::Workspace;
-use crate::daemon::{Checkout, ProjectRow, SidebarRows};
+use crate::daemon::{Checkout, LayoutAxis, LayoutNode, ProjectRow, SidebarRows};
 use crate::ui::chrome::Chrome;
 use crate::ui::chrome_render::render_workspace;
 use crate::ui::sidebar::agent_rows;
@@ -11,7 +11,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 
-async fn read_json_response(response: &'static [u8]) -> Result<Value, DaemonError> {
+async fn read_json_response<T: DeserializeOwned>(
+    response: impl AsRef<[u8]> + Send + 'static,
+) -> Result<T, DaemonError> {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move {
@@ -34,7 +36,10 @@ async fn read_json_response(response: &'static [u8]) -> Result<Value, DaemonErro
                 assert_ne!(count, 0, "request closed before headers completed");
                 received += count;
             }
-            stream.write_all(response).await.expect("write response");
+            stream
+                .write_all(response.as_ref())
+                .await
+                .expect("write response");
             stream.shutdown().await.expect("end response");
         })
         .await
@@ -56,9 +61,51 @@ async fn read_json_response(response: &'static [u8]) -> Result<Value, DaemonErro
     result
 }
 
+/// A right-deep tree: every split keeps one pane on the left and the rest of
+/// the layout on the right, so `panes - 1` splits nest `2 * (panes - 1)` levels.
+fn right_deep_layout(panes: usize) -> LayoutNode {
+    let mut node = LayoutNode::Pane {
+        pane_id: format!("pane-{}", panes - 1),
+    };
+    for index in (0..panes - 1).rev() {
+        node = LayoutNode::Split {
+            axis: LayoutAxis::Horizontal,
+            ratio: 0.5,
+            children: Box::new([
+                LayoutNode::Pane {
+                    pane_id: format!("pane-{index}"),
+                },
+                node,
+            ]),
+        };
+    }
+    node
+}
+
+#[tokio::test]
+async fn right_deep_layout_decodes_through_the_rest_client_without_truncation() {
+    for panes in [64, 100] {
+        let layout = right_deep_layout(panes);
+        let body = serde_json::to_vec(&layout).expect("encode layout");
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&body);
+        let decoded = read_json_response::<LayoutNode>(response)
+            .await
+            .unwrap_or_else(|error| panic!("{panes}-pane layout must decode: {error:?}"));
+        assert_eq!(
+            decoded, layout,
+            "{panes}-pane layout must round-trip unchanged"
+        );
+    }
+}
+
 #[tokio::test]
 async fn interrupted_successful_json_body_is_unavailable() {
-    let result = read_json_response(
+    let result = read_json_response::<Value>(
         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n[",
     )
     .await;
@@ -70,7 +117,7 @@ async fn interrupted_successful_json_body_is_unavailable() {
 
 #[tokio::test]
 async fn complete_malformed_json_body_stays_protocol_failure() {
-    let result = read_json_response(
+    let result = read_json_response::<Value>(
         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1\r\n\r\n[",
     )
     .await;
@@ -82,7 +129,7 @@ async fn complete_malformed_json_body_stays_protocol_failure() {
 
 #[tokio::test]
 async fn interrupted_unauthorized_response_stays_unauthorized() {
-    let result = read_json_response(
+    let result = read_json_response::<Value>(
         b"HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n[",
     )
     .await;

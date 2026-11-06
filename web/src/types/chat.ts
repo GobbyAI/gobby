@@ -249,7 +249,6 @@ export interface ContextUsage {
 export interface SessionObservationMeta {
   ref: string | null;
   source: string;
-  title: string | null;
   status: string;
   canProxyAttach?: boolean;
   model: string | null;
@@ -277,7 +276,6 @@ export interface SwappedSessionTarget {
 export interface ChatState {
   messages: ChatMessage[];
   sessionRef: string | null;
-  sessionTitle?: string | null;
   currentBranch: string | null;
   worktreePath: string | null;
   isStreaming: boolean;
@@ -369,7 +367,6 @@ export interface ConversationState {
   onNewChat: (agentName?: string) => void;
   onSelectSession: (session: GobbySession) => void;
   onDeleteSession?: (session: GobbySession) => void;
-  onRenameSession?: (id: string, title: string) => void;
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (
     sessionId: string,

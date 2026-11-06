@@ -9,7 +9,6 @@ import {
 import type { GobbySession } from "../../types/sessions";
 import { useNow } from "../../hooks/useNow";
 import { formatRelativeTime } from "../../utils/formatTime";
-import { getSessionTitleText } from "../../lib/sessionTitle";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -29,7 +28,6 @@ interface CommandPaletteProps {
   activeSessionId: string | null;
   onSelectSession: (session: GobbySession) => void;
   onDeleteSession?: (session: GobbySession) => void;
-  onRenameSession?: (id: string, title: string) => void; // future: inline rename
   actions: CommandPaletteAction[];
 }
 
@@ -40,10 +38,8 @@ export function CommandPalette({
   activeSessionId,
   onSelectSession,
   onDeleteSession,
-  onRenameSession: _onRenameSession,
   actions,
 }: CommandPaletteProps) {
-  void _onRenameSession; // future: inline rename
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -96,14 +92,9 @@ export function CommandPalette({
       : sessions
           .filter((s) => {
             if (!searchTerm) return true;
-            const title = (s.title || "").toLowerCase();
             const ref = (s.ref ?? "").toLowerCase();
             const seq = s.ref ?? "";
-            return (
-              title.includes(searchTerm) ||
-              ref.includes(searchTerm) ||
-              seq.includes(searchTerm)
-            );
+            return ref.includes(searchTerm) || seq.includes(searchTerm);
           })
           // Order by ref (#N) descending so each recency bucket lists newest first.
           .sort((a, b) => (b.seq_num ?? 0) - (a.seq_num ?? 0));
@@ -436,7 +427,6 @@ function SessionItem({
   onHover: () => void;
 }) {
   const seqLabel = session.ref ?? null;
-  const titleText = getSessionTitleText(session.title);
 
   return (
     <div
@@ -460,13 +450,7 @@ function SessionItem({
       >
         {seqLabel}
       </span>
-      <span
-        dir="auto"
-        className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)] [unicode-bidi:isolate]"
-      >
-        {titleText}
-      </span>
-      <span className="command-palette-item-time shrink-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">
+      <span className="command-palette-item-time ml-auto shrink-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">
         {formatRelativeTime(session.updated_at)}
       </span>
     </div>

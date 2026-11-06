@@ -67,7 +67,6 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
     setProxyDeliveryNotice,
     setSessionInteractionMode,
     setSessionRef,
-    setSessionTitle,
     setViewingSessionId,
     setViewingSessionMeta,
     shouldApplyHydratedUsage,
@@ -123,7 +122,6 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
 
     if (mainSessionMeta) {
       setSessionRef(mainSessionMeta.ref);
-      setSessionTitle(mainSessionMeta.title ?? null);
       setCurrentBranch(mainSessionMeta.gitBranch ?? null);
       if (mainSessionMeta.contextWindow) {
         setContextUsage((prev) => ({
@@ -135,7 +133,6 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
       }
     } else {
       setSessionRef(null);
-      setSessionTitle(null);
       setCurrentBranch(null);
       setContextUsage(buildContextUsageFromTotals({}));
     }
@@ -285,7 +282,6 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
           const nextMeta: SessionObservationMeta = {
             ref,
             source: s.source || "unknown",
-            title: s.title || null,
             status: s.status || "unknown",
             canProxyAttach: canProxyAttachSessionRecord(s),
             model: s.model || null,
