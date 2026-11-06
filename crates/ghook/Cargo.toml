@@ -11,6 +11,7 @@ homepage = "https://gobby.ai"
 readme = "README.md"
 keywords = ["gobby", "cli", "hooks"]
 categories = ["command-line-utilities", "development-tools"]
+autotests = false
 
 [[bin]]
 name = "ghook"
@@ -39,3 +40,6 @@ uuid = { version = "1", features = ["v4"] }
 jsonschema = { version = "0.17", default-features = false }
 temp-env = "0.3.6"
 tempfile = "3"
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

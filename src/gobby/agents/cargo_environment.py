@@ -11,12 +11,17 @@ _SOCKET_PATH_LIMIT = 103
 
 
 def cargo_environment(cache_dir: Path, socket: Path | None) -> dict[str, str]:
-    """Return the sccache and Cargo job-limit variables for one launch.
+    """Return the sccache, incremental and Cargo job-limit variables for one launch.
 
     Without sccache or a usable socket, the sccache variables are blank rather than
     absent: launch callers merge this over an inherited environment, and an absent
     key would keep a value from another trust domain. Cargo treats an empty
     RUSTC_WRAPPER as no wrapper.
+
+    Incremental output is per-tree and sccache cannot cache it, so a wrapped build
+    sets CARGO_INCREMENTAL=0 and its workspace crates become cacheable across trees.
+    Cargo reads any set value, blank included, as incremental off, so an unwrapped
+    launch builds non-incrementally. The blank value still clears an inherited one.
     """
     # Keep the PATH spelling: a resolved Homebrew Cellar path breaks on upgrade.
     wrapper = shutil.which("sccache")
@@ -26,6 +31,7 @@ def cargo_environment(cache_dir: Path, socket: Path | None) -> dict[str, str]:
         cache, server = str(cache_dir), str(socket)
     return {
         "CARGO_BUILD_JOBS": "4",
+        "CARGO_INCREMENTAL": "0" if wrapper else "",
         "RUSTC_WRAPPER": wrapper,
         "SCCACHE_DIR": cache,
         "SCCACHE_SERVER_UDS": server,

@@ -5,7 +5,7 @@
 //! side of the binding event. Each test drives the live path end to end:
 //! `drain_live_events`, the workspace model, `sync_live_chrome`, then the Chrome.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use gobby_client::app::{
     apply_live_menu_action, focus_agent, sync_live_chrome, ContextMenuKind, MenuAction,

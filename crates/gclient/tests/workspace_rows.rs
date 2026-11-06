@@ -2,7 +2,7 @@
 //! its focus from them and writes them back whenever its focus moves, so the
 //! next window (or the next start) lands where the last actor left off.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use gobby_client::app::run_live_loop;

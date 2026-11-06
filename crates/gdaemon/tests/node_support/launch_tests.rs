@@ -769,7 +769,7 @@ fn codex_symlink_seed_is_refused_with_a_warning() -> Result<()> {
     let output = std::process::Command::new(std::env::current_exe()?)
         .args([
             "--exact",
-            "launch_tests::codex_symlink_warning_child",
+            "node_agents::launch_tests::codex_symlink_warning_child",
             "--ignored",
             "--nocapture",
         ])

@@ -1,6 +1,6 @@
 //! 3.3.12 RAII terminal restore.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use mock_daemon::MockDaemon;
 

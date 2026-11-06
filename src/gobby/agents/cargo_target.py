@@ -1,22 +1,23 @@
 """Checkout-specific Cargo build directories.
 
-Each checkout builds into a deterministic directory below
-``~/.gobby/cache/cargo-target-v2/<project_id>/``. The checkout path participates
-in the cache key, so a main checkout, worktree, and clone never exchange build
-artifacts. Interactive shells reach the directory through a ``target`` symlink
-and build with the operator's own Cargo home. Unsandboxed spawned agents build
-with Gobby's shared ``CARGO_HOME``, and fingerprints embed that home's registry
-source paths, so they receive a sibling ``<checkout>-agent`` directory as
-``CARGO_TARGET_DIR`` instead of the operator's target. Sandboxed runs build with
-their own Cargo home into a per-checkout target under the sandbox cache. Checkout
-cleanup removes all three targets, and artifact readers resolve the release
-directory through ``cargo_release_dir`` so they follow whichever target a build
-used.
+Each checkout builds into a deterministic directory below the agent build root
+(``~/.gobby/cache`` unless ``agent_build.build_root`` names another canonical
+directory): ``<build root>/cargo-target-v2/<project_id>/``. The checkout path
+participates in the cache key, so a main checkout, worktree, and clone never
+exchange build artifacts. Interactive shells reach the directory through a
+``target`` symlink and build with the operator's own Cargo home. Unsandboxed
+spawned agents build with Gobby's shared ``CARGO_HOME``, and fingerprints embed
+that home's registry source paths, so they receive a sibling ``<checkout>-agent``
+directory as ``CARGO_TARGET_DIR`` instead of the operator's target. Sandboxed runs
+build with their own Cargo home into ``<build root>/sandbox/cargo-target``, which
+no unsandboxed build reads. Checkout cleanup removes all three targets, and
+artifact readers resolve the release directory through ``cargo_release_dir`` so
+they follow whichever target a build used.
 
 The link is added to the repository's local exclude file because the conventional
 ``target/`` ignore pattern matches directories and leaves a symlink untracked.
-Existing real directories and foreign symlinks are preserved. Gobby's legacy
-project-wide symlink is replaced atomically without copying its artifacts.
+Existing real directories and foreign symlinks are preserved. A ``target`` link
+that Gobby wrote under an earlier build root is re-pointed; nothing else is moved.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
-from gobby.agents.constants import agent_home_cache_root, sandbox_agent_cache_dir
+from gobby.agents.build_root import agent_build_root
 
 logger = logging.getLogger(__name__)
 
@@ -56,19 +57,10 @@ def _project_cache_root(project_id: str) -> Path:
         limit=_PROJECT_COMPONENT_LENGTH,
         fallback="unknown-project",
     )
-    return agent_home_cache_root() / "cargo-target-v2" / safe_id
+    return agent_build_root() / "cargo-target-v2" / safe_id
 
 
-def _legacy_cargo_target_dir(project_id: str) -> Path:
-    safe_id = _safe_component(
-        project_id,
-        limit=_PROJECT_COMPONENT_LENGTH,
-        fallback="unknown-project",
-    )
-    return agent_home_cache_root() / "cargo-target" / safe_id
-
-
-def _checkout_component(checkout: Path) -> str:
+def checkout_component(checkout: Path) -> str:
     canonical = checkout.expanduser().resolve(strict=False)
     safe_name = _safe_component(
         canonical.name,
@@ -81,11 +73,11 @@ def _checkout_component(checkout: Path) -> str:
 
 def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
     """Return the deterministic Cargo target directory for one checkout."""
-    return _project_cache_root(project_id) / _checkout_component(checkout)
+    return _project_cache_root(project_id) / checkout_component(checkout)
 
 
 def _sandbox_target_root() -> Path:
-    return sandbox_agent_cache_dir() / "cargo-target"
+    return agent_build_root() / "sandbox" / "cargo-target"
 
 
 def sandbox_checkout_cargo_target_dir(checkout: Path) -> Path:
@@ -96,7 +88,7 @@ def sandbox_checkout_cargo_target_dir(checkout: Path) -> Path:
     unsandboxed builds would rebuild every dependency on each alternation. Keyed
     by checkout path alone: a run knows its workspace but not always its project.
     """
-    return _sandbox_target_root() / _checkout_component(checkout)
+    return _sandbox_target_root() / checkout_component(checkout)
 
 
 def agent_checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
@@ -107,7 +99,7 @@ def agent_checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
     dependency on each alternation (#23198). The suffix cannot collide with a
     checkout component, which always ends in a hexadecimal path hash.
     """
-    return _project_cache_root(project_id) / f"{_checkout_component(checkout)}-agent"
+    return _project_cache_root(project_id) / f"{checkout_component(checkout)}-agent"
 
 
 def ensure_agent_cargo_target_dir(checkout: Path, project_id: str) -> str:
@@ -202,24 +194,37 @@ def _replace_target_symlink(target: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _is_gobby_checkout_target(destination: Path, desired: Path) -> bool:
+    """True when a link names this checkout's target under another build root.
+
+    The root may differ, but the ``cargo-target-v2/<project>/<checkout>`` layout and
+    the checkout component must match, so a foreign link is never claimed.
+    """
+    return (
+        destination.name == desired.name
+        and destination.parent.name == desired.parent.name
+        and destination.parent.parent.name == desired.parent.parent.name
+    )
+
+
 def link_checkout_cargo_target(checkout: Path, project_id: str) -> bool:
     """Point ``<checkout>/target`` at its checkout-specific Cargo target.
 
     Returns True when the link exists afterwards. A checkout without a
     ``Cargo.toml`` is left alone, as is any existing ``target`` entry that is
-    neither the desired link nor Gobby's legacy shared link. Nothing raises.
+    neither the desired link nor one Gobby wrote under an earlier build root.
+    Nothing raises.
     """
     if not (checkout / "Cargo.toml").is_file():
         return False
     target = checkout / "target"
     try:
         desired = checkout_cargo_target_dir(checkout, project_id)
-        legacy = _legacy_cargo_target_dir(project_id)
         if target.is_symlink():
             destination = os.readlink(target)
             if destination == str(desired):
                 desired.mkdir(parents=True, exist_ok=True)
-            elif destination == str(legacy):
+            elif _is_gobby_checkout_target(Path(destination), desired):
                 desired.mkdir(parents=True, exist_ok=True)
                 _replace_target_symlink(target, desired)
             else:

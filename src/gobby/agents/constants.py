@@ -171,6 +171,11 @@ def shared_agent_cargo_home_dir() -> Path:
     Gobby home; the operator's own ``~/.cargo`` is untouched, which is why agents
     build into their own target rather than the operator's. Sandboxed runs never
     write it: they build from ``sandbox_agent_cache_dir`` instead.
+
+    The two Cargo homes are separate on purpose: each trust domain keeps its own
+    home and target, so a sandboxed build cannot write what an unsandboxed build
+    executes from. Sharing one home across both would make each invalidate the
+    other's fingerprints, since Cargo keys them on ``CARGO_HOME``.
     """
     return agent_home_cache_root() / "cargo-home"
 
@@ -189,10 +194,11 @@ def ensure_agent_sccache_dir() -> Path:
 def sandbox_agent_cache_dir() -> Path:
     """Return the cache root that sandboxed runs share and nothing else builds from.
 
-    It holds their Cargo home, their per-checkout Cargo targets and their Zig
-    package mirror, so each stays warm across runs. Sandboxed runs write the
-    Cargo home and their own checkout's target, so no unsandboxed build may read
-    or execute anything below this root.
+    It holds their Cargo home and their Zig package mirror, so each stays warm
+    across runs. Their per-checkout Cargo targets live under the build root's
+    ``sandbox/cargo-target`` instead, because the build root can sit on its own
+    volume. Sandboxed runs write the Cargo home and their own checkout's target,
+    so no unsandboxed build may read or execute anything below this root.
     """
     return agent_home_cache_root() / "sandbox"
 

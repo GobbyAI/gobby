@@ -10,6 +10,7 @@ repository = "https://github.com/GobbyAI/gobby"
 homepage = "https://gobby.ai"
 keywords = ["gobby", "database", "schema"]
 categories = ["command-line-utilities", "development-tools"]
+autotests = false
 
 [lib]
 name = "gobby_daemon"
@@ -63,3 +64,6 @@ assert_cmd = "2"
 tempfile = "3"
 tokio-postgres = "0.7.18"
 tokio = { version = "1", features = ["test-util"] }
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

@@ -1,4 +1,4 @@
-mod mock_daemon;
+use super::mock_daemon;
 
 use gobby_client::app::{plan_arrange, ArrangeLayout};
 use mock_daemon::MockDaemon;

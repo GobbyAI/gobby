@@ -1,9 +1,9 @@
 //! Internal MCP family contract (plan `rust-internal-mcp-servers` section 1.1).
 //!
-//! Tests sit in `mod mcp_contract` so `cargo nextest run -p gobby-core
+//! Tests sit under the `mcp_contract` suite module so `cargo nextest run -p gobby-core
 //! -E 'test(mcp_contract)'` selects them by name.
 
-mod mcp_contract {
+mod contract {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

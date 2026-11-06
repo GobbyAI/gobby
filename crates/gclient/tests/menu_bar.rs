@@ -1,4 +1,4 @@
-mod mock_daemon;
+use super::mock_daemon;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::apply_live_menu_action;

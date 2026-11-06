@@ -624,6 +624,8 @@ _RESTART_PREFIXES = (
     # Header trust and the /mcp Host allowance are read when the app is created.
     "ui_exposure.",
     "mcp_exposure.",
+    # The build root is installed once at startup, so every cleanup and grant reads one value.
+    "agent_build.",
 )
 _RESTART_NESTED_PATHS = frozenset(
     {

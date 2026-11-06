@@ -1,5 +1,5 @@
 //! New/Open project registration and default-workspace attachment.
-mod mock_daemon;
+use super::mock_daemon;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use gobby_client::app::{

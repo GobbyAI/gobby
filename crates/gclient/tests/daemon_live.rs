@@ -1,4 +1,4 @@
-mod mock_daemon;
+use super::mock_daemon;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;

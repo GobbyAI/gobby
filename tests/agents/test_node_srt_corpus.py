@@ -36,6 +36,7 @@ from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions, prepare_sandbox_run_paths
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
 from gobby.agents.srt_settings import render_srt_settings
+from gobby.utils import local_token
 from gobby.utils.project_context import get_project_sandbox_config
 
 _CORPUS = (
@@ -459,6 +460,8 @@ def _evaluate(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
+    # The canonical operator bootstrap follows the passwd home, so pin it to the fixture home.
+    monkeypatch.setattr(local_token, "account_home", lambda: Path(layout["home"]))
     settings, env = _run_chain(inputs)
     return settings, env, layout
 
@@ -475,6 +478,7 @@ def _refusal(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
+    monkeypatch.setattr(local_token, "account_home", lambda: Path(layout["home"]))
     try:
         _run_chain(inputs)
     except ValueError as exc:

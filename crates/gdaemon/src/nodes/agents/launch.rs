@@ -267,6 +267,7 @@ fn policy_inputs(
         prewarm_pre_commit_store: payload.prewarm_pre_commit_store,
         platform: context.platform.clone(),
         darwin_user_dirs: None,
+        account_home: None,
         // The payload carries no seat-folder authority, so these grant nothing.
         definition: None,
         session_seq: None,

@@ -990,7 +990,7 @@
     {
       "id": "native-contract",
       "kind": "tests",
-      "command": "cargo nextest run -p gobby-code -E 'binary(contract)' --status-level fail --final-status-level fail",
+      "command": "cargo nextest run -p gobby-code -E 'binary(suite) & test(/^contract::/)' --status-level fail --final-status-level fail",
       "result": "13 passed in 0.038s; compiled contract matches native pinned fixture. Python-side stale fixture regenerated from same built contract."
     },
     {

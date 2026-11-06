@@ -25,6 +25,7 @@ from gobby.config._loading import (
 )
 
 # Internal imports for DaemonConfig fields - NOT re-exported
+from gobby.config.agent_build import AgentBuildConfig
 from gobby.config.ai import AIConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.bootstrap import DEFAULT_DAEMON_BIND_HOST
@@ -364,6 +365,10 @@ class DaemonConfig(BaseModel):
             allow_network=False,
         ),
         description="Daemon-owned sandbox defaults for spawned agent runtimes.",
+    )
+    agent_build: AgentBuildConfig = Field(
+        default_factory=AgentBuildConfig,
+        description="Where agent Cargo build folders are written.",
     )
     communications: CommunicationsConfig = Field(
         default_factory=CommunicationsConfig,

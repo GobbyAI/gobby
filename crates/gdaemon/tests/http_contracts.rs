@@ -5,7 +5,7 @@
 //! Each case replays in its declared `backend` state: `up` against a case-driven stub
 //! backend, `down` against a held backend address that refuses connections.
 
-mod common;
+use super::common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;

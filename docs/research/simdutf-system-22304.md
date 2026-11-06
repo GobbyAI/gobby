@@ -117,7 +117,7 @@ MACOSX_DEPLOYMENT_TARGET=26.0 \
 SIMD_EXPERIMENT_ARCHIVE="$SIMD_SCRATCH/pinned-system/lib/libghostty-vt.a" \
 ZIG="$SIMD_SCRATCH/use-prebuilt-zig" \
 RUSTFLAGS='-L native=/opt/homebrew/opt/simdutf/lib -l dylib=simdutf -l dylib=c++' \
-cargo nextest run -p gobby-terminal --features vt-engine --lib --test frame_producer
+cargo nextest run -p gobby-terminal --features vt-engine --lib --test suite -E 'test(frame_producer::)'
 ```
 
 `otool -L` on `cargo-target/debug/deps/gobby_terminal-39888e0cff2d915c`

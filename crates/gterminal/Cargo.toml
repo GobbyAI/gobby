@@ -11,6 +11,7 @@ homepage = "https://gobby.ai"
 keywords = ["gobby", "terminal", "pty"]
 categories = ["command-line-utilities"]
 build = "build.rs"
+autotests = false
 
 [lib]
 name = "gobby_terminal"
@@ -74,47 +75,8 @@ tempfile = "3"
 tokio = { version = "1", features = ["test-util"] }
 
 [[test]]
-name = "frame_producer"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "host_lifecycle"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "host_cli_args"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "control_protocol"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "frame_protocol"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "embed"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "link_artifacts"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "handover_display"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "host_image"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "host_handover"
-required-features = ["vt-engine"]
-
-[[test]]
-name = "wire_golden"
+name = "suite"
+path = "tests/suite.rs"
 
 [[bin]]
 name = "gterm"

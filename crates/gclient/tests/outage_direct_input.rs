@@ -4,7 +4,7 @@
 //! socket for the grant a newly focused pane needs. A key it cannot deliver
 //! says so instead of being dropped.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;

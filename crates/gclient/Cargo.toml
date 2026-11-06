@@ -10,6 +10,7 @@ repository = "https://github.com/GobbyAI/gobby"
 homepage = "https://gobby.ai"
 keywords = ["gobby", "terminal", "tui"]
 categories = ["command-line-utilities"]
+autotests = false
 
 [lib]
 name = "gobby_client"
@@ -46,3 +47,6 @@ sha1 = "0.10"
 sha2 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["test-util"] }
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

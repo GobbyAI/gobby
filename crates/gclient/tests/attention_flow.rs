@@ -1,6 +1,6 @@
 //! 3.3.3 attention respond through the daemon API.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_live_loop;

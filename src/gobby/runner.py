@@ -299,6 +299,12 @@ class GobbyRunner:
             self.startup_config = bootstrap_overlaid_config(
                 startup_snapshot.active, self.bootstrap_config
             )
+            from gobby.agents.build_root import configure_build_root
+
+            try:
+                configure_build_root(self.startup_config.agent_build.build_root)
+            except ValueError as exc:
+                raise StartRefusal(str(exc)) from exc
             await self._initialize_runtime_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)

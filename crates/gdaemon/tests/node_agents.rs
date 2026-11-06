@@ -2,8 +2,7 @@
 
 #[path = "node_support/checkout_tests.rs"]
 mod checkout_tests;
-#[path = "node_support/fake_gterm.rs"]
-mod fake_gterm;
+use super::node_support::fake_gterm;
 #[path = "node_support/fd_constructor_tests.rs"]
 mod fd_constructor_tests;
 #[path = "node_support/fd_hygiene.rs"]
@@ -1498,6 +1497,8 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
             .context("prewarm_pre_commit_store is not a bool")?,
         platform: srt_host_platform().to_string(),
         darwin_user_dirs: Some([tree.path("darwin_temp"), tree.path("darwin_cache")]),
+        // The corpus pins the passwd home to the fixture home, as the Python oracle does.
+        account_home: Some(tree.path("home")),
         // Null on every case but the workspace one: `as_str`/`as_u64` read null as absent.
         definition: filled["definition"].as_str().map(str::to_owned),
         session_seq: filled["session_seq"].as_u64(),
@@ -2648,7 +2649,7 @@ esac
         let output = std::process::Command::new(std::env::current_exe()?)
             .args([
                 "--exact",
-                "chokepoint_monitor_restart_helper",
+                "node_agents::chokepoint_monitor_restart_helper",
                 "--nocapture",
             ])
             .env("GOBBY_TEST_MONITOR_RESTART_CASE", &case_dir)

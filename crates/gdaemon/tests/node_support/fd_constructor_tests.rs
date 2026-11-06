@@ -42,7 +42,7 @@ fn constructor_closes_inherited_pipe_before_test_harness() -> Result<()> {
     let mut child = Command::new(std::env::current_exe()?)
         .args([
             "--exact",
-            "fd_constructor_tests::inherited_fd_sleeper",
+            "node_agents::fd_constructor_tests::inherited_fd_sleeper",
             "--ignored",
             "--nocapture",
             "--quiet",

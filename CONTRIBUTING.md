@@ -101,6 +101,58 @@ uv run mypy src/
 - Reference any related issues
 - Ensure CI passes before requesting review
 
+## Building Gobby
+
+Agent Cargo builds share one build root and one sccache. A workspace crate that has
+not changed compiles once and is reused by later builds that use the same target
+directory.
+
+### sccache and incremental builds
+
+When `sccache` is on `PATH` (`brew install sccache`), agent launches set
+`RUSTC_WRAPPER=sccache` and `CARGO_INCREMENTAL=0`. sccache cannot cache incremental
+output, so a wrapped build turns incremental compilation off. Without sccache, agent
+launches set `CARGO_INCREMENTAL` blank, which also turns it off. An unset variable
+keeps Cargo's default, incremental on, so an operator shell that sets nothing keeps it.
+
+sccache keys each compile on the target directory path. Hits come only from builds
+that share a target directory. A new worktree or a new target folder starts cold.
+
+### Debug info
+
+The dev profile sets `debug = "line-tables-only"`. Backtraces keep file and line, and
+the build writes less debug info. To inspect local variables in a debugger, build with
+`CARGO_PROFILE_DEV_DEBUG=2`.
+
+### Build root and sweep
+
+Agent build folders live under the build root. It defaults to `~/.gobby/cache`. To put
+them on another volume, set `agent_build.build_root` to an absolute, canonical, existing
+directory that is not `/` or your home directory, for example:
+
+```bash
+gclient config set agent_build.build_root /Volumes/GobbyBuild
+```
+
+The key is restart-required. The daemon reads it at startup, and an invalid value refuses
+the next start.
+
+`gobby build-sweep` lists build folders that no registered checkout, worktree or clone
+owns, and superseded hashed executables in folders that are still live. It is a dry run
+by default. `--apply` removes what it lists, and `--json` prints machine-readable output.
+It keeps anything touched in the last 24 hours, never follows symlinks, and reports an
+empty legacy `cache/cargo-target` without removing it.
+
+### One test program per crate
+
+Each Rust crate builds one integration test program, `suite`, from its `tests/` files.
+Cargo test auto-discovery is off. To add an integration test file, add a
+`#[path = "<name>.rs"] mod <name>;` entry to that crate's `tests/suite.rs`. Filter by
+the binary name, for example
+`cargo nextest run -p gobby-terminal --test suite -E 'binary(suite) & test(/^build_env::/)'`.
+The `schema_contract`, `catalog_manifest_freshness` and `projection_stale` programs stay
+separate because CI filters name them.
+
 ## Testing
 
 The full test suite runs pre-push. During development, run specific tests rather than the full suite:

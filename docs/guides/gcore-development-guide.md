@@ -2,6 +2,8 @@
 
 Technical internals for developers and agents working in the `gobby-core` crate (`crates/gcore/`).
 
+For the build cache, build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
+
 ## What gobby-core Is
 
 `gobby-core` is the shared Rust foundation crate for Gobby CLI crates and future Rust daemon work. It holds the boring, reusable platform layer: project discovery, bootstrap and daemon addressing, shared context/config contracts, grant handshake, degradation vocabulary, feature-gated datastore adapters, and generic indexing/search primitives.

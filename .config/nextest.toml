@@ -6,10 +6,10 @@ experimental = ["setup-scripts"]
 command = ["cargo", "build", "-p", "gobby-terminal", "--features", "vt-engine", "--bin", "gterm"]
 
 [[profile.default.scripts]]
-filter = '''package(gobby-client) & binary(frame_source_live) & (
-    test(=direct_frames_verify_epoch_and_render) |
-    test(=granted_direct_input_echoes_and_revoke_refuses) |
-    test(=tmux_pane_attaches_through_host_observer)
+filter = '''package(gobby-client) & binary(suite) & (
+    test(=frame_source_live::direct_frames_verify_epoch_and_render) |
+    test(=frame_source_live::granted_direct_input_echoes_and_revoke_refuses) |
+    test(=frame_source_live::tmux_pane_attaches_through_host_observer)
 )'''
 setup = 'gclient-test-gterm'
 
@@ -48,13 +48,13 @@ test-group = 'ghook-process'
 [[profile.default.overrides]]
 # Lease and lifecycle fixtures serialize on one advisory lock with a bounded
 # wait; queued behind long lifecycle cases, a lease case outwaits that bound.
-filter = 'package(gobby-daemon) & (binary(lease) | binary(lifecycle))'
+filter = 'package(gobby-daemon) & binary(suite) & (test(/^lease::/) | test(/^lifecycle::/))'
 test-group = 'gdaemon-lease'
 
 [[profile.default.overrides]]
 # Serial, so no sibling of this binary spawns during a test's spawn window
 # (see the leak-timeout note above). The publish test runs long enough to matter.
-filter = 'package(gobby-daemon) & binary(native_ws_transport)'
+filter = 'package(gobby-daemon) & binary(suite) & test(/^native_ws_transport::/)'
 test-group = 'gdaemon-native-ws'
 
 [[profile.default.overrides]]
@@ -65,7 +65,7 @@ test-group = 'serial-db'
 # Schema subprocesses share hub roles and must not inherit sibling capture pipes
 # while long apply tests run (the macOS FD_CLOEXEC race described above).
 # Node fixtures hold one advisory lock; schedule them before their bounded lock wait.
-filter = 'package(gobby-daemon) & (test(retention::tests::database) | binary(schema_cli) | binary(cli_contract) | binary(nodes) | binary(node_internal_route))'
+filter = 'package(gobby-daemon) & (test(retention::tests::database) | (binary(suite) & (test(/^schema_cli::/) | test(/^cli_contract::/) | test(/^nodes::/) | test(/^node_internal_route::/))))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
@@ -75,22 +75,22 @@ test-group = 'serial-db'
 [[profile.default.overrides]]
 # These fixtures create hub roles under one advisory lock; run in parallel they
 # deadlock against each other's role writes.
-filter = 'package(gobby-runtime) & (binary(config) | binary(grant) | binary(handshake) | binary(secrets) | binary(verify))'
+filter = 'package(gobby-runtime) & binary(suite) & (test(/^config::/) | test(/^grant::/) | test(/^handshake::/) | test(/^secrets::/) | test(/^verify::/))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(host_handover) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env) | binary(link_artifacts))'
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | (binary(suite) & (test(/^frame_producer::/) | test(/^host_lifecycle::/) | test(/^host_handover::/) | test(/^control_protocol::/) | test(/^frame_protocol::/) | test(/^embed::/) | test(/^build_env::/) | test(/^link_artifacts::/))))'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
-# gobby-terminals has its own host_lifecycle binary. The override above matches
+# gobby-terminals has its own host_lifecycle module in its suite. The override above matches
 # package gobby-terminal only, so this binary ran unserialized. explicit_drain
 # spawns no process, so its LEAK-FAIL can only come from a co-running test that
 # holds its inherited capture pipe. A 500ms probe of the unserialized config
 # (#24228) leaked in 13 of 80 full-binary iterations, 3 of them on explicit_drain;
 # the same probe leaked 0 of 40 with this group and 0 of 40 for explicit_drain
-# run alone. Group it with the other host_lifecycle binary.
-filter = 'package(gobby-terminals) & binary(host_lifecycle)'
+# run alone. Group it with the other host_lifecycle module.
+filter = 'package(gobby-terminals) & binary(suite) & test(/^host_lifecycle::/)'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
@@ -99,15 +99,15 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-client) & binary(loop_liveness) & test(=a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking)'
+filter = 'package(gobby-client) & binary(suite) & test(=loop_liveness::a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking)'
 # Request acknowledgements govern progress; this watchdog catches a stuck test.
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.default.overrides]]
-filter = 'package(gobby-client) & binary(teardown)'
+filter = 'package(gobby-client) & binary(suite) & test(/^teardown::/)'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-client) & binary(frame_source_live)'
+filter = 'package(gobby-client) & binary(suite) & test(/^frame_source_live::/)'
 test-group = 'gterm-pty'
 slow-timeout = { period = "120s", terminate-after = 3 }

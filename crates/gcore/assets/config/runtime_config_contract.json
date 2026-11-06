@@ -76,6 +76,17 @@
   },
   "exactKeys": [
     {
+      "activation": "restart_required",
+      "default": "",
+      "description": "Absolute, canonical, existing directory that holds agent Cargo build folders. Empty uses the Gobby cache. Takes effect at daemon startup.",
+      "key": "agent_build.build_root",
+      "machineExport": false,
+      "namespace": "agent_build",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
       "activation": "live",
       "default": false,
       "description": "Allow Git forge network endpoints for push, pull, and fetch.",

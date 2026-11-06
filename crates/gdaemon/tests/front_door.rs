@@ -1,6 +1,6 @@
 //! `gdaemon serve` front door against in-process stub backends.
 
-mod common;
+use super::common;
 
 use std::convert::Infallible;
 use std::pin::Pin;

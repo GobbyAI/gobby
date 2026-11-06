@@ -10,6 +10,8 @@ description = "Workspace-private gterm host-wire clients for the gdaemon termina
 
 # The workspace forbids unsafe code, which no module can allow. Deny it here so
 # host/process.rs alone may allow it for the macOS libproc identity lookup.
+autotests = false
+
 [lints.rust]
 unsafe_code = "deny"
 
@@ -33,3 +35,6 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "rt"] }
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

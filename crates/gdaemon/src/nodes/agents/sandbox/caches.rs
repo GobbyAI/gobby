@@ -368,7 +368,8 @@ impl RunLayout {
         self.shared_cache.join("cargo-home")
     }
 
-    /// `SandboxRunPaths.environment`. Without a sccache socket, the sccache keys are blank.
+    /// `SandboxRunPaths.environment`. Without a sccache socket, the sccache keys are blank,
+    /// and so is `CARGO_INCREMENTAL`: a blank value turns incremental output off.
     pub(super) fn environment(&self, provider: &str) -> BTreeMap<String, String> {
         let mut values: BTreeMap<String, String> = RUN_CACHE_ENV_VARS
             .iter()
@@ -391,6 +392,7 @@ impl RunLayout {
         values.insert("OCR_NO_UPDATE".to_string(), "1".to_string());
         for (name, value) in [
             ("CARGO_BUILD_JOBS", "4"),
+            ("CARGO_INCREMENTAL", ""),
             ("RUSTC_WRAPPER", ""),
             ("SCCACHE_DIR", ""),
             ("SCCACHE_SERVER_UDS", ""),

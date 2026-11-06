@@ -2,6 +2,8 @@
 
 Technical internals for developers and agents working in the gcode codebase.
 
+For the build cache, build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
+
 ## Architecture Overview
 
 ```

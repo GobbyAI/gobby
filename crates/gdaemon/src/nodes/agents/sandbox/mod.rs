@@ -51,6 +51,9 @@ pub struct PolicyInputs {
     pub platform: String,
     /// Trusted host-resolved Darwin temp/cache roots; absent means query confstr.
     pub darwin_user_dirs: Option<[PathBuf; 2]>,
+    /// Trusted host-resolved passwd home; absent means query getpwuid. The operator's
+    /// canonical bootstrap lives under it, whatever HOME and GOBBY_HOME say.
+    pub account_home: Option<PathBuf>,
     /// The seat's definition, its session sequence number, and its epic sequence number
     /// when it shares an epic folder. They name the workspace folders the spawn grants
     /// (#25148); an absent value grants nothing for that folder.

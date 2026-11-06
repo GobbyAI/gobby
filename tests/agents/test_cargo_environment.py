@@ -21,8 +21,11 @@ from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_san
 
 pytestmark = pytest.mark.unit
 
-SCCACHE_KEYS = ("RUSTC_WRAPPER", "SCCACHE_DIR", "SCCACHE_SERVER_UDS")
-BLANK = ("", "", "")
+SCCACHE_KEYS = ("RUSTC_WRAPPER", "SCCACHE_DIR", "SCCACHE_SERVER_UDS", "CARGO_INCREMENTAL")
+# Incremental output is per-tree and sccache cannot cache it, so sccache-backed builds turn it
+# off to make workspace crates cacheable across trees. Without sccache every key is blank: a
+# blank value clears an inherited one, and Cargo reads any set value, blank included, as off.
+BLANK = ("", "", "", "")
 
 
 @pytest.fixture
@@ -63,6 +66,7 @@ def test_launch_paths_share_one_cargo_environment(
         str(fake_sccache),
         "/shared/cargo-home/sccache",
         "/run/tmp/sccache.sock",
+        "0",
     )
     assert granted["CARGO_BUILD_JOBS"] == "4"
     ungranted = sandboxed.environment("codex")
@@ -81,6 +85,7 @@ def test_launch_paths_share_one_cargo_environment(
             str(fake_sccache),
             str(cache),
             str(home / "cache" / "sccache.sock"),
+            "0",
         )
         assert cache.is_dir()
         assert unsandboxed["CARGO_BUILD_JOBS"] == "4"
@@ -170,8 +175,9 @@ async def test_sandbox_cache_grants_keep_the_trust_split(
             child_env = {**spawn_env, **launch.provider_env}
             if cached:
                 cargo_home = Path(child_env["CARGO_HOME"])
-                wrapper, cache_dir, socket = _sccache_values(child_env)
+                wrapper, cache_dir, socket, incremental = _sccache_values(child_env)
                 assert (wrapper, cache_dir) == (str(fake_sccache), str(cargo_home / "sccache"))
+                assert incremental == "0"
                 assert cargo_home.resolve() in writes
                 assert Path(socket or "") == run_tmp / "sccache.sock"
                 assert run_tmp.resolve() in sockets

@@ -1,6 +1,6 @@
 //! 3.3.2 / 3.3.15 / 3.3.17 / 3.3.21 workspace control and attach.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;

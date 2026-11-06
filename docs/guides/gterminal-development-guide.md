@@ -8,6 +8,8 @@ workspace TUI. `gterm` is the supervised native PTY host. They are two
 binaries on purpose: the Ghostty VT engine sits behind `gobby-terminal`'s
 `vt-engine` feature and must not ship inside every client install.
 
+For the build cache, build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
+
 ## Build
 
 Zig 0.16.0 is a **build-time** dependency only for `vt-engine` (the `gterm`
@@ -32,7 +34,7 @@ copy. The optional non-SIMD Darwin archive uses the same member-preserving
 normalization as the SIMD archive; its focused build/link regression is:
 
 ```bash
-cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+cargo nextest run -p gobby-terminal --test suite -E 'test(build_env::darwin_nonsimd_archive_links_every_member)'
 ```
 
 End users receive prebuilt GitHub release assets. The installer local-workspace

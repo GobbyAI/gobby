@@ -8,9 +8,10 @@ use crate::node_commands::Sandbox;
 use anyhow::{Result, anyhow, bail};
 use std::{
     collections::{BTreeMap, HashSet},
+    ffi::{CStr, OsStr},
     fs,
     iter::once,
-    os::unix::fs::PermissionsExt,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -200,16 +201,46 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
 
 /// `credential_roots`: install credentials and the daemon's startup files. The oracle
 /// denies the bootstrap the daemon bound at startup. `PolicyInputs` carries no bound
-/// path, so the default `gobby_home/bootstrap.yaml` stands in for it.
-fn credential_roots(gobby: &Path) -> Vec<PathBuf> {
-    vec![
+/// path, so the default `gobby_home/bootstrap.yaml` stands in for it. The operator's
+/// canonical bootstrap sits under the passwd home, and the oracle denies it too.
+fn credential_roots(gobby: &Path, account: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
         gobby.join("grants"),
         gobby.join("tools").join("srt"),
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
-    ]
+    ];
+    roots.extend(account.map(|home| home.join(".gobby").join("bootstrap.yaml")));
+    roots
+}
+
+/// `account_home`: the passwd home of this UID, which the oracle reads through `pwd`. No
+/// environment variable selects it, so HOME and GOBBY_HOME cannot redirect the credential.
+fn passwd_home() -> Option<PathBuf> {
+    // SAFETY: getuid cannot fail and takes no pointers.
+    let uid = unsafe { libc::getuid() };
+    // SAFETY: a zeroed passwd is a valid value, and getpwuid_r overwrites it on success.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0; 16 * 1024];
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: `entry`, `buffer` and `found` outlive the call, and `buffer.len()` is its size.
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    if status != 0 || found.is_null() || entry.pw_dir.is_null() {
+        return None;
+    }
+    // SAFETY: a successful getpwuid_r leaves `pw_dir` a NUL-terminated string inside `buffer`.
+    let dir = unsafe { CStr::from_ptr(entry.pw_dir) };
+    Some(PathBuf::from(OsStr::from_bytes(dir.to_bytes())))
 }
 
 /// `private_srt_socket_roots`: the private SRT socket roots, including this UID's `/tmp` root.
@@ -232,8 +263,13 @@ pub(super) fn managed_execution_root(gobby: &Path) -> PathBuf {
 }
 
 /// `sensitive_roots`: Gobby roots excluded from every managed allow surface.
-fn sensitive_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
-    let mut roots = credential_roots(gobby);
+fn sensitive_roots(
+    gobby: &Path,
+    home: &Path,
+    account: Option<&Path>,
+    env: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut roots = credential_roots(gobby, account);
     roots.push(gobby.join("gcode-runtime"));
     roots.push(managed_execution_root(gobby));
     roots.extend(private_srt_socket_roots(gobby, env));
@@ -241,7 +277,12 @@ fn sensitive_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) ->
 }
 
 /// `sensitive_write_roots`: credential and daemon-state roots no write grant may override.
-fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
+fn sensitive_write_roots(
+    gobby: &Path,
+    home: &Path,
+    account: Option<&Path>,
+    env: &BTreeMap<String, String>,
+) -> Vec<String> {
     let mut roots = vec![
         home.join(".ssh"),
         home.join(".aws"),
@@ -249,7 +290,7 @@ fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, Strin
         home.join(".kube"),
         home.join(".config").join("gcloud"),
     ];
-    roots.extend(credential_roots(gobby));
+    roots.extend(credential_roots(gobby, account));
     roots.extend(private_srt_socket_roots(gobby, env));
     deny_paths(roots.iter().map(|root| text(root)), None, home)
 }
@@ -686,7 +727,8 @@ pub(super) fn assert_sensitive_path_contract(
     home: &Path,
     env: &BTreeMap<String, String>,
 ) -> Result<()> {
-    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env)
+    // The guard protects the operator's real passwd bootstrap, so it never follows a pinned account.
+    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, passwd_home().as_deref(), env)
         .into_iter()
         .map(PathBuf::from)
         .collect();
@@ -831,6 +873,8 @@ pub(super) fn compute(
 
     let provider_reads =
         provider_read_exceptions(provider, env, inputs.provider_executable.as_deref(), home);
+    // The operator's canonical bootstrap follows the passwd home unless the caller pins it.
+    let account = inputs.account_home.clone().or_else(passwd_home);
     let credential_denies = credential_read_roots(home);
     let git_paths = git_metadata_write_paths(&workspace, home)?;
     let rtk = rtk_sandbox_paths(env, home);
@@ -858,7 +902,7 @@ pub(super) fn compute(
         home,
     );
     let mut deny_read_paths = deny_paths(
-        sensitive_roots(gobby, home, env)
+        sensitive_roots(gobby, home, account.as_deref(), env)
             .into_iter()
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
@@ -872,7 +916,7 @@ pub(super) fn compute(
         .map(|path| canonical_pathbuf(path, Some(&workspace), home))
         .collect();
     let deny_write_paths = deny_paths(
-        sensitive_write_roots(gobby, home, env)
+        sensitive_write_roots(gobby, home, account.as_deref(), env)
             .into_iter()
             .chain(provider_control_write_paths(
                 &workspace,

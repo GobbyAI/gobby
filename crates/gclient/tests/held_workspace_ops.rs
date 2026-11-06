@@ -2,7 +2,7 @@
 //! keeps the refusal its receipt ordinal names, and its events reach the wire
 //! in the order the daemon stamped them.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use futures_util::{SinkExt, StreamExt};
 use mock_daemon::MockDaemon;

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from gobby.agents import sandbox_policy
+from gobby.agents.build_root import configure_build_root
 from gobby.agents.cargo_target import (
     agent_checkout_cargo_target_dir,
     cargo_release_dir,
@@ -25,10 +27,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     home = tmp_path / "home"
     monkeypatch.setenv("GOBBY_HOME", str(home))
-    return home
+    yield home
+    configure_build_root(None)
 
 
 @pytest.fixture
@@ -151,16 +154,21 @@ def test_link_is_idempotent(gobby_home: Path, cargo_checkout: Path) -> None:
     assert os.lstat(cargo_checkout / "target") == first_stat
 
 
-def test_legacy_link_is_atomically_migrated_without_artifacts(
+def test_link_from_an_earlier_build_root_is_atomically_migrated_without_artifacts(
     gobby_home: Path,
     cargo_checkout: Path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    legacy = gobby_home / "cache" / "cargo-target" / "proj-1"
-    legacy.mkdir(parents=True)
-    (legacy / "contaminated").write_text("old", encoding="utf-8")
+    earlier_root = tmp_path / "earlier-root"
+    earlier_root.mkdir()
+    configure_build_root(str(earlier_root))
+    earlier = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    configure_build_root(None)
+    earlier.mkdir(parents=True)
+    (earlier / "contaminated").write_text("old", encoding="utf-8")
     target = cargo_checkout / "target"
-    os.symlink(legacy, target, target_is_directory=True)
+    os.symlink(earlier, target, target_is_directory=True)
     replacements: list[tuple[Path, Path]] = []
     real_replace = os.replace
 
@@ -176,7 +184,19 @@ def test_legacy_link_is_atomically_migrated_without_artifacts(
     assert os.readlink(target) == str(desired)
     assert replacements and replacements[0][1] == target
     assert not (desired / "contaminated").exists()
-    assert (legacy / "contaminated").read_text(encoding="utf-8") == "old"
+    assert (earlier / "contaminated").read_text(encoding="utf-8") == "old"
+
+
+def test_legacy_shared_link_is_foreign_and_left_alone(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    legacy = gobby_home / "cache" / "cargo-target" / "proj-1"
+    legacy.mkdir(parents=True)
+    target = cargo_checkout / "target"
+    os.symlink(legacy, target, target_is_directory=True)
+
+    assert link_checkout_cargo_target(cargo_checkout, "proj-1") is False
+    assert os.readlink(target) == str(legacy)
 
 
 def test_non_cargo_checkout_untouched(gobby_home: Path, tmp_path: Path) -> None:

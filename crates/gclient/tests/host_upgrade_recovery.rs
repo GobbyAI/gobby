@@ -6,7 +6,7 @@
 //! tests drive the real live loop against a real frame socket, so a reconnect
 //! that went through the daemon would be visible as a second `terminal_attach`.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::time::Duration;
 

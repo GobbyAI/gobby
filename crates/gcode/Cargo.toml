@@ -11,6 +11,7 @@ homepage = "https://gobby.ai"
 readme = "README.md"
 keywords = ["code-search", "ast", "code-index", "developer-tools", "gobby"]
 categories = ["command-line-utilities", "development-tools"]
+autotests = false
 
 [lib]
 name = "gobby_code"
@@ -26,23 +27,12 @@ name = "gcode"
 path = "src/main.rs"
 
 [[test]]
-name = "effective_config"
-path = "tests/effective_config.rs"
-required-features = ["ai"]
+name = "suite"
+path = "tests/suite.rs"
 
 [[test]]
 name = "projection_stale"
 path = "tests/projection_stale.rs"
-required-features = ["test-support"]
-
-[[test]]
-name = "file_lock_concurrency"
-path = "tests/file_lock_concurrency.rs"
-required-features = ["test-support"]
-
-[[test]]
-name = "concurrent_vector_grant"
-path = "tests/concurrent_vector_grant.rs"
 required-features = ["test-support"]
 
 [dependencies]

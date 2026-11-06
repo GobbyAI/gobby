@@ -1,4 +1,4 @@
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::time::{Duration, Instant};
 

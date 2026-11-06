@@ -3,7 +3,7 @@
 //! destroy-orphans dialog's buttons answer a click, as do the project
 //! dialogs' (#22543).
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::time::Duration;
 
