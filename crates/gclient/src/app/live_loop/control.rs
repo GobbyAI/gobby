@@ -139,6 +139,20 @@ fn queue_for_promotion(
 /// key until its attachment is live.
 // INVARIANT (#25653): native keystrokes and paste never wait for the daemon,
 // a lease, or attachment metadata. A present host stream always wins.
+// Native keystrokes and their terminal echo must NEVER depend on the daemon:
+// not its WebSocket writer, response latency, database, leases, or readiness.
+// Once a local native stream is attached, send bytes directly to that host.
+// Poll daemon registration, focus, geometry, activity, and recovery beside the
+// input path; none may become a prerequisite for a key or its echoed frame.
+// A missing native stream must refuse explicitly, never fall back to daemon
+// input. The daemon enhances the session; it does not carry native typing.
+//
+// Guard: loop_liveness::
+// keystroke_latency_is_the_same_whether_the_daemon_is_healthy_slowed_or_absent
+// holds or withholds daemon replies and requires bounded host writes with zero
+// daemon input. loop_liveness::keystroke_latency_by_pane_count also checks the
+// host echo under load. Keep those tests sensitive to this dependency: startup
+// setup tolerance must never relax their keystroke or echo bounds.
 pub(super) fn send_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,

@@ -639,6 +639,15 @@ const KEY_BOUND: Duration = Duration::from_millis(1500);
 /// and absent. Its keys go straight to the host stream, so every key reaches
 /// the host within `KEY_BOUND` in every state and none awaits the daemon
 /// (memory b59e4ce9).
+// Regression guard for #25653: gclient must NEVER depend on the daemon for
+// native keystrokes or terminal echo. A healthy, slow, or absent daemon must
+// produce the same direct host input path. Holding a daemon reply must not
+// stall input, rendering, or echo, and no native key may ride terminal_input.
+// The companion keystroke_latency_by_pane_count checks host echo at 0/10/50/100
+// panes. Keep the key/echo deadlines strict after attach readiness; giving a
+// fixture more startup time is never permission to wait on the daemon per key.
+// A future daemon/lease/activity await on the native typing path must fail
+// this named guard, rather than being hidden by a longer typing timeout.
 #[tokio::test]
 async fn keystroke_latency_is_the_same_whether_the_daemon_is_healthy_slowed_or_absent() {
     for reply in [

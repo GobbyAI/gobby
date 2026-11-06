@@ -328,18 +328,26 @@ async fn lagged_subscriber_relists_and_converges() {
         }
     });
     for seq in 1..=1025 {
-        mock.send_event(json!({
+        let event = json!({
             "type": "terminal_event",
             "event": "created",
             "terminal_id": format!("terminal-{seq}"),
             "daemon_epoch": "epoch-1",
             "seq": seq,
             "timestamp": "2026-01-01T00:00:00Z"
-        }));
+        });
+        if seq == 1025 {
+            // This is fixture setup, not a reader-throughput deadline: under
+            // fleet load the mock may still be writing the burst after 2 s.
+            // Acknowledge its last write before budgeting the reader drain.
+            mock.send_event_and_wait(event).await;
+        } else {
+            mock.send_event(event);
+        }
     }
-    timeout(Duration::from_secs(2), monitor_task)
+    timeout(Duration::from_secs(10), monitor_task)
         .await
-        .expect("reader processed burst")
+        .expect("reader processed acknowledged burst through seq 1025")
         .expect("monitor task");
     assert!(matches!(
         lag_probe

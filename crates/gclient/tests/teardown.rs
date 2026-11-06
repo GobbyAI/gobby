@@ -27,7 +27,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration, Instant};
+use tokio::time::{timeout, timeout_at, Duration, Instant};
 use tracing::instrument::WithSubscriber;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::Context as LayerContext;
@@ -909,8 +909,26 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
     let (guard, restore_hits) = TerminalGuard::recording();
 
     let driver = async {
-        wait_for_ws_request(&mock, "terminal_set_viewport").await;
-        wait_for_focused_attachment(&mock).await;
+        // Startup performs several daemon requests, each with its own 5 s
+        // production budget. Its readiness precondition must not consume the
+        // shutdown budget or fail at the old one-second viewport probe.
+        timeout(Duration::from_secs(30), async {
+            while !mock
+                .activity()
+                .iter()
+                .any(|entry| entry == "WS terminal_set_viewport")
+                || focused_attachment(&mock, "terminal-shutdown").is_none()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{trigger:?}/{stall:?} startup not ready: {:?}",
+                mock.activity()
+            )
+        });
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         wait_for_ws_request(&mock, "terminal_input").await;
         let reconnect = if matches!(stall, LiveShutdownStall::ReconnectJoin) {
@@ -943,23 +961,29 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         (exit_started, reconnect)
     };
 
-    let mut switch = TerminalGuard::recording().0;
-    let (loop_result, (exit_started, reconnect)) = tokio::join!(
-        timeout(
-            Duration::from_secs(10),
-            run_live_loop(
-                &mut workspace,
-                &mut terminal,
-                &mut chrome,
-                input_rx,
-                &mut switch
-            ),
-        ),
-        driver,
-    );
-    loop_result
-        .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} exceeded the outer shutdown bound"))
-        .unwrap_or_else(|error| panic!("{trigger:?}/{stall:?} shutdown failed: {error}"));
+    let (exit_started, reconnect) = {
+        let mut switch = TerminalGuard::recording().0;
+        let live_loop = run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch,
+        );
+        tokio::pin!(live_loop);
+        let (exit_started, reconnect) = tokio::select! {
+            result = &mut live_loop => panic!("{trigger:?}/{stall:?} exited before shutdown request: {result:?}"),
+            started = driver => started,
+        };
+        // Start the shutdown timer at the driver's exit request, never at loop
+        // startup. Keep the strict 8 s assertion below and the original input
+        // delivery check above: setup tolerance grants no typing/echo tolerance.
+        let loop_result = timeout_at(exit_started + Duration::from_secs(8), &mut live_loop).await;
+        loop_result
+            .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} exceeded the shutdown bound"))
+            .unwrap_or_else(|error| panic!("{trigger:?}/{stall:?} shutdown failed: {error}"));
+        (exit_started, reconnect)
+    };
     drop(guard);
     assert!(
         exit_started.elapsed() <= Duration::from_secs(8),
