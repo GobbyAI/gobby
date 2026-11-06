@@ -24,7 +24,6 @@ __all__ = ["PROJECT_SYNC_KEY", "sync_project_skills"]
 
 PROJECT_SYNC_KEY = "project_sync"
 _SYNC_MARKER: dict[str, str] = {"owner": "gobby"}
-_PROJECT_SKILL_PAGE = 1000
 
 logger = logging.getLogger(__name__)
 
@@ -166,9 +165,9 @@ def _retire_missing(
     on_disk: set[str],
     result: dict[str, Any],
 ) -> None:
-    rows = storage.list_skills(
-        project_id=project_id, include_global=False, limit=_PROJECT_SKILL_PAGE
-    )
+    # limit=-1 reads every row in one query before the first delete. Offset
+    # paging would skip rows as deletes shift them.
+    rows = storage.list_skills(project_id=project_id, include_global=False, limit=-1)
     for row in rows:
         if row.name in on_disk or not _is_sync_owned(row):
             continue

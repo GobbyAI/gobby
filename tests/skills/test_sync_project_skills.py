@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -14,6 +15,8 @@ from gobby.storage.skills import LocalSkillManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
+
+_STALE_ROWS = 1005
 
 
 def _write_skill(folder: Path, name: str, body: str = "Do the thing.") -> Path:
@@ -197,3 +200,62 @@ def test_project_folder_does_not_adopt_a_soft_deleted_operator_row(
     assert live.id != operator.id
     assert live.content == "Folder body."
     assert "project_sync" in (live.metadata or {})
+
+
+def test_retirement_reaches_every_row_past_the_first_thousand(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+) -> None:
+    project_path = tmp_path / "game-goblins"
+    project = isolated_checkout_factory(temp_db, "game-goblins", root=project_path).project
+    _write_skill(project_path / ".gobby" / "skills" / "keep-me", "keep-me")
+    storage = LocalSkillManager(temp_db)
+    for index in range(_STALE_ROWS):
+        name = f"stale-{index:04d}"
+        storage.create_skill_with_files(
+            name=name,
+            description="Stale sync-owned row.",
+            content="Stale body.",
+            source_path=str(project_path / ".gobby" / "skills" / name),
+            source_type="filesystem",
+            project_id=project.id,
+            source="project",
+            metadata={"project_sync": {"owner": "gobby"}},
+            files=None,
+        )
+    operators: tuple[tuple[str, Literal["local", "github"], str], ...] = (
+        ("ops-keep", "local", str(tmp_path / "elsewhere" / "ops-keep")),
+        ("zz-ops-keep", "local", str(tmp_path / "elsewhere" / "zz-ops-keep")),
+        ("ext-keep", "github", "owner/ext-keep"),
+        ("zz-ext-keep", "github", "owner/zz-ext-keep"),
+    )
+    for name, source_type, source_path in operators:
+        storage.create_skill_with_files(
+            name=name,
+            description="Operator or external row.",
+            content="Operator body.",
+            source_path=source_path,
+            source_type=source_type,
+            project_id=project.id,
+            source="installed",
+            files=None,
+        )
+
+    result = sync_project_skills(temp_db)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == _STALE_ROWS
+    live = storage.list_skills(project_id=project.id, include_global=False, limit=-1)
+    assert {row.name for row in live} == {
+        "keep-me",
+        "ops-keep",
+        "zz-ops-keep",
+        "ext-keep",
+        "zz-ext-keep",
+    }
+
+    rerun = sync_project_skills(temp_db)
+
+    assert rerun["errors"] == []
+    assert rerun["orphaned"] == 0
