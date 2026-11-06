@@ -2,6 +2,7 @@ use super::super::{
     Inventory, MissingClass, MissingGroup, OrphanClass, ReconcileReceipt, apply,
     apply_with_persist, inventory, inventory_digest,
 };
+use super::canonical_tempdir;
 use crate::config::{
     CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, Context, ProjectIndexScope, QdrantConfig,
 };
@@ -585,7 +586,7 @@ fn apply_deletes_only_disowned_ids_and_writes_receipt() -> anyhow::Result<()> {
     ));
 
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
     let receipt = apply(&fixture.context(url), &digest, &receipt_path)?;
@@ -666,7 +667,7 @@ fn apply_is_busy_without_mutation_when_lease_is_held() -> anyhow::Result<()> {
     )?
     .expect("the holder takes the lease first");
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![]);
     let error = apply(
@@ -724,7 +725,7 @@ fn apply_refuses_when_inventory_changes_under_lease() -> anyhow::Result<()> {
     // The symbol gains the orphan's ID between the dry run and apply.
     fixture.symbol("src/gained.rs", &gained_hash, "gained", "function", 20)?;
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
     let error = apply(&fixture.context(url), &digest, &receipt_path)
@@ -767,7 +768,7 @@ fn apply_records_partial_receipt_on_qdrant_failure() -> anyhow::Result<()> {
     points.extend(orphan_points(256));
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) =
         spawn_http_responses(vec![scroll_page(points), delete_ok(), delete_failed()]);
@@ -827,7 +828,7 @@ fn apply_resets_only_synced_missing_versions() -> anyhow::Result<()> {
     other.symbol("src/other.rs", &other_hash, "o1", "function", 0)?;
 
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
     let receipt = apply(&fixture.context(url), &digest, &receipt_path)?;
@@ -863,7 +864,7 @@ fn apply_makes_no_mutation_when_initial_receipt_write_fails() -> anyhow::Result<
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
     // A private receipt directory the caller cannot write into.
-    let parent = tempfile::tempdir()?;
+    let parent = canonical_tempdir()?;
     let locked = parent.path().join("receipts");
     std::fs::create_dir(&locked)?;
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500))?;
@@ -900,7 +901,7 @@ fn apply_refuses_foreign_receipt_before_mutation() -> anyhow::Result<()> {
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
     // A receipt for the same project and collection but a different digest.
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let foreign = ReconcileReceipt {
         digest: format!("sha256:{}", "f".repeat(64)),
@@ -956,7 +957,7 @@ fn apply_reset_survives_adoption_of_retained_version() -> anyhow::Result<()> {
     let points = orphan_points(1);
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
     let receipt = apply(&fixture.context(url), &digest, &receipt_path)?;
@@ -992,7 +993,7 @@ fn apply_stops_before_deletes_when_reset_receipt_write_fails() -> anyhow::Result
     let (points, version) = seed_reset_and_orphan(&mut fixture)?;
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
     // Writes: 1 initial, 2 after the reset commit.
@@ -1049,7 +1050,7 @@ fn apply_stops_after_first_batch_when_receipt_write_fails() -> anyhow::Result<()
     points.extend(orphan_points(256));
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
     // Writes: 1 initial, 2 after the reset, 3 after the first batch.
@@ -1096,7 +1097,7 @@ fn apply_exits_nonzero_when_final_receipt_write_fails() -> anyhow::Result<()> {
     let (points, _version) = seed_reset_and_orphan(&mut fixture)?;
     let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
-    let receipt_dir = tempfile::tempdir()?;
+    let receipt_dir = canonical_tempdir()?;
     let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
     let (url, handle) = spawn_http_responses(vec![scroll_page(points), delete_ok()]);
     // Writes: 1 initial, 2 after the reset, 3 after the batch, 4 final.
@@ -1143,7 +1144,7 @@ fn apply_reports_unconfirmed_when_published_receipt_write_fails() -> anyhow::Res
         let (points, version) = seed_reset_and_orphan(&mut fixture)?;
         let digest = dry_run(&fixture, points.clone())?.inventory_digest;
 
-        let receipt_dir = tempfile::tempdir()?;
+        let receipt_dir = canonical_tempdir()?;
         let receipt_path = receipt_dir.path().join("reconcile-receipt.json");
         let mut responses = vec![scroll_page(points)];
         if expected_deletes > 0 {

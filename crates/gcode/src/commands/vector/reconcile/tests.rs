@@ -4,13 +4,24 @@ use super::*;
 #[path = "tests/serial_db.rs"]
 mod serial_db;
 
+/// A private (0700) temp directory under the canonical temp root. macOS temp roots are
+/// symlinks (`/var` -> `/private/var`), and `no_symlinks` refuses symlinked ancestors.
+/// tempfile's default mode follows the umask (0755 here), which receipt parents refuse.
+fn canonical_tempdir() -> anyhow::Result<tempfile::TempDir> {
+    use std::os::unix::fs::PermissionsExt;
+
+    Ok(tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 #[test]
 fn apply_refuses_receipt_outside_private_location() {
     use std::os::unix::fs::PermissionsExt;
 
     use crate::config::{CodeVectorSettings, ProjectIndexScope, QdrantConfig};
 
-    let project_root = tempfile::tempdir().expect("project root");
+    let project_root = canonical_tempdir().expect("project root");
     // The database URL is unreachable: a location refusal must come before any lease attempt.
     let ctx = Context {
         database_url: "postgresql://unreachable.invalid:1/none".to_string(),
@@ -41,7 +52,7 @@ fn apply_refuses_receipt_outside_private_location() {
         "unexpected refusal: {error:#}",
     );
 
-    let shared_parent = tempfile::tempdir().expect("shared parent");
+    let shared_parent = canonical_tempdir().expect("shared parent");
     std::fs::set_permissions(shared_parent.path(), std::fs::Permissions::from_mode(0o755))
         .expect("make parent shared");
     let error = apply(&ctx, &digest, &shared_parent.path().join("receipt.json"))

@@ -553,13 +553,13 @@ pub(crate) enum VectorCommand {
     /// unless --apply is given with the digest of a reviewed dry run.
     Reconcile {
         /// Apply the plan whose inventory digest matches --expect-digest
-        #[arg(long)]
+        #[arg(long, requires = "expect_digest", requires = "receipt")]
         apply: bool,
         /// Inventory digest (sha256:...) from a dry run of the same project
-        #[arg(long)]
+        #[arg(long, requires = "apply")]
         expect_digest: Option<String>,
         /// Receipt file recording the apply run; must sit in a private directory outside the repository
-        #[arg(long)]
+        #[arg(long, requires = "apply")]
         receipt: Option<String>,
     },
 }

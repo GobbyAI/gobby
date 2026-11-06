@@ -10,8 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use anyhow::Context as _;
+
+use crate::commands::receipt;
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::db;
+use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::models::{CODE_INDEX_UUID_NAMESPACE, Symbol};
 use crate::output::{self, Format};
 use crate::vector::code_symbols::{self, PointIdentity, VectorLifecycleError};
@@ -203,14 +207,7 @@ pub(crate) fn inventory(ctx: &Context) -> anyhow::Result<Inventory> {
     }
 
     let orphan_ids: Vec<String> = orphans.values().flatten().cloned().collect();
-    let synced_missing: Vec<String> = [
-        MissingClass::SyncedMissingCurrent,
-        MissingClass::SyncedMissingRetained,
-    ]
-    .iter()
-    .filter_map(|class| missing.get(class))
-    .flat_map(|group| group.version_ids.iter().cloned())
-    .collect();
+    let synced_missing = synced_missing_ids(&missing);
     let digest = inventory_digest(&orphan_ids, &synced_missing);
 
     Ok(Inventory {
@@ -290,18 +287,33 @@ pub(crate) fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     }
 }
 
+/// Rows per Qdrant delete request, matching retire-files' projection batch size.
+const DELETE_BATCH_SIZE: usize = 256;
+
 pub(crate) fn run_command(
     ctx: &Context,
-    apply: bool,
+    apply_requested: bool,
     expect_digest: Option<&str>,
-    receipt: Option<&Path>,
+    receipt_path: Option<&Path>,
     format: Format,
 ) -> anyhow::Result<()> {
-    let _ = (expect_digest, receipt);
-    if apply {
-        anyhow::bail!("reconcile apply is not implemented");
+    if !apply_requested {
+        return run(ctx, format);
     }
-    run(ctx, format)
+    let (Some(expect_digest), Some(receipt_path)) = (expect_digest, receipt_path) else {
+        anyhow::bail!("--apply requires --expect-digest and --receipt");
+    };
+    let applied = apply(ctx, expect_digest, receipt_path)?;
+    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
+    match format {
+        Format::Json => output::print_json(&json_apply_report(
+            &ctx.project_id,
+            &collection,
+            receipt_path,
+            &applied,
+        )),
+        Format::Text => output::print_text(&text_apply_report(&collection, receipt_path, &applied)),
+    }
 }
 
 fn json_report(project_id: &str, collection: &str, report: &Inventory) -> Value {
@@ -361,8 +373,9 @@ pub(crate) fn apply(
     expect_digest: &str,
     receipt_path: &Path,
 ) -> anyhow::Result<ReconcileReceipt> {
-    let _ = (ctx, expect_digest, receipt_path);
-    anyhow::bail!("reconcile apply is not implemented")
+    apply_with_persist(ctx, expect_digest, receipt_path, &mut |receipt| {
+        receipt::write_atomic(receipt_path, receipt)
+    })
 }
 
 pub(crate) fn apply_with_persist(
@@ -371,8 +384,154 @@ pub(crate) fn apply_with_persist(
     receipt_path: &Path,
     persist: &mut dyn FnMut(&ReconcileReceipt) -> anyhow::Result<()>,
 ) -> anyhow::Result<ReconcileReceipt> {
-    let _ = (ctx, expect_digest, receipt_path, persist);
-    anyhow::bail!("reconcile apply is not implemented")
+    receipt::validate_location(receipt_path, &ctx.project_root)?;
+    let qdrant = ctx
+        .qdrant
+        .as_ref()
+        .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
+
+    // The lease connection holds the project lock for the whole run. Writes use their
+    // own connection, so the reset transaction does not borrow the lease.
+    let mut lease_conn = db::connect_readwrite(&ctx.database_url)?;
+    let _lease = lease_project_lock(
+        &mut lease_conn,
+        &ctx.project_id,
+        IndexLockPolicy::maintenance_try(),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("project index is busy; rerun the dry-run"))?;
+
+    let report = inventory(ctx)?;
+    anyhow::ensure!(
+        report.inventory_digest == expect_digest,
+        "inventory changed since the dry run: expected {expect_digest}, found {}",
+        report.inventory_digest,
+    );
+    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
+    let planned_versions_reset = synced_missing_ids(&report.missing);
+    let orphan_ids: Vec<String> = report.orphans.values().flatten().cloned().collect();
+    let mut progress = ReconcileReceipt {
+        digest: report.inventory_digest.clone(),
+        project_id: ctx.project_id.clone(),
+        collection: collection.clone(),
+        planned_orphans: report
+            .orphans
+            .iter()
+            .map(|(class, ids)| (class.as_str().to_string(), ids.clone()))
+            .collect(),
+        planned_versions_reset: planned_versions_reset.clone(),
+        versions_reset: Vec::new(),
+        deleted: Vec::new(),
+        complete: false,
+    };
+
+    if let Some(previous) = receipt::read_existing::<ReconcileReceipt>(receipt_path)? {
+        anyhow::ensure!(
+            previous.project_id == progress.project_id
+                && previous.collection == progress.collection
+                && previous.digest == progress.digest,
+            "receipt {} belongs to another reconcile run",
+            receipt_path.display(),
+        );
+    }
+    persist(&progress)
+        .with_context(|| format!("cannot write receipt {}", receipt_path.display()))?;
+
+    let versions = db::id_params(&planned_versions_reset)?;
+    let mut writer = db::connect_readwrite(&ctx.database_url)?;
+    let mut tx = writer.transaction()?;
+    let rows = tx.query(
+        "UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL \
+         WHERE id = ANY($1) AND vectors_synced RETURNING id::text",
+        &[&versions],
+    )?;
+    let reset: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
+    if let Err(error) = tx.commit() {
+        return Err(unconfirmed(
+            receipt_path,
+            &progress,
+            anyhow::Error::from(error),
+        ));
+    }
+    progress.versions_reset = reset;
+    persist(&progress).map_err(|error| unconfirmed(receipt_path, &progress, error))?;
+
+    for batch in orphan_ids.chunks(DELETE_BATCH_SIZE) {
+        if let Err(error) = code_symbols::delete_symbol_vectors(qdrant, &ctx.project_id, batch) {
+            return Err(anyhow::Error::from(error).context(format!(
+                "Qdrant delete failed; receipt {} is partial",
+                receipt_path.display()
+            )));
+        }
+        progress.deleted.push(batch.to_vec());
+        persist(&progress).map_err(|error| unconfirmed(receipt_path, &progress, error))?;
+    }
+
+    progress.complete = true;
+    persist(&progress).map_err(|error| unconfirmed(receipt_path, &progress, error))?;
+    Ok(progress)
+}
+
+/// Reports a receipt write that follows a committed mutation. The publish may or may not
+/// have landed, so the run exits nonzero and names the receipt and the confirmed work.
+fn unconfirmed(path: &Path, progress: &ReconcileReceipt, error: anyhow::Error) -> anyhow::Error {
+    let deleted: Vec<&str> = progress
+        .deleted
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    anyhow::anyhow!(
+        "receipt write unconfirmed: {}\nversions_reset: {}\ndeleted: {}\ncause: {error:#}",
+        path.display(),
+        progress.versions_reset.len(),
+        deleted.join(" "),
+    )
+}
+
+fn synced_missing_ids(missing: &BTreeMap<MissingClass, MissingGroup>) -> Vec<String> {
+    [
+        MissingClass::SyncedMissingCurrent,
+        MissingClass::SyncedMissingRetained,
+    ]
+    .iter()
+    .filter_map(|class| missing.get(class))
+    .flat_map(|group| group.version_ids.iter().cloned())
+    .collect()
+}
+
+fn json_apply_report(
+    project_id: &str,
+    collection: &str,
+    receipt_path: &Path,
+    applied: &ReconcileReceipt,
+) -> Value {
+    json!({
+        "project_id": project_id,
+        "collection": collection,
+        "mode": "apply",
+        "success": true,
+        "inventory_digest": applied.digest,
+        "receipt": receipt_path.display().to_string(),
+        "deleted_points": applied.deleted.iter().map(Vec::len).sum::<usize>(),
+        "versions_reset": applied.versions_reset.len(),
+        "complete": applied.complete,
+    })
+}
+
+fn text_apply_report(collection: &str, receipt_path: &Path, applied: &ReconcileReceipt) -> String {
+    [
+        format!(
+            "vector reconcile apply for {collection}: complete {}",
+            applied.complete
+        ),
+        format!(
+            "deleted points: {}",
+            applied.deleted.iter().map(Vec::len).sum::<usize>()
+        ),
+        format!("versions reset: {}", applied.versions_reset.len()),
+        format!("receipt: {}", receipt_path.display()),
+    ]
+    .join("\n")
 }
 
 fn text_report(collection: &str, report: &Inventory) -> String {
