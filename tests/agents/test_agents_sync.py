@@ -131,7 +131,7 @@ class TestSyncBundledAgents:
 
             body.model = "new-model"
             assert body.step_workflow is not None
-            body.step_workflow.steps[0].allowed_mcp_tools = ["gobby-sessions:set_title"]
+            body.step_workflow.steps[0].allowed_mcp_tools = ["gobby-sessions:get_handoff"]
             template.write_text(yaml.safe_dump(body.model_dump(mode="json")), encoding="utf-8")
             result = reload_cache(MagicMock(), db=definition_db)
             after = _load_agent_body("test-agent", definition_db)
@@ -141,7 +141,7 @@ class TestSyncBundledAgents:
         assert after is not None
         assert after.model == "new-model"
         assert after.step_workflow is not None
-        assert after.step_workflow.steps[0].allowed_mcp_tools == ["gobby-sessions:set_title"]
+        assert after.step_workflow.steps[0].allowed_mcp_tools == ["gobby-sessions:get_handoff"]
         assert before.model == "old-model"
 
     @pytest.mark.unit

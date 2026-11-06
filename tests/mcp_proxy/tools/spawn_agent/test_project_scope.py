@@ -130,7 +130,6 @@ def _register_parent(
         machine_id=project.machine_id,
         source="test",
         project_id=project.project.id,
-        title="Parent",
     )
 
 

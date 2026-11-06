@@ -10,31 +10,16 @@ from gobby.sessions.status_events import (
     SessionStatusTransitionCallback,
 )
 
-type TitleChangeCallback = Callable[[str, str], None]
 type SessionChangeCallback = Callable[[str, str], None]
 
 
 class _SessionBootstrapHost(Protocol):
-    _title_listeners: list[TitleChangeCallback]
     _session_change_listeners: list[SessionChangeCallback]
     _status_transition_listeners: list[SessionStatusTransitionCallback]
     db: Any
 
 
 class _SessionBootstrapMixin:
-    def register_title_listener(self: _SessionBootstrapHost, listener: TitleChangeCallback) -> None:
-        """Register a sync callback fired after successful title changes."""
-        self._title_listeners.append(listener)
-
-    def unregister_title_listener(
-        self: _SessionBootstrapHost, listener: TitleChangeCallback
-    ) -> None:
-        """Remove a previously-registered title listener if present."""
-        try:
-            self._title_listeners.remove(listener)
-        except ValueError:
-            return
-
     def register_session_change_listener(
         self: _SessionBootstrapHost, listener: SessionChangeCallback
     ) -> None:

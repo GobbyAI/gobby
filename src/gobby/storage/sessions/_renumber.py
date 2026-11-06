@@ -14,7 +14,6 @@ class SessionRenumberMapping(TypedDict):
     old_seq_num: int | None
     new_seq_num: int
     status: str
-    title: str | None
 
 
 class _RenumberHost(Protocol):
@@ -42,7 +41,7 @@ class _RenumberMixin:
         with self.db.transaction_immediate(SessionSeqMutation(project_id=project_id)) as conn:
             rows = conn.execute(
                 """
-                SELECT id, seq_num, status, title
+                SELECT id, seq_num, status
                 FROM sessions
                 WHERE project_id = %s
                 ORDER BY
@@ -62,7 +61,6 @@ class _RenumberMixin:
                         "old_seq_num": int(old_seq_num) if old_seq_num is not None else None,
                         "new_seq_num": index,
                         "status": str(row["status"]),
-                        "title": None if row["title"] is None else str(row["title"]),
                     }
                 )
 

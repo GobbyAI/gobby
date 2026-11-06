@@ -45,8 +45,6 @@ class _FakeSession:
     machine_id: str = "21000000-0000-4000-8000-000000000001"
     source: str = "grok"
     project_id: str = "proj-1"
-    title: str | None = "Work"
-    title_source: str | None = "manual"
     status: str = "active"
     session_type: str = "web_chat"
     workspace_path: str | None = _WORKSPACE
@@ -60,8 +58,6 @@ class _FakeSession:
             "machine_id": self.machine_id,
             "source": self.source,
             "project_id": self.project_id,
-            "title": self.title,
-            "title_source": self.title_source,
             "status": self.status,
             "session_type": self.session_type,
         }

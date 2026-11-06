@@ -36,7 +36,6 @@ from gobby.sessions.handoff_records import (
     insert_delivery_receipt,
     insert_handoff_record,
 )
-from gobby.sessions.title_lifecycle import clear_successor_title
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionLineageMutation,
@@ -703,11 +702,10 @@ def _commit_web_chat_clear_successor_rows(
         (project_id,),
     ).fetchone()
     next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
-    title, title_source = clear_successor_title(conn, predecessor, next_seq_num)
     conn.execute(
         """
         INSERT INTO sessions (
-            id, external_id, machine_id, source, project_id, title, title_source,
+            id, external_id, machine_id, source, project_id,
             transcript_path, git_branch, parent_session_id,
             agent_depth, spawned_by_agent_id, terminal_context,
             workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
@@ -715,7 +713,7 @@ def _commit_web_chat_clear_successor_rows(
             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             'active', %s, FALSE, 0, 0, 0, NULL
         )
         """,
@@ -725,8 +723,6 @@ def _commit_web_chat_clear_successor_rows(
             machine_id,
             source,
             project_id,
-            title,
-            title_source,
             None,
             predecessor.git_branch,
             sanitized_parent,

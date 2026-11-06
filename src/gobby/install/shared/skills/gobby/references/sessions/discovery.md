@@ -1,9 +1,9 @@
 # Discover sessions
 
-Load when resolving identity, browsing work, registering a hookless client, or
-changing a title. Fetch schemas for `gobby-sessions:get_current_session`,
-`get_session`, `list_sessions`, `session_stats`, `get_usage_breakdown`,
-`register_session`, and `set_title` as needed.
+Load when resolving identity, browsing work, or registering a hookless client.
+Fetch schemas for `gobby-sessions:get_current_session`, `get_session`,
+`list_sessions`, `session_stats`, `get_usage_breakdown`, and `register_session`
+as needed.
 
 Use the injected session reference first. Otherwise resolve the actual external
 CLI identity and source with `get_current_session`. Never identify yourself with
@@ -25,9 +25,7 @@ and an ambient same-source identity mismatch is rejected. Resolve that mismatch
 rather than registering a substitute identity. Do not register normal hooked
 sessions again just to obtain a reference.
 
-`set_title` sets a sticky manual title on the caller. Manual titles outrank
-automatic claim titles and are inherited by bound clear successors. Operator
-CLI maintenance includes `sessions renumber --project PROJECT` (preview until
+Operator CLI maintenance includes `sessions renumber --project PROJECT` (preview until
 `--apply`) and `backfill-context-windows --dry-run` (writes without that flag).
 Renumbering changes display references; preserve UUIDs in durable integrations.
 
@@ -46,6 +44,6 @@ previous approval for that checkout. Source:
 
 Guide: [Finding your session](../../../../../../../../docs/guides/sessions.md#finding-your-own-session).
 
-_Version: 1.0.0_
+_Version: 2.0.0_
 
-_Last verified: 2026-10-17_
+_Last verified: 2026-11-05_

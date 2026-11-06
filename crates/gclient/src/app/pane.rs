@@ -350,7 +350,7 @@ impl Pane {
 
     /// What every chrome surface calls a bare terminal: the name the user gave
     /// the pane, then the command in its foreground, then a short terminal ID.
-    /// A terminal running a Gobby session is named by that session's title on
+    /// A terminal running a Gobby seat is named by its agent definition and ref on
     /// the sidebar instead, so the provider is no rung here.
     ///
     /// The ID fallback distinguishes unnamed terminals. The daemon's own

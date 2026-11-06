@@ -51,7 +51,6 @@ def sample_session(session_manager, sample_project):
         machine_id="21000000-0000-4000-8000-000000000001",
         source="cli",
         project_id=sample_project["id"],
-        title="Sample Session",
     )
 
 

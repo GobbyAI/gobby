@@ -42,7 +42,6 @@ async def evidence_for(tmp_path: Path, events: list[dict[str, Any]]) -> Transcri
         machine_id=LOCAL_MACHINE_ID,
         source="grok",
         project_id="project",
-        title=None,
         status="active",
         transcript_path=str(path),
         summary_path=None,

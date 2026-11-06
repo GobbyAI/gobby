@@ -364,8 +364,8 @@
     "note": "Python `src/gobby/servers/routes/sessions/lifecycle.py::release_session_composer`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts."
   },
   "HTTP POST /api/sessions/{session_id}/rename": {
-    "status": "proxied",
-    "note": "Python `src/gobby/servers/routes/sessions/lifecycle.py::rename_session`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts."
+    "status": "dropped by decision #25485",
+    "note": "Removed with stored session titles and manual names (#25485). Labels derive from ref, agent definition, claimed task and status line; no route stores a name."
   },
   "HTTP POST /api/sessions/{session_id}/restore-transcript": {
     "status": "proxied",
@@ -451,6 +451,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::get_agent_result`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
+  "MCP gobby-agents:get_attachment": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/agent_messaging.py::get_attachment`; Rust blocker: implement native durable inter-session message storage, attachment and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
   "MCP gobby-agents:get_inter_session_message": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agent_messaging.py::get_inter_session_message`; Rust blocker: implement native durable inter-session message storage, targeting and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
@@ -478,6 +482,10 @@
   "MCP gobby-agents:running_agent_stats": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::running_agent_stats`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-agents:send_attachment": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/agent_messaging.py::send_attachment`; Rust blocker: implement native durable inter-session message storage, attachment and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
   "MCP gobby-agents:send_message": {
     "status": "proxied",
@@ -583,6 +591,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py::send_keys`; Rust blocker: implement native terminal input routing, guarded submission and delivery verification MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries."
   },
+  "MCP gobby-sessions:send_wake": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py::send_wake`; Rust blocker: implement native terminal input routing and wake delivery MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries."
+  },
   "MCP gobby-sessions:session_stats": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::session_stats`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
@@ -591,9 +603,13 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/sessions/_terminal.py::set_handoff`; Rust blocker: implement native provider compact/clear handoff orchestration and terminal capture MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
   },
-  "MCP gobby-sessions:set_title": {
+  "MCP gobby-sessions:set_status_line": {
     "status": "proxied",
-    "note": "Python `src/gobby/mcp_proxy/tools/sessions/_handoff.py::set_title`; Rust blocker: implement native handoff consumption receipts, feedback persistence and title MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
+    "note": "Python `src/gobby/mcp_proxy/tools/sessions/_status_line.py::set_status_line`; Rust blocker: implement native session status-line storage and projection MCP handler. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-sessions:set_title": {
+    "status": "dropped by decision #25485",
+    "note": "Removed with stored session titles and manual names (#25485). Labels derive from ref, agent definition, claimed task and status line; no tool stores a name."
   },
   "MCP gobby-sessions:terminate_terminal": {
     "status": "proxied",

@@ -37,7 +37,6 @@ def canonical_task_session(
         machine_id=isolated.machine_id,
         source="codex",
         project_id=isolated.project.id,
-        title="Task create coverage session",
     )
 
 
@@ -52,7 +51,6 @@ def personal_task_session(
         machine_id=canonical_task_session.machine_id,
         source="codex",
         project_id=None,
-        title="Personal task create coverage session",
     )
 
 

@@ -327,8 +327,6 @@ pub struct SpawnPayload {
     pub reasoning_effort: Option<String>,
     pub sandbox: Sandbox,
     pub timeout_seconds: u64,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub title: Option<String>,
     pub source_root: String,
     pub workspace: SpawnWorkspace,
     #[serde(deserialize_with = "Option::deserialize")]

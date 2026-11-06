@@ -19,7 +19,6 @@ class SessionStatusTransition:
     status: str
     transitioned_at: datetime
     seq_num: int | None
-    title: str | None
     source: str
     session_ref: str | None = None
 
@@ -39,7 +38,6 @@ class SessionStatusTransition:
             status=status or session.status,
             transitioned_at=transitioned_at or session.updated_at,
             seq_num=session.seq_num,
-            title=session.title,
             source=session.source,
             session_ref=session.ref,
         )

@@ -27,7 +27,6 @@ from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_
 from ._session_metadata_update import _SessionMetadataUpdateMixin
 from ._summary_update import _SummaryUpdateMixin
 from ._terminal_revival import _TerminalRevivalMixin
-from ._title_fields import _TitleFieldMixin
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -46,7 +45,6 @@ class _ManagerState(Protocol):
 class _FieldUpdateMixin(
     _SessionMetadataUpdateMixin,
     _SummaryUpdateMixin,
-    _TitleFieldMixin,
     _TerminalRevivalMixin,
 ):
     def update_status(self: _ManagerState, session_id: str, status: str) -> Session | None:

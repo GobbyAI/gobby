@@ -70,14 +70,14 @@ fn orphan_row(row: &TerminalRow, sidebar: &SidebarRows) -> OrphanRow {
     }
 }
 
-/// The session's `ref` (`#12217`), else its title, else its short id.
+/// The session's `ref` (`#12217`), else its short id.
 fn session_label(session_id: &str, sidebar: &SidebarRows) -> String {
     sidebar
         .sessions
         .values()
         .flatten()
         .find(|session| session.id == session_id)
-        .and_then(|session| session.reference.clone().or_else(|| session.title.clone()))
+        .and_then(|session| session.reference.clone())
         .unwrap_or_else(|| format!("session {}", short_terminal_id(session_id)))
 }
 

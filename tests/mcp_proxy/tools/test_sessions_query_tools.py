@@ -29,7 +29,6 @@ def _make_session(**overrides: Any) -> Session:
         "machine_id": "21000000-0000-4000-8000-000000000001",
         "source": "grok",
         "project_id": "proj-xyz",
-        "title": "Claimed session",
         "status": "active",
         "transcript_path": None,
         "summary_path": None,

@@ -47,7 +47,7 @@ def row_reads(session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch) 
         ("  select variables FROM session_variables WHERE id = %s FOR UPDATE", frozenset()),
         ("SELECT pg_advisory_xact_lock(hashtext(%s))", frozenset()),
         ("SET LOCAL statement_timeout = 1000", frozenset()),
-        ("UPDATE sessions SET title = %s WHERE id = %s", frozenset({"sessions"})),
+        ("UPDATE sessions SET status = %s WHERE id = %s", frozenset({"sessions"})),
         (
             "INSERT INTO public.session_variables (session_id) VALUES (%s)",
             frozenset({"session_variables"}),
@@ -67,9 +67,9 @@ def test_written_tables_classifies_statements(sql: str, expected: frozenset[str]
     assert written_tables(sql) == expected
 
 
-def _set_title(session_manager: SessionManager, session_id: str, title: str) -> None:
+def _set_status(session_manager: SessionManager, session_id: str, status: str) -> None:
     with session_manager.db.transaction() as conn:
-        conn.execute("UPDATE sessions SET title = %s WHERE id = %s", (title, session_id))
+        conn.execute("UPDATE sessions SET status = %s WHERE id = %s", (status, session_id))
 
 
 def test_scope_reads_session_row_once(
@@ -108,11 +108,11 @@ def test_write_in_scope_refreshes_row(
 
     with hub_read_scope():
         session_manager.get(session.id)
-        _set_title(session_manager, session.id, "after write")
+        _set_status(session_manager, session.id, "paused")
         refreshed = session_manager.get(session.id)
 
     assert refreshed is not None
-    assert refreshed.title == "after write"
+    assert refreshed.status == "paused"
 
 
 def test_write_from_other_thread_refreshes_row(
@@ -123,14 +123,14 @@ def test_write_from_other_thread_refreshes_row(
     with hub_read_scope():
         session_manager.get(session.id)
         writer = threading.Thread(
-            target=_set_title, args=(session_manager, session.id, "other thread")
+            target=_set_status, args=(session_manager, session.id, "interrupted")
         )
         writer.start()
         writer.join()
         refreshed = session_manager.get(session.id)
 
     assert refreshed is not None
-    assert refreshed.title == "other thread"
+    assert refreshed.status == "interrupted"
 
 
 def test_unrelated_write_keeps_row(

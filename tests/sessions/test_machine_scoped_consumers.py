@@ -35,7 +35,6 @@ def _remote_session() -> Session:
         machine_id=REMOTE_MACHINE_ID,
         source="codex",
         project_id="41000000-0000-4000-8000-000000000001",
-        title=None,
         status="expired",
         transcript_path="/remote/transcript.jsonl",
         summary_path=None,

@@ -619,7 +619,6 @@ fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
                 | "summary_path"
                 | "summary_source_context_hash"
                 | "terminal_context"
-                | "title_source"
                 | "tool_call_count"
                 | "transcript_path"
                 | "transcript_processed"

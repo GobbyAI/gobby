@@ -35,7 +35,6 @@ async def test_claim_worktree_resolves_session_refs(
         source="codex",
         project_id=project.id,
         external_id="ext-test-session",
-        title="Test Session",
     )
     worktree = worktree_storage.create(
         project_id=project.id,

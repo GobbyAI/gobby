@@ -67,7 +67,6 @@ def _seat(
         machine_id=AGENT_TEST_MACHINE_ID,
         source="codex",
         project_id=project_id,
-        title=external_id,
         agent_depth=depth,
         parent_session_id=parent,
     )
@@ -82,7 +81,6 @@ def _operator_terminal(sessions: SessionManager, project_id: str, external_id: s
         machine_id=AGENT_TEST_MACHINE_ID,
         source="codex",
         project_id=project_id,
-        title=external_id,
     )
     return session.id
 

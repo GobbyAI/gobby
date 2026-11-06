@@ -18,7 +18,6 @@ MOCK_SESSION = Session(
     machine_id="21000000-0000-4000-8000-000000000008",
     source="claude_code",
     project_id="test-project",
-    title="Test Session",
     status="active",
     transcript_path="/tmp/test.jsonl",
     summary_path=None,
@@ -76,10 +75,10 @@ def test_list_sessions_populated(mock_session_manager: MagicMock) -> None:
     result = runner.invoke(sessions, ["list"])
 
     assert result.exit_code == 0
-    # Check for icon, sequence number, and title
+    # Check for icon, sequence number, and the ref-derived label
     assert "●" in result.output
     assert "#42" in result.output
-    assert "Test Session" in result.output
+    assert "test-project#42" in result.output
 
 
 def test_list_sessions_renders_attention_separately_from_lifecycle(
@@ -128,7 +127,7 @@ def test_show_session_found(mock_session_manager: MagicMock) -> None:
     assert result.exit_code == 0
     assert f"Session: {MOCK_SESSION.id}" in result.output
     assert "Status: active" in result.output
-    assert "Title: Test Session" in result.output
+    assert "Title:" not in result.output
 
 
 def test_show_session_not_found(mock_session_manager: MagicMock) -> None:

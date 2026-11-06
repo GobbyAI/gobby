@@ -818,7 +818,7 @@ def _live_roster_entry(temp_db: HubDatabase, entry_id: str) -> dict[str, Any]:
     "status",
     ["active", "paused", "awaiting_input", "awaiting_approval", "awaiting_handoff", "interrupted"],
 )
-def test_running_roster_projects_child_lifecycle_and_seat_title(
+def test_running_roster_projects_child_lifecycle_and_definition(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
@@ -830,7 +830,7 @@ def test_running_roster_projects_child_lifecycle_and_seat_title(
         source="codex",
         project_id=sample_project["id"],
     )
-    SessionVariableManager(temp_db).set_variable(child.id, "_definition_title", "Lane 1 Developer")
+    SessionVariableManager(temp_db).set_variable(child.id, "_agent_type", "fixture-worker")
     manager = LocalAgentRunManager(temp_db)
     run = manager.create(
         parent_session_id=child.id,
@@ -847,8 +847,8 @@ def test_running_roster_projects_child_lifecycle_and_seat_title(
     session_row = next(row for row in rows if row.kind == "session" and row.session_id == child.id)
 
     assert entry["lifecycle_status"] == status
-    assert entry["definition_title"] == "Lane 1 Developer"
-    assert session_row.definition_title == "Lane 1 Developer"
+    assert entry["definition"] == "fixture-worker"
+    assert session_row.definition == "fixture-worker"
     stored_run = manager.get(run.id)
     assert stored_run is not None
     assert stored_run.status == "running"
@@ -872,10 +872,10 @@ def test_roster_without_child_falls_back_to_run_lifecycle_and_definition(
     entry = _live_roster_entry(temp_db, f"run:{run.id}")
 
     assert entry["lifecycle_status"] == run.status
-    assert entry["definition_title"] == "fixture-worker"
+    assert entry["definition"] == "fixture-worker"
 
 
-def test_roster_recovers_older_seat_titles_without_definition_title_variable(
+def test_roster_names_the_definition_without_placement_titles(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
@@ -893,15 +893,15 @@ def test_roster_recovers_older_seat_titles_without_definition_title_variable(
         provider="codex",
         prompt="test",
         agent_name="fixture-worker",
-        resume_metadata_json={"placement": {"title": "Lane 1 Developer"}},
+        resume_metadata_json={"placement": {"title": "Lane 1 Architect"}},
     )
 
     entry = _live_roster_entry(temp_db, f"run:{run.id}")
     rows = AttentionStateManager(temp_db).load_roster_rows(live_session_statuses=(child.status,))
     session_row = next(row for row in rows if row.kind == "session" and row.session_id == child.id)
 
-    assert entry["definition_title"] == "Lane 1 Developer"
-    assert session_row.definition_title == "fixture-worker"
+    assert entry["definition"] == "fixture-worker"
+    assert session_row.definition == "fixture-worker"
 
 
 def test_roster_run_entries_carry_the_task_title(
@@ -934,7 +934,65 @@ def test_roster_run_entries_carry_the_task_title(
         "id": task.id,
         "ref": f"#{task.seq_num}",
         "title": "Roster run task",
+        "claim_holder": False,
     }
+
+
+def test_roster_marks_the_claim_holder_among_seats_sharing_a_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: Any,
+) -> None:
+    parent = session_manager.register(
+        external_id="roster-holder-parent",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    engineer = session_manager.register(
+        external_id="roster-holder-engineer",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    reviewer = session_manager.register(
+        external_id="roster-holder-reviewer",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Shared seat task",
+        validation_criteria="The roster marks only the claim holder.",
+    )
+    tasks.claim_task(task.id, engineer.id)
+    runs = LocalAgentRunManager(temp_db)
+    engineer_run = runs.create(
+        parent_session_id=parent.id,
+        child_session_id=engineer.id,
+        provider="codex",
+        model="gpt-5",
+        prompt="test",
+        task_id=task.id,
+    )
+    reviewer_run = runs.create(
+        parent_session_id=parent.id,
+        child_session_id=reviewer.id,
+        provider="codex",
+        model="gpt-5",
+        prompt="test",
+        task_id=task.id,
+    )
+
+    engineer_entry = _live_roster_entry(temp_db, f"run:{engineer_run.id}")
+    reviewer_entry = _live_roster_entry(temp_db, f"run:{reviewer_run.id}")
+
+    assert engineer_entry["task"]["id"] == task.id
+    assert engineer_entry["task"]["claim_holder"] is True
+    assert reviewer_entry["task"]["id"] == task.id
+    assert reviewer_entry["task"]["claim_holder"] is False
 
 
 def test_roster_session_entries_carry_the_open_claimed_task(
@@ -962,6 +1020,7 @@ def test_roster_session_entries_carry_the_open_claimed_task(
         "id": task.id,
         "ref": f"#{task.seq_num}",
         "title": "Claimed roster task",
+        "claim_holder": True,
     }
 
     tasks.close_task(task.id, closed_in_session_id=session.id)
@@ -1006,6 +1065,7 @@ def test_seat_roster_prefers_live_claim_to_spawn_task(
         "id": current.id,
         "ref": f"#{current.seq_num}",
         "title": current.title,
+        "claim_holder": True,
     }
 
 
@@ -1054,6 +1114,7 @@ def test_roster_follows_second_claim_even_when_previous_task_is_updated(
         "id": second.id,
         "ref": f"#{second.seq_num}",
         "title": second.title,
+        "claim_holder": True,
     }
 
 

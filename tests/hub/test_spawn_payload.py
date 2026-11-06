@@ -67,7 +67,6 @@ def _request(**overrides: Any) -> dict[str, Any]:
         "terminal_id": _TERMINAL_ID,
         "agent_depth": 1,
         "max_agent_depth": 5,
-        "title": "lane 5",
         "timeout": None,
         "droid_mode": "exec",
         "initial_variables": {},
@@ -397,7 +396,6 @@ def test_launch_fields_and_workspace(temp_db: HubDatabase) -> None:
     assert payload.project_id == _PROJECT_ID
     assert payload.terminal_id == _TERMINAL_ID
     assert (payload.agent_depth, payload.max_agent_depth) == (1, 5)
-    assert payload.title == "lane 5"
     assert payload.source_root == _SOURCE_ROOT
     assert payload.provider == "claude"
     assert payload.model == "gpt-test"

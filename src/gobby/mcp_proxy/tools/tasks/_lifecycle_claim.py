@@ -47,13 +47,6 @@ def record_claimant_state(ctx: RegistryContext, session_id: str, task: Task) -> 
         build_claimed_task_extra_skill_state(session_vars, ctx.task_manager),
     )
 
-    try:
-        from gobby.sessions.title_lifecycle import update_title_for_claim
-
-        update_title_for_claim(ctx.session_manager, session_id, task)
-    except Exception as e:
-        logger.warning("Failed to update session title after claiming %s: %s", task.id, e)
-
 
 def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the claim_task tool on the given registry."""

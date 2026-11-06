@@ -87,16 +87,16 @@ The public `get_current_session` helper accepts `claude`, `grok`,
 `codex`, `droid`, and `agy`. Pipeline and system sessions are created
 by internal automation.
 
-## Titles, Reasoning Effort, And Reading Direction
+## Labels, Reasoning Effort, And Reading Direction
 
-Session titles take one of three deterministic forms. A session without an open
-claimed task has the provisional title `project#seq: Provider` (`gobby#12: Claude`).
-Claiming a task sets `project#seq: Task #ref - title`. A manual title is kept
-verbatim. Title precedence is manual, then the open claimed task, then provisional,
-and the public `title_source` is `provisional`, `task`, or `manual`. A `/clear`
-successor inherits a manual title; any other title is recomputed for the successor.
-Status notifications such as Telegram use a provisional or task title as-is and
-prefix a manual one with the session ref: `gobby#12 - My manual title - Paused`.
+Sessions store no title and no manual name. Migration 491 dropped `title` and
+`title_source`, and `/api/sessions` returns neither field. Every display label is
+derived when read, from four inputs: the session ref, the agent definition, the
+claimed task, and the status line. A seat's label is its definition's display name,
+so `dev-team-lead` shows as `Dev Team Lead`. Claiming a task adds its reference and
+title to the task line. The roster marks the seat that holds the claim
+(`task.claim_holder`), and gclient renders that mark. A `/clear` successor derives
+its label from the same inputs.
 
 Full and brief `/api/sessions` records expose nullable `reasoning_effort`, representing
 the latest trustworthy effective effort or, when no effective value is known, the
@@ -237,7 +237,6 @@ calls.
 | `set_handoff` | Stage an authored handoff and dispatch the current session's compact or clear boundary. |
 | `get_handoff` | Consume the current session's pending handoff; with `failed_attempt_id`, read the caller's undelivered attempt; with `agent_run_id`, read a child run's final handoff. |
 | `feedback` | Submit the current epoch survey without marking it human-reviewed. |
-| `set_title` | Set the caller’s sticky manual title. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Set `stop_reason="completed"`; installed workflows determine its effect. This does not end an agent run or close a task. |
@@ -502,7 +501,6 @@ Clients that do not fire session-start hooks can register explicitly.
 call_tool("gobby-sessions", "register_session", {
     "external_id": "<sdk-run-id>",
     "source": "codex",
-    "title": "SDK driven analysis",
     "agent_depth": 0
 })
 ```

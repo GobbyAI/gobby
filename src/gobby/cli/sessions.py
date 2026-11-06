@@ -275,10 +275,6 @@ def list_sessions(
             "expired": "○",
         }.get(session.status, "?")
 
-        title = session.title or "(no title)"
-        if len(title) > 50:
-            title = title[:47] + "..."
-
         total_tokens = session.usage_input_tokens + session.usage_output_tokens
         tokens_str = ""
         if total_tokens > 0:
@@ -293,7 +289,7 @@ def list_sessions(
         attention_str = _format_attention(attention_by_session.get(session.id))
         click.echo(
             f"{status_icon} {seq_str:<5} {session.id[:8]}  {session.source:<12} "
-            f"{attention_str:<28} {title:<40} {tokens_str}"
+            f"{attention_str:<28} {tokens_str}"
         )
 
 
@@ -324,8 +320,6 @@ def show_session(session_id: str, json_format: bool) -> None:
     click.echo(f"Status: {session.status}")
     click.echo(f"Source: {session.source}")
     click.echo(f"Project: {session.project_id}")
-    if session.title:
-        click.echo(f"Title: {session.title}")
     if session.git_branch:
         click.echo(f"Branch: {session.git_branch}")
     click.echo(f"Created: {session.created_at}")

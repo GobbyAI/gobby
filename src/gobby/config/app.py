@@ -204,7 +204,7 @@ class DaemonConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def reject_removed_session_title_config(cls, data: Any) -> Any:
+    def reject_removed_config_sections(cls, data: Any) -> Any:
         """Reject removed config sections explicitly."""
         if isinstance(data, dict):
             if "conductor" in data:

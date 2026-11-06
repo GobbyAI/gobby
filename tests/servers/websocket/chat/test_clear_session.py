@@ -462,7 +462,6 @@ def _web_chat_row(sessions: SessionManager, project_id: str, label: str) -> Any:
         source="claude",
         sandbox_enabled=False,
         sandbox_policy_hash="policy-hash",
-        title=label,
         chat_mode="normal",
         model="claude-opus",
     )

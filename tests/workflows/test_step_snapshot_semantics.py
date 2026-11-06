@@ -1232,7 +1232,6 @@ async def _run_post_launch_failure_case(
         machine_id=LOCAL_MACHINE_ID,
         source="test",
         project_id=str(sample_project["id"]),
-        title="Parent",
     )
     child_manager = ChildSessionManager(session_manager)
     run_storage = LocalAgentRunManager(temp_db)

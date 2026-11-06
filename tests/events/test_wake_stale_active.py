@@ -49,7 +49,6 @@ def _stranded_codex_seat(session_manager: SessionManager, project_id: str) -> st
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title="stranded-codex",
     ).id
     with session_manager.db.transaction():
         session_manager.db.execute(
@@ -73,7 +72,6 @@ async def _deferred_wake(
         machine_id=None,
         source="claude",
         project_id=project_id,
-        title="wake-sender",
     ).id
     messages = InterSessionMessageManager(temp_db)
     messages.create_message(

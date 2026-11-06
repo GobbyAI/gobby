@@ -68,7 +68,6 @@ async def test_notice_is_a_system_global_that_wakes_active_seats(
             machine_id=None,
             source="codex",
             project_id=sample_project["id"],
-            title=name,
         ).id
         for name in ("active-seat", "second-active-seat")
     ]
@@ -107,7 +106,6 @@ async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title="active-seat",
     ).id
     parked: list[str] = []
     for name, status in (
@@ -120,7 +118,6 @@ async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
             machine_id=None,
             source="codex",
             project_id=project_id,
-            title=name,
         ).id
         session_manager.update_status(seat, status)
         parked.append(seat)
@@ -129,7 +126,6 @@ async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title="claimed-idle-seat",
     ).id
     session_manager.update_status(claimed, "idle")
     LocalTaskManager(temp_db).create_task(
@@ -233,7 +229,6 @@ async def test_slow_wake_is_bounded_after_the_notice_commits(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="slow-seat",
     ).id
     dispatcher = SlowWakeDispatcher()
     runner = _runner(database=temp_db, session_manager=session_manager, wake_dispatcher=dispatcher)

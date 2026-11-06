@@ -47,7 +47,7 @@ def _load_roster_entries(
                 "machine_id": run.machine_id,
                 "project_id": run.project_id,
                 "lifecycle_status": run.lifecycle_status,
-                "definition_title": run.definition_title,
+                "definition": run.definition,
                 "attention": _serialize_attention(attention.get(entry_id))
                 or _serialize_attention(session_attention),
                 "provider_error": _provider_error(session_attention),
@@ -81,7 +81,7 @@ def _load_roster_entries(
                 "machine_id": session.machine_id,
                 "project_id": session.project_id,
                 "lifecycle_status": session.lifecycle_status,
-                "definition_title": session.definition_title,
+                "definition": session.definition,
                 "attention": _serialize_attention(attention.get(entry_id)),
                 "provider_error": _provider_error(attention.get(entry_id)),
                 "task": _task_payload(session),
@@ -106,6 +106,7 @@ def _task_payload(row: AttentionRosterRow) -> dict[str, object] | None:
         "id": row.task_id,
         "ref": row.task_ref,
         "title": row.task_title,
+        "claim_holder": row.task_claim_held,
     }
 
 

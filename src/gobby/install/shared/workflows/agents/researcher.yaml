@@ -4,7 +4,7 @@ direct_integration_commit_paths: [".gobby/plans/research/**"]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "2.4.0"
+version: "3.0.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: codex
@@ -145,7 +145,6 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
-        - "gobby-sessions:set_title"
         - "gobby-tasks:create_task"
         - "gobby-tasks:claim_task"
       on_mcp_success:
@@ -183,7 +182,6 @@ step_workflow:
       # Internal reads pass this MCP allowlist; native report writes are
       # confined by research-artifact-write-scope.
       allowed_mcp_tools:
-        - "gobby-sessions:set_title"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:end_agent_run"

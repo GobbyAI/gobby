@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.terminal_binding import repair_native_terminal_binding
 from gobby.storage.machines import MachineNotRegisteredError
-from gobby.storage.sessions._title_defaults import manual_title_source
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 
@@ -48,7 +47,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
         source: str,
         machine_id: str | None = None,
         project_id: str | None = None,
-        title: str | None = None,
         git_branch: str | None = None,
         parent_session_id: str | None = None,
         agent_depth: int = 0,
@@ -62,7 +60,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             source: CLI type - claude, codex, grok, agent-sdk, etc. (required)
             machine_id: Machine identifier (auto-resolved if omitted)
             project_id: Project ID (auto-resolved from .gobby/project.json if omitted)
-            title: Session title
             git_branch: Git branch name
             parent_session_id: Parent session ID for handoff chains
             agent_depth: Depth in agent hierarchy (0 = root session)
@@ -135,8 +132,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 machine_id=resolved_machine_id,
                 source=source,
                 project_id=resolved_project_id,
-                title=title,
-                title_source=manual_title_source(title),
                 git_branch=git_branch,
                 parent_session_id=parent_session_id if parent_session_id is not None else UNSET,
                 agent_depth=agent_depth,

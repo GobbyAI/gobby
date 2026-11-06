@@ -49,7 +49,6 @@ def session(temp_db: HubDatabase, project_id: str) -> Session:
         machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
-        title="Owner session",
     )
 
 

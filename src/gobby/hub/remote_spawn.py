@@ -28,7 +28,6 @@ from gobby.agents.spawn import PreparedSpawn, prepare_terminal_resume, prepare_t
 from gobby.config.app import DaemonConfig
 from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError, node_command_client
-from gobby.hub.spawn_payload import build_spawn_payload
 from gobby.mcp_proxy.tools.spawn_agent._code_index import code_index_preflight_mode
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _roll_back_run
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
@@ -64,7 +63,6 @@ class RemoteSpawnRequest:
     model: str | None = None
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
-    title: str | None = None
     isolation: str | None = None
     branch_name: str | None = None
     base_branch: str | None = None
@@ -371,6 +369,9 @@ async def spawn_remote_agent(
                 run = runner.run_storage.get(run_id)
                 if run is None:
                     raise RuntimeError(f"agent run {run_id} was not recorded")
+                # Local import: spawn_payload loads the spawn_agent package, which loads this module.
+                from gobby.hub.spawn_payload import build_spawn_payload
+
                 payload = build_spawn_payload(
                     db,
                     run=run,
@@ -382,7 +383,6 @@ async def spawn_remote_agent(
                         "initial_variables": request.initial_variables,
                         "agent_depth": prepared.agent_depth,
                         "max_agent_depth": request.max_agent_depth,
-                        "title": request.title,
                         "timeout": request.timeout_seconds,
                         "droid_mode": "exec",
                         "agent_lookup_name": request.agent_name,

@@ -88,7 +88,6 @@ def _seat_session(sessions: SessionManager, project_id: str, seat: _Seat) -> str
         machine_id=require_machine_id(),
         source="codex",
         project_id=project_id,
-        title=name,
     )
     if seat.role is not None:
         SessionVariableManager(sessions.db).set_variable(session.id, "_agent_type", seat.role)

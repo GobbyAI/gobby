@@ -43,7 +43,6 @@ def _session(transcript_path: Path) -> Session:
         machine_id=LOCAL_MACHINE_ID,
         source="agy",
         project_id="project",
-        title=None,
         status="active",
         transcript_path=str(transcript_path),
         summary_path=None,

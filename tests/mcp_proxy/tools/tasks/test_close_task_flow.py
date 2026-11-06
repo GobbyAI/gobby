@@ -328,9 +328,6 @@ async def test_cleanup_refetches_claims_added_during_close(monkeypatch: pytest.M
     monkeypatch.setattr(
         close_finalization, "notify_parent_on_task_state_change", lambda *_a, **_k: None
     )
-    monkeypatch.setattr(
-        "gobby.sessions.title_lifecycle.recompute_automatic_title", lambda *_a: None
-    )
     variables = cast(MagicMock, ctx.session_var_manager)
     variables.get_variables.return_value = {
         "claimed_tasks": {task.id: "#1"},

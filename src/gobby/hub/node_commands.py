@@ -116,7 +116,6 @@ class SpawnPayload(NodeModel):
     reasoning_effort: str | None
     sandbox: Sandbox
     timeout_seconds: int
-    title: str | None
     source_root: str
     workspace: SpawnWorkspace
     agent_name: str | None

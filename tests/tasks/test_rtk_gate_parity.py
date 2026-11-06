@@ -76,7 +76,6 @@ def _derive(tmp_path: Path, records: list[dict[str, Any]]) -> TranscriptEvidence
         machine_id="isolated",
         source="claude",
         project_id="project",
-        title=None,
         status="active",
         transcript_path=str(transcript),
         summary_path=None,

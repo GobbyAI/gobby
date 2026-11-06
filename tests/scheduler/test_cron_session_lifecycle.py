@@ -34,7 +34,6 @@ def _parent(db: HubDatabase, status: str) -> tuple[CronJob, CronRun, str]:
         machine_id=None,
         project_id=PROJECT_ID,
         source="cron",
-        title="cron:status-report",
         parent_session_id=system_session_id(),
     )
     return job, run, parent.id

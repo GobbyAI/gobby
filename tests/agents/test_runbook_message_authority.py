@@ -134,7 +134,6 @@ def _seat(
         machine_id=AGENT_TEST_MACHINE_ID,
         source="codex",
         project_id=project_id,
-        title=name,
         agent_depth=1 if parent else 0,
         parent_session_id=parent,
     )

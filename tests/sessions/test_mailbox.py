@@ -126,7 +126,6 @@ def _register_session(
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title=external_id,
         agent_depth=agent_depth,
         parent_session_id=parent_session_id,
     )

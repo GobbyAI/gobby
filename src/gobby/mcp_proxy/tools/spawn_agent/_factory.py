@@ -351,7 +351,6 @@ def create_spawn_agent_registry(
         reserved_run_id: str | None = None,
         placement: dict[str, Any] | None = None,
         machine: str | None = None,
-        title: str | None = None,
         seat_context: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         """
@@ -409,8 +408,6 @@ def create_spawn_agent_registry(
                 the caller owns that machine.
             seat_context: Prompt-only launch assignments: worktree and first_job.
                 Cannot set workflow controls, team membership or runtime identity.
-            title: Automatic session and pane title when no task is claimed. Returns
-                after task close or clear; existing manual titles take precedence.
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -525,18 +522,6 @@ def create_spawn_agent_registry(
                 initial_variables.update(agent_body.workflows.variables)
         if seat_context is not None:
             initial_variables["seat_context"] = seat_context
-        if agent_body:
-            from gobby.sessions.title_lifecycle import (
-                DEFINITION_TITLE_VARIABLE,
-                definition_display_name,
-            )
-
-            # A defined seat's title is its definition name; a caller title never overrides it.
-            initial_variables[DEFINITION_TITLE_VARIABLE] = definition_display_name(agent_body.name)
-        elif title is not None and title.strip():
-            from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
-
-            initial_variables[DEFINITION_TITLE_VARIABLE] = title.strip()
 
         # Inject _assigned_pipeline if the workflow is a PipelineDefinition
         if effective_workflow:
@@ -727,7 +712,6 @@ def create_spawn_agent_registry(
                     model=model,
                     reasoning_effort=reasoning_effort,
                     reasoning_required=reasoning_required,
-                    title=title,
                     isolation=checkout_mode,
                     branch_name=branch_name,
                     base_branch=base_branch,

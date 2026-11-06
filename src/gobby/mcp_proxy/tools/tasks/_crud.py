@@ -271,13 +271,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 build_claimed_task_extra_skill_state(session_vars, ctx.task_manager),
             )
 
-            try:
-                from gobby.sessions.title_lifecycle import update_title_for_claim
-
-                update_title_for_claim(ctx.session_manager, resolved_session_id, task)
-            except Exception as e:
-                logger.warning("Failed to update session title after claiming %s: %s", task.id, e)
-
         # Handle 'blocks' argument if provided (syntactic sugar)
         # Collect errors consistently with depends_on handling below
         dependency_errors: list[str] = []

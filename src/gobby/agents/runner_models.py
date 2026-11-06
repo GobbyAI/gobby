@@ -74,9 +74,6 @@ class AgentConfig:
     git_branch: str | None = None
     """Git branch for the session."""
 
-    title: str | None = None
-    """Optional title for the agent session."""
-
     project_path: str | None = None
     """Project path for loading project-specific workflows."""
 

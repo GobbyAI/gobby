@@ -120,9 +120,7 @@ def test_register_session_failure_returns_existing_canonical_session(
     )
     persisted = session_mgr.get(canonical_id)
     assert persisted is not None
-    assert session_mgr._session_metadata[canonical_id]["title"] == (
-        f"test-project#{persisted.seq_num}: Codex"
-    )
+    assert "title" not in session_mgr._session_metadata[canonical_id]
 
 
 def test_register_session_persists_project_path_as_workspace_identity(
@@ -140,7 +138,6 @@ def test_register_session_persists_project_path_as_workspace_identity(
             project_id=kwargs["project_id"],
             session_type="terminal",
             parent_session_id=None,
-            title="Claude",
             git_branch=kwargs.get("git_branch"),
             workspace_path=kwargs.get("workspace_path"),
             workspace_generation=1 if kwargs.get("workspace_path") else 0,
@@ -182,7 +179,6 @@ def test_register_session_happy_path_populates_caches(
         source="claude",
         project_id=project_id,
         transcript_path="/tmp/storage-session.jsonl",
-        title="Unified Manager Session",
     )
 
     assert len(session_id) == 36
@@ -213,9 +209,6 @@ def test_register_session_happy_path_caches_persisted_provisional_title(
     session = session_mgr.get(session_id)
 
     assert session is not None
-    assert session.title == f"test-project#{session.seq_num}: Codex"
-    assert session.title_source == "provisional"
-    assert session_mgr._session_metadata[session_id]["title"] == session.title
 
 
 def test_register_existing_session_backfills_terminal_context(

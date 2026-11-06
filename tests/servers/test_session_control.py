@@ -630,8 +630,6 @@ class TestContinueInChatTerminalKill:
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
         source_session.source = "codex"
-        source_session.title = "Manual Investigation"
-        source_session.title_source = "manual"
         source_session.terminal_context = None
 
         target_session = MagicMock()
@@ -708,8 +706,6 @@ class TestContinueInChatTerminalKill:
             "new-conv",
             source="codex",
             model=None,
-            title="Manual Investigation",
-            title_source="manual",
             chat_mode=None,
         )
         assert session_manager.update.call_count >= 1

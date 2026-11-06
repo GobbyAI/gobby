@@ -23,7 +23,6 @@ from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     build_handoff_continue_prompt,
 )
-from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
 from gobby.storage.session_startup_marks import record_startup_mark
 from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 
@@ -64,7 +63,6 @@ _CLEAR_SUCCESSOR_VARIABLE_KEYS = (
     MCP_PROXY_READY_VARIABLE,
     "_agent_type",
     "_agent_definition_hash",
-    DEFINITION_TITLE_VARIABLE,
 )
 
 
@@ -178,20 +176,13 @@ def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None
         )
         return
 
-    title = getattr(session, "title", None) or ""
     handler.logger.debug(
         "Scheduling tmux window rename for %s pane=%s",
         getattr(session, "ref", "?"),
         pane,
     )
-    handler.logger.debug(
-        "Scheduling tmux window rename title for %s: %r",
-        getattr(session, "ref", "?"),
-        title,
-    )
     _compat_module().schedule_tmux_window_rename(
         session,
-        title,
         loop=getattr(handler._session_coordinator, "_event_loop", None),
     )
 
@@ -235,8 +226,6 @@ def _crossing_seat(
     seat = {"_agent_type": agent_type}
     if predecessor_vars.get("_agent_definition_hash"):
         seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
-    if predecessor_vars.get(DEFINITION_TITLE_VARIABLE):
-        seat[DEFINITION_TITLE_VARIABLE] = predecessor_vars[DEFINITION_TITLE_VARIABLE]
     return seat
 
 
@@ -355,16 +344,6 @@ def _bind_clear_successor(
     except Exception as exc:
         handler.logger.warning(
             "Failed to carry the SRT socket root to clear successor %s: %s", successor_id, exc
-        )
-    try:
-        from gobby.sessions.title_lifecycle import apply_clear_successor_title
-
-        apply_clear_successor_title(handler._session_manager, successor_id, predecessor)
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to set clear-successor title for session %s: %s",
-            successor_id,
-            exc,
         )
     return True
 

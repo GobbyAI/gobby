@@ -36,8 +36,8 @@ _TASK_REF_ROLE_COLUMNS: dict[str, str] = {
 # Keep Session.from_row's required metadata while omitting conversation bodies.
 # NULL aliases satisfy its full-row constructor without fetching those values.
 _BRIEF_SESSION_COLUMNS = """
-    sessions.id, external_id, machine_id, source, sessions.project_id, title,
-    title_source, reasoning_effort, status, transcript_path, summary_path,
+    sessions.id, external_id, machine_id, source, sessions.project_id,
+    reasoning_effort, status, transcript_path, summary_path,
     NULL AS summary_markdown, git_branch, parent_session_id, created_at, updated_at,
     last_activity, summary_generation_mode, summary_generated_at, agent_depth,
     spawned_by_agent_id, workflow_name, agent_run_id, context_injected,
@@ -54,7 +54,7 @@ _BRIEF_SESSION_COLUMNS = """
 # Session.to_dict hands out unchanged.
 _SESSION_COLUMN_NAMES = tuple(
     """
-    id external_id machine_id source project_id title title_source reasoning_effort status
+    id external_id machine_id source project_id reasoning_effort status
     transcript_path summary_path summary_markdown handoff_markdown
     summary_source_context_hash summary_generation_mode summary_generated_at git_branch
     parent_session_id transcript_processed transcript_processing_failure_count

@@ -47,19 +47,12 @@ from gobby.sessions.handoff_records import (
     record_handoff_delivery,
     stage_agent_end_handoff,
 )
-from gobby.sessions.title_lifecycle import (
-    apply_clear_successor_title,
-    clear_successor_title,
-    recompute_automatic_title,
-    update_title_for_claim,
-)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.sessions._title_defaults import provider_title_label
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.terminals.pane_io import PaneIO, send_pane_key
 from gobby.utils.session_context import session_context_for_test
@@ -130,12 +123,6 @@ def _agent_boundary(
         prompt=f"agent handoff {suffix}",
     )
     return parent_session, child, run.id
-
-
-def _title(manager: SessionManager, session_id: str) -> str | None:
-    session = manager.get(session_id)
-    assert session is not None
-    return session.title
 
 
 def test_render_handoff_is_structured_deterministic_and_excludes_feedback() -> None:
@@ -1932,7 +1919,7 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     session = _registered_session(session_manager)
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
     names = {tool["name"] for tool in registry.list_tools()}
-    assert {"set_handoff", "get_handoff", "feedback", "set_title"} <= names
+    assert {"set_handoff", "get_handoff", "feedback"} <= names
     assert not {
         "compact_self",
         "clear_self",
@@ -1998,8 +1985,6 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
             "session_id": None,
             "handoff": "",
         }
-        renamed = await registry.call("set_title", {"title": "Manual title"})
-        assert renamed["title"] == "Manual title"
 
 
 @pytest.mark.asyncio
@@ -2060,72 +2045,6 @@ async def test_get_handoff_result_stays_below_offload_threshold(
         "found_work_gate_armed": False,
     }
     assert len(json.dumps(result)) < 15_000
-
-
-def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
-    session_manager: SessionManager,
-) -> None:
-    session = _registered_session(session_manager)
-    assert session.seq_num is not None
-    assert session.title == (
-        f"handoff-test#{session.seq_num}: {provider_title_label(session.source)}"
-    )
-
-    update_title_for_claim(
-        session_manager,
-        session.id,
-        SimpleNamespace(seq_num=42, title="Implement handoffs"),
-    )
-    assert _title(session_manager, session.id) == (
-        f"handoff-test#{session.seq_num}: Task #42 - Implement handoffs"
-    )
-
-    session_manager.update_title(session.id, "Sticky", title_source="manual")
-    update_title_for_claim(
-        session_manager,
-        session.id,
-        SimpleNamespace(seq_num=43, title="Another task"),
-    )
-    assert _title(session_manager, session.id) == "Sticky"
-
-    successor_id = session_manager.register_session(
-        external_id="title-successor",
-        machine_id=MACHINE_ID,
-        source="codex",
-        project_id=session.project_id,
-    )
-    predecessor = session_manager.get(session.id)
-    assert predecessor is not None
-    apply_clear_successor_title(session_manager, successor_id, predecessor)
-    assert _title(session_manager, successor_id) == "Sticky"
-
-    session_manager.update_title(successor_id, "temporary", title_source="task")
-    assert _title(session_manager, successor_id) == "Sticky"
-    recomputed = recompute_automatic_title(session_manager, successor_id)
-    assert recomputed is not None and recomputed.title == "Sticky"
-
-
-def test_clear_successor_task_title_uses_successor_session_ref(
-    session_manager: SessionManager,
-) -> None:
-    predecessor = _registered_session(session_manager)
-    task = LocalTaskManager(session_manager.db).create_task(
-        project_id=predecessor.project_id,
-        title="Continue claimed work",
-        claimed_by_session_id=predecessor.id,
-        category="code",
-        validation_criteria="Title lifecycle test task.",
-        implementation_domain="backend",
-    )
-
-    title, title_source = clear_successor_title(
-        session_manager.db,
-        predecessor,
-        successor_seq_num=99,
-    )
-
-    assert title == (f"handoff-test#99: Task #{task.seq_num} - Continue claimed work")
-    assert title_source == "task"
 
 
 def test_staged_handoff_rejection_names_the_blocking_condition(

@@ -104,7 +104,6 @@ async def test_register_repairs_existing_unbound_native_pane(
         terminal_context={}
         if missing_identity
         else {"parent_pid": 8001, "parent_create_time": 110.0},
-        title="Orchestrator",
     )
     shell = MagicMock(pid=8000)
     shell.create_time.return_value = 100.0
@@ -204,7 +203,7 @@ async def test_register_repairs_existing_unbound_native_pane(
     attached = terminals.get(terminal_id)
     assert attached is not None and attached.session_id == session.id
     refreshed = manager.get(session.id)
-    assert refreshed is not None and refreshed.title == "Orchestrator"
+    assert refreshed is not None
     assert refreshed.terminal_context is not None
     assert refreshed.terminal_context["gobby_terminal_id"] == terminal_id
     roster = AttentionStateManager(temp_db).load_roster_rows(live_session_statuses=["active"])

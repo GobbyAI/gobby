@@ -7,11 +7,6 @@ from typing import Any
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
-_TITLE_HELP = (
-    "title: omit to title the session's pane with the definition name (a manual "
-    "title is kept), pass text to set that title, or pass an empty string to leave it."
-)
-
 
 def register_agent_spawn_tools(
     registry: InternalToolRegistry,
@@ -109,19 +104,14 @@ def register_agent_spawn_tools(
         description=(
             "Activate an agent definition on the current session: prompt, rules, skills, "
             "variables, tool restrictions and step workflow. A role change requires a relaunch. "
-            f"{_TITLE_HELP}"
         ),
     )
     async def apply_agent_definition(
         agent: str,
         variables: dict[str, Any] | None = None,
         task_id: str | None = None,
-        title: str | None = None,
     ) -> dict[str, Any]:
-        from gobby.mcp_proxy.tools.apply_agent_definition import (
-            apply_agent_definition_impl,
-            title_applied_session,
-        )
+        from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 
         result = await apply_agent_definition_impl(
             agent=agent,
@@ -130,22 +120,19 @@ def register_agent_spawn_tools(
             task_id=task_id,
             task_manager=ctx.task_manager,
         )
-        return title_applied_session(ctx.db, result, agent, title)
+        return result
 
     @registry.tool(
         name="apply_persona",
         description=(
             "Switch the current session's persona prompt and skills live, preserving its seat. "
-            f"{_TITLE_HELP}"
         ),
     )
     async def apply_persona(
         agent: str,
         variables: dict[str, Any] | None = None,
         task_id: str | None = None,
-        title: str | None = None,
     ) -> dict[str, Any]:
-        from gobby.mcp_proxy.tools.apply_agent_definition import title_applied_session
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
         result = await apply_persona_impl(
@@ -155,7 +142,4 @@ def register_agent_spawn_tools(
             task_id=task_id,
             task_manager=ctx.task_manager,
         )
-        applied = result.get("persona_applied")
-        return title_applied_session(
-            ctx.db, result, applied if isinstance(applied, str) else agent, title
-        )
+        return result
