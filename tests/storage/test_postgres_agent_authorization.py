@@ -790,6 +790,7 @@ def test_managed_execution_cannot_record_an_operator_dirty_path_approval(
                 checkout_root=str(tmp_path),
                 paths=["a.txt"],
                 approved_by="agent",
+                reason="test",
             )
     finally:
         agent_db.close()

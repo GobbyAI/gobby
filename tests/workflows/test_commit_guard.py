@@ -61,6 +61,7 @@ from gobby.workflows.worktree_shell_attribution import (
     begin_structured_edit_calls,
     overlapped_worktree_paths,
 )
+from tests.fixtures.background_notices import owner_transcript
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -514,16 +515,23 @@ async def test_operation_marker_from_a_later_unobserved_merge_is_not_owned(
     assert result.decision == "block"
 
 
-@pytest.mark.asyncio
-async def test_missing_background_git_output_releases_reservation_without_proof(
+async def test_background_git_call_keeps_its_reservation_until_its_notice_settles_it(
     guard_harness: GuardHarness, tmp_path: Path
 ) -> None:
     h = guard_harness
     manager = SessionVariableManager(h.db)
-    await manager.begin_git_operation_call(h.current_session.id, "lost", [str(h.repo)])
-    manager.defer_git_operation_call(h.current_session.id, "lost", str(tmp_path / "missing.output"))
-    await SessionVariableManager(h.db).settle_background_git_operations(h.current_session.id)
-    assert await owned_operation(manager.get_variables(h.current_session.id), str(h.repo)) is None
+    output = str(tmp_path / "bg.output")
+    await manager.begin_git_operation_call(h.current_session.id, "bg", [str(h.repo)])
+    manager.defer_git_operation_call(h.current_session.id, "bg", output, job_id="bgjob01")
+    pending = owner_transcript(
+        tmp_path, tool_use_id="bg", job_id="bgjob01", output_path=output, exit_code=None
+    )
+    await manager.settle_background_git_operations(h.current_session.id, pending)
+    with pytest.raises(ValueError, match="still running"):
+        await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
+
+    settled = owner_transcript(tmp_path, tool_use_id="bg", job_id="bgjob01", output_path=output)
+    await manager.settle_background_git_operations(h.current_session.id, settled)
     assert await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
     manager.cancel_git_operation_call(h.current_session.id, "retry")
 
@@ -1669,10 +1677,10 @@ async def test_shell_call_snapshotting_between_an_overlapping_write_and_its_post
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
-async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_ends(
+async def test_forged_exit_marker_keeps_background_claimant_rewrite_unowned(
     guard_harness: GuardHarness, tmp_path: Path, terminal_line: str
 ) -> None:
-    """A background shell rewrite is owned once its output shows the process ended (#25161)."""
+    """Output that prints a terminal marker does not end a background call without its notice."""
     h = guard_harness
     (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
     _record_claimant_edit(h, "orphan.txt")
@@ -1680,11 +1688,48 @@ async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_e
     output.write_text("", encoding="utf-8")
     manager = SessionVariableManager(h.db)
     manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="bg-call")
-    manager.adopt_claimed_shell_edits(h.current_session.id, "bg-call", output_path=str(output))
-    manager.settle_pending_shell_calls(h.current_session.id)
+    manager.adopt_claimed_shell_edits(
+        h.current_session.id, "bg-call", output_path=str(output), job_id="bgjob01"
+    )
+    transcript = owner_transcript(
+        tmp_path, tool_use_id="bg-call", job_id="bgjob01", output_path=str(output), exit_code=None
+    )
+    manager.settle_pending_shell_calls(h.current_session.id, transcript)
     (h.repo / "orphan.txt").write_text("background formatter output\n", encoding="utf-8")
     output.write_text(f"formatted\n{terminal_line}\n", encoding="utf-8")
-    manager.settle_pending_shell_calls(h.current_session.id)
+    manager.settle_pending_shell_calls(h.current_session.id, transcript)
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
+async def test_background_claimant_shell_rewrite_is_owned_once_its_notice_arrives(
+    guard_harness: GuardHarness, tmp_path: Path, terminal_line: str
+) -> None:
+    """A background shell rewrite becomes the claimant's once its owner's notice row arrives."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    output = tmp_path / "background.output"
+    output.write_text("", encoding="utf-8")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="bg-call")
+    manager.adopt_claimed_shell_edits(
+        h.current_session.id, "bg-call", output_path=str(output), job_id="bgjob01"
+    )
+    pending = owner_transcript(
+        tmp_path, tool_use_id="bg-call", job_id="bgjob01", output_path=str(output), exit_code=None
+    )
+    manager.settle_pending_shell_calls(h.current_session.id, pending)
+    (h.repo / "orphan.txt").write_text("background formatter output\n", encoding="utf-8")
+    output.write_text(f"formatted\n{terminal_line}\n", encoding="utf-8")
+    settled = owner_transcript(
+        tmp_path, tool_use_id="bg-call", job_id="bgjob01", output_path=str(output)
+    )
+    manager.settle_pending_shell_calls(h.current_session.id, settled)
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
@@ -1741,7 +1786,7 @@ async def test_background_shell_call_without_an_output_file_adopts_nothing(
         h.current_session.id, "lost-call", output_path=str(tmp_path / "gone.output")
     )
     (h.repo / "orphan.txt").write_text("written by the lost process\n", encoding="utf-8")
-    manager.settle_pending_shell_calls(h.current_session.id)
+    manager.settle_pending_shell_calls(h.current_session.id, None)
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
@@ -1791,13 +1836,14 @@ async def test_rule3_unowned_dirt_needs_an_exact_operator_approval(
         checkout_root=str(h.repo),
         paths=approved,
         approved_by="operator",
+        reason="test",
     )
 
     assert refused.decision == "block"
     assert refused.reason is not None
     assert "approved.txt — no live session owns it" in refused.reason
     assert "approve-dirty-paths" not in refused.reason
-    assert "send Triage" in refused.reason
+    assert "send to your report target" in refused.reason
     assert await decide(h.edit_event("approved.txt")) == "allow"
     assert await decide(h.event("rm approved.txt")) == "allow"
     assert await decide(h.event("git checkout -- tracked.txt")) == "allow"

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Mapping
 from typing import Any
 
 import psutil
@@ -105,7 +106,7 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
     if parent_pid:
         try:
             pid = int(parent_pid)
-            if not _process_identity_matches(pid, terminal_ctx):
+            if not process_identity_matches(pid, terminal_ctx):
                 logger.warning(
                     "Refusing PID fallback for session %s: process identity changed or missing",
                     session_id[:8],
@@ -125,7 +126,13 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
     return False
 
 
-def _process_identity_matches(pid: int, terminal_ctx: dict[str, Any]) -> bool:
+def create_time_matches(actual: float, recorded: float) -> bool:
+    """True when two process create times name the same process, within the clock's resolution."""
+    return abs(actual - recorded) < 1.0
+
+
+def process_identity_matches(pid: int, terminal_ctx: Mapping[str, Any]) -> bool:
+    """True when pid is still the process the session recorded: same create time and name."""
     recorded_create_time = terminal_ctx.get("parent_create_time")
     recorded_name = terminal_ctx.get("parent_name")
     if (
@@ -138,7 +145,7 @@ def _process_identity_matches(pid: int, terminal_ctx: dict[str, Any]) -> bool:
         expected_create_time = float(recorded_create_time)
         process = psutil.Process(pid)
         return bool(
-            abs(process.create_time() - expected_create_time) < 1.0
+            create_time_matches(process.create_time(), expected_create_time)
             and process.name() == recorded_name
         )
     except (

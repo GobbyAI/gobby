@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from gobby.hooks.checkout_reads import event_machine_id
+from gobby.sessions.background_notices import BackgroundReceipt, resolve_background_notice
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitOk, daemon_git
@@ -18,7 +19,6 @@ from gobby.workflows.checkout_fingerprint import path_fingerprints
 from gobby.workflows.commit_guard_conflicts import ForeignPathOwner
 from gobby.workflows.task_claim_state import task_checkout_edit_times, task_edit_path_covers
 from gobby.workflows.worktree_shell_attribution import (
-    background_output_state,
     overlapped_worktree_paths,
     worktree_digests,
 )
@@ -265,8 +265,17 @@ class GitOperationRegistry(ABC):
 
         self._mutate_variables(session_id, cancel, keys=(OPERATIONS_VARIABLE,))
 
-    def defer_git_operation_call(self, session_id: str, call_id: str, output_path: str) -> None:
-        """Keep a Claude background call pending until its output carries a terminal receipt."""
+    def defer_git_operation_call(
+        self,
+        session_id: str,
+        call_id: str,
+        output_path: str,
+        *,
+        job_id: str | None = None,
+        job_tree: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Keep a Claude background call pending until its owner's transcript notice, or its
+        recorded jobs, end."""
 
         def defer(variables: dict[str, Any]) -> tuple[None, bool]:
             entries = _entries(variables)
@@ -278,6 +287,8 @@ class GitOperationRegistry(ABC):
                     and entry.get("pending")
                 ):
                     entry["output_path"] = output_path
+                    entry["job_id"] = job_id
+                    entry["job_tree"] = job_tree
                     changed = True
             if changed:
                 variables[OPERATIONS_VARIABLE] = entries
@@ -285,8 +296,13 @@ class GitOperationRegistry(ABC):
 
         self._mutate_variables(session_id, defer, keys=(OPERATIONS_VARIABLE,))
 
-    async def settle_background_git_operations(self, session_id: str) -> None:
-        """Settle completed output receipts before guards read operation provenance."""
+    async def settle_background_git_operations(
+        self, session_id: str, transcript_path: str | None
+    ) -> None:
+        """Finish pending background Git calls whose owner transcript holds their notice row.
+
+        Without a resolved notice a call stays pending whatever its output shows.
+        """
         variables = await asyncio.to_thread(
             self.get_variable_subset, session_id, (OPERATIONS_VARIABLE,)
         )
@@ -297,11 +313,15 @@ class GitOperationRegistry(ABC):
             call_id = entry.get("call_id")
             if not isinstance(output, str) or not isinstance(call_id, str):
                 continue
-            state = await asyncio.to_thread(background_output_state, output)
-            if state == "finished":
+            job_id = entry.get("job_id")
+            receipt = BackgroundReceipt(
+                job_id=job_id if isinstance(job_id, str) else None, output_path=output
+            )
+            notice = await asyncio.to_thread(
+                resolve_background_notice, transcript_path, tool_use_id=call_id, receipt=receipt
+            )
+            if notice is not None:
                 await self.finish_git_operation_call(session_id, call_id)
-            elif state == "missing":
-                await asyncio.to_thread(self.cancel_git_operation_call, session_id, call_id)
 
     async def finish_git_operation_call(self, session_id: str, call_id: str) -> None:
         """Bind terminal receipts, including conflict exits, to the resulting Git state."""

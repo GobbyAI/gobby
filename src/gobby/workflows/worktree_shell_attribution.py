@@ -13,8 +13,10 @@ rules judge it until its write completes or is refused, so a Bash call that over
 marks it too. A path an overlapping call changed stays foreign to every session until no call
 in that worktree is running and the path's author edits it with a native write, which reclaims it.
 
-A background Bash call stays in flight until its owner settles it or its freshness window ends.
-The gate never reads its output's exit line as proof of exit, because a live process can print it.
+A background Bash call stays in flight until its owner's transcript holds its notice row, its
+owner ends gracefully with the process tree stopped and empty, or an operator releases it; no
+clock settles it. Neither the gate nor the settle paths read its output's exit line as proof of
+exit, because a live process can print that line and keep writing.
 """
 
 from __future__ import annotations
@@ -23,15 +25,18 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.hooks.events import tool_execution_id
+from gobby.sessions.background_notices import (
+    BackgroundReceipt,
+    resolve_background_notice,
+)
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.checkout_fingerprint import path_fingerprints
 
@@ -53,11 +58,6 @@ OVERLAPS_VARIABLE = "worktree_shell_overlaps"
 # A foreground Bash call cannot run longer than 10 minutes, so an older entry belongs to a
 # call whose after-hook never ran and must not mark a live call as overlapping.
 STALE_CALL_SECONDS = 600.0
-# A background call stays in flight while its output file exists. This ceiling only bounds an
-# output file whose end line never came, so it cannot mark live calls forever.
-BACKGROUND_STALE_SECONDS = 4 * 60 * 60.0
-_BACKGROUND_TAIL_BYTES = 512
-_BACKGROUND_END_LINE = re.compile(r"\[(?:exited with code -?\d+|killed)\]")
 # Call ids of structured edits; a Bash call's id is its tool-call id, which never has this prefix.
 _EDIT_CALL_PREFIX = "edit:"
 
@@ -147,34 +147,29 @@ def _started_at_of(entry: Mapping[str, Any]) -> float | None:
     return float(value) if isinstance(value, int | float) else None
 
 
-def background_output_state(output_path: str) -> str:
-    """Return ``running``, ``finished`` or ``missing`` for a background call's output file.
-
-    The CLI ends the file with an ``[exited with code N]`` or ``[killed]`` line when the
-    process stops.
-    """
-    path = Path(output_path)
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            handle.seek(max(0, size - _BACKGROUND_TAIL_BYTES))
-            tail = handle.read().decode("utf-8", "replace")
-    except OSError:
-        return "missing"
-    lines = [line.strip() for line in tail.splitlines() if line.strip()]
-    return "finished" if lines and _BACKGROUND_END_LINE.fullmatch(lines[-1]) else "running"
-
-
 def _is_fresh(entry: Any, now: float) -> bool:
+    """Whether an entry still holds its paths.
+
+    A background call holds them until its owner's notice row settles it, a graceful owner end
+    settles it, or an operator releases its paths. No clock ends it: a call whose notice never
+    arrives stays in flight. Only a foreground call, which cannot outlive its shell, uses a clock.
+    """
     if not isinstance(entry, dict):
         return False
-    age = now - float(entry.get("started_at", 0.0))
+    if entry.get("pending_receipt") is True or isinstance(entry.get("output_path"), str):
+        return True
+    started_at = float(entry.get("started_at", 0.0))
+    return now - started_at < STALE_CALL_SECONDS
+
+
+def _receipt_of(entry: Mapping[str, Any]) -> BackgroundReceipt | None:
     output_path = entry.get("output_path")
-    if entry.get("pending_receipt") is True:
-        return age < BACKGROUND_STALE_SECONDS
-    if isinstance(output_path, str):
-        return age < BACKGROUND_STALE_SECONDS and background_output_state(output_path) != "missing"
-    return age < STALE_CALL_SECONDS
+    if not isinstance(output_path, str):
+        return None
+    job_id = entry.get("job_id")
+    return BackgroundReceipt(
+        job_id=job_id if isinstance(job_id, str) else None, output_path=output_path
+    )
 
 
 def _json_object(text: Any) -> dict[str, Any]:
@@ -250,9 +245,15 @@ class WorktreeShellCallRegistry(ABC):
             self._mark_overlapped(session_id, call_id)
 
     def defer_worktree_shell_call(
-        self, session_id: str, call_id: str, *, output_path: str | None
+        self,
+        session_id: str,
+        call_id: str,
+        *,
+        output_path: str | None,
+        job_id: str | None = None,
+        job_tree: Mapping[str, Any] | None = None,
     ) -> None:
-        """Keep a call in flight until its output file or terminal poll proves it ended."""
+        """Keep a call in flight until its owner's transcript notice, or its recorded jobs, end."""
 
         def defer(variables: dict[str, Any]) -> tuple[None, bool]:
             calls = _calls_of(variables)
@@ -262,6 +263,8 @@ class WorktreeShellCallRegistry(ABC):
             calls[call_id] = {
                 **entry,
                 "output_path": output_path,
+                "job_id": job_id,
+                "job_tree": job_tree,
                 "pending_receipt": output_path is None,
             }
             variables[CALLS_VARIABLE] = calls
@@ -364,8 +367,10 @@ class WorktreeShellCallRegistry(ABC):
 
         A structured edit registers its own entry under ``edit:<request_id>:<root>`` before its
         rules judge it, so that request's entries (its shell id and its edit keys) never count.
-        A background call counts until its owner settles it or its freshness window ends. Its
-        output's exit line does not end it: a live process can print that line and keep writing.
+        A background call counts until its owner settles it: a notice row, a graceful end that
+        empties its recorded jobs, or an operator release. A foreground call counts until its
+        freshness window ends. Its output's exit line never ends a call: a live process can print
+        that line and keep writing.
         """
         rows = self.db.fetchall(
             """
@@ -419,6 +424,37 @@ class WorktreeShellCallRegistry(ABC):
             return None, True
 
         self._mutate_variables(session_id, settle, keys=(OVERLAPS_VARIABLE,))
+
+    def retire_worktree_shell_calls(
+        self, session_id: str, root: str, paths: Collection[str]
+    ) -> list[str]:
+        """Drop this session's in-flight calls in ``root`` that touch ``paths``, unattributed.
+
+        An operator release uses this for a session that has ended: its calls can no longer
+        settle, and their changes stay foreign until the operator approves them by path. A call
+        touches a path when the path was dirty at its start. A call that began on a clean path
+        may still write it, so it stays in flight (fail closed).
+        """
+        named = set(paths)
+        retired: list[str] = []
+
+        def touches(entry: Any) -> bool:
+            if not isinstance(entry, dict) or entry.get("root") != root:
+                return False
+            dirty = entry.get("dirty")
+            return isinstance(dirty, dict) and not named.isdisjoint(dirty)
+
+        def retire(variables: dict[str, Any]) -> tuple[None, bool]:
+            calls = _calls_of(variables)
+            kept = {call_id: entry for call_id, entry in calls.items() if not touches(entry)}
+            if len(kept) == len(calls):
+                return None, False
+            retired.extend(call_id for call_id in calls if call_id not in kept)
+            variables[CALLS_VARIABLE] = kept
+            return None, True
+
+        self._mutate_variables(session_id, retire, keys=(CALLS_VARIABLE,))
+        return retired
 
     def clear_overlapped_paths(self, session_id: str, root: str, paths: Collection[str]) -> None:
         """Drop paths a native structured write named from this session's overlap record."""
@@ -476,27 +512,60 @@ def attribute_settled_call(
 
 
 async def settle_background_worktree_shell_calls(
-    manager: SessionVariableManager, session_id: str
+    manager: SessionVariableManager, session_id: str, transcript_path: str | None
 ) -> bool:
-    """Settle this session's background calls whose process ended; True when paths were recorded.
+    """Settle this session's background calls that its transcript proves ended; True when paths
+    were recorded.
 
-    A running call stays in flight. A call whose output file is gone is retired without
-    attribution, so its paths stay foreign. Database work runs in worker threads; the digest runs
-    on the event loop.
+    Only a notice row in the owner's transcript settles a call, matched to its tool use and
+    output file. Without one the call stays in flight whatever its output shows, and its paths
+    stay foreign. Database and transcript work run in worker threads; the digest runs on the
+    event loop.
     """
+
+    async def noticed(call_id: str, receipt: BackgroundReceipt) -> bool:
+        notice = await asyncio.to_thread(
+            resolve_background_notice, transcript_path, tool_use_id=call_id, receipt=receipt
+        )
+        return notice is not None
+
+    return await _settle_background_calls(manager, session_id, noticed)
+
+
+async def settle_ended_owner_background_calls(
+    manager: SessionVariableManager, session_id: str, call_ids: Collection[str]
+) -> bool:
+    """Settle the given background calls, whose recorded jobs a graceful owner end has stopped.
+
+    The stopped, empty job tree is the proof, so no notice row is needed. Calls outside
+    ``call_ids`` are left as they are.
+    """
+
+    async def owner_ended(call_id: str, receipt: BackgroundReceipt) -> bool:
+        del receipt
+        return call_id in call_ids
+
+    return await _settle_background_calls(manager, session_id, owner_ended)
+
+
+async def _settle_background_calls(
+    manager: SessionVariableManager,
+    session_id: str,
+    proven: Callable[[str, BackgroundReceipt], Awaitable[bool]],
+) -> bool:
+    """Settle each background call that ``proven`` accepts; True when paths were recorded."""
     now = time.time()
     recorded = False
     for call_id, entry in (
         await asyncio.to_thread(manager.background_worktree_calls, session_id)
     ).items():
         root = entry.get("root")
-        output_path = entry.get("output_path")
-        if not isinstance(root, str) or not isinstance(output_path, str):
+        receipt = _receipt_of(entry)
+        if not isinstance(root, str) or receipt is None:
             continue
-        state = await asyncio.to_thread(background_output_state, output_path)
-        if state == "running":
+        if not await proven(call_id, receipt):
             continue
-        after = await worktree_digests(root) if state == "finished" else None
+        after = await worktree_digests(root)
         settled = await asyncio.to_thread(
             manager.settle_worktree_shell_call, session_id, root, call_id, after=after, now=now
         )
