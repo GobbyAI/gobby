@@ -588,7 +588,12 @@ impl LoopJobs {
             }
             Pending::Geometry(pane, rows, cols) => {
                 match workspace.stage_geometry(pane, rows, cols) {
-                    Ok(messages) if messages.is_empty() => false,
+                    // Nothing was sent, so the recorded size is not on its way.
+                    // Forget it, or a later pass takes it as sent and never offers it.
+                    Ok(messages) if messages.is_empty() => {
+                        self.sent_geometry.retain(|entry| entry.0 != pane);
+                        false
+                    }
                     Ok(messages) => {
                         let daemon = workspace.daemon().clone();
                         spawn_job(&self.tx, tag.clone(), async move {
