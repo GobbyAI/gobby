@@ -29,11 +29,22 @@ pub(super) fn daemon_pane_id(chrome: &Chrome, slot: layout::PaneId) -> Option<St
     chrome.viewer.panes.daemon_id(slot).map(str::to_owned)
 }
 
+/// The toast for a placement that `placement_op` refused on a daemon tab. The
+/// refusal comes only from a missing project or an unresolved focused pane.
+pub(super) fn refusal_message(workspace: &Workspace<LiveDaemon>) -> &'static str {
+    if workspace.project_id().is_some() {
+        "Wait for the focused pane before splitting"
+    } else {
+        "Select a project before opening a shell"
+    }
+}
+
 /// The op that places `terminal_id` per `placement` when the window views a
 /// daemon workspace: a new tab of the focused project, or a split of the
 /// active daemon tab's focused pane (a bar with no tab yet gets a tab).
-/// `None` keeps the chrome-only placement: no model, no project, or a
-/// local tab active.
+/// `None` is no daemon op. With no model, no project, or a local tab active,
+/// the caller places the pane chrome-only. A split whose daemon tab's focus
+/// names no pane yet is refused: the caller must not place it chrome-only.
 pub(super) fn placement_op(
     workspace: &Workspace<LiveDaemon>,
     chrome: &Chrome,

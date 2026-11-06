@@ -147,3 +147,32 @@ async fn a_refused_split_placement_adds_no_pane_to_the_daemon_tab_locally() {
     );
     mock.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_refused_split_placement_says_to_wait() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, mut chrome, _) = fixture(&mock).await;
+    project_with_daemon_tab_active(&mut workspace, &mut chrome);
+    let pane = workspace
+        .pane_for_terminal("existing")
+        .expect("existing pane");
+    chrome.open_pane(pane, "unresolved");
+    let jobs = LoopJobs::new(&workspace);
+
+    place_live_terminal(
+        &mut workspace,
+        &mut chrome,
+        jobs.outcomes(),
+        Placement::SplitRight,
+        "existing",
+        None,
+        None,
+    );
+
+    assert_eq!(
+        chrome.alert_log.last().map(|toast| toast.title.as_str()),
+        Some("Wait for the focused pane before splitting"),
+        "a refused placement says why, since the user sees no pane appear"
+    );
+    mock.shutdown().await;
+}
