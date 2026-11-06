@@ -2480,8 +2480,10 @@ async fn a_lost_write_reply_does_not_stop_the_keys_typed_after_it() {
             written(&mock, "terminal-b").len() == 2
         })
         .await;
-        tokio::time::sleep(gobby_client::daemon::REQUEST_DEADLINE + Duration::from_millis(500))
+        tokio::time::pause();
+        tokio::time::advance(gobby_client::daemon::REQUEST_DEADLINE + Duration::from_millis(500))
             .await;
+        tokio::time::resume();
         mock.allow_ws("terminal_input");
         probe.key_reaches("terminal-b", 'k').await;
         drop(input_tx);

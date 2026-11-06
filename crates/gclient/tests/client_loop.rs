@@ -5591,7 +5591,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         wait_for_focus_reports(&mock, 1).await;
         let chord =
             |c: char, modifiers: KeyModifiers| send_chord(&input_tx, KeyCode::Char(c), modifiers);
-        // FocusPaneRight: the lease follows focus to the neighbour.
+        // FocusPaneRight moves focus to the neighbour.
         chord('l', KeyModifiers::NONE).await;
         wait_for_focus_reports(&mock, 2).await;
         // SwapPaneLeft: b takes a's place, focus stays on b.
@@ -5627,14 +5627,18 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         })
         .await
         .expect("the spawned terminal attaches");
-        settle_live_event().await;
+        // The viewport precedes the split's asynchronous focus report. Wait
+        // for that report before it can be mistaken for either jump below.
+        wait_until(|| focused_terminals(&mock).last().map(String::as_str) == Some(SPAWNED)).await;
         let before_jumps = focused_report_count(&mock);
         // OpenNotificationTarget: c, in the other tab.
         chord('o', KeyModifiers::NONE).await;
-        wait_for_focus_reports(&mock, before_jumps + 1).await;
+        wait_until(|| focused_terminals(&mock).last().map(String::as_str) == Some("terminal-c"))
+            .await;
         // NextAttention (custom chord): b's terminal, back in the first tab.
         chord('f', KeyModifiers::NONE).await;
-        wait_for_focus_reports(&mock, before_jumps + 2).await;
+        wait_until(|| focused_terminals(&mock).last().map(String::as_str) == Some("terminal-b"))
+            .await;
         drop(input_tx);
         before_jumps
     };
