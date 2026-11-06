@@ -52,7 +52,8 @@ Each stage validates against task.validation_criteria with stage and a per-crite
 
 The lead checks attestations and security, lands, validates the integrated SHA
 after landing, records closing and closes. Developers and reviewers never land,
-merge, close or delete worktrees. The lead deletes only clean merged worktrees
+merge into the integration branch, close or delete worktrees. When the lead asks,
+a developer merges the base into its own tree under its claim. The lead deletes only clean merged worktrees
 after associated seats end, without force. Superseded evidence remains in history.
 
 For an epic retain the primary pair and shared tree; the lead schedules ready
@@ -65,7 +66,8 @@ epic lead lands the leaf into the epic branch under clean-tree coordination,
 validates, closes it and removes the clean child tree. Once every descendant is
 closed, an epic team seat may claim the epic root for final validation. The lead's named
 integration-leaf step provides a claimable task for implementation repairs and
-final integration checks; the lead performs base merges. Final review is independent
+final integration checks; the developer holding that leaf performs base merges
+under its claim. Final review is independent
 of all descendant code/test authors and binds the candidate and subtree_revision.
 
 Relaunch missing seats with seats and team_id, the original admission execution,
@@ -117,6 +119,6 @@ not reach seats once the pipeline child has ended.
 Guides: [runbooks](../../../../../../../../docs/guides/runbooks.md) and
 [pipelines](../../../../../../../../docs/guides/pipelines.md#runbooks).
 
-_Version: 4.1.1_
+_Version: 5.0.0_
 
-_Last verified: 2026-11-04_
+_Last verified: 2026-11-05_
