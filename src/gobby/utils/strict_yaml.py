@@ -48,4 +48,4 @@ class StrictYamlLoader(yaml.SafeLoader):
 
 def load_strict_yaml(text: str) -> Any:
     """Parse one YAML document, refusing duplicate mapping keys at any depth."""
-    return StrictYamlLoader(text).get_single_data()
+    return yaml.load(text, Loader=StrictYamlLoader)
