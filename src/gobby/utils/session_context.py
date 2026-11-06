@@ -45,6 +45,9 @@ class SessionContext:
     conversation_id: str | None = None
     """External/CLI-specific session ID (e.g., Claude Code conversation ID)."""
 
+    project_id: str | None = None
+    """The session's own project, compared with an explicit project override."""
+
 
 _current_session_context: contextvars.ContextVar[SessionContext | None] = contextvars.ContextVar(
     "current_session_context", default=None
@@ -370,10 +373,12 @@ def _resolve_and_seed_contexts_sync(
 
     if resolved_session_id:
         conversation_id: str | None = resolved_session_conversation_id
+        session_project_id: str | None = None
         try:
             session = session_manager.get(resolved_session_id) if session_manager else None
             if session is not None:
                 conversation_id = session.external_id
+                session_project_id = session.project_id
         except Exception as exc:
             logger.debug(
                 "Failed to load session %s for SessionContext: %s",
@@ -381,7 +386,11 @@ def _resolve_and_seed_contexts_sync(
                 exc,
             )
         tokens.session_token = set_session_context(
-            SessionContext(session_id=resolved_session_id, conversation_id=conversation_id)
+            SessionContext(
+                session_id=resolved_session_id,
+                conversation_id=conversation_id,
+                project_id=session_project_id,
+            )
         )
         tokens.resolved_session_id = resolved_session_id
 

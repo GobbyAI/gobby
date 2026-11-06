@@ -56,7 +56,10 @@ daemon's project. Run `install_skill(project_scoped=true)` from a session bound 
 the target project. Without a caller project, the install fails with an error and
 does not fall back to the daemon's project. `get_skill`, `list_skills`,
 `update_skill`, `remove_skill`, and `restore_skill` resolve project rows through the
-caller's project too. `search_skills` still indexes the daemon's project.
+caller's project too. `search_skills` still indexes the daemon's project. A call
+that passes an explicit `project_id` naming a project other than the calling
+session's project is refused, and the error names both projects. Skill tools never
+act on a named project that is not the caller's.
 
 A removed skill keeps its row for restore but no longer blocks a same-name install
 or move into the same scope.
