@@ -23,6 +23,7 @@ from gobby.hooks.inbox import (
     drain_hook_inbox_barrier,
     drain_hook_inbox_once,
 )
+from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from gobby.runner import GobbyRunner
 from gobby.runner_hook_replay import (
     HookReplayBarrierOutcome,
@@ -925,6 +926,10 @@ class TestAgentRestartReconciliation:
         assert metadata is not None
         assert metadata["reconciliation_pending"] is False
         assert mutexes.get_mutex(task.id) is None
+        # The free lease stays spawnable after recovery: the replacement spawn takes it.
+        lease = TaskSpawnLease(db=temp_db, task_id=task.id)
+        assert lease.acquire() is None
+        lease.release_unattached()
 
     @pytest.mark.asyncio
     async def test_periodic_recovery_releases_heartbeat_signed_mutex_and_clears_fence(
