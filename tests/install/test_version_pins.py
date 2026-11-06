@@ -60,6 +60,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.82"),
         # gcode: history eligibility at the current config changed in #23582 under installed 1.9.105.
         ("gcode", "1.9.106"),
+        # gcode: reconcile apply under the maintenance lease changed in #23580 under installed 1.9.106.
+        ("gcode", "1.9.107"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
     ],
