@@ -42,6 +42,9 @@ AGENTS = {"build": "builder-agent", "check": "checker-agent", "close": "closer-a
 DOC_WRITER = "writer-agent"
 DOC_REVIEWER = "reviewer-agent"
 REVIEW_DOCS = "review-docs"
+IMPLEMENT_DOCS = "implement-docs"
+DOCS = "docs"
+CODE = "code"
 
 
 def _flow(closer_seat: str = "close") -> PipelineDefinition:
@@ -232,16 +235,30 @@ class _Team:
         return session
 
 
-def _alternate_review_flow() -> PipelineDefinition:
-    """A developer's implement stage is reviewed by the code reviewer seat or, when that seat is
-    not live, by an agent-only docs reviewer the lead spawns."""
+def _lane_flow() -> PipelineDefinition:
+    """A developer's implement stage takes docs-category tasks to the docs reviewer and every other
+    task to the code reviewer. A docs writer's candidate takes the docs lane only."""
     definition = _flow()
-    stages = dict(definition.claim_flow)
-    stages[IMPLEMENT] = stages[IMPLEMENT].model_copy(update={"next": [REVIEW, REVIEW_DOCS]})
-    stages[REVIEW_DOCS] = ClaimStage(
-        agent=DOC_REVIEWER, done_when=["independent-review"], next=VALIDATE, on_rejected=IMPLEMENT
+    base = definition.claim_flow
+    return definition.model_copy(
+        update={
+            "claim_flow": {
+                IMPLEMENT: base[IMPLEMENT].model_copy(update={"next": [REVIEW_DOCS, REVIEW]}),
+                REVIEW: base[REVIEW],
+                VALIDATE: base[VALIDATE],
+                IMPLEMENT_DOCS: ClaimStage(
+                    agent=DOC_WRITER, done_when=base[IMPLEMENT].done_when, next=REVIEW_DOCS
+                ),
+                REVIEW_DOCS: ClaimStage(
+                    agent=DOC_REVIEWER,
+                    categories=[DOCS],
+                    done_when=["independent-review"],
+                    next=VALIDATE,
+                    on_rejected=[IMPLEMENT_DOCS, IMPLEMENT],
+                ),
+            }
+        }
     )
-    return definition.model_copy(update={"claim_flow": stages})
 
 
 def _team(db: HubDatabase, sample_project: dict[str, Any], closer_seat: str = "close") -> _Team:
@@ -253,10 +270,15 @@ def _docs_team(db: HubDatabase, sample_project: dict[str, Any]) -> _Team:
 
 
 def _build_team(
-    db: HubDatabase, sample_project: dict[str, Any], definition: PipelineDefinition
+    db: HubDatabase,
+    sample_project: dict[str, Any],
+    definition: PipelineDefinition,
+    category: str | None = None,
 ) -> _Team:
     project = sample_project["id"]
-    task = LocalTaskManager(db).create_task(project, "Probe", validation_criteria="Works.")
+    task = LocalTaskManager(db).create_task(
+        project, "Probe", validation_criteria="Works.", category=category
+    )
     executions = LocalPipelineExecutionManager(db, project)
     execution = executions.create_execution(
         definition.name, definition_json=definition.model_dump_json()
@@ -511,13 +533,12 @@ def test_correction_on_another_candidate_does_not_move_a_reviewed_candidate(
     assert team.holder() == builder
 
 
-def test_developer_candidate_reviewed_by_docs_reviewer_moves_to_closer(
+def test_developer_docs_candidate_reaches_validate_when_the_docs_reviewer_approves(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    """The code reviewer seat is not live, so the developer's completed stage routes to the docs
-    reviewer and its approval moves the claim to validate (#25802 lead repro)."""
-    team = _build_team(temp_db, sample_project, _alternate_review_flow())
-    team.retire(REVIEW)
+    """A developer implements a docs-category task; the docs reviewer's approval moves the claim to
+    the closer with no code reviewer involved (#23583 shape, whoever implemented it)."""
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=DOCS)
     builder, reviewer = team.session(IMPLEMENT), team.session(REVIEW_DOCS)
     closer = team.session(VALIDATE)
     team.chain(builder, IMPLEMENT, C1)
@@ -528,17 +549,86 @@ def test_developer_candidate_reviewed_by_docs_reviewer_moves_to_closer(
     assert team.holder() == closer
 
 
-def test_docs_reviewer_rejection_of_developer_candidate_returns_claim_to_developer(
+def test_code_candidate_goes_to_the_code_reviewer_while_a_docs_reviewer_is_live(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    team = _build_team(temp_db, sample_project, _alternate_review_flow())
+    """Routing follows the task category, never which reviewer seat happens to be live."""
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=CODE)
+    builder, reviewer = team.session(IMPLEMENT), team.session(REVIEW)
+    team.chain(builder, IMPLEMENT, C1)
+
+    assert team.holder() == reviewer
+
+
+def test_docs_reviewer_cannot_move_a_code_candidate_when_the_code_reviewer_is_absent(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """With the code reviewer gone, the code candidate is refused and a docs reviewer's approval of
+    it does not move the claim to validate."""
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=CODE)
     team.retire(REVIEW)
+    builder, docs_reviewer = team.session(IMPLEMENT), team.session(REVIEW_DOCS)
+    with pytest.raises(ValueError, match="needs its live pipeline seat"):
+        team.chain(builder, IMPLEMENT, C1)
+
+    team.attest(docs_reviewer, "independent-review", REVIEW_DOCS, sha=C1)
+
+    assert team.holder() == builder
+
+
+def test_code_candidate_with_only_a_docs_route_is_refused(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    definition = _lane_flow()
+    stages = dict(definition.claim_flow)
+    stages[IMPLEMENT] = stages[IMPLEMENT].model_copy(update={"next": [REVIEW_DOCS]})
+    flow = definition.model_copy(update={"claim_flow": stages})
+    team = _build_team(temp_db, sample_project, flow, category=CODE)
+    builder = team.session(IMPLEMENT)
+
+    with pytest.raises(ValueError, match="has no route for category"):
+        team.chain(builder, IMPLEMENT, C1)
+
+
+def test_docs_reviewer_rejection_of_a_developer_docs_candidate_returns_it_to_the_developer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """The writer seat is live too, but the developer produced this candidate, so it returns there."""
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=DOCS)
     builder, reviewer = team.session(IMPLEMENT), team.session(REVIEW_DOCS)
     team.chain(builder, IMPLEMENT, C1)
 
     team.attest(reviewer, "independent-review", REVIEW_DOCS, result="rejected", sha=C1)
 
     assert team.holder() == builder
+
+
+def test_docs_writer_rejection_returns_to_the_writer_beside_a_live_developer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=DOCS)
+    builder, writer = team.session(IMPLEMENT), team.session(IMPLEMENT_DOCS)
+    reviewer = team.session(REVIEW_DOCS)
+    team.hand_off(recipient=writer, holder=builder)
+    team.chain(writer, IMPLEMENT_DOCS, C1)
+    assert team.holder() == reviewer
+
+    team.attest(reviewer, "independent-review", REVIEW_DOCS, result="rejected", sha=C1)
+
+    assert team.holder() == writer
+
+
+def test_rejection_of_a_candidate_no_lane_produced_refuses_the_evidence(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_team(temp_db, sample_project, _lane_flow(), category=DOCS)
+    builder, reviewer = team.session(IMPLEMENT), team.session(REVIEW_DOCS)
+    team.chain(builder, IMPLEMENT, C1)
+
+    with pytest.raises(ValueError, match="cannot tell which lane produced"):
+        team.attest(reviewer, "independent-review", REVIEW_DOCS, result="rejected", sha=C2)
+
+    assert team.holder() == reviewer
 
 
 def test_claim_stage_names_exactly_one_seat_or_agent() -> None:

@@ -127,6 +127,8 @@ class ClaimStage(BaseModel):
     # Alternatives in declared order; the first whose seat is live takes the claim.
     next: list[str] = Field(default_factory=list)
     on_rejected: list[str] = Field(default_factory=list)
+    # Task categories this stage takes the claim for; empty admits every category.
+    categories: list[str] = Field(default_factory=list)
     approved_result: str = "approved"
     rejected_result: str = "rejected"
 
