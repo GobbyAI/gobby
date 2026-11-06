@@ -67,9 +67,9 @@ For one session's or one task's ledger on the operator CLI, `uv run gobby tokens
 coverage and one spend line per source. Unknown spend prints as `unknown (<reason>)`, never
 zero, and incomplete provider runs are named. `--json` prints the whole page, rows included.
 `uv run gobby tokens quota [PROVIDER...]` reads the running daemon's capacity snapshot for
-each provider (all six when none is named): state, each window's used percent and reset
-time, and components. It exits 1 when the daemon is unreachable.
+each provider (all six when none is named): state, each window's used, limit, used percent
+and reset time, and every key of each component. It exits 1 when the daemon is unreachable.
 
 See [token usage and savings](../../../../../../../../docs/guides/observability.md#token-usage-and-savings).
 
-_Version: 1.2.0_
+_Version: 1.2.1_
