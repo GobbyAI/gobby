@@ -10,6 +10,110 @@ use crate::daemon::{Generation, LiveDaemon};
 use crate::frame_source::{AttachLocator, PaneFrameSource, Transport, UnixSocketFrameSource};
 use crate::ui::Chrome;
 
+#[tokio::test]
+async fn daemon_attachment_state_cannot_gate_a_present_native_host_stream() {
+    for daemon_ready in [false, true] {
+        let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
+        let mut workspace = Workspace::live(daemon);
+        workspace.daemon_ready = daemon_ready;
+        let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+        pane.install_attachment(
+            "old-metadata".into(),
+            Transport::Direct,
+            Generation(0),
+            0,
+            PaneFrameSource::Scripted(crate::frame_source::ScriptedFrameSource::new(
+                Transport::Direct,
+            )),
+        );
+        // Deliberately unset the daemon attachment's live flag without losing
+        // the host stream. Bookkeeping must not choose the keystroke route.
+        pane.begin_attaching("new-metadata".into(), Transport::Direct, Generation(1));
+        workspace.panes.insert(pane.id, pane);
+        let mut jobs = LoopJobs::new(&workspace);
+        let mut chrome = Chrome::dark();
+        send_live_input(
+            &mut workspace,
+            &mut chrome,
+            &mut jobs,
+            PaneId(1),
+            b"x",
+            false,
+        )
+        .expect("native input uses the present host stream");
+        send_live_input(
+            &mut workspace,
+            &mut chrome,
+            &mut jobs,
+            PaneId(1),
+            b"paste",
+            true,
+        )
+        .expect("native paste uses the present host stream");
+        let source = workspace.pane(PaneId(1)).scripted_source().unwrap();
+        assert!(
+            source
+                .sent_messages()
+                .iter()
+                .any(|message| matches!(message,
+            ClientMessage::Input { data } if data == b"x")),
+            "daemon_ready={daemon_ready}: metadata must never gate a native key"
+        );
+        assert!(
+            source
+                .sent_messages()
+                .iter()
+                .any(|message| matches!(message,
+            ClientMessage::Paste { text } if text == "paste")),
+            "daemon_ready={daemon_ready}: metadata must never gate native paste"
+        );
+        assert!(
+            workspace.pane(PaneId(1)).writer.is_none(),
+            "native input must not spawn a daemon writer"
+        );
+        assert!(chrome.alert_log.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_missing_native_host_stream_never_falls_back_to_the_daemon_writer() {
+    for paste in [false, true] {
+        let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
+        let mut workspace = Workspace::live(daemon);
+        workspace.daemon_ready = true;
+        let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+        pane.install_attachment(
+            "metadata".into(),
+            Transport::Direct,
+            Generation(0),
+            0,
+            PaneFrameSource::Scripted(crate::frame_source::ScriptedFrameSource::new(
+                Transport::Direct,
+            )),
+        );
+        drop(pane.take_frame_source());
+        workspace.panes.insert(pane.id, pane);
+        let mut jobs = LoopJobs::new(&workspace);
+        let mut chrome = Chrome::dark();
+        let result = send_live_input(
+            &mut workspace,
+            &mut chrome,
+            &mut jobs,
+            PaneId(1),
+            b"x",
+            paste,
+        );
+        assert!(
+            workspace.pane(PaneId(1)).writer.is_none(),
+            "paste={paste}: losing a native host stream must never create a daemon writer"
+        );
+        assert!(
+            result.is_err(),
+            "missing native input stream must report a local failure"
+        );
+    }
+}
+
 /// A direct frame source whose socket is cut after the handshake, so every
 /// host write through it fails the way a write to a departed host does.
 async fn cut_direct_source(epoch: &str) -> PaneFrameSource {

@@ -9,6 +9,15 @@ use serde_json::json;
 use tokio::net::UnixStream;
 
 async fn retired_direct_attach() -> (Workspace<LiveDaemon>, super::super::DirectAttach) {
+    let (workspace, attached, _host) = direct_attach_with_host().await;
+    (workspace, attached)
+}
+
+async fn direct_attach_with_host() -> (
+    Workspace<LiveDaemon>,
+    super::super::DirectAttach,
+    UnixStream,
+) {
     let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
         .expect("unconnected daemon handle");
     let mut workspace = Workspace::live(daemon);
@@ -55,11 +64,96 @@ async fn retired_direct_attach() -> (Workspace<LiveDaemon>, super::super::Direct
     let source = UnixSocketFrameSource::connect_stream(client, &locator, "token", 80, 24)
         .await
         .expect("direct source");
-    drop(host_task.await.expect("host handshake"));
+    let host = host_task.await.expect("host handshake");
     (
         workspace,
         (json!({}), "retired-attachment".into(), locator, source),
+        host,
     )
+}
+
+#[tokio::test]
+async fn daemon_errors_never_retire_a_live_host_stream() {
+    assert_eq!(deliver_after_daemon_failure("frame").await, b"still typing");
+}
+
+#[tokio::test]
+async fn failed_daemon_registration_never_retires_a_live_host_stream() {
+    assert_eq!(
+        deliver_after_daemon_failure("reregister").await,
+        b"still typing"
+    );
+}
+
+async fn deliver_after_daemon_failure(failure: &str) -> Vec<u8> {
+    let (mut workspace, (_, attachment, locator, source), mut host) =
+        direct_attach_with_host().await;
+    let generation = workspace.daemon.generation();
+    let pane = workspace.panes.get_mut(&PaneId(1)).expect("pane");
+    pane.tombstones.clear();
+    pane.install_attachment(
+        attachment,
+        Transport::Direct,
+        generation,
+        0,
+        crate::frame_source::PaneFrameSource::Direct(source),
+    );
+    pane.remember_host_locator(&locator);
+    let host_attachment = pane.frame_source().unwrap().host_attachment_id();
+    let error = FrameError::Daemon("Daemon unavailable.".into());
+    let next = if failure == "frame" {
+        assert!(
+            workspace
+                .begin_host_frame_recovery(PaneId(1), &error)
+                .is_none(),
+            "a daemon error is not a host socket failure"
+        );
+        workspace
+            .begin_frame_recovery(PaneId(1), &error)
+            .expect("ignore daemon error")
+    } else {
+        workspace.host_recovered.insert(PaneId(1));
+        workspace
+            .panes
+            .get_mut(&PaneId(1))
+            .unwrap()
+            .fallback_in_flight = true;
+        workspace
+            .apply_frame_recovery(Recovery {
+                pane_id: PaneId(1),
+                generation,
+                started: Instant::now(),
+                step: RecoveryStep::Reregistered {
+                    terminal_id: "terminal-1".into(),
+                    outcome: Err(error),
+                },
+            })
+            .expect("failed metadata registration")
+    };
+    assert!(
+        next.is_none(),
+        "{failure}: a daemon failure must not start a detach or proxy attach"
+    );
+    let pane = workspace.panes.get_mut(&PaneId(1)).unwrap();
+    assert!(pane.is_live(), "{failure}: direct pane remains live");
+    assert_eq!(pane.transport(), Some(Transport::Direct));
+    assert_eq!(
+        pane.frame_source().unwrap().host_attachment_id(),
+        host_attachment
+    );
+    pane.send_host_input(b"still typing", false)
+        .expect("retained host input");
+    tokio::time::timeout(std::time::Duration::from_millis(1500), async {
+        loop {
+            let message: ClientMessage =
+                read_message_async(&mut host, MAX_FRAME_SIZE).await.unwrap();
+            if let ClientMessage::Input { data } = message {
+                break data;
+            }
+        }
+    })
+    .await
+    .expect("daemon failure adds no wait before host input")
 }
 
 #[tokio::test]

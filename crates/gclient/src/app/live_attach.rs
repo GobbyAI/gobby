@@ -335,13 +335,20 @@ impl Workspace<LiveDaemon> {
                 && pane.attached_generation() != Some(generation)
                 && workspace.attached_generation.get(pane_id) != Some(&generation)
         };
-        // A host-local restore keeps an attachment that dies with its daemon
-        // generation; once the daemon is back on a new one, the pane takes a
-        // fresh attachment without waiting for a retry to fall due (#23419).
+        // gclient input and rendering MUST NOT depend on the daemon (#25653).
+        // A new daemon generation only needs new bookkeeping. Reuse EVERY
+        // live direct stream, not just streams restored after a host exec:
+        // begin_attaching would pause input and replace a healthy host socket.
         let reregister: Vec<PaneId> = self
             .order
             .iter()
-            .filter(|pane_id| self.host_recovered.contains(pane_id) && stale(self, pane_id))
+            .filter(|pane_id| {
+                let pane = &self.panes[*pane_id];
+                pane.is_live()
+                    && pane.transport() == Some(Transport::Direct)
+                    && !pane.attach_retry_pending(now)
+                    && stale(self, pane_id)
+            })
             .copied()
             .collect();
         let due: Vec<PaneId> = self
@@ -351,6 +358,7 @@ impl Workspace<LiveDaemon> {
                 let pane = &self.panes[*pane_id];
                 (pane.attach_retry_due(now) || (include_initial && !pane.attach_retry_pending(now)))
                     && !self.host_recovered.contains(pane_id)
+                    && !(pane.is_live() && pane.transport() == Some(Transport::Direct))
                     && stale(self, pane_id)
             })
             .copied()

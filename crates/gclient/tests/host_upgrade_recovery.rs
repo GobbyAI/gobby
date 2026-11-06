@@ -8,6 +8,9 @@
 
 mod mock_daemon;
 
+#[path = "mock_daemon/draw.rs"]
+mod draw;
+
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -18,7 +21,7 @@ use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
-use gobby_terminal::protocol::ClientMessage;
+use gobby_terminal::protocol::{CellData, ClientMessage, FrameData, PaneModes, ServerMessage};
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::{live_workspace_on_direct_host, DirectHost, MockDaemon};
 use ratatui::backend::TestBackend;
@@ -236,7 +239,8 @@ async fn native_input_during_daemon_reattach_reaches_the_host() {
     let pane_id = workspace
         .pane_for_terminal(terminal_id)
         .expect("direct pane");
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (backend, _draws, frames) = draw::DrawRecorder::new(48, 12);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
@@ -268,22 +272,62 @@ async fn native_input_during_daemon_reattach_reaches_the_host() {
             );
         }
         let gate = host.hold_accepts();
+        let daemon_reply = mock.hold_ws("terminal_attach", |_| true);
         mock.close_websockets_going_away();
         wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        // The daemon answered the replacement attach, but the host cannot yet
-        // answer its handshake. This is a live-loop input event in that window.
+        // A daemon reconnect must preserve the existing host stream. Even if
+        // a replacement handshake cannot run, this key must arrive NOW rather
+        // than being queued until the daemon or a new host attach answers.
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
-        settle().await;
-        let early: Vec<_> = websocket_requests(&mock, "terminal_focus")
-            .into_iter()
-            .filter(|request| {
-                request["focused"] == true && request["attachment_id"] != first.as_str()
-            })
-            .collect();
-        assert!(
-            early.is_empty(),
-            "the new attachment is not reported focused before its host is ready: {early:?}"
-        );
+        timeout(
+            Duration::from_millis(1500),
+            host.wait_for("input on the retained host stream", |seen| {
+                seen.iter()
+                    .any(|message| matches!(message, ClientMessage::Input { data } if data == b"b"))
+            }),
+        )
+        .await
+        .expect("daemon reattachment must never pause native input");
+        host.to_client
+            .send(ServerMessage::Frame(FrameData {
+                cells: "HOST-ECHO-b"
+                    .chars()
+                    .map(|symbol| CellData {
+                        symbol: symbol.to_string(),
+                        fg: 0x10,
+                        bg: 0,
+                        modifier: 0,
+                        skip: false,
+                        hyperlink: None,
+                    })
+                    .collect(),
+                width: 11,
+                height: 1,
+                cursor: None,
+                hyperlinks: Vec::new(),
+                graphics: Vec::new(),
+                modes: PaneModes::default(),
+            }))
+            .expect("the retained host stream receives fresh echo");
+        timeout(
+            Duration::from_millis(1500),
+            wait_until("fresh echo while daemon registration is held", || {
+                frames
+                    .lock()
+                    .expect("rendered frames")
+                    .iter()
+                    .any(|frame| frame.contains("HOST-ECHO-b"))
+            }),
+        )
+        .await
+        .expect("daemon reattachment must never pause host rendering");
+        daemon_reply.notify_one();
+        // The original host is already ready. Updating the daemon attachment
+        // may update focus without opening another host connection.
+        wait_until("focus on the replacement attachment", || {
+            focused_attachment(&mock, terminal_id).is_some_and(|id| id != first)
+        })
+        .await;
         host.release_accepts(&gate);
         host.wait_for("the key typed during native reattachment", |seen| {
             seen.iter()
@@ -310,6 +354,11 @@ async fn native_input_during_daemon_reattach_reaches_the_host() {
     );
     result.expect("native reattachment input loop");
     assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
+    assert_eq!(
+        host.attaches(),
+        1,
+        "daemon reconnect keeps the original host attachment"
+    );
     assert!(
         websocket_requests(&mock, "terminal_input").is_empty(),
         "native input typed during the reattachment stays on the host stream"

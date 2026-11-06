@@ -1,4 +1,14 @@
 //! Interactive Tokio loop for the authenticated live daemon transport.
+//!
+//! # Input and rendering independence
+//!
+//! gclient input and rendering MUST NOT depend on the daemon (#25653).
+//! A daemon restart once replaced healthy host streams with proxy attachments,
+//! making typing and echo wait on the failing daemon. Keep native input and
+//! frames on their existing owner-only host sockets. Daemon registration,
+//! focus hints, roster and geometry bookkeeping run beside the loop, never as
+//! prerequisites for a native keystroke or a host frame. Only failure of the
+//! host stream itself starts host-local recovery.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -214,6 +224,9 @@ pub async fn run_live_loop<B: Backend>(
             workspace.refresh_relist();
             relist_job = workspace.start_relist();
         }
+        // I/O boundary invariant (#25653): poll daemon jobs BESIDE native
+        // input and host frames. Never await daemon registration or recovery
+        // inside either branch, or demote a host stream on a daemon failure.
         tokio::select! {
             biased;
             reason = recv_exit_signal(&mut exit_signals) => {

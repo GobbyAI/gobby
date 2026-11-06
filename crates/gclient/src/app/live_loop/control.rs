@@ -8,7 +8,7 @@ use tokio::sync::watch;
 
 use crate::app::apply::refused_write_toast;
 use crate::daemon::LiveDaemon;
-use crate::frame_source::{FrameError, PaneFrameSource, Transport};
+use crate::frame_source::{FrameError, FrameSource, PaneFrameSource, Transport};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
@@ -137,6 +137,8 @@ fn queue_for_promotion(
 /// straight there, with or without the daemon. A daemon-bound pane needs the
 /// daemon, so it waits on the daemon's writer. A pane still attaching keeps the
 /// key until its attachment is live.
+// INVARIANT (#25653): native keystrokes and paste never wait for the daemon,
+// a lease, or attachment metadata. A present host stream always wins.
 pub(super) fn send_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -148,6 +150,13 @@ pub(super) fn send_live_input(
     if workspace.exit_reason().is_some() {
         return Ok(());
     }
+    if workspace.pane(pane_id).closing_native() {
+        chrome.notify(Toast::warning(CLOSING_NATIVE_INPUT));
+        return Ok(());
+    }
+    if types_on_host(workspace.pane(pane_id)) {
+        return send_live_write(workspace, jobs, pane_id, data, paste);
+    }
     if workspace.pane(pane_id).native_proxy() {
         if held_for_promotion(workspace, pane_id) {
             queue_for_promotion(workspace, chrome, pane_id, data, paste);
@@ -157,14 +166,8 @@ pub(super) fn send_live_input(
         }
         return Ok(());
     }
-    if workspace.pane(pane_id).closing_native() {
-        chrome.notify(Toast::warning(CLOSING_NATIVE_INPUT));
-        return Ok(());
-    }
     let pane = workspace.pane(pane_id);
-    // A detaching pane is not live, so its keys take the daemon path.
-    let direct = pane.is_live() && pane.direct_native();
-    if pane.accepts_input() && (direct || workspace.daemon_ready()) {
+    if pane.accepts_input() && workspace.daemon_ready() {
         return send_live_write(workspace, jobs, pane_id, data, paste);
     }
     if !workspace.daemon_ready() {
@@ -293,9 +296,21 @@ fn pane_writer<'a>(
     pane
 }
 
-/// Hand one write to the pane's path. A native direct pane types on its own
-/// frame socket. Any other pane hands the write to its writer, which sends it
-/// after the writes typed before it. Nothing here waits on the daemon.
+// The host socket, not daemon readiness, a lease, or an attachment-state flag,
+// determines native input routing (#25653). This predicate cannot access the
+// daemon. Explicit local close/kill still stops further input.
+fn types_on_host(pane: &Pane) -> bool {
+    pane.backend.is_native()
+        && !pane.closing_native()
+        && !pane.is_terminating()
+        && pane
+            .frame_source()
+            .is_some_and(|source| source.transport() == Transport::Direct)
+}
+
+// INVARIANT (#25653): a native host stream has no daemon writer fallback.
+// Enqueue locally and return; only legacy tmux writes use the daemon worker.
+/// Hand one write to the pane's path without waiting on the daemon.
 pub(super) fn send_live_write(
     workspace: &mut Workspace<LiveDaemon>,
     jobs: &LoopJobs,
@@ -303,18 +318,19 @@ pub(super) fn send_live_write(
     data: &[u8],
     paste: bool,
 ) -> Result<(), FrameError> {
-    let generation = workspace.daemon().generation();
-    if !workspace.pane(pane_id).accepts_input() {
-        return Ok(());
-    }
-    // A direct native pane types on its own frame socket: no write
-    // sequence, no in-flight write, no daemon round trip per key (#22573).
-    // A detaching pane is not live, so its keys take the daemon path.
-    let pane = workspace.pane(pane_id);
-    if pane.is_live() && pane.direct_native() {
+    if types_on_host(workspace.pane(pane_id)) {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
         return pane.send_host_input(data, paste);
     }
+    if workspace.pane(pane_id).backend.is_native() {
+        return Err(FrameError::Protocol(
+            "native host input stream unavailable".into(),
+        ));
+    }
+    if !workspace.pane(pane_id).accepts_input() {
+        return Ok(());
+    }
+    let generation = workspace.daemon().generation();
     let pane = pane_writer(workspace, jobs.outcomes(), pane_id);
     let client_write_seq = pane.client_write_seq + 1;
     let mut body = json!({

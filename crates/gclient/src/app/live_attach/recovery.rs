@@ -20,6 +20,16 @@ impl Workspace<LiveDaemon> {
         pane_id: PaneId,
         error: &FrameError,
     ) -> Result<Option<RecoveryFuture>, FrameError> {
+        // Daemon failures are not host-stream failures. Never detach or demote
+        // a live direct stream because daemon bookkeeping failed (#25653).
+        if matches!(error, FrameError::Daemon(_))
+            && self
+                .panes
+                .get(&pane_id)
+                .is_some_and(|pane| pane.is_live() && pane.transport() == Some(Transport::Direct))
+        {
+            return Ok(None);
+        }
         match error {
             FrameError::Finalized { .. } => {
                 self.retire_pane_attachment(pane_id);
@@ -134,7 +144,6 @@ impl Workspace<LiveDaemon> {
                 | FrameError::Cancelled
                 | FrameError::Io(_)
                 | FrameError::Protocol(_)
-                | FrameError::Daemon(_)
         ) {
             return None;
         }
@@ -311,10 +320,18 @@ impl Workspace<LiveDaemon> {
                 self.clear_fallback_flight(pane_id);
                 let (reply, attachment) = match outcome {
                     Ok(attached) => attached,
-                    // No fresh attachment to adopt: the full daemon re-attach
-                    // replaces the host stream as well.
+                    // Registration is daemon metadata, not proof that the
+                    // host socket failed. Keep typing and rendering on that
+                    // same socket while retrying metadata with bounded backoff
+                    // (#25653). A daemon outage must NEVER drop this stream.
                     Err(error) => {
-                        return Ok(self.begin_daemon_recovery(pane_id, &error.to_string()))
+                        record.warn("host_registration_deferred", error_class(&error));
+                        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+                        let delay = pane.attach_retry_delay;
+                        pane.attach_retry_at = Some(tokio::time::Instant::now() + delay);
+                        pane.attach_retry_delay =
+                            (delay * 2).min(super::super::attach::ATTACH_RETRY_MAX);
+                        return Ok(None);
                     }
                 };
                 record.completed(Transport::Direct);
@@ -451,7 +468,8 @@ impl Workspace<LiveDaemon> {
         generation: Generation,
     ) -> RecoveryFuture {
         let pane = self.panes.get_mut(&pane_id).expect("pane exists");
-        // The re-register owns its pane until it lands, as a recovery does.
+        // Own only the metadata flight; the live host stream stays installed
+        // and writable throughout this daemon request (#25653).
         pane.fallback_in_flight = true;
         let terminal_id = pane.terminal_id.clone();
         let daemon = self.daemon.clone();
