@@ -8,7 +8,7 @@ import shlex
 import shutil
 import subprocess
 import time
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1944,14 +1944,10 @@ async def test_overlap_holder_native_write_ignores_a_stale_call_from_another_ses
 
 
 @pytest.mark.asyncio
-async def test_overlap_holder_native_write_ignores_a_finished_background_call_from_another_session(
-    guard_harness: GuardHarness, tmp_path: Path
+async def test_overlap_holder_native_write_refused_while_live_process_prints_exit_line(
+    guard_harness: GuardHarness, live_background_writer: Callable[[str, str], str]
 ) -> None:
-    """A background call whose process exited no longer blocks the holder's native write.
-
-    Its owner settles it only on that session's next tool call, so an idle owner must not
-    strand the holder's overlap record.
-    """
+    """A live writer can print an exit line and keep writing, so the holder stays refused."""
     h = guard_harness
     _holder_overlap(h, "owned.txt")
     manager = SessionVariableManager(h.db)
@@ -1963,11 +1959,13 @@ async def test_overlap_holder_native_write_ignores_a_finished_background_call_fr
         attributable=False,
         now=time.time(),
     )
-    output = tmp_path / "foreign-bg.out"
-    output.write_text("built\n[exited with code 0]\n", encoding="utf-8")
-    manager.defer_worktree_shell_call(h.foreign_session.id, "foreign-bg", output_path=str(output))
+    output = live_background_writer("foreign-bg.out", "built\n[exited with code 0]\n")
+    manager.defer_worktree_shell_call(h.foreign_session.id, "foreign-bg", output_path=output)
 
-    assert await _dirty_edit_reason(h, _native_write(h, "owned.txt")) == ""
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt"))
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
 
 
 @pytest.mark.asyncio

@@ -13,8 +13,8 @@ rules judge it until its write completes or is refused, so a Bash call that over
 marks it too. A path an overlapping call changed stays foreign to every session until no call
 in that worktree is running and the path's author edits it with a native write, which reclaims it.
 
-A background Bash call stays in flight until its output file shows that the process ended. Its
-owner settles it before the next tool call of that session is judged.
+A background Bash call stays in flight until its owner settles it or its freshness window ends.
+The gate never reads its output's exit line as proof of exit, because a live process can print it.
 """
 
 from __future__ import annotations
@@ -175,18 +175,6 @@ def _is_fresh(entry: Any, now: float) -> bool:
     if isinstance(output_path, str):
         return age < BACKGROUND_STALE_SECONDS and background_output_state(output_path) != "missing"
     return age < STALE_CALL_SECONDS
-
-
-def _is_running(entry: Any, now: float) -> bool:
-    """Fresh and not yet exited; a background call whose output shows its process ended is done.
-
-    Its owner settles it only on that session's next tool call, so counting it as running would
-    strand every overlap record in the worktree for as long as the owner stays idle.
-    """
-    if not _is_fresh(entry, now):
-        return False
-    output_path = entry.get("output_path")
-    return not (isinstance(output_path, str) and background_output_state(output_path) == "finished")
 
 
 def _json_object(text: Any) -> dict[str, Any]:
@@ -376,7 +364,8 @@ class WorktreeShellCallRegistry(ABC):
 
         A structured edit registers its own entry under ``edit:<request_id>:<root>`` before its
         rules judge it, so that request's entries (its shell id and its edit keys) never count.
-        A background call whose process exited no longer counts, even before its owner settles it.
+        A background call counts until its owner settles it or its freshness window ends. Its
+        output's exit line does not end it: a live process can print that line and keep writing.
         """
         rows = self.db.fetchall(
             """
@@ -387,7 +376,7 @@ class WorktreeShellCallRegistry(ABC):
         )
         own_edit_prefix = f"{_EDIT_CALL_PREFIX}{request_id}:"
         return any(
-            _is_running(entry, now) and entry.get("root") == root
+            _is_fresh(entry, now) and entry.get("root") == root
             for row in rows
             for call_id, entry in _json_object(row["calls"]).items()
             if call_id != request_id and not call_id.startswith(own_edit_prefix)

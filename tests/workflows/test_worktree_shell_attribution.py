@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -194,18 +197,41 @@ async def test_running_background_call_stays_in_flight(
     assert set(manager.worktree_shell_call_entries(S1)) == {"bg-1"}
 
 
-def test_has_calls_in_flight_ignores_a_background_call_whose_process_exited(
+def test_has_calls_in_flight_counts_a_background_call_whose_process_exited_until_settled(
     db: Any, tmp_path: Path
 ) -> None:
-    """An exited background call is not running, though its owner has not settled it yet."""
+    """An exited background call stays in flight until its owner settles it."""
+    output = tmp_path / "bg-1.out"
+    with output.open("w", encoding="utf-8") as handle:
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write(sys.argv[1])",
+                "done\n[exited with code 0]\n",
+            ],
+            stdout=handle,
+            check=True,
+        )
     manager = SessionVariableManager(db)
     manager.begin_worktree_shell_call(
         S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
     )
-    manager.defer_worktree_shell_call(
-        S1, "bg-1", output_path=_output(tmp_path, "bg-1.out", "done\n[exited with code 0]\n")
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=str(output))
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is True
+
+
+def test_has_calls_in_flight_counts_a_background_call_whose_live_process_printed_the_exit_marker(
+    db: Any, live_background_writer: Callable[[str, str], str]
+) -> None:
+    """A live writer can print an exit line and keep writing; the line does not end its call."""
+    manager = SessionVariableManager(db)
+    manager.begin_worktree_shell_call(
+        S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
     )
-    assert manager.has_calls_in_flight(ROOT, time.time(), None) is False
+    output = live_background_writer("bg-1.out", "done\n[exited with code 0]\n")
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output)
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is True
 
 
 def test_has_calls_in_flight_counts_a_background_call_still_running(

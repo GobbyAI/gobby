@@ -112,7 +112,7 @@ def format_dirty_edit_reason(
             *[f"- {path} — no live session owns it" for path in sorted(unowned)],
             *[
                 f"- {path} — overlapped with another session's Bash call in this worktree; "
-                "it stays foreign until that call exits"
+                "it stays foreign until that call settles or goes stale"
                 for path in sorted(overlapped)
             ],
             *(
@@ -132,7 +132,7 @@ def format_dirty_edit_reason(
             *(
                 [
                     "Overlapped paths were changed while another session's Bash call ran in this "
-                    "worktree. Once no Bash call here is still running, edit each path with the "
+                    "worktree. Once no Bash call here is still in flight, edit each path with the "
                     "native Edit or Write tool: that edit reclaims the path for this session.",
                 ]
                 if overlapped
