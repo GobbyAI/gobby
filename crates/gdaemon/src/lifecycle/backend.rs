@@ -62,6 +62,12 @@ pub struct BackendConfig {
     pub heartbeat_interval: Duration,
     /// Holds the running child's write token; each spawn installs a fresh one.
     pub write_token: TokenSlot,
+    /// Grace a backend gets after an observed shutdown intent before it is drained.
+    pub exit_grace: Duration,
+    /// Cadence of the supervisor's wait reports while a backend has not exited.
+    pub report_interval: Duration,
+    /// Sink for supervisor wait reports; stderr unless a caller captures them.
+    pub reporter: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
 impl BackendConfig {
@@ -93,6 +99,9 @@ impl BackendConfig {
             drain_timeout: Duration::from_secs(17),
             heartbeat_interval: Duration::from_secs(1),
             write_token: TokenSlot::default(),
+            exit_grace: Duration::from_secs(60),
+            report_interval: Duration::from_secs(60),
+            reporter: Arc::new(|line: &str| eprintln!("{line}")),
         })
     }
 }

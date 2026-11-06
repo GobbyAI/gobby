@@ -124,6 +124,18 @@ def test_restart_waits_through_native_unavailability(
         assert "Backend did not finish startup readiness" in result.output
 
 
+def test_restart_wait_names_the_backend_state_it_was_waiting_on(
+    restart_daemon: RestartDaemon,
+) -> None:
+    """A backend that never leaves 'starting' fails the wait and names the state it reports."""
+    restart_daemon.becomes_ready = False
+    result = CliRunner().invoke(lifecycle.restart, ["--wait"])
+
+    assert result.exit_code == 1, result.output
+    assert "Backend did not finish startup readiness" in result.output
+    assert "backend state 'starting' at test" in result.output
+
+
 @pytest.mark.parametrize(
     ("payload", "reason"),
     [

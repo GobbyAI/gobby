@@ -62,6 +62,15 @@ impl TestDb {
     }
 
     async fn supervisor(&self, home: &Path, script: &str) -> Result<BackendSupervisor> {
+        self.supervisor_with(home, script, |_| {}).await
+    }
+
+    async fn supervisor_with(
+        &self,
+        home: &Path,
+        script: &str,
+        tune: impl FnOnce(&mut BackendConfig),
+    ) -> Result<BackendSupervisor> {
         let mut lease = self.lease("supervisor")?;
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?
@@ -73,6 +82,9 @@ impl TestDb {
             .insert("HOME".into(), home.as_os_str().to_owned());
         config.drain_timeout = Duration::from_millis(100);
         config.heartbeat_interval = Duration::from_millis(100);
+        config.exit_grace = Duration::from_millis(100);
+        config.report_interval = Duration::from_secs(60);
+        tune(&mut config);
         Ok(BackendSupervisor::new(lease, claim, config))
     }
 }
@@ -921,4 +933,73 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
         SupervisorExit::Stopped
     );
     Ok(())
+}
+
+/// A backend that announces its own restart and then never exits must not hold the supervisor
+/// in `Starting` forever. The announced intent is applied after the exit grace, which respawns
+/// the backend; the respawned backend announces a stop that the supervisor also applies.
+#[tokio::test]
+async fn lingering_backend_after_announced_restart_is_drained_and_respawned() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib,time
+from gobby.shutdown_intent import write_shutdown_intent
+home=pathlib.Path(os.environ['GOBBY_HOME']); p=home/'starts'
+n=len(p.read_text())+1 if p.exists() else 1
+p.write_text('a'*n)
+write_shutdown_intent('test_restart' if n==1 else 'test_stop', 'restart' if n==1 else 'stop', home=home)
+time.sleep(3600)
+"#;
+        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let (_tx, rx) = watch::channel(false);
+        assert_eq!(
+            timeout(Duration::from_secs(15), supervisor.run(rx)).await??,
+            SupervisorExit::Stopped,
+            "the announced restart and stop are applied to lingering backends"
+        );
+        assert_eq!(fs::read_to_string(home.path().join("starts"))?, "aa");
+        Ok(())
+    })
+    .await
+}
+
+/// While a backend has not exited, the supervisor reports what it waits on at the configured
+/// cadence, so a stuck start is visible in the daemon log instead of silent.
+#[tokio::test]
+async fn silent_backend_wait_is_reported_each_interval() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let sink = Arc::clone(&lines);
+        let mut supervisor = db
+            .supervisor_with(home.path(), "import time\ntime.sleep(3600)\n", move |config| {
+                config.report_interval = Duration::from_millis(100);
+                config.reporter = Arc::new(move |line: &str| {
+                    sink.lock().expect("report sink").push(line.to_owned());
+                });
+            })
+            .await?;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        timeout(Duration::from_secs(10), async {
+            while lines.lock().expect("report sink").len() < 3 {
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
+        stop.send(true)?;
+        assert_eq!(
+            timeout(Duration::from_secs(10), task).await???,
+            SupervisorExit::Stopped
+        );
+        let reports = lines.lock().expect("report sink").clone();
+        assert!(
+            reports
+                .iter()
+                .all(|line| line.contains("backend pid") && line.contains("waiting on its exit")),
+            "{reports:?}"
+        );
+        Ok(())
+    })
+    .await
 }
