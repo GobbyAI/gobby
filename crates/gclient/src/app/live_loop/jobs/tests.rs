@@ -1,5 +1,5 @@
 use super::super::jobs_apply::apply_job_outcome;
-use super::{Coalescer, JobKey, JobOutcome, JobResult, JobTag, LoopJobs};
+use super::{Coalescer, JobKey, JobOutcome, JobResult, JobTag, LoopJobs, Pending};
 use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::{PaneFrameSource, ProxyFrameSource, ScriptedFrameSource, Transport};
@@ -241,6 +241,47 @@ fn proxy_geometry_clears_deferred_viewport() {
     assert!(
         !workspace.pane(PaneId(1)).viewport_deferred(),
         "proxy geometry cannot wait on a discarded direct writer"
+    );
+}
+
+/// A pass records the size it means to send before the job runs. When the
+/// job sends nothing, that record must go, or the next pass sees the same
+/// size as already sent and never offers it again. A live pane with no
+/// writer yet is the case: staging returns no messages for it.
+#[test]
+fn a_geometry_job_that_sends_nothing_forgets_the_size_it_recorded() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    // A live workspace starts unready, and unready refuses every request.
+    workspace.daemon_ready = true;
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    assert!(pane.take_frame_source().is_some());
+    workspace.panes.insert(pane.id, pane);
+    assert!(
+        workspace.pane(PaneId(1)).is_live(),
+        "the pane is attached, but has no writer yet"
+    );
+    let staged = workspace.stage_geometry(PaneId(1), 30, 100);
+    assert!(
+        matches!(staged, Ok(ref messages) if messages.is_empty()),
+        "staging sends nothing for a pane without a writer"
+    );
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    jobs.sent_geometry = vec![(PaneId(1), 30, 100, attachment)];
+
+    jobs.offer(
+        &mut workspace,
+        &mut chrome,
+        JobKey::Geometry(PaneId(1)),
+        Pending::Geometry(PaneId(1), 30, 100),
+    );
+
+    assert!(
+        jobs.sent_geometry.is_empty(),
+        "a size that was never sent must not stay recorded as sent"
     );
 }
 
