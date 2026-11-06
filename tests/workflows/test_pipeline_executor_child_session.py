@@ -298,7 +298,6 @@ class TestPipelineChildSession:
             machine_id=None,
             source="codex",
             project_id=project_id,
-            title="caller",
         )
 
         tool_proxy = AsyncMock()

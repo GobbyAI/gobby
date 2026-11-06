@@ -42,7 +42,6 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
             "proj-alpha".to_owned(),
             vec![SessionRow {
                 id: "sess-alpha".to_owned(),
-                title: Some("Ship the Unicode 修复".to_owned()),
                 reference: Some("gobby#1742".to_owned()),
                 ..SessionRow::default()
             }],
@@ -151,17 +150,9 @@ fn a_seat_without_a_definition_names_its_provider() {
     );
 }
 
-/// A seat whose session carries `title` with `title_source`, joined to an
-/// open pane on `term-seat`.
-fn titled_seat(title: &str, title_source: &str) -> (Workspace, PaneId) {
-    titled_definition_seat(title, title_source, None)
-}
-
-fn titled_definition_seat(
-    title: &str,
-    title_source: &str,
-    definition: Option<&str>,
-) -> (Workspace, PaneId) {
+/// A seat on session `#14069` (in `gobby`), joined to an open pane on `term-seat`,
+/// with the run's agent `definition` when one is given.
+fn definition_seat(definition: Option<&str>) -> (Workspace, PaneId) {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
         projects: vec![ProjectRow {
@@ -175,8 +166,6 @@ fn titled_definition_seat(
             vec![SessionRow {
                 id: "sess-seat".to_owned(),
                 reference: Some("#14069".to_owned()),
-                title: Some(title.to_owned()),
-                title_source: Some(title_source.to_owned()),
                 ..SessionRow::default()
             }],
         )]
@@ -214,54 +203,23 @@ fn titled_definition_seat(
 }
 
 #[test]
-fn a_manual_session_title_names_the_seat_in_place_of_its_provider() {
-    let (ws, pane) = titled_seat("gobby#14069: Synthetic seat", "manual");
+fn a_defined_seat_header_leads_with_its_ref_then_its_definition() {
+    let (ws, pane) = definition_seat(Some("lane-architect"));
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "○ #14069: Synthetic seat · Focused",
-        "the manual title drops the ref prefix the header already leads with"
+        "○ #14069: lane-architect · Focused",
+        "the ref leads the definition, as for every seat"
     );
-
-    let (ws, pane) = titled_seat("gobby#14069: Task #22974 - fix titles", "task");
     assert_eq!(
-        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "○ #14069: Claude · Focused",
-        "an automatic title keeps the provider"
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), false).title,
+        "○ #14069: lane-architect",
     );
-}
-
-#[test]
-fn seat_identity_title_precedes_the_run_definition_in_the_pane_header() {
-    for (title, source, expected) in [
-        ("Lane 1 Developer", "definition", "Lane 1 Developer"),
-        ("gobby#14069: Release Lead", "manual", "Release Lead"),
-        (
-            "gobby#14069: Task #23928 - pane titles",
-            "task",
-            "lane-developer",
-        ),
-        ("gobby#14069: Claude", "provisional", "lane-developer"),
-        ("", "definition", "lane-developer"),
-    ] {
-        let (ws, pane) = titled_definition_seat(title, source, Some("lane-developer"));
-        assert_eq!(ws.sidebar().agents[0].definition_label(), expected);
-        for chrome in [
-            Chrome::dark(),
-            Chrome::new(crate::theme::Theme::new(crate::theme::ThemeKind::Light)),
-        ] {
-            // A defined seat's header is its definition name alone: no ref, counter or slug.
-            assert_eq!(
-                pane_corners(&ws, &chrome, ws.pane(pane), true).title,
-                format!("○ {expected} · Focused"),
-                "title={title:?}, source={source:?}"
-            );
-            assert_eq!(
-                pane_corners(&ws, &chrome, ws.pane(pane), false).title,
-                format!("○ {expected}"),
-                "title={title:?}, source={source:?}"
-            );
-        }
-    }
+    let (ws, pane) = definition_seat(None);
+    assert_eq!(
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), false).title,
+        "○ #14069: Claude",
+        "a seat with no definition leads with its ref and provider"
+    );
 }
 
 #[test]

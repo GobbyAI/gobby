@@ -174,7 +174,7 @@ def test_bulk_update_wraps_safe_update_in_transaction(
     with patch.object(
         session_manager.db, "transaction", wraps=session_manager.db.transaction
     ) as txn:
-        session_manager.update(session_id, title="Updated title")
+        session_manager.update(session_id, git_branch="wrapped-update")
 
     txn.assert_called()
     assert txn.call_args is not None

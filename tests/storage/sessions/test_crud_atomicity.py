@@ -160,7 +160,6 @@ def test_create_web_chat_session_rolls_back_when_follow_up_update_fails(
                 machine_id="20000000-0000-4000-8000-000000000002",
                 project_id=sample_project["id"],
                 source="claude",
-                title="Web Chat",
                 model="claude-opus-4-5-20251101",
                 sandbox_enabled=True,
                 sandbox_policy_hash="policy-hash-123",
@@ -246,7 +245,6 @@ def test_update_terminal_context_merges_partial_context_and_notifies_once(
 
     updated = manager.update(
         session.id,
-        title="Updated terminal",
         terminal_context={
             "tmux_pane": None,
             "cwd": "/work/new",
@@ -255,7 +253,6 @@ def test_update_terminal_context_merges_partial_context_and_notifies_once(
     )
 
     assert updated is not None
-    assert updated.title == "Updated terminal"
     assert updated.terminal_context == {
         "tmux_pane": "%7",
         "tmux_socket_path": "/tmp/tmux.sock",

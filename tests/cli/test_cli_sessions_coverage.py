@@ -56,7 +56,6 @@ def test_list_sessions_found(mock_session_manager) -> None:
         created_at="2023-01-01T00:00:00",
         updated_at="2023-01-01T00:00:00",
         source="claude",
-        title="Test Session",
         seq_num=1,
         external_id=None,
         machine_id=None,
@@ -74,7 +73,7 @@ def test_list_sessions_found(mock_session_manager) -> None:
     assert result.exit_code == 0
     assert "Found 1 sessions" in result.output
     assert "sess-1" in result.output
-    assert "Test Session" in result.output
+    assert "proj-1#1" in result.output
     assert "#1" in result.output
 
 
@@ -86,7 +85,6 @@ def test_list_sessions_json(mock_session_manager) -> None:
         created_at="2023-01-01T00:00:00",
         updated_at="2023-01-01T00:00:00",
         source="claude",
-        title="Test Session",
         external_id=None,
         machine_id=None,
         transcript_path=None,
@@ -102,7 +100,7 @@ def test_list_sessions_json(mock_session_manager) -> None:
 
     assert result.exit_code == 0
     assert '"id": "sess-1"' in result.output
-    assert '"title": "Test Session"' in result.output
+    assert '"title"' not in result.output
 
 
 def test_show_session_found(mock_session_manager, mock_resolve_session) -> None:
@@ -113,7 +111,6 @@ def test_show_session_found(mock_session_manager, mock_resolve_session) -> None:
         created_at="2023-01-01T00:00:00",
         updated_at="2023-01-01T00:00:00",
         source="claude",
-        title="Test Session",
         summary_markdown="Test Summary",
         external_id=None,
         machine_id=None,
@@ -151,7 +148,6 @@ def test_delete_session_success(mock_session_manager, mock_resolve_session) -> N
         created_at="2023-01-01T00:00:00",
         updated_at="2023-01-01T00:00:00",
         source="claude",
-        title=None,
         external_id=None,
         machine_id=None,
         transcript_path=None,
@@ -191,7 +187,6 @@ def test_session_stats(mock_session_manager) -> None:
         source="claude",
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
-        title=None,
         external_id=None,
         machine_id=None,
         transcript_path=None,
@@ -207,7 +202,6 @@ def test_session_stats(mock_session_manager) -> None:
         source="codex",
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
-        title=None,
         external_id=None,
         machine_id=None,
         transcript_path=None,
@@ -237,7 +231,6 @@ def test_show_messages(mock_session_manager, mock_resolve_session) -> None:
         source="claude",
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
-        title=None,
         external_id=None,
         machine_id=None,
         transcript_path=None,
@@ -293,7 +286,6 @@ def test_create_handoff(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path="/tmp/transcript.jsonl",
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -328,7 +320,6 @@ def test_create_handoff(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path="/tmp/transcript.jsonl",
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -375,7 +366,6 @@ def test_create_handoff_full_llm_error(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path="/tmp/transcript.jsonl",
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -442,7 +432,6 @@ def test_create_handoff_no_transcript_path(mock_session_manager, mock_resolve_se
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path=None,  # No path
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -476,7 +465,6 @@ def test_create_handoff_transcript_not_found(mock_session_manager, mock_resolve_
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path="/tmp/missing.jsonl",
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -568,7 +556,6 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path="/tmp/transcript.jsonl",
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -586,7 +573,6 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path="/tmp/transcript.jsonl",
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -654,7 +640,6 @@ def test_create_handoff_notes_persist_to_db_and_file(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path=str(transcript_path),
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,
@@ -670,7 +655,6 @@ def test_create_handoff_notes_persist_to_db_and_file(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         transcript_path=str(transcript_path),
-        title=None,
         external_id=None,
         machine_id=None,
         summary_path=None,

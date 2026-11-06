@@ -25,7 +25,6 @@ def _session() -> Session:
         machine_id="21000000-0000-4000-8000-000000000011",
         source="codex",
         project_id="project-19495",
-        title="Session auto-link regression",
         status="active",
         transcript_path=None,
         summary_path=None,

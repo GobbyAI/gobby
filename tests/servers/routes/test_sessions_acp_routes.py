@@ -46,8 +46,6 @@ class _Session:
     external_id: str
     source: str
     project_id: str = "proj-1"
-    title: str | None = "Work"
-    title_source: str | None = "manual"
     status: str = "active"
     session_type: str = "web_chat"
     machine_id: str = MACHINE
@@ -61,7 +59,6 @@ class _Session:
             "external_id": self.external_id,
             "source": self.source,
             "project_id": self.project_id,
-            "title": self.title,
             "status": self.status,
             "session_type": self.session_type,
             "machine_id": self.machine_id,
@@ -127,9 +124,7 @@ class _SM:
         machine_id: str,
         source: str,
         project_id: str | None,
-        title: str | None = None,
         session_type: str = "terminal",
-        title_source: str | None = None,
     ) -> _Session:
         row = _Session(
             id=f"sess-{external_id}",
@@ -137,8 +132,6 @@ class _SM:
             machine_id=machine_id,
             source=source,
             project_id=project_id or "",
-            title=title,
-            title_source=title_source,
             session_type=session_type,
         )
         self.rows[row.id] = row

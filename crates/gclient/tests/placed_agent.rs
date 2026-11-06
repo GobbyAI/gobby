@@ -371,7 +371,7 @@ fn seat_on_roster(mock: &MockDaemon) {
         "run_id": format!("run-{AGENT}"),
         "session_id": null,
         "lifecycle_status": "running",
-        "definition_title": "Lane 8 developer",
+        "definition": "Lane 8 architect",
         "attention": null,
         "task": null,
         "provider": "claude",
@@ -424,7 +424,7 @@ async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
 
     let create = tab_create(&s.mock).await;
     assert_eq!(create["terminal_id"], json!(AGENT));
-    assert_eq!(create["title"], json!("Lane 8 developer"));
+    assert_eq!(create["title"], json!("Lane 8 architect"));
     s.mock.shutdown().await;
 }
 
@@ -456,7 +456,7 @@ async fn an_agent_pane_moved_to_a_new_tab_names_it_after_the_agent() {
 
     assert_eq!(
         tab_create(&s.mock).await["title"],
-        json!("Lane 8 developer")
+        json!("Lane 8 architect")
     );
     s.mock.shutdown().await;
 }

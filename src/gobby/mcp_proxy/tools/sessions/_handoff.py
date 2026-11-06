@@ -1,4 +1,4 @@
-"""One-shot handoff retrieval, feedback capture, and manual session titles."""
+"""One-shot handoff retrieval and feedback capture."""
 
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ from gobby.sessions.handoff_reconciliation import (
 )
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
 from gobby.storage.session_tasks import claimant_sessions
-from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -153,7 +152,7 @@ def register_handoff_tools(
     session_manager: SessionManager,
     task_manager: LocalTaskManager | None = None,
 ) -> None:
-    """Register pull-only handoff, feedback, and title tools."""
+    """Register pull-only handoff and feedback tools."""
 
     def _current_session_id() -> str | None:
         current = get_current_session_id()
@@ -395,26 +394,6 @@ def register_handoff_tools(
             return {"success": False, "error": str(exc), "error_code": "invalid_feedback"}
         return {"success": True, "created": len(ids), "feedback_ids": ids}
 
-    def set_title(title: str) -> dict[str, Any]:
-        """Set a sticky manual title for the current session."""
-        session_id = _current_session_id()
-        if session_id is None:
-            return {"success": False, "error": "No session context available"}
-        if not isinstance(title, str) or not title.strip():
-            return {
-                "success": False,
-                "error": "title must be a nonblank string",
-                "error_code": "invalid_title",
-            }
-        updated = session_manager.update_title(
-            session_id,
-            title.strip(),
-            title_source=MANUAL_TITLE_SOURCE,
-        )
-        if updated is None:
-            return {"success": False, "error": "Session not found"}
-        return {"success": True, "session_id": session_id, "title": updated.title}
-
     registry.register(
         name="get_handoff",
         description=(
@@ -453,16 +432,4 @@ def register_handoff_tools(
             "additionalProperties": False,
         },
         func=feedback,
-    )
-    registry.register(
-        name="set_title",
-        description="Set a sticky manual title for the current session.",
-        brief="Set the current session's sticky manual title.",
-        input_schema={
-            "type": "object",
-            "properties": {"title": {"type": "string"}},
-            "required": ["title"],
-            "additionalProperties": False,
-        },
-        func=set_title,
     )

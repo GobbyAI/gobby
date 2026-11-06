@@ -408,7 +408,6 @@ class TestGetSessionEdgeCases:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
-            title="Codex stale context",
         )
         session_storage.db.execute(
             "UPDATE sessions SET context_window = %s, model = %s WHERE id = %s",
@@ -448,7 +447,6 @@ class TestGetSessionEdgeCases:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
-            title="Codex context override",
         )
         session_storage.db.execute(
             "UPDATE sessions SET model = %s WHERE id = %s",

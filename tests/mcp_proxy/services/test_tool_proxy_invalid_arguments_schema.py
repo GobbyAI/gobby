@@ -61,7 +61,6 @@ def proxy_parts(temp_db: HubDatabase) -> ProxyParts:
         machine_id="21000000-0000-4000-8000-000000000016",
         source="codex",
         project_id=None,
-        title="Schema guidance test session",
     )
     mcp_manager = MagicMock()
     mcp_manager.project_id = "test-project"

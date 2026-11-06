@@ -10,17 +10,16 @@ from gobby.storage.session_models import Session
 from gobby.terminal_context import terminal_context_has_tmux_target
 
 
-def _recovery_score(session: Session) -> tuple[bool, bool, bool, bool]:
+def _recovery_score(session: Session) -> tuple[bool, bool, bool]:
     """Score recovery candidates by metadata completeness only."""
     return (
         not bool(session.transcript_path),
-        not bool(session.title),
         not terminal_context_has_tmux_target(session.terminal_context),
         not bool(session.terminal_context),
     )
 
 
-def _recovery_rank(session: Session) -> tuple[bool, bool, bool, bool, datetime, str]:
+def _recovery_rank(session: Session) -> tuple[bool, bool, bool, datetime, str]:
     """Rank cross-source recovery candidates by completeness, then age."""
     return (*_recovery_score(session), session.created_at, session.id)
 

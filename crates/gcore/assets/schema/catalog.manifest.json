@@ -3897,14 +3897,6 @@
       "definition": "jsonb|jsonb|YES||NEVER"
     },
     {
-      "name": "sessions.title",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "sessions.title_source",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "sessions.tool_call_count",
       "definition": "integer|int4|YES|0|NEVER"
     },

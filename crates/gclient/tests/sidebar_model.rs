@@ -341,7 +341,6 @@ fn build_joins_projects_worktrees_and_agents() {
             vec![SessionRow {
                 id: "sess-a".to_string(),
                 reference: Some("#12217".to_string()),
-                title: Some("coordinator".to_string()),
                 source: Some("claude".to_string()),
                 status: "active".to_string(),
                 machine_id: Some(REMOTE_MACHINE.to_string()),
@@ -365,6 +364,7 @@ fn build_joins_projects_worktrees_and_agents() {
 
     let mut session_agent = entry("session:sess-a", Some("terminal-a"));
     session_agent.session_id = Some("sess-a".to_string());
+    session_agent.definition = Some("coordinator".to_string());
     session_agent.attention = blocked();
     let mut run_agent = entry("run:run-b", Some("terminal-b"));
     run_agent.run_id = Some("run-b".to_string());
@@ -445,7 +445,7 @@ fn build_joins_projects_worktrees_and_agents() {
     assert_eq!(session_row.session_ref.as_deref(), Some("#12217"));
     assert_eq!(
         session_row.name, "coordinator",
-        "the joined session title names the agent"
+        "the agent definition names the agent"
     );
     assert_eq!(
         session_row.machine_id, REMOTE_MACHINE,
@@ -771,17 +771,15 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
     );
 }
 
-/// #22805: a Grok pane's row is named like any provider's. The joined session
-/// title wins over the pane's foreground command, and the command ("grok")
-/// names only a row the roster has not joined to a session.
+/// #22805: a Grok pane's row is named like any provider's. A seat with no agent
+/// definition is named by the pane's foreground command ("grok"), joined or not.
 #[test]
-fn grok_row_takes_the_session_title_over_the_pane_command() {
+fn grok_row_takes_the_pane_command_when_no_definition_names_it() {
     let rows = SidebarRows {
         sessions: BTreeMap::from([(
             PROJECT.to_string(),
             vec![SessionRow {
                 id: "sess-grok".to_string(),
-                title: Some("Stability lane Engineer".to_string()),
                 source: Some("grok".to_string()),
                 status: "awaiting_approval".to_string(),
                 ..Default::default()
@@ -801,8 +799,8 @@ fn grok_row_takes_the_session_title_over_the_pane_command() {
     let model = model(&rows, &[joined, unjoined], &[grok_pane, bare_pane]);
 
     assert_eq!(
-        model.agents[0].name, "Stability lane Engineer",
-        "the joined session title names the Grok row"
+        model.agents[0].name, "grok",
+        "a joined seat with no definition is named by the pane command"
     );
     assert_eq!(model.agents[0].provider, "grok");
     assert_eq!(
@@ -821,7 +819,7 @@ fn build_carries_definition_name_and_task_title() {
             PROJECT.to_string(),
             vec![RunRow {
                 run_id: "run-b".to_string(),
-                agent_name: Some("backend-developer".to_string()),
+                agent_name: Some("backend-architect".to_string()),
                 provider: Some("codex".to_string()),
                 status: "running".to_string(),
                 ..Default::default()
@@ -851,13 +849,13 @@ fn build_carries_definition_name_and_task_title() {
     let run_row = &model.agents[0];
     assert_eq!(
         run_row.agent_definition_name.as_deref(),
-        Some("backend-developer")
+        Some("backend-architect")
     );
     assert_eq!(run_row.task_title.as_deref(), Some("Agent data model"));
     assert_eq!(run_row.task_ref.as_deref(), Some("#22744"));
     assert_eq!(run_row.context_percent, Some(42));
     assert_eq!(run_row.tokens_used, Some(128_000));
-    assert_eq!(run_row.definition_label(), "backend-developer");
+    assert_eq!(run_row.definition_label(), "backend-architect");
     let claude_code_row = &model.agents[1];
     assert_eq!(claude_code_row.agent_definition_name, None);
     assert_eq!(claude_code_row.task_title, None);
@@ -987,31 +985,54 @@ fn a_refresh_that_clears_the_status_line_clears_the_agent_row() {
 }
 
 #[test]
-fn roster_seat_title_survives_task_titles_and_missing_run_rows() {
+fn a_seat_is_named_by_its_definition_beside_its_ref() {
     let mut seat = entry("session:s", Some("terminal-s"));
     seat.session_id = Some("s".into());
-    seat.definition_title = Some("Lane 1 Developer".into());
+    seat.definition = Some("Lane 1 Architect".into());
     let mut rows = SidebarRows::default();
-    for (source, title, expected) in [
-        ("task", "Fix attention", "Lane 1 Developer"),
-        ("provisional", "Codex", "Lane 1 Developer"),
-        ("definition", "Lane 1 Developer", "Lane 1 Developer"),
-        ("manual", "My custom seat", "My custom seat"),
-    ] {
-        rows.sessions.insert(
-            PROJECT.into(),
-            vec![SessionRow {
-                id: "s".into(),
-                title: Some(title.into()),
-                title_source: Some(source.into()),
-                ..Default::default()
-            }],
-        );
-        let model = model(&rows, &[seat.clone()], &[]);
-        assert_eq!(model.agents[0].definition_label(), expected, "{source}");
-    }
-    let model = model(&SidebarRows::default(), &[seat], &[]);
-    assert_eq!(model.agents[0].definition_label(), "Lane 1 Developer");
+    rows.sessions.insert(
+        PROJECT.into(),
+        vec![SessionRow {
+            id: "s".into(),
+            reference: Some("#14069".into()),
+            source: Some("claude".into()),
+            ..Default::default()
+        }],
+    );
+    let joined = model(&rows, std::slice::from_ref(&seat), &[]);
+    assert_eq!(joined.agents[0].name, "Lane 1 Architect");
+    assert_eq!(joined.agents[0].definition_label(), "Lane 1 Architect");
+    assert_eq!(joined.agents[0].session_ref.as_deref(), Some("#14069"));
+    let unjoined = model(&SidebarRows::default(), &[seat], &[]);
+    assert_eq!(unjoined.agents[0].definition_label(), "Lane 1 Architect");
+}
+
+#[test]
+fn build_marks_only_the_claim_holder_among_seats_sharing_a_task() {
+    let holder: RosterEntry = serde_json::from_value(json!({
+        "entry_id": "session:sess-h",
+        "session_id": "sess-h",
+        "task": {"id": "task-uuid", "ref": "#25485", "title": "Remove stored titles", "claim_holder": true},
+        "terminal": {"terminal_id": "terminal-h", "backend": "native"}
+    }))
+    .expect("a roster entry with a claim-holder task should deserialize");
+    let reviewer: RosterEntry = serde_json::from_value(json!({
+        "entry_id": "session:sess-r",
+        "session_id": "sess-r",
+        "task": {"id": "task-uuid", "ref": "#25485", "title": "Remove stored titles", "claim_holder": false},
+        "terminal": {"terminal_id": "terminal-r", "backend": "native"}
+    }))
+    .expect("a roster entry with a non-holder task should deserialize");
+
+    let model = model(&SidebarRows::default(), &[holder, reviewer], &[]);
+
+    assert_eq!(model.agents[0].task_ref.as_deref(), Some("#25485"));
+    assert_eq!(model.agents[1].task_ref.as_deref(), Some("#25485"));
+    assert!(
+        model.agents[0].task_claim_held,
+        "the claim holder is marked"
+    );
+    assert!(!model.agents[1].task_claim_held, "the other seat is not");
 }
 
 /// A parked session's ref shows, and a seat moved onto a successor session

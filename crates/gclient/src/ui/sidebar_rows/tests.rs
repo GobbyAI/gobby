@@ -214,7 +214,6 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
                 SessionRow {
                     id: "sess-effort".to_string(),
                     reference: Some("#77".to_string()),
-                    title: Some("effort session".to_string()),
                     source: Some("codex".to_string()),
                     model: Some("gpt-5".to_string()),
                     reasoning_effort: Some("high".to_string()),
@@ -223,7 +222,6 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
                 SessionRow {
                     id: "sess-bare".to_string(),
                     reference: Some("#78".to_string()),
-                    title: Some("bare session".to_string()),
                     ..SessionRow::default()
                 },
             ],
@@ -526,6 +524,32 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 }
 
 #[test]
+fn the_claim_holder_marks_its_task_line_and_no_other_seat_does() {
+    let chrome = Chrome::dark();
+    let holder = SidebarRow {
+        id: "session:holder".into(),
+        definition: "Architect".into(),
+        reference: "#25485".into(),
+        task: Some(("#25485".into(), "Remove stored titles".into())),
+        claim_mark: Some("\u{f084}"),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_third_line(&holder, 60, &chrome)),
+        "   Working task 25485 \u{f084} Remove stored titles"
+    );
+    let reviewer = SidebarRow {
+        claim_mark: None,
+        ..holder
+    };
+    assert_eq!(
+        line_text(&row_third_line(&reviewer, 60, &chrome)),
+        "   Working task 25485 Remove stored titles"
+    );
+}
+
+#[test]
 fn parents_connect_to_their_first_child_on_both_continuation_lines() {
     let chrome = Chrome::dark();
     let parent = SidebarRow {
@@ -759,7 +783,7 @@ fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     let mut chrome = Chrome::dark();
     let lane = SidebarRow {
         id: "session:lane".into(),
-        definition: "Lane 2 developer gClient chrome".into(),
+        definition: "Lane 2 architect gClient chrome".into(),
         reference: "#15398".into(),
         kind: RowKind::Agent,
         ..SidebarRow::default()
@@ -769,12 +793,12 @@ fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     assert_eq!(row_travel(&lane, 24), 31 - 13);
     assert_eq!(
         line_text(&row_line(&lane, 24, &chrome, 0)),
-        " ○ #15398: Lane 2 develo"
+        " ○ #15398: Lane 2 archit"
     );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     assert_eq!(
         line_text(&row_line(&lane, 24, &chrome, 0)),
-        " ○ #15398: ne 2 develope"
+        " ○ #15398: ne 2 architec"
     );
     chrome.ticker = (TICKER_PAUSE + 18) * TICKER_STEP;
     let line = row_line(&lane, 24, &chrome, 0);
@@ -789,7 +813,7 @@ fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     chrome.prefs.title_scrolling = TitleScrolling::Off;
     assert_eq!(
         line_text(&row_line(&lane, 24, &chrome, 0)),
-        " ○ #15398: Lane 2 devel…"
+        " ○ #15398: Lane 2 archi…"
     );
 
     // A row too narrow to pin the reference beside a title truncates.
@@ -842,13 +866,11 @@ fn a_terminal_row_puts_its_address_at_the_right_edge_while_the_name_leaves_room(
 }
 
 #[test]
-fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
+fn a_seat_line_one_is_its_definition_beside_its_ref() {
     let mut ws = Workspace::scripted();
-    let session = |id: &str, reference: &str, title: &str, source: Option<&str>| SessionRow {
+    let session = |id: &str, reference: &str| SessionRow {
         id: id.to_string(),
         reference: Some(reference.to_string()),
-        title: Some(title.to_string()),
-        title_source: source.map(str::to_string),
         ..SessionRow::default()
     };
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
@@ -861,30 +883,26 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         sessions: [(
             "proj-alpha".to_string(),
             vec![
-                session("sess-named", "#77", "synthetic", Some("manual")),
-                session("sess-bare-ref", "#78", "alpha#78", Some("manual")),
-                session("sess-auto", "#79", "alpha#79: Codex", Some("provisional")),
-                session("sess-suffix", "#80", "Release #80", Some("manual")),
-                session("sess-other", "#81", "other#81: Handoff", Some("manual")),
-                session("sess-ref", "#82", "#82: Ship", Some("manual")),
+                session("sess-named", "#77"),
+                session("sess-bare-ref", "#78"),
+                session("sess-suffix", "#80"),
             ],
         )]
         .into_iter()
         .collect(),
         ..SidebarRows::default()
     });
-    let ids = [
-        "sess-named",
-        "sess-bare-ref",
-        "sess-auto",
-        "sess-suffix",
-        "sess-other",
-        "sess-ref",
-    ];
+    let ids = ["sess-named", "sess-bare-ref", "sess-suffix"];
     let seat = |id: &str| {
+        let definition = match id {
+            "sess-named" => json!("Architect"),
+            "sess-suffix" => json!("Release #80"),
+            _ => json!(null),
+        };
         json!({
             "entry_id": format!("session:{id}"),
             "session_id": id,
+            "definition": definition,
             "provider": "codex",
             "terminal": {"terminal_id": format!("term-{id}"), "backend": "native"}
         })
@@ -911,28 +929,17 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         line_text(&row_line(row, 34, &chrome, 0))
     };
 
-    assert_eq!(line_one("sess-named"), " ○ #77: synthetic");
+    assert_eq!(line_one("sess-named"), " ○ #77: Architect");
     assert_eq!(
         line_one("sess-bare-ref"),
         " ○ #78: Codex",
-        "a manual title that is only the ref names nothing"
-    );
-    assert_eq!(
-        line_one("sess-auto"),
-        " ○ #79: Codex",
-        "an automatic title keeps the provider"
+        "a seat with no definition names its provider"
     );
     assert_eq!(
         line_one("sess-suffix"),
         " ○ #80: Release #80",
-        "a ref inside the title is part of the name"
+        "a ref inside the definition is part of the name"
     );
-    assert_eq!(
-        line_one("sess-other"),
-        " ○ #81: other#81: Handoff",
-        "another project's prefix is not this session's ref"
-    );
-    assert_eq!(line_one("sess-ref"), " ○ #82: Ship");
 }
 
 /// The style of the one span in `line` whose text is exactly `text`.
@@ -1299,7 +1306,7 @@ fn the_sandbox_lock_leaves_the_title_window_unchanged() {
 fn sandbox_text_fallback_precedes_the_model_on_line_two() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
-        definition: "Developer".into(),
+        definition: "Architect".into(),
         reference: "#77".into(),
         model_slug: "codex-gpt-6.1-sol-medium".into(),
         kind: RowKind::Agent,

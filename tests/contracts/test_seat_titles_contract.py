@@ -38,5 +38,12 @@ def test_contract_doc_records_joshs_title_rules() -> None:
         assert quote in text
 
 
+def test_contract_doc_drops_stored_title_machinery() -> None:
+    text = CONTRACT.read_text(encoding="utf-8")
+
+    assert "title_lifecycle" not in text
+    assert "title precedence" not in text.lower()
+
+
 def test_spawn_and_placement_code_has_no_lane_wording() -> None:
     assert _lane_hits(sorted((REPO / "src/gobby/agents").glob("*.py"))) == []

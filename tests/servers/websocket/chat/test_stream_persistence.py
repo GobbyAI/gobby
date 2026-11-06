@@ -17,7 +17,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_persisted_first_user_message_leaves_provisional_title(
+async def test_persisted_first_user_message_is_stored_for_web_chat(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
 ) -> None:
@@ -28,8 +28,6 @@ async def test_persisted_first_user_message_leaves_provisional_title(
         project_id=sample_project["id"],
         session_type="web_chat",
     )
-    before = session_manager.get(db_session.id)
-    assert before is not None
     owner = SimpleNamespace(session_manager=session_manager, _chat_sessions={})
     persistence = ChatStreamPersistence(owner, "web-chat-title", AssistantContentBlocks())
 
@@ -45,5 +43,3 @@ async def test_persisted_first_user_message_leaves_provisional_title(
     ]
     after = session_manager.get(db_session.id)
     assert after is not None
-    assert after.title == before.title == f"test-project#{after.seq_num}: Codex"
-    assert after.title_source == "provisional"

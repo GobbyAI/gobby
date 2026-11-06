@@ -41,7 +41,6 @@ class TestSession:
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update(session.id, title_source="manual")
         session_manager.update_context_usage(
             session.id,
             ContextUsageSnapshot.from_token_breakdown(
@@ -62,7 +61,6 @@ class TestSession:
         assert session_from_row.id == session.id
         assert session_from_row.external_id == "test-cli-key"
         assert session_from_row.source == "claude"
-        assert session_from_row.title_source == "manual"
         assert session_from_row.context_used_tokens == 3300
         assert session_from_row.last_prompt_uncached_input_tokens == 1000
         assert session_from_row.last_prompt_cache_read_tokens == 2000
@@ -81,7 +79,6 @@ class TestSession:
             machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
-            title="Test Session",
         )
 
         d = session.to_dict()
@@ -89,31 +86,7 @@ class TestSession:
         assert d["external_id"] == "dict-test"
         assert d["machine_id"] == "20000000-0000-4000-8000-000000000002"
         assert d["source"] == "codex"
-        assert d["title"] == "Test Session"
-        assert d["title_source"] == "manual"
         assert d["status"] == "active"
-
-    def test_to_dict_and_brief_include_title_source(self) -> None:
-        session = Session(
-            id="sess-title-source",
-            external_id="ext-title-source",
-            machine_id="20000000-0000-4000-8000-000000000002",
-            source="codex",
-            project_id="proj-1",
-            title="Titled Session",
-            title_source="manual",
-            status="active",
-            transcript_path=None,
-            summary_path=None,
-            summary_markdown=None,
-            git_branch=None,
-            parent_session_id=None,
-            created_at=datetime(2026, 4, 16, tzinfo=UTC),
-            updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
-        )
-
-        assert session.to_dict()["title_source"] == "manual"
-        assert session.to_brief()["title_source"] == "manual"
 
     @pytest.mark.parametrize("reasoning_effort", [None, "xhigh"])
     def test_full_and_brief_expose_nullable_effort(
@@ -127,8 +100,6 @@ class TestSession:
             machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id="proj-1",
-            title="proj#1: Task #7 - Repair session titles",
-            title_source="task",
             reasoning_effort=reasoning_effort,
             status="active",
             transcript_path=None,
@@ -142,7 +113,6 @@ class TestSession:
 
         for record in (session.to_dict(), session.to_brief()):
             assert record["reasoning_effort"] == reasoning_effort
-            assert record["title_source"] == "task"
 
     @pytest.mark.parametrize("status", ["paused", "awaiting_handoff"])
     def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self, status: str) -> None:
@@ -153,7 +123,6 @@ class TestSession:
             machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id="proj-1",
-            title="Live tmux session",
             status=status,
             transcript_path=None,
             summary_path=None,
@@ -177,7 +146,6 @@ class TestSession:
             machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id="proj-1",
-            title="Historical tmux session",
             status=status,
             transcript_path=None,
             summary_path=None,
@@ -201,7 +169,6 @@ class TestSession:
             machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id="proj-1",
-            title="Stale pid session",
             status="paused",
             transcript_path=None,
             summary_path=None,
@@ -232,7 +199,6 @@ class TestSessionManagerModelFields:
             machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=sample_project["id"],
-            title="Test",
             transcript_path="/path.jsonl",
             git_branch="main",
             parent_session_id=None,
@@ -270,7 +236,6 @@ class TestSessionManagerModelFields:
         assert "machine_id" in d
         assert "source" in d
         assert "project_id" in d
-        assert "title" in d
         assert "status" in d
         assert "transcript_path" in d
         assert "summary_path" in d

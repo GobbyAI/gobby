@@ -63,7 +63,6 @@ def _claude_pane(
         machine_id=None,
         source="claude",
         project_id=project_id,
-        title="idle-claude-pane",
     ).id
     with session_manager.db.transaction():
         session_manager.db.execute(
@@ -76,7 +75,6 @@ def _claude_pane(
         machine_id=None,
         source="claude",
         project_id=project_id,
-        title="wake-sender",
     ).id
     messages = InterSessionMessageManager(temp_db)
     messages.create_message(

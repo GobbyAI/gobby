@@ -285,7 +285,7 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
                 "entry_id": "session:seat",
                 "session_id": "seat",
                 "provider": "codex",
-                "definition_title": "Lane 1 Developer",
+                "definition": "Lane 1 Architect",
                 "terminal": {"terminal_id": "term-seat", "backend": "native"},
                 "lifecycle_status": status,
                 "attention": attention
@@ -312,7 +312,7 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
         let corners =
             gobby_client::ui::pane_chrome::pane_corners(&ws, &chrome, ws.pane(pane), true);
         assert!(
-            corners.title.contains("Lane 1 Developer"),
+            corners.title.contains("Lane 1 Architect"),
             "{}",
             corners.title
         );

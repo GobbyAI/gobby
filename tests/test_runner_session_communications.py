@@ -26,7 +26,6 @@ def _transition(session_id: str, project_id: str) -> SessionStatusTransition:
         status="paused",
         transitioned_at=datetime(2026, 7, 30, 12, 0, tzinfo=UTC),
         seq_num=42,
-        title="Existing agent",
         source="codex",
     )
 

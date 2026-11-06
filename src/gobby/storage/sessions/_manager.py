@@ -14,7 +14,6 @@ from gobby.storage.workspace_machine_scope import (
 
 from ._bootstrap import (
     SessionChangeCallback,
-    TitleChangeCallback,
     _SessionBootstrapMixin,
 )
 from ._bulk_update import _BulkUpdateMixin
@@ -29,12 +28,6 @@ from ._registration_cache import _RegistrationCacheMixin
 from ._renumber import _RenumberMixin
 from ._session_mapping_cache import SessionMappingKey, _put_session_mapping
 from ._terminal import _TerminalMixin
-from ._title_defaults import (
-    DEFINITION_TITLE_SOURCE,
-    MANUAL_TITLE_SOURCE,
-    PROVISIONAL_TITLE_SOURCE,
-    TASK_TITLE_SOURCE,
-)
 from ._transcript import _TranscriptMixin
 from ._update_sentinel import UNSET, UnsetType
 from ._usage import _UsageMixin
@@ -65,20 +58,12 @@ class SessionManager(
     _storage: SessionManager
     logger: logging.Logger
     _config: DaemonConfig | None
-    _title_listeners: list[TitleChangeCallback]
     _session_change_listeners: list[SessionChangeCallback]
     _session_mapping: dict[SessionMappingKey, str]
     _session_mapping_timestamps: dict[SessionMappingKey, float]
     _session_mapping_lock: threading.Lock
     _session_metadata: dict[str, dict[str, Any]]
     _session_metadata_lock: threading.Lock
-
-    _VALID_TITLE_SOURCES: ClassVar[set[str]] = {
-        DEFINITION_TITLE_SOURCE,
-        MANUAL_TITLE_SOURCE,
-        PROVISIONAL_TITLE_SOURCE,
-        TASK_TITLE_SOURCE,
-    }
 
     def __init__(
         self,
@@ -102,7 +87,6 @@ class SessionManager(
         self._storage: SessionManager = storage
         self.logger = logger_instance or get_logger()
         self._config = config
-        self._title_listeners: list[TitleChangeCallback] = []
         self._session_change_listeners: list[SessionChangeCallback] = []
         self._status_transition_listeners: list[SessionStatusTransitionCallback] = []
         self._session_mapping: dict[SessionMappingKey, str] = {}
@@ -126,7 +110,6 @@ class SessionManager(
         session_type: str,
         parent_session_id: str | None,
         transcript_path: str | None,
-        title: str | None,
         git_branch: str | None,
         workflow_name: str | None,
         agent_depth: int,
@@ -150,7 +133,6 @@ class SessionManager(
                 "parent_session_id": parent_session_id,
                 "transcript_path": transcript_path,
                 "project_id": project_id,
-                "title": title,
                 "git_branch": git_branch,
                 "workflow_name": workflow_name,
                 "agent_depth": agent_depth,
@@ -167,7 +149,6 @@ class SessionManager(
         project_id: str | None,
         parent_session_id: str | None | UnsetType,
         transcript_path: str | None,
-        title: str | None,
         git_branch: str | None,
         workflow_name: str | None,
         agent_depth: int,
@@ -202,7 +183,6 @@ class SessionManager(
                 session_type=recovered.session_type,
                 parent_session_id=recovered.parent_session_id,
                 transcript_path=transcript_path,
-                title=recovered.title,
                 git_branch=git_branch,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
@@ -228,7 +208,6 @@ class SessionManager(
         project_id: str | None,
         parent_session_id: str | None | UnsetType = UNSET,
         transcript_path: str | None = None,
-        title: str | None = None,
         git_branch: str | None = None,
         project_path: str | None = None,
         terminal_context: dict[str, Any] | None = None,
@@ -257,7 +236,6 @@ class SessionManager(
                 machine_id=machine_id,
                 source=source,
                 project_id=project_id,
-                title=title,
                 transcript_path=transcript_path,
                 git_branch=git_branch,
                 parent_session_id=parent_session_id,
@@ -281,7 +259,6 @@ class SessionManager(
                 session_type=session.session_type,
                 parent_session_id=session.parent_session_id,
                 transcript_path=transcript_path,
-                title=session.title,
                 git_branch=git_branch,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
@@ -308,7 +285,6 @@ class SessionManager(
                 project_id=project_id,
                 parent_session_id=parent_session_id,
                 transcript_path=transcript_path,
-                title=title,
                 git_branch=git_branch,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,

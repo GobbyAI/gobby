@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from gobby.storage.session_models import Session
 
@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 class SummaryUpdateHost(Protocol):
     db: HubDatabase
-    _VALID_TITLE_SOURCES: ClassVar[set[str]]
 
     def get(self, session_id: str) -> Session | None: ...
 
@@ -30,5 +29,3 @@ class SummaryUpdateHost(Protocol):
     ) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
-
-    def _run_title_change_side_effects(self, updated: Session, title: str) -> None: ...

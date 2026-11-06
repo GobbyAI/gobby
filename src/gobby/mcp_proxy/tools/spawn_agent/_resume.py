@@ -199,7 +199,7 @@ def resumed_seat_plan(
     recorded_title = snapshot.get("title") if snapshot else None
     own = workspaces.get_pane_for_terminal(run.terminal_id) if run.terminal_id else None
     if own is not None:
-        title = own.label or recorded_title or session.title or run.agent_name or "agent"
+        title = own.label or recorded_title or run.agent_name or "agent"
         return {"split": {"pane": own.id, "axis": "down", "title": title}}, None
     if snapshot is None or not isinstance(recorded_title, str):
         return None, None

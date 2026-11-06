@@ -13,7 +13,6 @@ class SessionRegisterRequest(BaseModel):
     )
     # Session metadata
     transcript_path: str | None = Field(None, description="Path to JSONL transcript file")
-    title: str | None = Field(None, description="Natural language session summary/title")
     source: str | None = Field(
         None, description="Session source (e.g., 'Claude Code', 'Agent SDK')"
     )
@@ -44,7 +43,6 @@ class WebChatSessionRequest(BaseModel):
         None,
         description="Working directory used to resolve the project when project_id is omitted",
     )
-    title: str | None = Field(None, description="Optional session title")
     model: str | None = Field(None, description="Optional model override")
     reasoning_effort: str | None = Field(
         None, description="Optional reasoning effort override for supported providers/models"

@@ -1,7 +1,7 @@
 """Tests for cli/sessions.py -- targeting uncovered lines.
 
 Covers: get_session_manager, get_message_manager, show_session (json/details),
-        list_sessions (cost/title truncation), messages (json/tool/truncation),
+        list_sessions (cost truncation), messages (json/tool/truncation),
         search (json/empty), delete failure, stats with project.
 Lines targeted: 19-26, 102-158, 177-295, 309-310
 """
@@ -48,7 +48,6 @@ def _make_session(**overrides: Any) -> Session:
         "created_at": "2024-01-01T00:00:00",
         "updated_at": "2024-01-01T00:00:00",
         "source": "claude",
-        "title": "Test Session",
         "seq_num": 1,
         "external_id": None,
         "machine_id": None,
@@ -108,23 +107,6 @@ class TestListSessionsEdgeCases:
         mock_session_manager.list.return_value = [session]
         result = runner.invoke(sessions, ["list"])
         assert result.exit_code == 0
-
-    def test_list_long_title_truncated(
-        self, runner: CliRunner, mock_session_manager: MagicMock
-    ) -> None:
-        long_title = "A" * 60
-        session = _make_session(title=long_title)
-        mock_session_manager.list.return_value = [session]
-        result = runner.invoke(sessions, ["list"])
-        assert result.exit_code == 0
-        assert "..." in result.output
-
-    def test_list_no_title(self, runner: CliRunner, mock_session_manager: MagicMock) -> None:
-        session = _make_session(title=None, seq_num=None)
-        mock_session_manager.list.return_value = [session]
-        result = runner.invoke(sessions, ["list"])
-        assert result.exit_code == 0
-        assert "(no title)" in result.output
 
     def test_list_awaiting_handoff_icon(
         self, runner: CliRunner, mock_session_manager: MagicMock

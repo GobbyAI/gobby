@@ -205,7 +205,6 @@ def _session_meta_payload(
     return {
         "external_id": _as_str(getattr(session, "external_id", None)),
         "source": _as_str(getattr(session, "source", None)) or "unknown",
-        "title": _as_str(getattr(session, "title", None)),
         "status": _as_str(getattr(session, "status", None)) or "unknown",
         "model": live_model,
         "reasoning_effort": live_reasoning_effort,

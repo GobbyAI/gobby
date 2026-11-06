@@ -225,7 +225,7 @@ fn agent_rows() -> (Workspace, Chrome) {
         "proj-alpha".into(),
         vec![RunRow {
             run_id: "run-long".into(),
-            agent_name: Some("backend-developer-workflow-run".into()),
+            agent_name: Some("backend-architect-workflow-run".into()),
             provider: Some("codex".into()),
             model: Some("gpt-5".into()),
             terminal_id: Some("term-agent".into()),
@@ -237,7 +237,6 @@ fn agent_rows() -> (Workspace, Chrome) {
         vec![SessionRow {
             id: "sess-long".into(),
             reference: Some("#123".into()),
-            title: Some("Agent row preview".into()),
             ..SessionRow::default()
         }],
     );
@@ -435,7 +434,6 @@ fn pane_edges() -> (Workspace, Chrome) {
         vec![SessionRow {
             id: "sess-alpha".to_string(),
             reference: Some("#1742".to_string()),
-            title: Some("Ship the Unicode 修复 to pane headers".to_string()),
             status: "active".to_string(),
             ..SessionRow::default()
         }],
@@ -861,7 +859,7 @@ fn agent_rows_golden() {
     let rows = glyph_rows(&rendered);
     let agent = rows
         .iter()
-        .position(|row| row.contains("#123: backend-developer-work"))
+        .position(|row| row.contains("#123: backend-architect-work"))
         .expect("agent definition row");
     assert!(rows[agent + 1].contains("gpt-5"), "{:?}", rows[agent + 1]);
     assert!(

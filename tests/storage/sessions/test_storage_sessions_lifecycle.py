@@ -336,7 +336,6 @@ class TestSessionManagerLifecycle:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            title="Semantic session",
         )
         transitions: list[SessionStatusTransition] = []
 
@@ -2039,7 +2038,6 @@ class TestSessionManagerLifecycle:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            title="Original Title",
         )
 
         updated = session_manager.update(
@@ -2047,7 +2045,6 @@ class TestSessionManagerLifecycle:
             external_id="new-ext-id",
             transcript_path="/new/path.jsonl",
             status="paused",
-            title="New Title",
             git_branch="feature/branch",
         )
 
@@ -2055,7 +2052,6 @@ class TestSessionManagerLifecycle:
         assert updated.external_id == "new-ext-id"
         assert updated.transcript_path == "/new/path.jsonl"
         assert updated.status == "paused"
-        assert updated.title == "New Title"
         assert updated.git_branch == "feature/branch"
 
     def test_update_clears_nullable_metadata(
@@ -2068,23 +2064,17 @@ class TestSessionManagerLifecycle:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            title="Temporary title",
             transcript_path="/tmp/transcript.jsonl",
             git_branch="feature/temporary",
-            title_source="manual",
         )
 
         updated = session_manager.update(
             session.id,
-            title=None,
-            title_source=None,
             transcript_path=None,
             git_branch=None,
         )
 
         assert updated is not None
-        assert updated.title == "Temporary title"
-        assert updated.title_source == "manual"
         assert updated.transcript_path is None
         assert updated.git_branch is None
 
@@ -2302,14 +2292,12 @@ class TestSessionManagerLifecycle:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
-            title="First",
         )
         second = session_manager.register(
             external_id="dry-2",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
-            title="Second",
         )
         with temp_db.transaction() as conn:
             conn.execute(
@@ -2350,28 +2338,24 @@ class TestSessionManagerLifecycle:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
-            title="Visible first",
         )
         deleted = session_manager.register(
             external_id="apply-deleted",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
-            title="Deleted",
         )
         visible_second = session_manager.register(
             external_id="apply-2",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
-            title="Visible second",
         )
         other = session_manager.register(
             external_id="other-1",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=other_project.id,
-            title="Other",
         )
 
         with temp_db.transaction() as conn:
@@ -2504,7 +2488,7 @@ def test_expire_paused_session_requires_confirmed_exited_native_terminal(
             terminal_context={"gobby_terminal_id": str(uuid.uuid4())},
         )
     elif guard == "changed_row":
-        session_manager.update(session.id, title="new activity")
+        session_manager.update(session.id, git_branch="changed-while-paused")
     elif guard == "alternate_live":
         alternate_id = str(uuid.uuid4())
         terminals.create_pending(

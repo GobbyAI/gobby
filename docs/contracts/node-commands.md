@@ -160,7 +160,6 @@ Payload, in order:
 | `reasoning_effort` | string or null |
 | `sandbox` | sandbox object |
 | `timeout_seconds` | number |
-| `title` | string or null |
 | `source_root` | string |
 | `workspace` | `{mode, path, branch_name, base_branch}` |
 | `agent_name`, `api_base`, `api_token`, `codex_oss_provider`, `resume_session_id`, `execution_mode`, `code_index_preflight`, `task_id` | string or null |

@@ -19,7 +19,6 @@ def _make_session(**overrides: Any) -> Session:
         "machine_id": "21000000-0000-4000-8000-000000000001",
         "source": "claude",
         "project_id": "proj-xyz",
-        "title": "Test session",
         "status": "active",
         "transcript_path": "/tmp/transcripts/sess.jsonl",
         "summary_path": "/tmp/summaries/sess.md",
@@ -65,7 +64,7 @@ class TestSessionToBrief:
         assert brief["external_id"] == "ext-123"
         assert brief["source"] == "claude"
         assert brief["project_id"] == "proj-xyz"
-        assert brief["title"] == "Test session"
+        assert "title" not in brief
         assert brief["status"] == "active"
         assert brief["git_branch"] == "main"
         assert brief["model"] == "claude-sonnet-4-6"

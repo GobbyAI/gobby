@@ -100,7 +100,7 @@ def build_spawn_payload(
 
     Request keys read: ``prompt``, ``project_id``, ``project_path``,
     ``terminal_id`` (required, hub-minted), ``initial_variables`` (required),
-    ``agent_depth`` (0), ``max_agent_depth`` (5), ``title``, ``timeout``,
+    ``agent_depth`` (0), ``max_agent_depth`` (5), ``timeout``,
     ``droid_mode`` ("exec"), ``agent_lookup_name``, ``agent_body``,
     ``checkout_mode``, ``branch_name``, ``base_branch``.
 
@@ -140,7 +140,6 @@ def build_spawn_payload(
         reasoning_effort=reasoning.effective_effort,
         sandbox=Sandbox.model_validate(sandbox_config.model_dump(mode="json")),
         timeout_seconds=int(timeout),
-        title=request.get("title"),
         source_root=request["project_path"],
         workspace=_workspace(db, run, request, body, resume_existing=resume_existing),
         agent_name=request.get("agent_lookup_name") or (body.name if body is not None else None),

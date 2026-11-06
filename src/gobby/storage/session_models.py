@@ -40,7 +40,6 @@ class Session:
     machine_id: str
     source: str
     project_id: str  # Required - sessions must belong to a project
-    title: str | None
     status: str
     transcript_path: str | None
     summary_path: str | None
@@ -60,7 +59,6 @@ class Session:
     transcript_processing_last_error_code: str | None = None
     transcript_processing_last_error: str | None = None
     transcript_processing_last_failed_at: datetime | None = None
-    title_source: str | None = None
     reasoning_effort: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
@@ -138,8 +136,6 @@ class Session:
             source=row["source"],
             project_id=row["project_id"],
             project_name=cls._get_optional(row, "project_name"),
-            title=row["title"],
-            title_source=cls._get_optional(row, "title_source"),
             reasoning_effort=cls._get_optional(row, "reasoning_effort"),
             status=row["status"],
             transcript_path=row["transcript_path"],
@@ -302,8 +298,6 @@ class Session:
             "machine_id": self.machine_id,
             "source": self.source,
             "project_id": self.project_id,
-            "title": self.title,
-            "title_source": self.title_source,
             "reasoning_effort": self.reasoning_effort,
             "status": self.status,
             "transcript_path": self.transcript_path,
@@ -372,8 +366,6 @@ class Session:
             "external_id": self.external_id,
             "source": self.source,
             "project_id": self.project_id,
-            "title": self.title,
-            "title_source": self.title_source,
             "reasoning_effort": self.reasoning_effort,
             "status": self.status,
             "git_branch": self.git_branch,

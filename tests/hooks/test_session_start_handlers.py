@@ -733,7 +733,6 @@ class TestSessionStartPreCreatedSession:
         )
         mock_schedule.assert_called_once_with(
             updated_session,
-            "",
             loop=mock_dependencies["session_coordinator"]._event_loop,
         )
 

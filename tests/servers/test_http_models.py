@@ -15,7 +15,6 @@ class TestSessionRegisterRequest:
         request = SessionRegisterRequest(
             external_id="test-key",
             transcript_path=None,
-            title=None,
             source=None,
             parent_session_id=None,
             status=None,
@@ -33,7 +32,6 @@ class TestSessionRegisterRequest:
         request = SessionRegisterRequest(
             external_id="test-key",
             transcript_path="/path/to/transcript.jsonl",
-            title="Test Session",
             source="Claude Code",
             parent_session_id="parent-uuid",
             status="active",
@@ -43,7 +41,6 @@ class TestSessionRegisterRequest:
             cwd="/current/working/dir",
         )
 
-        assert request.title == "Test Session"
         assert request.git_branch == "main"
 
 
@@ -57,7 +54,6 @@ class TestWebChatSessionRequest:
         assert request.project_id is None
         assert "machine_id" not in type(request).model_fields
         assert request.cwd is None
-        assert request.title is None
         assert request.model is None
         assert request.chat_mode is None
 
@@ -66,7 +62,6 @@ class TestWebChatSessionRequest:
             provider="codex",
             project_id="project-uuid",
             cwd="/repo",
-            title="Web Chat",
             model="gpt-5.4",
             chat_mode="plan",
         )
@@ -74,6 +69,5 @@ class TestWebChatSessionRequest:
         assert request.provider == "codex"
         assert request.project_id == "project-uuid"
         assert request.cwd == "/repo"
-        assert request.title == "Web Chat"
         assert request.model == "gpt-5.4"
         assert request.chat_mode == "plan"

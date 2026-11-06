@@ -6,7 +6,6 @@ import logging
 import uuid
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from datetime import datetime
 from typing import Any
 from unittest.mock import patch
@@ -19,13 +18,6 @@ from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _session_metadata_update as session_metadata_update
 from gobby.storage.sessions import _upsert as session_upsert
 from gobby.storage.sessions import _web_chat_crud as session_web_chat_crud
-from gobby.storage.sessions._title_defaults import (
-    MANUAL_TITLE_SOURCE,
-    PROVISIONAL_TITLE_SOURCE,
-    manual_title_source,
-    provider_title_label,
-)
-from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -126,24 +118,6 @@ def test_registration_blocks_foreign_owner_across_projects(
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize(
-    ("title", "expected"),
-    [
-        ("Session title", MANUAL_TITLE_SOURCE),
-        ("  Session title  ", MANUAL_TITLE_SOURCE),
-        ("", None),
-        ("   ", None),
-        (None, None),
-        (42, None),
-    ],
-)
-def test_manual_title_source_only_marks_non_blank_strings(
-    title: object,
-    expected: str | None,
-) -> None:
-    assert manual_title_source(title) == expected
-
-
 def test_session_registration_boolean_case_is_postgres_safe() -> None:
     source = inspect.getsource(session_crud)
     upsert_source = inspect.getsource(session_upsert)
@@ -206,8 +180,6 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             conn,
             session,
             machine_id=session.machine_id,
-            title=None,
-            title_source=None,
             transcript_path=None,
             git_branch=None,
             parent_session_id=None,
@@ -227,8 +199,6 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             conn,
             cleared,
             machine_id=cleared.machine_id,
-            title=None,
-            title_source=None,
             transcript_path=None,
             git_branch=None,
             parent_session_id=None,
@@ -267,7 +237,6 @@ def _session_stub() -> Session:
         machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id="project-1",
-        title=None,
         status="active",
         transcript_path=None,
         summary_path=None,
@@ -321,8 +290,6 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
         conn,
         session,
         machine_id=session.machine_id,
-        title=UNSET,
-        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -353,8 +320,6 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
         conn,
         session,
         machine_id=session.machine_id,
-        title=UNSET,
-        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -385,8 +350,6 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
         conn,
         session,
         machine_id=session.machine_id,
-        title=UNSET,
-        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -413,8 +376,6 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
         conn,
         session,
         machine_id=session.machine_id,
-        title=UNSET,
-        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -547,7 +508,6 @@ class TestSessionManagerRegistration:
             machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
-            title="My Session",
             transcript_path="/path/to/transcript.jsonl",
             git_branch="main",
         )
@@ -557,7 +517,6 @@ class TestSessionManagerRegistration:
         assert session.machine_id == LOCAL_MACHINE_ID
         assert session.source == "claude"
         assert session.project_id == sample_project["id"]
-        assert session.title == "My Session"
         assert session.status == "active"
         assert session.transcript_path == "/path/to/transcript.jsonl"
         assert session.git_branch == "main"
@@ -567,190 +526,6 @@ class TestSessionManagerRegistration:
         assert session.turn_count == 0
         assert session.tool_call_count == 0
         assert session.last_assistant_content is None
-
-    @pytest.mark.parametrize(
-        "source",
-        [
-            "claude",
-            "claude_code",
-            "codex",
-            "grok",
-            "droid",
-            "agy",
-            "pipeline",
-            "Custom Source!",
-        ],
-    )
-    def test_register_without_title_uses_provisional_title(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-        source: str,
-    ) -> None:
-        session = session_manager.register(
-            external_id=f"provisional-{source}",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source=source,
-            project_id=sample_project["id"],
-        )
-
-        assert session.title == f"test-project#{session.seq_num}: {provider_title_label(source)}"
-        assert session.title_source == PROVISIONAL_TITLE_SOURCE
-
-    def test_register_with_explicit_title_does_not_mark_provisional(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        session = session_manager.register(
-            external_id="explicit-title",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="codex",
-            project_id=sample_project["id"],
-            title="Caller Supplied Title",
-        )
-
-        assert session.title == "Caller Supplied Title"
-        assert session.title_source == "manual"
-
-    def test_register_rejects_removed_native_title_source(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        with pytest.raises(ValueError, match="Invalid title_source"):
-            session_manager.register(
-                external_id="explicit-native-title",
-                machine_id="20000000-0000-4000-8000-000000000001",
-                source="codex",
-                project_id=sample_project["id"],
-                title="Caller Supplied Title",
-                title_source="native",
-            )
-
-    def test_register_rejects_invalid_title_source(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        with pytest.raises(ValueError, match="Invalid title_source"):
-            session_manager.register(
-                external_id="invalid-title-source",
-                machine_id="20000000-0000-4000-8000-000000000001",
-                source="codex",
-                project_id=sample_project["id"],
-                title="Caller Supplied Title",
-                title_source="provider",
-            )
-
-    def test_register_rejects_removed_llm_title_source(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        with pytest.raises(ValueError, match="Invalid title_source"):
-            session_manager.register(
-                external_id="provisional-ignores-caller-source",
-                machine_id="20000000-0000-4000-8000-000000000001",
-                source="codex",
-                project_id=sample_project["id"],
-                title_source="llm",
-            )
-
-    def test_register_existing_blank_title_backfills_provisional_title(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        session = session_manager.register(
-            external_id="blank-title",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="codex",
-            project_id=sample_project["id"],
-            title="",
-        )
-
-        updated = session_manager.register(
-            external_id="blank-title",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="codex",
-            project_id=sample_project["id"],
-        )
-
-        assert updated.id == session.id
-        assert updated.title == f"test-project#{updated.seq_num}: Codex"
-        assert updated.title_source == PROVISIONAL_TITLE_SOURCE
-
-    def test_stale_registration_backfill_preserves_concurrent_task_title(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        session = session_manager.register(
-            external_id="stale-registration-title",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="claude",
-            project_id=sample_project["id"],
-        )
-        stale_session = replace(session, title=None, title_source=None)
-        task_owned = session_manager.update_title(
-            session.id,
-            "(gobby): Task #42 - Claimed work",
-            title_source="task",
-        )
-        assert task_owned is not None
-
-        monkeypatch.setattr(
-            session_manager,
-            "find_by_external_id",
-            lambda *_args, **_kwargs: stale_session,
-        )
-
-        updated = session_manager.register(
-            external_id="stale-registration-title",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="claude",
-            project_id=sample_project["id"],
-        )
-
-        assert updated.title == "(gobby): Task #42 - Claimed work"
-        assert updated.title_source == "task"
-
-    def test_create_web_chat_without_title_uses_provisional_title(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        session = session_manager.create_web_chat_session(
-            machine_id="20000000-0000-4000-8000-000000000001",
-            project_id=sample_project["id"],
-            source="droid",
-            model="gemini-3.5-flash",
-            sandbox_enabled=True,
-            sandbox_policy_hash="policy-hash-123",
-        )
-
-        assert session.session_type == "web_chat"
-        assert session.title == f"test-project#{session.seq_num}: Droid"
-        assert session.title_source == PROVISIONAL_TITLE_SOURCE
-
-    def test_create_web_chat_with_user_title_marks_it_manual(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        session = session_manager.create_web_chat_session(
-            machine_id="20000000-0000-4000-8000-000000000001",
-            project_id=sample_project["id"],
-            source="codex",
-            title="My Investigation",
-            sandbox_enabled=True,
-            sandbox_policy_hash="policy-hash-123",
-        )
-
-        assert session.title == "My Investigation"
-        assert session.title_source == "manual"
 
     def test_register_recreates_missing_system_parent_session(
         self,
@@ -876,7 +651,6 @@ class TestSessionManagerRegistration:
             machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
-            title="Original",
         )
 
         # Second registration with same key combo
@@ -885,12 +659,9 @@ class TestSessionManagerRegistration:
             machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
-            title="Updated",
         )
 
-        # Should be the same session with updated title
         assert session2.id == session1.id
-        assert session2.title == "Updated"
 
     def test_register_preserves_expired_terminal_session_and_transcript_state(
         self,
@@ -1161,7 +932,6 @@ class TestSessionManagerRegistration:
             machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
-            title="Web chat",
             session_type="web_chat",
         )
         terminal = session_manager.register(
@@ -1169,7 +939,6 @@ class TestSessionManagerRegistration:
             machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
-            title="Terminal",
             session_type="terminal",
         )
 
@@ -1275,7 +1044,6 @@ class TestSessionManagerRegistration:
             machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
-            title="Web Chat",
             model="claude-opus-4-5-20251101",
             chat_mode="accept_edits",
             sandbox_enabled=True,
@@ -1332,7 +1100,6 @@ class TestSessionManagerRegistration:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            title=None,
             transcript_path=None,
             git_branch=None,
         )
@@ -1344,7 +1111,6 @@ class TestSessionManagerRegistration:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            title="Updated Title",
             transcript_path="/new/path.jsonl",
             git_branch="feature/new",
             parent_session_id=parent.id,  # Use real parent session
@@ -1352,7 +1118,6 @@ class TestSessionManagerRegistration:
 
         # Same session, updated metadata
         assert session2.id == session1.id
-        assert session2.title == "Updated Title"
         assert session2.transcript_path == "/new/path.jsonl"
         assert session2.git_branch == "feature/new"
         assert session2.parent_session_id == parent.id
@@ -1364,7 +1129,6 @@ class TestSessionManagerRegistration:
             source="claude",
             project_id=sample_project["id"],
         )
-        assert preserved.title == "Updated Title"
         assert preserved.transcript_path == "/new/path.jsonl"
         assert preserved.git_branch == "feature/new"
         assert preserved.parent_session_id == parent.id
@@ -1374,13 +1138,10 @@ class TestSessionManagerRegistration:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            title=None,
             transcript_path=None,
             git_branch=None,
             parent_session_id=None,
         )
-        assert cleared.title == "Updated Title"
-        assert cleared.title_source == "manual"
         assert cleared.transcript_path is None
         assert cleared.git_branch is None
         assert cleared.parent_session_id is None

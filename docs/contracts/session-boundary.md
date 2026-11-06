@@ -293,17 +293,11 @@ run those reloads ahead of the pull.
 
 ## Titles
 
-Persisted titles are deterministic:
-
-- provisional: `<project>#<session>: <Provider>`;
-- successful claim: `<project>#<session>: Task #<task> - <title>`;
-- `set_title(title)`: sticky manual title.
-
-Manual titles outrank all automatic sources. Clear successors inherit a manual title;
-otherwise they select the latest still-open transferred claim or their own provisional
-title. Closing the current claim recomputes the same rule. Tmux displays the persisted automatic title after terminal ownership checks.
-Terminal and Sessions activity panels suppress the provisional provider suffix
-while preserving task titles, per the completed #22163 presentation contract.
+Sessions store no title (#25485). Labels are derived from the session ref, the agent
+definition, the claimed task, and the status line. The `set_title` tool and the
+`POST /api/sessions/{session_id}/rename` route are removed. Clear successors and
+closed claims recompute their labels from the same inputs. Tmux window names derive
+from the session ref until tmux is removed (#25486).
 
 ## Archival Summaries And Memory
 

@@ -86,7 +86,6 @@ class TestSessionManagerRegistration:
             project_id=test_project["id"],
             parent_session_id=None,  # Use None instead of invalid UUID
             transcript_path="/path/to/transcript.jsonl",
-            title="Test Session Title",
             git_branch="feature/test",
         )
 
@@ -94,7 +93,6 @@ class TestSessionManagerRegistration:
         # Verify session data
         session = session_mgr.get(session_id)
         assert session is not None
-        assert session.title == "Test Session Title"
         assert session.git_branch == "feature/test"
 
     def test_register_caches_mapping(
@@ -218,7 +216,6 @@ class TestSessionManagerLookup:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="droid",
             project_id=test_project["id"],
-            title="Full Data Session",
         )
 
         session = session_mgr.get(session_id)
@@ -226,7 +223,6 @@ class TestSessionManagerLookup:
         assert session.id == session_id
         assert session.external_id == "full-data"
         assert session.source == "droid"
-        assert session.title == "Full Data Session"
 
     def test_get_session_nonexistent(self, session_mgr: SessionManager) -> None:
         """Test getting nonexistent session returns None."""
@@ -245,7 +241,6 @@ class TestSessionManagerLookup:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
-            title="Canonical Session",
             transcript_path="/tmp/rollout.jsonl",
             terminal_context={"tmux_pane": "%1"},
         )
@@ -254,7 +249,6 @@ class TestSessionManagerLookup:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
-            title=None,
             transcript_path=None,
         )
 

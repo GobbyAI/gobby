@@ -69,7 +69,6 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
-        title="Test Session",
     )
     assert not session.had_edits
 
@@ -150,7 +149,6 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
-        title="Shell Edit Session",
     )
     task = task_manager.create_task(
         project_id=project.id,
@@ -207,7 +205,6 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
-        title="Out-of-Repo Edit Session",
     )
     task = task_manager.create_task(
         project_id=project.id,

@@ -60,7 +60,6 @@ def sample_session(
         machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
-        title="Test session",
     )
     return session
 

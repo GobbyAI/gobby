@@ -56,7 +56,6 @@ def canonical_task_session(
         machine_id="21000000-0000-4000-8000-00000000000b",
         source="codex",
         project_id=sample_project["id"],
-        title="Task tool test session",
     )
 
 
@@ -68,7 +67,6 @@ def personal_task_session(temp_db: HubDatabase) -> Session:
         machine_id="21000000-0000-4000-8000-00000000000b",
         source="codex",
         project_id=None,
-        title="Personal task tool test session",
     )
 
 

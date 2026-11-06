@@ -521,7 +521,7 @@ class TestApplyPersonaImpl:
 
 
 @pytest.mark.asyncio
-async def test_apply_persona_titles_the_pane_with_the_persona_name(
+async def test_apply_persona_stores_no_session_title(
     db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
@@ -553,5 +553,5 @@ async def test_apply_persona_titles_the_pane_with_the_persona_name(
         result = await registry.call("apply_persona", {"agent": "lane-manager"})
 
     session = SessionManager(db).get(session_id)
-    assert result["title"] == "Lane Manager"
-    assert session is not None and session.title == "Lane Manager"
+    assert "title" not in result
+    assert session is not None and not hasattr(session, "title")

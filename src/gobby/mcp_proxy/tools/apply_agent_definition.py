@@ -301,53 +301,6 @@ def commit_definition_changes(
         return {"status": "applied", "agent": agent, "variables": merged}
 
 
-def title_applied_session(
-    db: HubDatabase | None, result: dict[str, Any], agent: str, title: str | None
-) -> dict[str, Any]:
-    """Title the caller's session (its pane) after a successful apply.
-
-    ``None`` titles it with the definition name unless the session already has a
-    manual title; a nonblank string sets that title; a blank string leaves it alone.
-    The default title is automatic (definition source): it outranks provisional titles,
-    and a later apply or task claim may replace it; once the session holds no open
-    claim, the automatic title returns to it. An explicit title is manual.
-    The title set is reported as ``result["title"]``.
-    """
-    if db is None or not result.get("success"):
-        return result
-    from gobby.storage.sessions import SessionManager
-    from gobby.storage.sessions._title_defaults import DEFINITION_TITLE_SOURCE, MANUAL_TITLE_SOURCE
-    from gobby.utils.session_context import get_session_context
-
-    context = get_session_context()
-    session_id = context.session_id if context else None
-    if not session_id:
-        return result
-    manager = SessionManager(db)
-    source = MANUAL_TITLE_SOURCE
-    if title is None:
-        session = manager.get(session_id)
-        if session is None or session.title_source == MANUAL_TITLE_SOURCE:
-            return result
-        title = agent.replace("-", " ").title()
-        source = DEFINITION_TITLE_SOURCE
-    if not title.strip():
-        return result
-    try:
-        if source == DEFINITION_TITLE_SOURCE:
-            from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            SessionVariableManager(db).merge_variables(
-                session_id, {DEFINITION_TITLE_VARIABLE: title}
-            )
-        updated = manager.update_title(session_id, title.strip(), title_source=source)
-    except Exception:
-        logger.warning("Failed to title session %s for %s", session_id, agent, exc_info=True)
-        return result
-    return {**result, "title": updated.title} if updated is not None else result
-
-
 def _refusal(code: str, error: str) -> dict[str, Any]:
     return {"success": False, "error_code": code, "error": error}
 

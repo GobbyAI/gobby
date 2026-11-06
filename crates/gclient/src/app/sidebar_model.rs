@@ -101,11 +101,8 @@ pub struct AgentEntry {
     pub terminal_id: String,
     pub backend: Backend,
     pub name: String,
-    /// The run's agent definition (`backend-developer`); no rung of `name`.
+    /// The run's agent definition (`backend-architect`); no rung of `name`.
     pub agent_definition_name: Option<String>,
-    /// The session's manual or definition title without its ref prefix; it takes the
-    /// definition's place in the row's line 1 and the pane header.
-    pub identity_title: Option<String>,
     pub provider: String,
     pub model: Option<String>,
     /// The model's provider-printed name, resolved daemon-side; the row
@@ -114,6 +111,8 @@ pub struct AgentEntry {
     pub task_ref: Option<String>,
     /// The roster task's title: a run's task, or the open task a session holds.
     pub task_title: Option<String>,
+    /// True when this seat's session holds the claim on its task.
+    pub task_claim_held: bool,
     /// The session's one-line status, drawn on line three while no task is held.
     pub status_line: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
@@ -173,12 +172,10 @@ impl SandboxState {
 }
 
 impl AgentEntry {
-    /// The session's manual or definition title, else the run's agent definition name,
-    /// else the provider label a session's provisional title carries.
+    /// The agent definition name, else the provider label a seat with no definition shows.
     pub fn definition_label(&self) -> String {
-        self.identity_title
+        self.agent_definition_name
             .clone()
-            .or_else(|| self.agent_definition_name.clone())
             .unwrap_or_else(|| provider_label(&self.provider).to_string())
     }
 
@@ -216,7 +213,7 @@ impl AgentEntry {
     }
 }
 
-/// The daemon's `_PROVIDER_TITLE_LABELS` (`storage/sessions/_title_defaults.py`).
+/// The provider labels a seat with no agent definition shows, kept in step with the daemon.
 const PROVIDER_LABELS: [(&str, &str); 9] = [
     ("agy", "Antigravity"),
     ("claude", "Claude"),
@@ -229,8 +226,7 @@ const PROVIDER_LABELS: [(&str, &str); 9] = [
     ("unknown", "Unknown"),
 ];
 
-/// Mirrors the daemon's `provider_title_label`: a blank source is `Unknown`,
-/// an unlisted one shows as written.
+/// A blank provider is `Unknown`; an unlisted one shows as written.
 pub fn provider_label(provider: &str) -> &str {
     let provider = provider.trim();
     if provider.is_empty() {
@@ -330,25 +326,20 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .or_else(|| run.and_then(|(_, run)| run.provider.clone()))
                 .or_else(|| session.and_then(|(_, session)| session.source.clone()))
                 .filter(|provider| !provider.is_empty());
-            // Each rung is filtered on its own: an empty session title means
-            // "unnamed", not "stop looking", so the run and tmux names below it
-            // still get their turn. The pane's own ladder ends the chain for a
-            // row that has one, and the last rung is the short terminal id
-            // for a roster entry with no pane open. The provider is no rung:
-            // it rides on the row's second line with the model.
-            let session_title = session
-                .and_then(|(_, session)| session.title.clone())
-                .filter(|name| !name.is_empty());
+            // The name ladder: the agent definition, then the tmux name, then the
+            // pane's own name, and the short terminal id for a roster entry with
+            // no pane open. The provider is no rung: it rides on the row's second
+            // line with the model.
             let agent_definition_name = entry
-                .definition_title
+                .definition
                 .clone()
                 .filter(|name| !name.trim().is_empty())
                 .or_else(|| {
                     run.and_then(|(_, run)| run.agent_name.clone())
                         .filter(|name| !name.trim().is_empty())
                 });
-            let name = session_title
-                .or_else(|| agent_definition_name.clone())
+            let name = agent_definition_name
+                .clone()
                 .or_else(|| {
                     entry
                         .tmux_session_name
@@ -357,16 +348,6 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
                 .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
-            let identity_title = session
-                .and_then(|(project, session)| {
-                    let name = rows
-                        .projects
-                        .iter()
-                        .find(|row| row.id == project)
-                        .map_or("", |row| row.name.as_str());
-                    session.identity_title(name)
-                })
-                .map(str::to_owned);
             let machine_id = [
                 entry.machine_id.as_deref(),
                 session.and_then(|(_, session)| session.machine_id.as_deref()),
@@ -386,7 +367,6 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 backend: terminal.backend,
                 name,
                 agent_definition_name,
-                identity_title,
                 provider: provider.unwrap_or_default(),
                 model: concrete_model(entry.model.as_deref())
                     .or_else(|| concrete_model(run.and_then(|(_, run)| run.model.as_deref())))
@@ -396,6 +376,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 model_display_name: concrete_model(entry.model_display_name.as_deref()),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 task_title: entry.task.as_ref().and_then(|task| task.title.clone()),
+                task_claim_held: entry.task.as_ref().is_some_and(|task| task.claim_holder),
                 status_line: entry.status_line.clone(),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 session_id: entry

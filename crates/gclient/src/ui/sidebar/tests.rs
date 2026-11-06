@@ -93,7 +93,7 @@ fn seat_sidebar_renders_live_claim_from_roster_without_run_task_binding() {
             "project_id": "proj-alpha",
             "machine_id": "local",
             "provider": "codex",
-            "definition_title": "Developer",
+            "definition": "Architect",
             "lifecycle_status": "active",
             "terminal": {"terminal_id": "term-alpha", "backend": "native"},
             "task": {"id": "live-task", "ref": "#24638", "title": "Live claim label"}

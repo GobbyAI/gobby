@@ -9033,6 +9033,7 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
     let mock = MockDaemon::start("local-token").await;
     let mut roster_entry = sidebar_roster_entry("session:session-1", "run-1", "terminal-1");
     roster_entry["session_id"] = json!("session-1");
+    roster_entry["definition"] = json!("Restore Architect");
     mock.enqueue(
         "GET",
         "/api/attention/roster",
@@ -9067,7 +9068,6 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
             "sessions": [{
                 "id": "session-1",
                 "ref": "#13923",
-                "title": "Restore gclient",
                 "status": "active",
                 "source": "codex",
             }],
@@ -9090,7 +9090,7 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
     assert!(workspace.daemon_ready());
     let agent = &workspace.sidebar().agents[0];
     assert_eq!(agent.session_ref.as_deref(), Some("#13923"));
-    assert_eq!(agent.name, "Restore gclient");
+    assert_eq!(agent.name, "Restore Architect");
     let worktrees = &workspace.sidebar().projects[0].worktrees;
     assert_eq!(worktrees.len(), 1);
     assert_eq!(worktrees[0].worktree_id, "wt-1");

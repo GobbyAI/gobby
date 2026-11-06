@@ -153,16 +153,13 @@ def test_previous_runs_own_pane_comes_first(placed: _Harness) -> None:
     assert _placement(h, run) == {"split": {"pane": lane.id, "axis": "down", "title": SEAT}}
 
 
-def test_own_pane_without_any_recorded_title_uses_the_session_title(placed: _Harness) -> None:
+def test_own_pane_without_any_recorded_title_uses_the_definition_name(placed: _Harness) -> None:
     h = placed
     lane = _held_seat(h, "Lane 1", state="exited")
     session = _seat_session(h, _ended_run(h, None, terminal_id=lane.terminal_id))
-    h.sessions.update(session.id, title="Lane 1 fixture-worker")
-    titled = h.sessions.get(session.id)
-    assert titled is not None
 
-    assert resumed_seat_plan(titled, h.runs, h.workspaces)[0] == {
-        "split": {"pane": lane.id, "axis": "down", "title": "Lane 1 fixture-worker"}
+    assert resumed_seat_plan(session, h.runs, h.workspaces)[0] == {
+        "split": {"pane": lane.id, "axis": "down", "title": "fixture-worker"}
     }
 
 

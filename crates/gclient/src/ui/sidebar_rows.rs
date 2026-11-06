@@ -87,6 +87,9 @@ pub struct SidebarRow {
     /// An agent row's sandbox lock, resolved from its session's sandbox state
     /// and the nerd-glyph pref; `None` for an unrestricted agent.
     pub sandbox_mark: Option<&'static str>,
+    /// An agent row's claim mark on its task line, set only on the seat whose
+    /// session holds the claim; `None` for every other seat.
+    pub claim_mark: Option<&'static str>,
     /// An agent row's one-line status, drawn on line three while it holds no task.
     pub status_line: Option<String>,
 }
@@ -448,8 +451,8 @@ pub(crate) fn row_line_with_scrolling<'a>(
                 let definition = (row.definition.as_str(), title_style);
                 let pinned = pinned_width(row);
                 if pinned < budget {
-                    // `{ref}: ` stays put and a title the row cannot hold,
-                    // such as a lane seat's manual title, scrolls after it
+                    // `{ref}: ` stays put and a definition the row cannot hold,
+                    // such as a long lane seat's definition, scrolls after it
                     // on the shared clock like the task line.
                     if pinned > 0 {
                         spans.push(Span::styled(row.reference.as_str(), identifier_style));
@@ -584,8 +587,22 @@ fn pinned_width(row: &SidebarRow) -> usize {
 fn task_line(row: &SidebarRow) -> Option<(String, String)> {
     let (reference, title) = row.task.as_ref()?;
     let number = reference.rsplit('#').next().unwrap_or(reference);
+    // The claim mark sits between the number and the title, one cell from each.
+    let mark = row
+        .claim_mark
+        .map_or_else(String::new, |mark| format!("{mark} "));
     // The lead keeps its trailing space, so a scrolled title never runs into it.
-    Some((format!("Working task {number} "), title.clone()))
+    Some((format!("Working task {number} {mark}"), title.clone()))
+}
+
+/// The claim-holder mark on a task line: the key glyph with nerd glyphs, else the
+/// word `claim`. Only the seat whose session holds the claim carries it.
+pub fn claim_mark(holds_claim: bool, nerd_glyphs: bool) -> Option<&'static str> {
+    match (holds_claim, nerd_glyphs) {
+        (true, true) => Some("\u{f084}"),
+        (true, false) => Some("claim"),
+        (false, _) => None,
+    }
 }
 
 /// The agent's status line for line three when it holds no task; blank text counts as none.

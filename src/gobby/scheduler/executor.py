@@ -322,7 +322,6 @@ class CronExecutor:
                 machine_id=None,
                 source="cron",
                 project_id=job.project_id,
-                title=f"cron:{job.name}",
                 parent_session_id=system_session_id(),
                 agent_depth=0,
             )
