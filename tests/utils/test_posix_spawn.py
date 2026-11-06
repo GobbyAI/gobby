@@ -83,10 +83,6 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
-    "agents/agent_workspaces.py::_recover_index_lock": (
-        "lsof lock-holder probe forks with the default close_fds; under the posix_spawn "
-        "helper it timed out at 5 seconds and left a stale index.lock in place"
-    ),
     "agents/srt_monitor.py::_node_executable": (
         "own process group to kill launcher descendants after the bounded Node identity probe"
     ),
