@@ -105,48 +105,7 @@ pub fn spawn_host(socket_dir: &Path) -> HostProc {
     spawn_host_with_args(socket_dir, &[])
 }
 
-/// Copy `gterm` onto a private inode. Sibling tests (`build_env`,
-/// `frame_source_live`) invoke Cargo against this checkout's target dir and can
-/// replace `CARGO_BIN_EXE_gterm` while a host is starting; macOS kills a
-/// process that execs an in-place-overwritten signed binary.
-fn private_gterm(socket_dir: &Path) -> PathBuf {
-    let src = gterm_bin();
-    let dst = socket_dir.join("gterm");
-    // Stage under a private name and rename over `gterm` so every spawn execs a
-    // new inode. `std::fs::copy` onto an existing path truncates and rewrites
-    // the inode a previous host in this directory already executed, and macOS
-    // kills the next exec of an in-place-overwritten signed binary with SIGKILL.
-    let staged = socket_dir.join(".gterm.staged");
-    let mut last_err = None;
-    for _ in 0..20 {
-        match std::fs::copy(&src, &staged) {
-            Ok(_) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = std::fs::metadata(&staged)
-                        .expect("gterm copy metadata")
-                        .permissions();
-                    perms.set_mode(0o755);
-                    std::fs::set_permissions(&staged, perms).expect("gterm copy mode");
-                }
-                std::fs::rename(&staged, &dst).expect("rename staged gterm copy");
-                return dst;
-            }
-            Err(err) => {
-                last_err = Some(err);
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    }
-    panic!(
-        "copy gterm from {} to {}: {:?}",
-        src.display(),
-        dst.display(),
-        last_err
-    );
-}
-
+/// Start the once-built Cargo image with additional host arguments.
 pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
     spawn_host_with_env_removed(socket_dir, extra, &[])
 }
@@ -168,7 +127,11 @@ pub fn spawn_host_with_env(
     env: &[(&str, &str)],
     removed: &[&str],
 ) -> HostProc {
-    spawn_host_binary(&private_gterm(socket_dir), socket_dir, extra, env, removed)
+    // Cargo built this image once for the run. Reuse its inode instead of
+    // triggering another macOS executable assessment for each host launch.
+    // Nextest groups host fixtures with nested Cargo builders to protect this
+    // image from replacement. The host still pins its private runtime image.
+    spawn_host_binary(&gterm_bin(), socket_dir, extra, env, removed)
 }
 
 /// Spawns `binary` as the host, for a test that launches it through a path

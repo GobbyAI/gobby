@@ -81,7 +81,9 @@ test-group = 'serial-db'
 [[profile.default.overrides]]
 # Fresh Cargo/Zig builds must not starve host tests sharing this run's machine:
 # upgrade tests exercise the product's fixed 15s budget, including rollback.
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(host_handover) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env) | binary(link_artifacts))'
+# Include every host-prefixed suite: they reuse the built executable and must
+# not overlap nested Cargo builders that can replace that image.
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(/^host_/) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(batch_paste) | binary(terminal_theme) | binary(build_env) | binary(link_artifacts))'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]

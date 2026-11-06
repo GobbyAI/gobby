@@ -10,6 +10,37 @@ use std::os::unix::net::UnixListener;
 use std::time::Duration;
 
 #[test]
+fn ordinary_hosts_reuse_the_built_image_with_isolated_state() {
+    use sha2::{Digest, Sha256};
+
+    let binary = host_support::gterm_bin();
+    let original = std::fs::read(&binary).expect("built gterm image");
+    let hash = format!("{:x}", Sha256::digest(&original));
+    let dirs = [temp_socket_dir(), temp_socket_dir()];
+    let mut hosts = Vec::new();
+    for dir in &dirs {
+        host_support::write_token(dir.path(), "shared-image-token");
+        hosts.push(host_support::spawn_host(dir.path()));
+        let socket = dir.path().join(CONTROL_SOCKET);
+        host_support::wait_socket(&socket);
+        let mut control = host_support::connect(&socket);
+        host_support::hello_control(&mut control, "shared-image-token");
+        let ping = host_support::rpc(&mut control, "ping", serde_json::json!({}));
+        assert_eq!(ping["binary_sha256"], hash, "{ping}");
+    }
+    for dir in &dirs {
+        assert!(
+            !dir.path().join("gterm").exists(),
+            "ordinary host launches must reuse the built executable"
+        );
+    }
+    assert_eq!(
+        std::fs::read(&binary).expect("unchanged built image"),
+        original
+    );
+}
+
+#[test]
 fn socket_startup_tolerates_bind_after_fifteen_seconds() {
     let dir = temp_socket_dir();
     let socket = dir.path().join(CONTROL_SOCKET);
