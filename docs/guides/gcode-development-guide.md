@@ -324,14 +324,22 @@ reads to `gcode`. Graph lifecycle operations are Rust-owned FalkorDB operations:
   (not run on every file sync). It deletes project-wide orphaned graph nodes —
   comparing `CodeFile.path`/`CodeSymbol.file_path` against PostgreSQL
   `code_indexed_files` — and then runs project orphan cleanup once.
-- `gcode vector cleanup-orphans` is the Qdrant counterpart: it removes
-  `code_symbols_{project_id}` vector points for files no longer indexed in
-  PostgreSQL.
-- `gcode prune` is the cross-project operator command. It removes stale projects
-  and reconciles orphaned graph + vector projection state across the remaining
-  indexed projects (keeps a confirmation prompt unless `--force`). `gcode
-  --project <path-or-name> prune` scopes projection cleanup to one project, and
-  graph/vector cleanup failures are reported independently.
+- `gcode vector reconcile` is the Qdrant counterpart
+  (`commands::vector::reconcile`). The default dry run reads Qdrant then
+  PostgreSQL, takes no lock, and reports orphan and missing classes with an
+  `inventory_digest`. `--apply --expect-digest <digest> --receipt <file>` takes
+  the maintenance lease, rebuilds the inventory, refuses on a digest mismatch,
+  resets `vectors_synced` on synced versions with missing points, and deletes
+  orphan points in batches of 256. Only absence from `code_symbols` authorizes
+  a deletion. Receipt location checks live in `commands::receipt`, shared with
+  `retire-files`.
+- `gcode prune` is the operator command for stale projects and content GC
+  (keeps a confirmation prompt unless `--force`). Plain `gcode prune` delegates
+  to the daemon; `gcode --project <path-or-name> prune` runs one project. It
+  sweeps no vector orphans. Content GC (`commands::status::content_gc`) lets
+  recent history protect a version only at its own path, and only while the
+  current config indexes that path; a root whose checkout is gone keeps its
+  versions, and a history error keeps the eligible ones.
 
 Graph clear uses `MATCH (n {project: $project})` plus the code-index label
 predicate (`CodeFile`, `CodeSymbol`, `CodeModule`, `UnresolvedCallee`,
@@ -729,4 +737,4 @@ Qdrant cleanup targets only `code_symbols_{project_id}`.
 Schema application belongs to `gdaemon apply`. `gcode invalidate` remains the
 project-scoped reset for indexed facts.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-11-06_

@@ -193,7 +193,8 @@ These commands require the Gobby daemon and graph support:
 | `gcode graph view` | Render scoped call, import, or class-hierarchy views |
 | `gcode graph report` | Generate a report with explicit degradation |
 | `gcode graph cleanup-orphans` | Reconcile missing-file graph projections |
-| `gcode vector sync-file`, `clear`, `rebuild`, `cleanup-orphans` | Operate only the code-symbol vector projection |
+| `gcode vector sync-file`, `clear`, `rebuild` | Operate only the code-symbol vector projection |
+| `gcode vector reconcile` | Dry-run vector inventory; operator `--apply --expect-digest --receipt` under the maintenance lease |
 
 `gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
 blast-radius` supports `--depth`.
@@ -446,4 +447,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-10-26_
+_Last verified: 2026-11-06_
