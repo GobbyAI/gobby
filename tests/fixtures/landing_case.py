@@ -110,14 +110,17 @@ class LandingCase:
         return sha
 
     def session(self, title: str, *, parent: str | None = None) -> str:
-        """Register a local session in the project; ``parent`` None makes it a root."""
+        """Register a local session in the project; ``parent`` None makes it a root.
+
+        ``title`` is kept for the callers' readability; sessions store no title (#25485).
+        """
         session_id = str(uuid4())
         # The next free number, so sessions registered through SessionManager never collide.
         self.db.execute(
             """
-            INSERT INTO sessions (id, external_id, machine_id, source, project_id, title,
+            INSERT INTO sessions (id, external_id, machine_id, source, project_id,
                                   status, agent_depth, seq_num, parent_session_id)
-            SELECT %s, %s, %s, 'test', %s, %s, 'active', %s,
+            SELECT %s, %s, %s, 'test', %s, 'active', %s,
                    COALESCE(MAX(seq_num), 699) + 1, %s
             FROM sessions WHERE project_id = %s
             """,
@@ -126,7 +129,6 @@ class LandingCase:
                 f"ext-{session_id}",
                 require_machine_id(),
                 self.project_id,
-                title,
                 0 if parent is None else 1,
                 parent,
                 self.project_id,
