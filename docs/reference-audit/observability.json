@@ -471,6 +471,36 @@
     },
     {
       "surface": "cli",
+      "command": "gobby tokens ledger",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tokens.py",
+        "symbol": "token_ledger"
+      },
+      "verification": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tokens quota",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tokens.py",
+        "symbol": "token_quota"
+      },
+      "verification": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
       "command": "gobby observations list",
       "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md",
       "implementation": {

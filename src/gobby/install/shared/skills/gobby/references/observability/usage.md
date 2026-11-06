@@ -62,6 +62,14 @@ repair, not a read-only audit. Inspect skipped-session diagnostics and the
 audited/drifted/repaired summary. Rehearse repairs with isolated transcripts and
 test state; use the admin recovery procedure for live-state restoration.
 
+For one session's or one task's ledger on the operator CLI, `uv run gobby tokens ledger
+--session SESSION` (or `--task TASK`, exactly one) prints the same scope totals, per-source
+coverage and one spend line per source. Unknown spend prints as `unknown (<reason>)`, never
+zero, and incomplete provider runs are named. `--json` prints the whole page, rows included.
+`uv run gobby tokens quota [PROVIDER...]` reads the running daemon's capacity snapshot for
+each provider (all six when none is named): state, each window's used percent and reset
+time, and components. It exits 1 when the daemon is unreachable.
+
 See [token usage and savings](../../../../../../../../docs/guides/observability.md#token-usage-and-savings).
 
-_Version: 1.1.0_
+_Version: 1.2.0_
