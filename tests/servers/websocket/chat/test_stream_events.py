@@ -141,8 +141,6 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
         "conversation_id": "conv-1",
         "db_session_id": "db-1",
         "session_ref": "other-project#12",
-        "title": "ACP title",
-        "session_title": "ACP title",
         "updated_at": "2026-06-27T05:00:00Z",
     }
     assert transport.sent[1] == {

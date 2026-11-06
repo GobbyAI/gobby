@@ -69,6 +69,7 @@ _SESSION_COLUMN_NAMES = tuple(
     last_assistant_content approved_tools_json session_type sandbox_enabled
     sandbox_policy_hash created_at updated_at last_activity workspace_path
     workspace_generation startup_claim_generation startup_claim_owner startup_claim_state
+    status_line
     """.split()
 )
 _SESSION_COLUMNS = ", ".join(
