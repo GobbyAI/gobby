@@ -43,7 +43,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     pass
 
             if skill is None and name:
-                skill = ctx.storage.get_by_name(name, project_id=ctx.project_id)
+                skill = ctx.storage.get_by_name(name, project_id=ctx.caller_project_id())
 
             if skill is None:
                 return {"success": False, "error": f"Skill not found: {skill_id or name}"}

@@ -274,7 +274,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             resolved_session_id = await ctx.run_db(
                 ctx.session_manager.resolve_session_reference,
                 session_reference,
-                project_id=ctx.project_id,
+                project_id=ctx.caller_project_id(),
             )
             if reference_path is None:
                 await ctx.run_db(
@@ -321,7 +321,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 unavailable.append(_unavailable(identity, "invalid_identity", str(exc)))
                 continue
             skill = await ctx.run_db(
-                ctx.storage.get_by_name, requirement.skill, project_id=ctx.project_id
+                ctx.storage.get_by_name, requirement.skill, project_id=ctx.caller_project_id()
             )
             if skill is None:
                 unavailable.append(_unavailable(identity, "not_found", "Skill not found"))
@@ -461,7 +461,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 ctx.storage.get_skill_with_manifest,
                 skill_id=skill_id,
                 name=name,
-                project_id=ctx.project_id,
+                project_id=ctx.caller_project_id(),
                 file_limit=MAX_MANIFEST_FILE_ENTRIES,
                 directory_limit=MAX_MANIFEST_DIRECTORY_ENTRIES,
             )
@@ -577,7 +577,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 ctx.storage.get_skill_file_page,
                 skill_id,
                 name=name,
-                project_id=ctx.project_id,
+                project_id=ctx.caller_project_id(),
                 path_prefix=path_prefix,
                 file_type=file_type,
                 after_path=after_path,
@@ -638,7 +638,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 except ValueError:
                     pass
             if skill is None and name:
-                skill = await ctx.run_db(ctx.storage.get_by_name, name, project_id=ctx.project_id)
+                skill = await ctx.run_db(
+                    ctx.storage.get_by_name, name, project_id=ctx.caller_project_id()
+                )
             if skill is None:
                 if continuation:
                     return _error(

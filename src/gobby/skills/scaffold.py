@@ -1,26 +1,15 @@
 """Skill scaffolding and initialization.
 
-Functions for creating new skill directories and initializing
-project-level skills configuration. Extracted from src/gobby/cli/skills.py
-as part of the Strangler Fig decomposition.
+Functions for creating new skill directories and initializing the project's
+skills folder. Extracted from src/gobby/cli/skills.py as part of the
+Strangler Fig decomposition. The startup sync reads every folder under
+``.gobby/skills/`` directly, so no config file is written.
 """
 
 import re
 from pathlib import Path
-from typing import Any
-
-import yaml
 
 SKILL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
-
-DEFAULT_SKILLS_CONFIG: dict[str, Any] = {
-    "version": "1.0",
-    "skills": {
-        "enabled": True,
-        "auto_discover": True,
-        "search_paths": ["./skills", "./.gobby/skills"],
-    },
-}
 
 
 def validate_skill_name(name: str) -> str | None:
@@ -105,16 +94,15 @@ Provide usage examples here.
 
 
 def init_skills_directory(base_path: Path) -> dict[str, bool]:
-    """Initialize the skills directory and config for a project.
+    """Create the project's ``.gobby/skills`` folder if it is missing.
 
     Args:
         base_path: Project root directory (where .gobby/ lives).
 
     Returns:
-        Dict with 'dir_created' and 'config_created' booleans.
+        Dict with a 'dir_created' boolean.
     """
     skills_dir = base_path / ".gobby" / "skills"
-    config_file = skills_dir / "config.yaml"
 
     # Create .gobby directory if needed
     gobby_dir = base_path / ".gobby"
@@ -126,10 +114,4 @@ def init_skills_directory(base_path: Path) -> dict[str, bool]:
         skills_dir.mkdir(parents=True)
         dir_created = True
 
-    config_created = False
-    if not config_file.exists():
-        yaml_text = yaml.dump(DEFAULT_SKILLS_CONFIG, default_flow_style=False)
-        config_file.write_text(yaml_text, encoding="utf-8")
-        config_created = True
-
-    return {"dir_created": dir_created, "config_created": config_created}
+    return {"dir_created": dir_created}

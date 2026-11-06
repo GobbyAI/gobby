@@ -27,11 +27,39 @@ Gobby uses these scopes:
 |-------|-------------------|---------------|
 | Bundled content | Synced from `src/gobby/install/shared/skills/` into Gobby-owned installed rows | Source templates; not a separate live scope |
 | Installed | `gobby skills install <source>` or `install_skill(project_scoped=false)` | Available globally in the local Gobby database |
-| Project | `gobby skills install --project <source>` or `install_skill(project_scoped=true)` | Available for one project and preferred over a global skill with the same name |
+| Project | A folder at `<project>/.gobby/skills/<name>/`, synced on daemon start; or `gobby skills install --project <source>` / `install_skill(project_scoped=true)` | Available for one project and preferred over a global skill with the same name |
 
-`gobby skills init` creates `.gobby/skills/` and a local config file for
-project skill authoring. Installing a skill persists it through the daemon and
-marks it as either installed or project-scoped.
+`gobby skills init` creates `.gobby/skills/` for project skill authoring.
+Installing a skill persists it through the daemon and marks it as either
+installed or project-scoped.
+
+### Project Folder Sync
+
+On each daemon start, Gobby syncs the `.gobby/skills/` folder of every registered
+project's main checkout into project-scoped rows. No manual install is needed.
+
+- A folder with a `SKILL.md` creates a row for its project, with its reference files.
+- Editing `SKILL.md` or a reference file, then restarting, updates that row and its files.
+- Removing a folder retires its row when the scan finishes cleanly. If a folder fails
+  to load, or a checkout cannot be read, nothing is retired.
+- The folder is the source of truth. A row removed with `remove_skill` returns on the
+  next start while its folder exists; delete the folder to retire the skill for good.
+- Only rows the sync created are updated or retired. Operator-installed
+  (`install_skill`) and external-source rows are never touched.
+- A folder named like a bundled skill is skipped with a warning. A project row never
+  shadows a bundled skill.
+
+### Caller Project Scope
+
+Project-scoped installs bind to the project of the calling session, never the
+daemon's project. Run `install_skill(project_scoped=true)` from a session bound to
+the target project. Without a caller project, the install fails with an error and
+does not fall back to the daemon's project. `get_skill`, `list_skills`,
+`update_skill`, `remove_skill`, and `restore_skill` resolve project rows through the
+caller's project too. `search_skills` still indexes the daemon's project.
+
+A removed skill keeps its row for restore but no longer blocks a same-name install
+or move into the same scope.
 
 ## SKILL.md Format
 

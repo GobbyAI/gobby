@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, NoReturn
 
 from psycopg.errors import UniqueViolation
@@ -15,6 +16,7 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.datetime import normalize_datetime_model
+from gobby.utils.dev import linked_worktree_root
 
 
 class CheckoutConflictError(Exception):
@@ -372,6 +374,26 @@ def require_root(db: HubDatabase, project_id: str, machine_id: str | None) -> st
             f"no checkout for machine {local_machine_id} project {project_id}"
         )
     return checkout.root_path
+
+
+def get_project_gobby_root(db: HubDatabase, project_id: str) -> Path | None:
+    """Return the registered local main checkout's `.gobby` directory, or None.
+
+    A linked worktree resolves to its main checkout, so a sync reads the
+    checkout the operator registered and never a branch's working copy.
+    """
+    try:
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        checkout_root = require_root(db, project_id, machine_id)
+    except CheckoutNotFoundError:
+        return None
+    checkout_path = Path(checkout_root).resolve()
+    linked = linked_worktree_root(checkout_path)
+    if linked is not None:
+        checkout_path = linked.main_checkout
+    return checkout_path / ".gobby"
 
 
 def resolve_operation_root(

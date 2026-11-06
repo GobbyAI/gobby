@@ -61,6 +61,7 @@ def bundled_content_refusal(runner: GobbyRunner) -> str | None:
 
 def run_startup_content_sync(runner: GobbyRunner) -> None:
     """Sync installed workflow files before migrating rule delivery dispositions."""
+    from gobby.skills.project_sync import sync_project_skills
     from gobby.sync_registry import (
         migrate_rule_delivery_dispositions,
         sync_bundled_content_to_db,
@@ -79,6 +80,8 @@ def run_startup_content_sync(runner: GobbyRunner) -> None:
     # Files landed in registered main checkouts become active on restart in
     # both dev and installed mode. The importer logs and skips malformed files.
     sync_imported_workflows(runner.database)
+    # Skill folders under registered checkouts follow the same startup rule.
+    sync_project_skills(runner.database)
 
     result = migrate_rule_delivery_dispositions(runner.database)
     if not result.get("success"):

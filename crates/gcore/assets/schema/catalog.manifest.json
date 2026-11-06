@@ -6979,10 +6979,6 @@
       "definition": "UNIQUE (skill_id, path)"
     },
     {
-      "name": "skills.idx_skills_name_project_source",
-      "definition": "UNIQUE NULLS NOT DISTINCT (name, project_id, source)"
-    },
-    {
       "name": "skills.skills_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -8864,7 +8860,7 @@
     },
     {
       "name": "idx_skills_name_project_source",
-      "definition": "CREATE UNIQUE INDEX idx_skills_name_project_source ON $schema.skills USING btree (name, project_id, source) NULLS NOT DISTINCT"
+      "definition": "CREATE UNIQUE INDEX idx_skills_name_project_source ON $schema.skills USING btree (name, project_id, source) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
     },
     {
       "name": "idx_skills_project_id",

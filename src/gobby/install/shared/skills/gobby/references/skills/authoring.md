@@ -3,8 +3,13 @@
 Load when creating or changing reusable instruction behavior. Use installed
 methodology through `gobby-skills`; native CLI skill tools do not record Gobby
 loads. Author bundled skills under `src/gobby/install/shared/skills/<name>/`;
-`.gobby/skills/` and `~/.gobby/skills/` are local authoring locations, not proof
-of an installed DB row. Operator `gobby skills init` and `new` scaffold files.
+`~/.gobby/skills/` is a local authoring location, not proof of an installed DB row.
+A project folder `<project>/.gobby/skills/<name>/` is synced on daemon start into a
+project-scoped row for that project, so a skill folder needs no manual install. The
+sync updates the row and its files on each start and retires the row when the folder
+is removed; it never shadows a bundled skill. Project-scoped installs
+(`install_skill(project_scoped=true)`) bind to the caller session's project and fail
+loud without one. Operator `gobby skills init` and `new` scaffold files.
 
 Before a behavior-changing skill, add a pressure scenario under
 `tests/skills/scenarios/<name>/`: record excluded-skill failure, write minimal
@@ -38,4 +43,6 @@ for Gobby-specific authoring and to other capability references for procedures.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#behavioral-skill-validation).
 
-_Last verified: 2026-09-12_
+_Version: 1.1.0_
+
+_Last verified: 2026-11-05_

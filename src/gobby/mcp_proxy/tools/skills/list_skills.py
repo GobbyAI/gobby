@@ -81,7 +81,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             ) -> list[Skill]:
                 return await ctx.run_db(
                     ctx.storage.list_skills,
-                    project_id=ctx.project_id,
+                    project_id=ctx.caller_project_id(),
                     category=category,
                     enabled=enabled,
                     limit=limit_value,

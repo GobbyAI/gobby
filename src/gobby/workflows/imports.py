@@ -21,9 +21,8 @@ from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
+from gobby.storage.project_checkouts import get_project_gobby_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
-from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.dev import linked_worktree_root
 from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -281,18 +280,8 @@ def sync_imported_workflow_file(
 
 def get_project_workflows_root(db: HubDatabase, project_id: str) -> Path | None:
     """Return the registered local main checkout's canonical workflow directory."""
-    try:
-        machine_id = require_local_machine_id(
-            None, resource_kind="project_checkout", resource_id=project_id
-        )
-        checkout_root = require_root(db, project_id, machine_id)
-    except CheckoutNotFoundError:
-        return None
-    checkout_path = Path(checkout_root).resolve()
-    linked = linked_worktree_root(checkout_path)
-    if linked is not None:
-        checkout_path = linked.main_checkout
-    return checkout_path / ".gobby" / "workflows"
+    gobby_root = get_project_gobby_root(db, project_id)
+    return None if gobby_root is None else gobby_root / "workflows"
 
 
 def sync_imported_workflows(

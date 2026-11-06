@@ -616,11 +616,11 @@ class SkillMetadataMixin:
         skill = self.get_skill(skill_id)
         if is_bundled_template_path(skill.source_path):
             raise ValueError(f"Skill '{skill.name}': {BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR}")
+        # Only a live row holds the project slot; a soft-deleted row does not block the move.
         existing = self.get_by_name(
             skill.name,
             project_id=project_id,
             include_global=False,
-            include_deleted=True,
             source="project",
         )
         if existing is not None and existing.id != skill.id:
@@ -672,10 +672,10 @@ class SkillMetadataMixin:
             ValueError: If skill not found.
         """
         skill = self.get_skill(skill_id)
+        # Only a live row holds the installed slot; a soft-deleted row does not block the move.
         existing = self.get_by_name(
             skill.name,
             project_id=None,
-            include_deleted=True,
             source="installed",
         )
         if existing is not None and existing.id != skill.id:

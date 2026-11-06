@@ -24,7 +24,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         try:
             result = await materializer.resolve(
                 name,
-                project_id=ctx.project_id,
+                project_id=ctx.caller_project_id(),
                 run_db=ctx.run_db,
             )
             return result.to_tool_result()

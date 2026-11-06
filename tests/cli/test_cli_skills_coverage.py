@@ -669,14 +669,14 @@ class TestSkillsMeta:
 class TestSkillsInit:
     @patch("gobby.skills.scaffold.init_skills_directory")
     def test_init_created(self, mock_init: MagicMock, runner: CliRunner) -> None:
-        mock_init.return_value = {"dir_created": True, "config_created": True}
+        mock_init.return_value = {"dir_created": True}
         result = runner.invoke(skills, ["init"], obj=_make_config_obj(), catch_exceptions=False)
         assert result.exit_code == 0
         assert "initialized" in result.output.lower()
 
     @patch("gobby.skills.scaffold.init_skills_directory")
     def test_init_already_exists(self, mock_init: MagicMock, runner: CliRunner) -> None:
-        mock_init.return_value = {"dir_created": False, "config_created": False}
+        mock_init.return_value = {"dir_created": False}
         result = runner.invoke(skills, ["init"], obj=_make_config_obj(), catch_exceptions=False)
         assert result.exit_code == 0
         assert "already exists" in result.output

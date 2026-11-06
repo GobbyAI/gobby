@@ -18,6 +18,7 @@ from gobby.skills.hubs.github_topic import (
     normalize_topic_item_id,
 )
 from gobby.skills.loader import SkillLoadError
+from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
 
@@ -289,8 +290,18 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     "clawcare not installed, skipping security scan for %s", parsed_skill.name
                 )
 
-            # Determine project ID for the skill
-            skill_project_id = ctx.project_id if project_scoped else None
+            # A project-scoped install belongs to the caller's project. ctx.project_id
+            # is the daemon's registry project and is never stored here.
+            skill_project_id: str | None = None
+            if project_scoped:
+                caller = get_project_context()
+                caller_project_id = caller.get("id") if caller else None
+                if not caller_project_id:
+                    return _failure(
+                        "project_scoped install needs a caller project; "
+                        "run it from a session bound to a project"
+                    )
+                skill_project_id = str(caller_project_id)
 
             loaded_files = parsed_skill.loaded_files
             skill_files = (

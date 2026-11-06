@@ -43,7 +43,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if skill is None and name:
                 skill = ctx.storage.get_by_name(
                     name,
-                    project_id=ctx.project_id,
+                    project_id=ctx.caller_project_id(),
                     include_deleted=True,
                 )
 

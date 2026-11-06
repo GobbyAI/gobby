@@ -62,8 +62,12 @@ class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
         injection_format: str | None = None,
         enabled: bool | None = None,
         clear_deleted_at: bool = False,
+        source_path: str | None = None,
     ) -> Skill:
-        """Atomically replace updater-managed metadata and optional files."""
+        """Atomically replace updater-managed metadata and optional files.
+
+        A given ``source_path`` repoints the row; ``None`` keeps it.
+        """
         from gobby.skills.parser import SkillParseError, validate_runtime_metadata
 
         try:
@@ -74,7 +78,8 @@ class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE skills
-                   SET description = %s, content = %s, version = %s, license = %s,
+                   SET source_path = COALESCE(%s, source_path),
+                       description = %s, content = %s, version = %s, license = %s,
                        compatibility = %s, allowed_tools = %s, metadata = %s,
                        always_apply = COALESCE(%s, always_apply),
                        injection_format = COALESCE(%s, injection_format),
@@ -83,6 +88,7 @@ class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
                        updated_at = %s
                    WHERE id = %s""",
                 (
+                    source_path,
                     description,
                     content,
                     version,
