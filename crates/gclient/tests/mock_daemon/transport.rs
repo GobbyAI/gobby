@@ -386,6 +386,19 @@ impl MockDaemon {
         self.state.lock().expect("mock state").requests.clone()
     }
 
+    /// Count the websocket requests of `kind` in place, without copying the log.
+    pub fn websocket_request_count(&self, kind: &str) -> usize {
+        self.state
+            .lock()
+            .expect("mock state")
+            .requests
+            .iter()
+            .filter(|request| request.method == "WS")
+            .filter_map(|request| request.body.as_ref())
+            .filter(|body| body.get("type").and_then(Value::as_str) == Some(kind))
+            .count()
+    }
+
     pub fn websocket_handshakes(&self) -> usize {
         self.state.lock().expect("mock state").websocket_handshakes
     }

@@ -3923,7 +3923,10 @@ async fn a_second_release_behind_a_full_backlog_is_never_lost() {
         // This waits for the full serial write backlog before the releases
         // and takes. Rendering progress keeps its separate liveness bound.
         timeout(DRAIN_DEADLINE, async {
-            while takes().iter().filter(|line| line.starts_with("take ")).count() < 4 {
+            // Count takes in place. Copying the whole request log on every
+            // pass held the mock's state lock for each copy, which slowed the
+            // mock's own replies under load.
+            while mock.websocket_request_count("terminal_take_control") < 4 {
                 tokio::task::yield_now().await;
             }
         })
