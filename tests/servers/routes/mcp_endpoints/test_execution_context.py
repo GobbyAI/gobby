@@ -28,6 +28,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.session_context import (
     TERMINAL_CONTEXT_HEADER,
     SeededContextTokens,
+    SessionContext,
     reset_seeded_contexts,
 )
 
@@ -227,10 +228,21 @@ class TestSetContextForRequest:
             session_id="#7",
         )
 
-        with patch(
-            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
-            return_value=SeededContextTokens(),
-        ) as mock_helper:
+        caller_session = SessionContext(
+            session_id="resolved-session",
+            conversation_id=None,
+            project_id=caller_project_id,
+        )
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                return_value=SeededContextTokens(resolved_session_id="resolved-session"),
+            ) as mock_helper,
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.get_session_context",
+                return_value=caller_session,
+            ),
+        ):
             await _set_context_for_request(server, {}, request)
 
         kwargs = mock_helper.call_args.kwargs
@@ -656,3 +668,76 @@ async def test_terminal_wrapper_same_project_install_stores_the_caller_project(
         storage.get_by_name("caller-only", project_id=caller_project_id, include_global=False)
         is not None
     )
+
+
+@pytest.mark.integration
+async def test_explicit_override_fails_closed_when_caller_session_lookup_raises(
+    temp_db: HubDatabase,
+) -> None:
+    """A failed caller-session lookup propagates; it never seeds a session without a project.
+
+    An explicit override naming project C from a caller in project B must not
+    reach the skills guard with no caller project to compare against.
+    """
+    caller_project_id = str(uuid.uuid4())
+    override_project_id = str(uuid.uuid4())
+    _insert_project(temp_db, caller_project_id, "caller-project")
+    _insert_project(temp_db, override_project_id, "override-project")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_session_reference.return_value = SESSION_UUID
+    server.session_manager.get.side_effect = RuntimeError("hub database unavailable")
+    request = _make_request(
+        project_id=override_project_id,
+        caller_project_id=caller_project_id,
+        session_id=SESSION_UUID,
+    )
+
+    with pytest.raises(RuntimeError, match="hub database unavailable"):
+        await _set_context_for_request(server, {}, request)
+
+
+@pytest.mark.integration
+async def test_explicit_override_fails_closed_when_session_ref_does_not_resolve(
+    temp_db: HubDatabase,
+) -> None:
+    """An explicit override whose session ref does not resolve is refused, not seeded.
+
+    With no caller session the skills guard has no caller project to compare, so
+    the override would otherwise pass into project C.
+    """
+    caller_project_id = str(uuid.uuid4())
+    override_project_id = str(uuid.uuid4())
+    _insert_project(temp_db, caller_project_id, "caller-project")
+    _insert_project(temp_db, override_project_id, "override-project")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_session_reference.side_effect = ValueError("no such session")
+    request = _make_request(
+        project_id=override_project_id,
+        caller_project_id=caller_project_id,
+        session_id=SESSION_UUID,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _set_context_for_request(server, {}, request)
+
+    assert exc_info.value.status_code == 409
+    assert _exception_detail(exc_info.value)["error_code"] == "SESSION_REQUIRED"
+
+
+@pytest.mark.integration
+async def test_default_caller_with_unresolved_session_ref_keeps_project_seeding(
+    temp_db: HubDatabase,
+) -> None:
+    """Without an explicit override an unresolved session ref still seeds the header project."""
+    project_id = str(uuid.uuid4())
+    _insert_project(temp_db, project_id, "default-project")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_session_reference.side_effect = ValueError("no such session")
+    request = _make_request(project_id=project_id, session_id=SESSION_UUID)
+
+    tokens = await _set_context_for_request(server, {}, request)
+    try:
+        assert tokens.resolved_session_id is None
+        assert tokens.resolved_project_id == project_id
+    finally:
+        reset_seeded_contexts(tokens)

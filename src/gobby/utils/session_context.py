@@ -374,17 +374,12 @@ def _resolve_and_seed_contexts_sync(
     if resolved_session_id:
         conversation_id: str | None = resolved_session_conversation_id
         session_project_id: str | None = None
-        try:
-            session = session_manager.get(resolved_session_id) if session_manager else None
-            if session is not None:
-                conversation_id = session.external_id
-                session_project_id = session.project_id
-        except Exception as exc:
-            logger.debug(
-                "Failed to load session %s for SessionContext: %s",
-                resolved_session_id,
-                exc,
-            )
+        # DB failures propagate: a SessionContext without its project would let the
+        # skills guard permit an explicit override it cannot check.
+        session = session_manager.get(resolved_session_id) if session_manager else None
+        if session is not None:
+            conversation_id = session.external_id
+            session_project_id = session.project_id
         tokens.session_token = set_session_context(
             SessionContext(
                 session_id=resolved_session_id,
