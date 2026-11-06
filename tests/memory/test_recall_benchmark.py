@@ -30,7 +30,7 @@ Run:
         uv run pytest tests/memory/test_recall_benchmark.py -m integration -v -s
 
 Connection is read from GOBBY_TEST_FALKOR_HOST (default 127.0.0.1),
-GOBBY_TEST_FALKOR_PORT (default 16379), GOBBY_TEST_FALKOR_PASSWORD. The test runs
+GOBBY_TEST_FALKOR_PORT (default 26379), GOBBY_TEST_FALKOR_PASSWORD. The test runs
 in a uniquely-named graph and clears it per arm, so it never touches gobby_kg.
 """
 
@@ -39,12 +39,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import create_autospec
 
 import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
+from gobby.prompts.loader import PromptLoader
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from tests.memory._recall_corpus import (
     DIM,
@@ -52,7 +54,6 @@ from tests.memory._recall_corpus import (
     K,
     MemoryDef,
     _seed_keys,
-    _Stub,
     _StubExtractor,
     build_corpus,
     make_embed_fn,
@@ -128,8 +129,8 @@ async def _run_arm(
     service = KnowledgeGraphService(
         falkor_client=client,
         embed_fn=make_embed_fn(DIM),
-        prompt_loader=_Stub(),
-        llm_service=_Stub(),
+        prompt_loader=create_autospec(PromptLoader, instance=True),
+        llm_service=None,
         feature_config=MemoryKnowledgeGraphConfig(),
         vector_store=None,
         embedding_dim=DIM,
@@ -177,7 +178,7 @@ async def _run_arm(
 
 async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
     host = os.environ.get("GOBBY_TEST_FALKOR_HOST", "127.0.0.1")
-    port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "16379"))
+    port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "26379"))
     password = os.environ.get("GOBBY_TEST_FALKOR_PASSWORD")
     if not password:
         pytest.skip("GOBBY_TEST_FALKOR_PASSWORD is unset")
@@ -306,9 +307,9 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
             print(f"  alpha={alpha:<4} cap={cap:<3} recall@{K}={m.recall_at_k:.3f} MRR={m.mrr:.3f}")
 
         print("--- cluster sweep grid (min_cluster_size, min_samples) — #17198 ---")
-        for (mcs, ms), m in cluster_sweep.items():
+        for (mcs, min_samples), m in cluster_sweep.items():
             print(
-                f"  mcs={mcs:<3} ms={ms!s:<4} recall@{K}={m.recall_at_k:.3f} "
+                f"  mcs={mcs:<3} ms={min_samples!s:<4} recall@{K}={m.recall_at_k:.3f} "
                 f"MRR={m.mrr:.3f} clusters={m.cluster_count}/{m.clustered_entities}"
             )
 

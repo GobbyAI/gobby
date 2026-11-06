@@ -23,7 +23,7 @@ def _falkor_harness(
     repo_root: Path, tmp_path: Path, settings: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     script = (repo_root / "pre-push-test.sh").read_text()
-    start = script.index("read_managed_falkordb_settings() {")
+    start = script.index("read_test_falkordb_settings() {")
     end = script.index("\n# bash 3.2", start)
     harness = tmp_path / "falkor.sh"
     harness.write_text(
@@ -62,10 +62,12 @@ def test_pre_push_rejects_partial_isolated_falkor_settings(
     assert "test-password" not in result.stderr
 
 
-def test_pre_push_retains_managed_falkor_fallback(repo_root: Path, tmp_path: Path) -> None:
+def test_pre_push_defaults_falkor_to_the_test_stack_never_managed(
+    repo_root: Path, tmp_path: Path
+) -> None:
     result = _falkor_harness(repo_root, tmp_path, {})
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["managed-host", "16379", "managed-test-password"]
+    assert result.stdout.splitlines() == ["127.0.0.1", "26379", "gobby_test"]
 
 
 def test_release_workflow_provisions_pre_push_tools_and_falkor(repo_root: Path) -> None:
@@ -80,22 +82,30 @@ def test_release_workflow_provisions_pre_push_tools_and_falkor(repo_root: Path) 
         "Install Rust toolchain",
         "Install cargo-nextest",
         "Setup Zig 0.16.0",
-        "Start isolated FalkorDB test service",
+        "Start isolated FalkorDB and Qdrant test services",
         "Build Python test native helpers",
     ):
         assert names.index(name) < pre_push_index
     nextest = steps[names.index("Install cargo-nextest")]
     assert nextest["with"]["tool"] == "nextest"
-    service = steps[names.index("Start isolated FalkorDB test service")]["run"]
+    service = steps[names.index("Start isolated FalkorDB and Qdrant test services")]["run"]
+    assert "GOBBY_FALKORDB_TEST_PASSWORD=" in service
     assert "GOBBY_TEST_FALKOR_PASSWORD=" in service
     assert "::add-mask::" in service
-    assert "docker exec falkordb-test redis-cli PING" in service
-    assert "--tmpfs /var/lib/falkordb/data" in service
+    assert "docker compose -f docker-compose.test.yml up -d --wait falkordb-test qdrant-test" in (
+        service
+    )
+    assert "docker run" not in service
     assert job["env"]["GOBBY_TEST_FALKOR_HOST"] == "127.0.0.1"
-    assert job["env"]["GOBBY_TEST_FALKOR_PORT"] == "16379"
+    assert job["env"]["GOBBY_TEST_FALKOR_PORT"] == "26379"
     cleanup = steps[names.index("Remove isolated test services")]
     assert cleanup["if"] == "always()"
-    assert "docker rm -f falkordb-test" in cleanup["run"]
+    assert (
+        "docker compose -f docker-compose.test.yml rm -sfv falkordb-test qdrant-test"
+        in cleanup["run"]
+    )
+    assert "docker rm -f" in cleanup["run"]
+    assert "${GOBBY_POSTGRES_TEST_CONTAINER}" in cleanup["run"]
 
 
 def test_pre_push_shell_syntax(repo_root: Path) -> None:
@@ -157,32 +167,46 @@ def test_release_workflow_falkor_service_supports_authenticated_graphs(
     )
     steps = workflow["jobs"]["release-branch-ci"]["steps"]
     service = next(
-        step for step in steps if step.get("name") == "Start isolated FalkorDB test service"
+        step
+        for step in steps
+        if step.get("name") == "Start isolated FalkorDB and Qdrant test services"
     )
-    container = f"gobby-release-ci-test-{uuid.uuid4().hex}"
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
+    project = f"gobby-release-ci-test-{uuid.uuid4().hex}"
+    ports: list[int] = []
+    for _ in range(3):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            ports.append(listener.getsockname()[1])
+    falkor_port, qdrant_http_port, qdrant_grpc_port = ports
     github_env = tmp_path / "github-env"
     startup = tmp_path / "start-falkor.sh"
-    startup.write_text("set -euo pipefail\n" + service["run"].replace("falkordb-test", container))
+    startup.write_text("set -euo pipefail\n" + service["run"])
     env = os.environ | {
         "GITHUB_ENV": str(github_env),
-        "GOBBY_TEST_FALKOR_PORT": str(port),
+        "COMPOSE_PROJECT_NAME": project,
+        "GOBBY_FALKORDB_TEST_PORT": str(falkor_port),
+        "GOBBY_QDRANT_TEST_HTTP_PORT": str(qdrant_http_port),
+        "GOBBY_QDRANT_TEST_GRPC_PORT": str(qdrant_grpc_port),
     }
     try:
         result = subprocess.run(
             ["bash", str(startup)],
+            cwd=repo_root,
             env=env,
             capture_output=True,
             text=True,
             check=False,
-            timeout=180,
+            timeout=300,
         )
-        password = github_env.read_text().strip().split("=", 1)[1]
+        github_values = dict(
+            line.split("=", 1) for line in github_env.read_text().splitlines() if "=" in line
+        )
+        password = github_values["GOBBY_TEST_FALKOR_PASSWORD"]
         # Startup stdout contains the masking command; only show redacted stderr.
         assert result.returncode == 0, result.stderr.replace(password, "[redacted]")
-        client = redis.Redis(host="127.0.0.1", port=port, password=password, socket_timeout=5)
+        client = redis.Redis(
+            host="127.0.0.1", port=falkor_port, password=password, socket_timeout=5
+        )
         execute = cast(Callable[..., object], client.execute_command)
         try:
             assert client.ping()
@@ -193,7 +217,7 @@ def test_release_workflow_falkor_service_supports_authenticated_graphs(
             execute("GRAPH.DELETE", "release_ci_test")
         finally:
             client.close()
-        unauthenticated = redis.Redis(host="127.0.0.1", port=port, socket_timeout=5)
+        unauthenticated = redis.Redis(host="127.0.0.1", port=falkor_port, socket_timeout=5)
         try:
             with pytest.raises(redis.exceptions.AuthenticationError):
                 unauthenticated.ping()
@@ -201,10 +225,21 @@ def test_release_workflow_falkor_service_supports_authenticated_graphs(
             unauthenticated.close()
     finally:
         cleanup = subprocess.run(
-            ["docker", "rm", "-f", container],
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.test.yml",
+                "rm",
+                "-sfv",
+                "falkordb-test",
+                "qdrant-test",
+            ],
+            cwd=repo_root,
+            env=env,
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=60,
         )
-        assert cleanup.returncode == 0, "isolated FalkorDB cleanup failed"
+        assert cleanup.returncode == 0, "isolated FalkorDB and Qdrant cleanup failed"

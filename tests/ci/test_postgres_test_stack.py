@@ -53,6 +53,8 @@ _PYTEST_FORBIDDEN_SKIP_REASONS = [
     "set GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR",
     "awaiting #14098",
     "set GOBBY_OTEL_COLLECTOR_SMOKE=1",
+    "GOBBY_TEST_FALKOR_PASSWORD is unset",
+    "GOBBY_TEST_QDRANT_URL is unset",
 ]
 
 _POSTGRES_COMMAND_OPTIONS = [
@@ -386,29 +388,36 @@ def test_python_suppression_ratchet_runs_in_ci_and_pre_push(repo_root: Path) -> 
     assert command in " ".join(short_script.split())
 
 
-def test_pre_push_exports_managed_falkordb_settings_before_home_isolation(
+def test_pre_push_exports_test_stack_settings_before_home_isolation(
     repo_root: Path,
 ) -> None:
     script = _load_pre_push_script(repo_root)
     dream_e2e = (repo_root / "tests/e2e/test_memory_dream_gc_e2e.py").read_text()
 
-    assert "read_managed_falkordb_settings()" in script
-    assert "print(runtime.environment[name])" in script
+    assert "read_test_falkordb_settings()" in script
+    assert "resolve_compose_runtime" not in script
+    assert "read_managed_falkordb_settings" not in script
+    assert "runtime.environment" not in script
     for name in (
         "GOBBY_FALKORDB_HOST",
         "GOBBY_FALKORDB_PORT",
         "GOBBY_FALKORDB_PASSWORD",
     ):
-        assert f'"{name}"' in script
         assert f'{name}="$PYTEST_FALKORDB_{name.removeprefix("GOBBY_FALKORDB_")}"' in script
         assert f'"{name}"' in dream_e2e
     assert 'GOBBY_TEST_FALKOR_HOST="$PYTEST_FALKORDB_HOST"' in script
     assert 'GOBBY_TEST_FALKOR_PORT="$PYTEST_FALKORDB_PORT"' in script
     assert 'GOBBY_TEST_FALKOR_PASSWORD="$PYTEST_FALKORDB_PASSWORD"' in script
+    assert 'GOBBY_TEST_QDRANT_URL="$PYTEST_QDRANT_URL"' in script
     assert "os.environ.get(name)" in dream_e2e
     _assert_before(
         script,
         "elif ! load_pytest_falkordb_settings; then",
+        'HOME="$PYTEST_ISOLATION_DIR/home"',
+    )
+    _assert_before(
+        script,
+        "elif ! ensure_test_stack_services; then",
         'HOME="$PYTEST_ISOLATION_DIR/home"',
     )
 
@@ -651,3 +660,115 @@ def _job_env(env: Mapping[str, Any]) -> dict[str, str]:
         _POSTGRES_TEST_USER_ENV,
     }
     return {name: str(env[name]) for name in names}
+
+
+_MANAGED_SERVICES_COMPOSE = "src/gobby/data/docker-compose.services.yml"
+# Host ports the daemon's managed FalkorDB, FalkorDB browser, Qdrant (HTTP/gRPC) and
+# PostgreSQL publish. The test stack must never bind any of them.
+_MANAGED_HOST_PORTS = frozenset({"16379", "13000", "6333", "6334", "60891"})
+_FALKORDB_TEST_PORT_SPEC = "127.0.0.1:${GOBBY_FALKORDB_TEST_PORT:-26379}:6379"
+_QDRANT_TEST_PORT_SPECS = [
+    "127.0.0.1:${GOBBY_QDRANT_TEST_HTTP_PORT:-26333}:6333",
+    "127.0.0.1:${GOBBY_QDRANT_TEST_GRPC_PORT:-26334}:6334",
+]
+
+
+def _env_list(environment: object) -> dict[str, str]:
+    pairs = (str(entry).split("=", 1) for entry in _sequence(environment))
+    return {key: value for key, value, *_ in pairs}
+
+
+def test_test_stack_mirrors_managed_falkordb_and_qdrant_images_and_module_args(
+    repo_root: Path,
+) -> None:
+    test_services = _mapping(_load_yaml(repo_root / "docker-compose.test.yml")["services"])
+    managed_services = _mapping(_load_yaml(repo_root / _MANAGED_SERVICES_COMPOSE)["services"])
+
+    assert test_services["falkordb-test"]["image"] == managed_services["falkordb"]["image"]
+    assert test_services["qdrant-test"]["image"] == managed_services["qdrant"]["image"]
+
+    test_falkor_env = _env_list(test_services["falkordb-test"]["environment"])
+    managed_falkor_env = _env_list(managed_services["falkordb"]["environment"])
+    assert test_falkor_env["FALKORDB_ARGS"] == managed_falkor_env["FALKORDB_ARGS"]
+    assert test_falkor_env["REDIS_ARGS"].endswith(" --save 3600 1 300 100")
+    assert _env_list(test_services["qdrant-test"]["environment"]) == _env_list(
+        managed_services["qdrant"]["environment"]
+    )
+
+
+def test_test_stack_binds_loopback_on_ports_distinct_from_managed_services(
+    repo_root: Path,
+) -> None:
+    test_services = _mapping(_load_yaml(repo_root / "docker-compose.test.yml")["services"])
+
+    assert test_services["falkordb-test"]["ports"] == [_FALKORDB_TEST_PORT_SPEC]
+    assert test_services["qdrant-test"]["ports"] == _QDRANT_TEST_PORT_SPECS
+    defaults = {
+        _compose_default("GOBBY_FALKORDB_TEST_PORT", "26379"),
+        _compose_default("GOBBY_QDRANT_TEST_HTTP_PORT", "26333"),
+        _compose_default("GOBBY_QDRANT_TEST_GRPC_PORT", "26334"),
+        _compose_default(_POSTGRES_TEST_PORT_ENV, _POSTGRES_TEST_PORT),
+    }
+    assert len(defaults) == 4
+    assert defaults.isdisjoint(_MANAGED_HOST_PORTS)
+
+
+def test_test_stack_uses_ephemeral_storage_and_test_only_credentials(repo_root: Path) -> None:
+    test_services = _mapping(_load_yaml(repo_root / "docker-compose.test.yml")["services"])
+    falkor = _mapping(test_services["falkordb-test"])
+    qdrant = _mapping(test_services["qdrant-test"])
+
+    assert falkor["tmpfs"] == ["/var/lib/falkordb/data:rw"]
+    assert qdrant["tmpfs"] == ["/qdrant/storage:rw"]
+    assert "volumes" not in falkor
+    assert "volumes" not in qdrant
+    assert "PING" in str(falkor["healthcheck"])
+    assert "healthz" in str(qdrant["healthcheck"])
+    password = _compose_default("GOBBY_FALKORDB_TEST_PASSWORD", "gobby_test")
+    assert f"--requirepass {password}" in str(_env_list(falkor["environment"])["REDIS_ARGS"])
+
+
+def test_pre_push_uses_test_stack_falkordb_and_qdrant_services(repo_root: Path) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert "ensure_test_stack_services()" in script
+    ensure_fn = _bash_function(script, "ensure_test_stack_services")
+    assert "docker_compose -f docker-compose.test.yml up -d falkordb-test qdrant-test" in ensure_fn
+    _assert_before(ensure_fn, "test_falkordb_is_ready", "docker_compose -f docker-compose.test.yml")
+    assert "test_qdrant_is_ready" in ensure_fn
+    assert (
+        'PYTEST_QDRANT_URL="${GOBBY_TEST_QDRANT_URL:-http://127.0.0.1:'
+        '${GOBBY_QDRANT_TEST_HTTP_PORT:-26333}}"'
+    ) in script
+    for reason in (
+        "GOBBY_TEST_FALKOR_PASSWORD is unset",
+        "GOBBY_TEST_QDRANT_URL is unset",
+    ):
+        assert reason in script
+        assert reason in _PYTEST_FORBIDDEN_SKIP_REASONS
+
+
+def test_falkor_live_tests_default_to_the_test_stack_port(repo_root: Path) -> None:
+    for relative in (
+        "tests/memory/test_recall_benchmark.py",
+        "tests/memory/test_recall_benchmark_e2e.py",
+    ):
+        text = (repo_root / relative).read_text()
+        assert '"GOBBY_TEST_FALKOR_PORT", "26379"' in text, relative
+        assert "16379" not in text, relative
+
+
+def test_contributing_documents_test_stack_and_test_env_export(repo_root: Path) -> None:
+    text = (repo_root / "CONTRIBUTING.md").read_text()
+
+    assert "docker compose -f docker-compose.test.yml up -d --wait" in text
+    for needle in (
+        "falkordb-test",
+        "qdrant-test",
+        "GOBBY_TEST_FALKOR_HOST=127.0.0.1",
+        "GOBBY_TEST_FALKOR_PORT=26379",
+        "GOBBY_TEST_FALKOR_PASSWORD=gobby_test",
+        "GOBBY_TEST_QDRANT_URL=http://127.0.0.1:26333",
+        "tests/memory/test_qdrant_live.py",
+    ):
+        assert needle in text, needle
