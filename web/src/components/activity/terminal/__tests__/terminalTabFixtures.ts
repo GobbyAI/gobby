@@ -28,7 +28,6 @@ export function makeTmuxSession(
     pane_command: null,
     pane_path: null,
     window_name: null,
-    session_title: null,
     gobby_session_id: null,
     agent_managed: false,
     attached_bridge: null,

@@ -115,7 +115,6 @@ export interface StateSetters {
   setSelectedProvider: Setter<string | null>;
   setSessionInteractionMode: Setter<SessionInteractionMode>;
   setSessionRef: Setter<string | null>;
-  setSessionTitle: Setter<string | null>;
   setViewingSessionId: Setter<string | null>;
   setViewingSessionMeta: Setter<SessionObservationMeta | null>;
   setWorktreePath: Setter<string | null>;

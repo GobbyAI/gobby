@@ -104,7 +104,6 @@ describe("useChat message and conversation state", () => {
         session: {
           id: "db-session-2",
           seq_num: 202,
-          title: "Other chat",
           usage_input_tokens: 0,
           usage_output_tokens: 0,
           usage_cache_read_tokens: 0,
@@ -175,7 +174,7 @@ describe("useChat message and conversation state", () => {
         },
       );
       mockFetch.mockJsonResponse("/api/sessions/old-chat", {
-        session: { id: "old-chat", seq_num: 1, title: "Old chat" },
+        session: { id: "old-chat", seq_num: 1 },
       });
 
       const { result } = renderHook(() => useChat());
@@ -221,7 +220,7 @@ describe("useChat message and conversation state", () => {
         if (url.includes("/api/sessions/new-chat")) {
           return Promise.resolve(
             Response.json({
-              session: { id: "new-chat", seq_num: 2, title: "New chat" },
+              session: { id: "new-chat", seq_num: 2 },
             }),
           );
         }
@@ -543,7 +542,6 @@ describe("useChat message and conversation state", () => {
         model: null,
         chat_mode: null,
         seq_num: 42,
-        title: null,
       },
     });
 
@@ -586,7 +584,6 @@ describe("useChat message and conversation state", () => {
       session: {
         id: "db-session-2",
         seq_num: 202,
-        title: "Other chat",
         source: "codex",
         session_type: "web_chat",
         usage_input_tokens: 0,
@@ -745,7 +742,6 @@ describe("useChat message and conversation state", () => {
         model: null,
         chat_mode: "plan",
         seq_num: 501,
-        title: null,
         status: "active",
         session_type: "web_chat",
       },
@@ -785,7 +781,6 @@ describe("useChat message and conversation state", () => {
         id: "sess-proxy",
         seq_num: 2315,
         source: "claude",
-        title: "Proxy session",
         status: "active",
         model: "sonnet",
         external_id: "proxy-ext",
@@ -820,7 +815,6 @@ describe("useChat message and conversation state", () => {
         session_id: "sess-proxy",
         external_id: "proxy-ext",
         source: "claude",
-        title: "Proxy session",
         status: "active",
         model: "sonnet",
         ref: "#2315",
@@ -886,8 +880,8 @@ describe("useChat message and conversation state", () => {
     mockFetch.mockJsonResponse("/api/sessions/db-session-continued", {
       session: {
         id: "db-session-continued",
+        ref: "#88",
         seq_num: 88,
-        title: "Continued Session",
         source: "codex",
         model: "gpt-5.4",
         chat_mode: "accept_edits",
@@ -932,7 +926,6 @@ describe("useChat message and conversation state", () => {
         db_session_id: "db-session-continued",
         source_session_id: "source-session",
         ref: "#88",
-        title: "Continued Session",
         source: "codex",
         model: "gpt-5.4",
         chat_mode: "accept_edits",
@@ -944,9 +937,8 @@ describe("useChat message and conversation state", () => {
     await waitFor(() => {
       expect(result.current.dbSessionId).toBe("db-session-continued");
       expect(result.current.sessionRef).toBe("#88");
-      expect(result.current.sessionTitle).toBe("Continued Session");
       expect(result.current.selectedProvider).toBe("codex");
-      expect(result.current.mainSessionMeta?.title).toBe("Continued Session");
+      expect(result.current.mainSessionMeta?.ref).toBe("#88");
       expect(result.current.mainSessionMeta?.model).toBe("gpt-5.4");
       expect(result.current.contextUsage.totalInputTokens).toBe(320);
       expect(result.current.contextUsage.contextWindow).toBe(200000);
@@ -1155,8 +1147,8 @@ describe("useChat message and conversation state", () => {
     mockFetch.mockJsonResponse("/api/sessions/db-session-continued", {
       session: {
         id: "db-session-continued",
+        ref: "#88",
         seq_num: 88,
-        title: "Continued Session",
         source: "codex",
         model: "gpt-5.4",
         chat_mode: "accept_edits",
@@ -1188,7 +1180,6 @@ describe("useChat message and conversation state", () => {
         db_session_id: "db-session-continued",
         source_session_id: "source-session",
         ref: "#88",
-        title: "Continued Session",
         source: "codex",
         model: "gpt-5.4",
         chat_mode: "accept_edits",

@@ -10,6 +10,7 @@ import {
 
 import type { TmuxTarget } from "../../../hooks/terminalRosterSnapshot";
 import type { SettledWrite } from "../../../hooks/terminalWriteSettlement";
+import { useSessionAttention } from "../../../hooks/useSessionAttention";
 import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
 import { useCoarsePointer, useIsMobile } from "../../../hooks/useIsMobile";
 import type { GobbySession } from "../../../types/sessions";
@@ -302,9 +303,10 @@ export function TerminalTab({
   const consumedCreatedKeyRef = useRef<string | null>(null);
   const allowInitialSelectionRef = useRef(selectedKey === null);
 
+  const { rosterBySession } = useSessionAttention();
   const joinedSessions = useMemo(
-    () => joinTmuxSessions(tmuxSessions, sessions, projectId),
-    [projectId, sessions, tmuxSessions],
+    () => joinTmuxSessions(tmuxSessions, sessions, projectId, rosterBySession),
+    [projectId, rosterBySession, sessions, tmuxSessions],
   );
   const visibleSessions = useMemo(
     () =>

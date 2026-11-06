@@ -81,7 +81,6 @@ describe("ChatPage – plan mode radios (#18343)", () => {
           viewingSessionMeta: {
             ref: "#77",
             source: "claude",
-            title: "Autonomous Run",
             status: "active",
             model: "sonnet",
             externalId: "term-77",

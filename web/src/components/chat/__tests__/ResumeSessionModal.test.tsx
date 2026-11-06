@@ -18,14 +18,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function session(id: string, title: string): GobbySession {
+function session(id: string): GobbySession {
   return {
     id,
     ref: `project#${id}`,
     external_id: id,
     source: "claude",
     project_id: "project-1",
-    title,
     status: "active",
     model: null,
     message_count: 1,
@@ -110,17 +109,17 @@ describe("ResumeSessionModal", () => {
     expect(firstSignal?.aborted).toBe(true);
 
     await act(async () => {
-      second.resolve(responseWith([session("new", "Newest response")]));
+      second.resolve(responseWith([session("new")]));
     });
     expect(
-      await screen.findByText(/project#.*: Newest response/),
+      await screen.findByText("project#new"),
     ).toBeInTheDocument();
 
     await act(async () => {
-      first.resolve(responseWith([session("old", "Stale response")]));
+      first.resolve(responseWith([session("old")]));
     });
-    expect(screen.queryByText(/Stale response/)).not.toBeInTheDocument();
-    expect(screen.getByText(/project#.*: Newest response/)).toBeInTheDocument();
+    expect(screen.queryByText("project#old")).not.toBeInTheDocument();
+    expect(screen.getByText("project#new")).toBeInTheDocument();
   });
 
   it("uses the latest sessions fallback without refetching on prop identity changes", async () => {
@@ -132,7 +131,7 @@ describe("ResumeSessionModal", () => {
       <ResumeSessionModal
         isOpen
         onClose={vi.fn()}
-        sessions={[session("initial", "Initial fallback")]}
+        sessions={[session("initial")]}
         onResume={vi.fn()}
       />,
     );
@@ -141,7 +140,7 @@ describe("ResumeSessionModal", () => {
       <ResumeSessionModal
         isOpen
         onClose={vi.fn()}
-        sessions={[session("latest", "Latest fallback")]}
+        sessions={[session("latest")]}
         onResume={vi.fn()}
       />,
     );
@@ -156,7 +155,7 @@ describe("ResumeSessionModal", () => {
     });
 
     expect(
-      await screen.findByText(/project#.*: Latest fallback/),
+      await screen.findByText("project#latest"),
     ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

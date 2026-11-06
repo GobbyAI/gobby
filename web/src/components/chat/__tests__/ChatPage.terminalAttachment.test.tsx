@@ -67,7 +67,6 @@ describe("ChatPage – terminal attachment", () => {
           viewingSessionMeta: {
             ref: "#51",
             source: "claude",
-            title: "Observed Terminal",
             status: "active",
             model: "sonnet",
             externalId: "term-51",
@@ -116,7 +115,6 @@ describe("ChatPage – terminal attachment", () => {
           viewingSessionMeta: {
             ref: "#59",
             source: "codex",
-            title: "Attached Terminal",
             status: "active",
             model: "gpt-5.4",
             reasoningEffort: "high",
@@ -171,7 +169,6 @@ describe("ChatPage – terminal attachment", () => {
             viewingSessionMeta: {
               ref: "#52",
               source: "claude",
-              title: "Observed Terminal",
               status: "active",
               model: "claude-sonnet-4-6",
               externalId: "term-52",
@@ -210,7 +207,6 @@ describe("ChatPage – terminal attachment", () => {
               external_id: "ext-11",
               source: "claude",
               project_id: "proj-1",
-              title: "Session One",
               status: "active",
               model: "sonnet",
               message_count: 1,
@@ -236,7 +232,6 @@ describe("ChatPage – terminal attachment", () => {
               external_id: "ext-12",
               source: "codex",
               project_id: "proj-1",
-              title: "Session Two",
               status: "expired",
               model: "gpt-5.4",
               message_count: 2,
@@ -287,7 +282,6 @@ describe("ChatPage – terminal attachment", () => {
             viewingSessionMeta: {
               ref: "#52",
               source: "claude",
-              title: "Observed Terminal",
               status: "active",
               model: "claude-sonnet-4-6",
               externalId: "term-52",
@@ -319,7 +313,6 @@ describe("ChatPage – terminal attachment", () => {
             viewingSessionMeta: {
               ref: "#154",
               source: "grok",
-              title: "Live Handoff Terminal",
               status: "awaiting_handoff",
               canProxyAttach: true,
               model: "grok-build",
@@ -351,7 +344,6 @@ describe("ChatPage – terminal attachment", () => {
             viewingSessionMeta: {
               ref: "#52",
               source: "claude",
-              title: "Observed Terminal",
               status: "active",
               model: "claude-sonnet-4-6",
               externalId: "term-52",
