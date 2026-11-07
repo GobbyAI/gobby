@@ -835,6 +835,22 @@ under `.gobby/plans/coverage/<project>/<root>/<plan>.coverage.yaml`, print that
 path, and use the exit-code contract below. `jsonl` and arbitrary path values
 are not task-tree modes; task JSONL is export material, not coverage input.
 
+Read role for `db` mode. A developer seat's login holds the sanctioned read
+role `gobby_gcode_capability`. That role has `SELECT` on `tasks` and
+`task_dependencies` and nothing else, with no write grant. Row-level security
+(migration 490) narrows it to the seat's current project:
+
+- `tasks` rows where `project_id = gobby_agent_auth.current_project_id()`.
+- `task_dependencies` rows whose dependent task is in that project.
+
+Coverage loads only the project's task set and its blocker edges, so this grant
+covers what coverage reads and nothing more. The narrower `current_project_id()`
+is deliberate: coverage evaluates one project, and the wider
+`current_read_code_project_ids()` set used by the code-index policies is not
+needed. A seat asking for another project's tasks gets no rows, so coverage
+reports those rows as uncovered; it does not read them. The daemon role and the
+existing read roles keep their grants.
+
 Exit codes: `0`, `2`, `3`, `4`, `5`, `6`, `7`, `8`.
 
 Evidence kinds: `commits | task-diff | worktree-diff | coverage-matrix | none`.
@@ -872,6 +888,43 @@ plan authority until manual expansion supplies the real root.
 Plan archive is system-managed: archiving flips `state` to `archived`, moves
 the plan file to `.gobby/plans/completed/`, records `archived_at`, and removes
 the managed coverage manifest.
+
+### Linked Checkouts
+
+A project can have several checkouts on one machine: the primary checkout and
+registered linked worktrees or clone overlays. Each has its own plan file and
+its own coverage manifest.
+
+- `gobby-plans:update_plan_hash` and `gobby-plans:regenerate_coverage_manifest`
+  act on the checkout they name. The default is the primary checkout. A linked
+  checkout must be one that `resolve_operation_root` accepts for the plan's
+  project on this machine. An unregistered path, or a checkout of another
+  project, is refused with `invalid_project`, and nothing is read or written.
+- The manifest is written under the checkout that was read, at the canonical
+  scoped path. A refresh from a linked checkout does not touch the primary
+  checkout's manifest or plan file. `update_plan_hash` writes a manifest only
+  when that checkout's plan hash differs from the registry. When the hashes
+  already match it changes nothing, and `regenerate_coverage_manifest` writes
+  the named checkout's manifest.
+- The `plans` row is one per project and plan, not one per checkout. Its
+  `plan_hash` is the hash of the checkout that `update_plan_hash` refreshed
+  last. A linked refresh therefore moves the registry hash that every checkout
+  sees, and the primary checkout's record can change to a branch hash. This is
+  the accepted behaviour, for three reasons:
+  - Each consumer of the registry hash checks it against the file of the
+    checkout it reads, and fails closed on a mismatch. Coverage evaluation
+    raises `StaleHashError` when the supplied hash does not match the parsed
+    file. Expansion QA reports plan-hash drift. Neither passes against another
+    checkout's file.
+  - A linked refresh rewrites no primary file and no primary manifest.
+  - The primary checkout recovers by refreshing itself: `update_plan_hash` with
+    the primary checkout restores the registry hash to the primary's file.
+
+  Until that refresh runs, primary-checkout operations that read the registry
+  hash are refused with a freshness mismatch. They are not silently satisfied.
+  A per-checkout registry row would change the `plans` identity and the
+  expansion authority that this contract defines. That is a separate contract
+  change, not part of linked-checkout support.
 
 ## Re-expansion Reconciliation
 
