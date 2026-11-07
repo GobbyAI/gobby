@@ -453,6 +453,50 @@ impl RunLayout {
     }
 }
 
+/// Validate the build root against this node's own filesystem.
+///
+/// The hub's validator cannot see this machine's volumes or links, so the node refuses a root
+/// that is not absolute, is missing (an unmounted volume must never be recreated on the boot
+/// disk), is a symbolic link, or is not spelled canonically. The canonical path is returned.
+fn node_build_root(raw: &Path) -> Result<PathBuf> {
+    if !raw.is_absolute() {
+        bail!(
+            "Agent build root {} is not absolute; the hub sends the canonical configured root",
+            raw.display()
+        );
+    }
+    let meta = match fs::symlink_metadata(raw) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
+            "Agent build root {} is missing on this node; its volume may be unmounted, and the node will not create it",
+            raw.display()
+        ),
+        Err(error) => {
+            return Err(anyhow!("stat agent build root {}: {error}", raw.display()));
+        }
+    };
+    if meta.file_type().is_symlink() {
+        bail!(
+            "Agent build root {} is a symbolic link; the node refuses to follow it",
+            raw.display()
+        );
+    }
+    if !meta.is_dir() {
+        bail!("Agent build root {} is not a directory", raw.display());
+    }
+    let canonical = raw
+        .canonicalize()
+        .map_err(|error| anyhow!("resolve agent build root {}: {error}", raw.display()))?;
+    if canonical != raw {
+        bail!(
+            "Agent build root {} is not canonical on this node; it resolves to {}",
+            raw.display(),
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
+
 /// `prepare_sandbox_run_paths` without filesystem writes: the run root, its
 /// subdirectories, and the shared and per-checkout Cargo targets. The caller creates
 /// the directories, and the pre-commit prewarm is the only side effect.
@@ -460,6 +504,7 @@ pub(super) fn run_layout(
     inputs: &PolicyInputs,
     env: &BTreeMap<String, String>,
 ) -> Result<RunLayout> {
+    let build_root = node_build_root(&inputs.build_root)?;
     let gobby = inputs.gobby_home.as_path();
     let managed = resolve_nonstrict(&gobby.join("runtime").join("managed-executions"));
     let bootstrap_root = non_empty(env, "GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
@@ -473,13 +518,7 @@ pub(super) fn run_layout(
         None => secure_policy_directory(gobby, &inputs.run_id)?,
     };
     let shared_cache = gobby.join("cache").join("sandbox");
-    if !inputs.build_root.is_absolute() {
-        bail!(
-            "Agent build root {} is not absolute; the hub sends the canonical configured root",
-            inputs.build_root.display()
-        );
-    }
-    let build_sandbox = inputs.build_root.join("sandbox");
+    let build_sandbox = build_root.join("sandbox");
     let cargo_target = build_sandbox
         .join("cargo-target")
         .join(super::checkout_component(&inputs.workspace));

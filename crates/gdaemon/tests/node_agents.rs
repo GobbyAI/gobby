@@ -1448,6 +1448,8 @@ impl SrtTree {
         for name in ["home", "gobby_home", "bin", "tmp", "workspace", "main"] {
             fs::create_dir_all(self.path(name))?;
         }
+        // The node refuses a build root it cannot find, so the default cache exists first.
+        fs::create_dir_all(self.path("gobby_home").join("cache"))?;
         for relative in srt_entries(inputs, "home_tree")? {
             let relative = relative
                 .as_str()

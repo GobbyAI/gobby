@@ -308,3 +308,129 @@ fn an_overlong_socket_path_leaves_sccache_unwired() {
     assert_eq!(values["CARGO_INCREMENTAL"], "");
     assert_eq!(values["CARGO_BUILD_JOBS"], "4");
 }
+
+#[test]
+fn a_missing_build_root_is_refused_and_not_created() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    let build_root = dir.path().join("GobbyBuild");
+    let inputs = inputs_with_build_root(&gobby_home, &build_root, &workspace);
+
+    let error = run_layout(&inputs, &BTreeMap::new())
+        .err()
+        .context("a missing build root must be refused")?;
+
+    assert!(error.to_string().contains("is missing"), "{error}");
+    assert!(
+        !build_root.exists(),
+        "the node created the missing build root"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_build_root_on_an_unmounted_volume_is_refused_without_creating_the_mount_point() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    let mount_parent = dir.path().join("Volumes");
+    let build_root = mount_parent.join("GobbyBuild");
+    let inputs = inputs_with_build_root(&gobby_home, &build_root, &workspace);
+
+    let error = run_layout(&inputs, &BTreeMap::new())
+        .err()
+        .context("a build root on an absent volume must be refused")?;
+
+    assert!(error.to_string().contains("volume"), "{error}");
+    assert!(
+        !mount_parent.exists(),
+        "the node created the absent volume's mount point"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_non_canonical_build_root_is_refused() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let canonical = build_root.canonicalize()?;
+    let name = canonical.file_name().context("the build root has a name")?;
+    let spelled = canonical.join("..").join(name);
+    let inputs = inputs_with_build_root(&gobby_home, &spelled, &workspace);
+
+    let error = run_layout(&inputs, &BTreeMap::new())
+        .err()
+        .context("a non-canonical build root must be refused")?;
+
+    assert!(error.to_string().contains("not canonical"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn a_symlinked_build_root_is_refused_and_never_followed() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let real = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&real)?;
+    let link = dir.path().join("linked-build");
+    symlink(&real, &link)?;
+    let inputs = inputs_with_build_root(&gobby_home, &link, &workspace);
+
+    let error = run_layout(&inputs, &BTreeMap::new())
+        .err()
+        .context("a symlinked build root must be refused")?;
+
+    assert!(error.to_string().contains("symbolic link"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn a_native_launch_write_grants_follow_the_configured_build_root() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    let sandbox_target = run_layout(&inputs, &BTreeMap::new())?.cargo_target;
+
+    let policy = compile_policy(&inputs, &[], &[])?;
+
+    assert_eq!(policy.env["CARGO_TARGET_DIR"], text(&sandbox_target));
+    assert!(
+        policy
+            .sandbox
+            .extra_write_paths
+            .contains(&text(&sandbox_target))
+    );
+    // Every cargo-target write grant names the configured root, never the gobby cache.
+    let stray: Vec<&String> = policy
+        .sandbox
+        .extra_write_paths
+        .iter()
+        .filter(|path| {
+            path.contains("cargo-target") && !Path::new(path).starts_with(&inputs.build_root)
+        })
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "a cargo-target grant escapes the build root: {stray:?}"
+    );
+    Ok(())
+}

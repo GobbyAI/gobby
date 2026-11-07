@@ -38,10 +38,13 @@ impl CommandCase {
     fn new(name: &str) -> Result<Self> {
         let corpus = corpus()?;
         let root = tempfile::tempdir()?;
-        let cwd = root.path().join("workspace");
-        let home = root.path().join("gobby-home");
+        let canonical = fs::canonicalize(root.path())?;
+        let cwd = canonical.join("workspace");
+        let home = canonical.join("gobby-home");
         fs::create_dir_all(&cwd)?;
         fs::create_dir_all(&home)?;
+        // The node refuses a build root it cannot find, so the corpus's default cache exists.
+        fs::create_dir_all(home.join("cache"))?;
         // Substitute paths in JSON strings, preserving all frozen values and ordering.
         let filled = serde_json::to_string(&corpus)?
             .replace("<workspace>", &cwd.display().to_string())
@@ -508,6 +511,11 @@ impl LaunchFixture {
         let node = monitor_node(&tree, &body)?;
         let installation = srt_installation(&tree, node);
         let mut payload = CommandCase::new("claude-fresh")?.payload;
+        // The payload's build root must be this fixture's cache: the node refuses a missing one,
+        // and the case's own temporary home was already dropped when its payload was taken.
+        let cache = tree.path("gobby_home").join("cache");
+        fs::create_dir_all(&cache)?;
+        payload.build_root = cache.display().to_string();
         payload.run_id = SRT_RUN_ID.into();
         payload.source_root = inputs.source_root.display().to_string();
         payload.project_id = inputs.project_id.clone();
