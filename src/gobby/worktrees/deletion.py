@@ -206,23 +206,27 @@ async def _delete_worktree(
             error="Cannot verify merged_into without a resolved git manager",
             error_code="merged_into_requires_git_manager",
         )
-    worktree_exists = Path(worktree.worktree_path).exists()
-    if worktree_exists and git_manager is None:
+    if git_manager is None:
+        # Without Git nothing proves the registration or branch is gone, so neither the
+        # tree nor the record is touched; the stale record waits for a Git manager.
         return WorktreeDeletionResult(
             success=False,
+            git_deleted=False,
             error=(
-                "Cannot delete an on-disk worktree without a resolved git manager; "
+                "Cannot verify the worktree removal without a resolved git manager; "
                 "the worktree record was preserved"
             ),
+            error_code="worktree_git_unavailable",
         )
-    force = request.force or request.surface is DeletionSurface.HTTP
+    worktree_exists = Path(worktree.worktree_path).exists()
+    force = request.force
     generated_untracked: list[str] = []
     if request.surface in _DAEMON_SURFACES:
         verdict = await _daemon_precheck(request, worktree, git_manager, worktree_exists)
         if isinstance(verdict, WorktreeDeletionResult):
             return verdict
         generated_untracked = verdict
-    elif request.surface is DeletionSurface.MCP:
+    elif request.surface in (DeletionSurface.MCP, DeletionSurface.HTTP):
         precheck = await _mcp_precheck(request, worktree, git_manager, worktree_exists)
         if precheck is not None:
             return precheck
@@ -337,11 +341,11 @@ def _finish_storage_deletion(
 async def _daemon_precheck(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
-    git_manager: WorktreeGitManager | None,
+    git_manager: WorktreeGitManager,
     worktree_exists: bool,
 ) -> WorktreeDeletionResult | list[str]:
     """Refuse what a daemon deletion cannot prove; else the generated untracked paths to clear."""
-    if git_manager is None or request.force or request.force_delete_branch:
+    if request.force or request.force_delete_branch:
         return WorktreeDeletionResult(
             success=False, git_deleted=False, error="Cannot safely verify the worktree"
         )
@@ -389,10 +393,10 @@ async def _daemon_precheck(
 async def _mcp_precheck(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
-    git_manager: WorktreeGitManager | None,
+    git_manager: WorktreeGitManager,
     worktree_exists: bool,
 ) -> WorktreeDeletionResult | None:
-    if git_manager is None or not worktree_exists:
+    if not worktree_exists:
         return None
 
     status = await git_manager.get_worktree_status(worktree.worktree_path)
@@ -410,6 +414,7 @@ async def _mcp_precheck(
     if status.has_uncommitted_changes and not request.force:
         return WorktreeDeletionResult(
             success=False,
+            git_deleted=False,
             error="Worktree has uncommitted changes. Use force=True to delete anyway.",
             uncommitted_changes=True,
         )
@@ -452,17 +457,10 @@ async def _verify_removed(git_manager: WorktreeGitManager, worktree_path: str) -
 async def _delete_git_worktree(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
-    git_manager: WorktreeGitManager | None,
+    git_manager: WorktreeGitManager,
     *,
     force: bool,
 ) -> WorktreeDeletionResult | None:
-    if git_manager is None:
-        logger.info(
-            "Worktree path %s doesn't exist, cleaning up DB record only",
-            worktree.worktree_path,
-        )
-        return None
-
     git_already_deleted, retry_error = await probe_missing_worktree_git_state(
         git_manager,
         worktree_path=worktree.worktree_path,

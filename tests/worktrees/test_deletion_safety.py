@@ -166,7 +166,7 @@ def _tree(tmp_path: Path) -> Path:
 async def _delete(
     surface: DeletionSurface,
     storage: _Storage,
-    git: _Git,
+    git: _Git | None,
     *,
     boundary: DestructiveBoundary | None = None,
 ) -> Any:
@@ -174,7 +174,7 @@ async def _delete(
         boundary or DestructiveBoundary(),
         request=WorktreeDeletionRequest(WORKTREE_ID, surface),
         worktree_storage=cast(LocalWorktreeManager, storage),
-        resolve_git_manager=lambda _worktree: cast(WorktreeGitManager, git),
+        resolve_git_manager=lambda _worktree: cast(WorktreeGitManager | None, git),
         task_manager=cast(LocalTaskManager, SimpleNamespace(artifacts=_Artifacts())),
     )
 
@@ -303,4 +303,36 @@ async def test_teardown_refuses_tracked_change_under_a_generated_path(tmp_path: 
     assert result.uncommitted_changes is True
     assert git.delete_calls == 0
     assert (tree / ".mcp.json").read_text() == '{"edited": true}\n'
+    assert WORKTREE_ID in storage.rows
+
+
+@pytest.mark.asyncio
+async def test_http_delete_refuses_tracked_change_without_forcing(tmp_path: Path) -> None:
+    tree = _tree(tmp_path)
+    (tree / "README.md").write_text("edited, uncommitted\n")
+    git = _Git(tree, tracked_lines=(" M README.md",))
+    storage = _Storage(_worktree(tree))
+
+    result = await _delete(DeletionSurface.HTTP, storage, git)
+
+    assert result.success is False
+    assert result.uncommitted_changes is True
+    assert result.git_deleted is False
+    assert git.force_calls == []
+    assert git.delete_calls == 0
+    assert (tree / "README.md").read_text() == "edited, uncommitted\n"
+    assert WORKTREE_ID in storage.rows
+
+
+@pytest.mark.asyncio
+async def test_missing_tree_without_git_manager_refuses_and_keeps_stale_row(
+    tmp_path: Path,
+) -> None:
+    storage = _Storage(_worktree(tmp_path / "wt-25840-gone"))
+
+    result = await _delete(DeletionSurface.MCP, storage, None)
+
+    assert result.success is False
+    assert result.error_code == "worktree_git_unavailable"
+    assert result.git_deleted is False
     assert WORKTREE_ID in storage.rows
