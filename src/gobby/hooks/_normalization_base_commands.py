@@ -45,6 +45,7 @@ from gobby.hooks._python_pipeline_classifier import (
     _PythonExecutionClassification,
 )
 from gobby.hooks._shell_execution_words import _unwrap
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.code_navigation import (
     HEAD_TAIL_VALUE_OPTIONS,
     MAX_NARROW_SOURCE_BYTES,
@@ -167,7 +168,10 @@ def _uv_project_is_proven(directory: str) -> bool:
 
     uv walks upward from a directory for its project, and a workspace member's lockfile
     belongs to the workspace root. Without both proofs the lockfile target is unproven.
+    A node-origin checkout is never proven here: the hub's disk is not the node's disk.
     """
+    if node_origin():
+        return False
     try:
         project = Path(directory).resolve()
         if not (project / "pyproject.toml").is_file():

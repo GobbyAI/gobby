@@ -186,6 +186,19 @@ def test_uv_lock_unparseable_ancestor_pyproject_fails_closed(tmp_path: Path) -> 
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+def test_uv_lock_remote_origin_project_fails_closed(tmp_path: Path) -> None:
+    # A delivery scope makes the project a node checkout; the hub's disk cannot prove it.
+    child = tmp_path / "child"
+    _write_uv_project(child)
+
+    with patch("gobby.hooks._normalization_base_commands.node_origin", return_value=True):
+        data = _invocation_metadata(
+            f"uv lock --project {child}", tool_cwd=tmp_path, project_path=tmp_path
+        )
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 @pytest.mark.parametrize(
     ("command", "operands", "edits"),
     [
