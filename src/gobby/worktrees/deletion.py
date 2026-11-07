@@ -412,10 +412,16 @@ async def _mcp_precheck(
             error_code="worktree_status_unavailable",
         )
     if status.has_uncommitted_changes and not request.force:
+        # HTTP callers cannot pass force, so their refusal names an action they can take.
+        error = (
+            "Worktree has uncommitted changes; commit or discard them, then retry the deletion."
+            if request.surface is DeletionSurface.HTTP
+            else "Worktree has uncommitted changes. Use force=True to delete anyway."
+        )
         return WorktreeDeletionResult(
             success=False,
             git_deleted=False,
-            error="Worktree has uncommitted changes. Use force=True to delete anyway.",
+            error=error,
             uncommitted_changes=True,
         )
     return None

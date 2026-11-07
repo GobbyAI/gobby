@@ -325,6 +325,22 @@ async def test_http_delete_refuses_tracked_change_without_forcing(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_http_refusal_text_does_not_advertise_force(tmp_path: Path) -> None:
+    tree = _tree(tmp_path)
+    (tree / "README.md").write_text("edited, uncommitted\n")
+    git = _Git(tree, tracked_lines=(" M README.md",))
+    storage = _Storage(_worktree(tree))
+
+    result = await _delete(DeletionSurface.HTTP, storage, git)
+
+    assert result.uncommitted_changes is True
+    assert result.error is not None
+    assert "uncommitted changes" in result.error
+    # HTTP callers cannot pass force, so the refusal must not point them at it.
+    assert "force" not in result.error.lower()
+
+
+@pytest.mark.asyncio
 async def test_missing_tree_without_git_manager_refuses_and_keeps_stale_row(
     tmp_path: Path,
 ) -> None:
