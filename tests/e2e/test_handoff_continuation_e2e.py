@@ -82,16 +82,31 @@ def _seat_prompt(scenario: str) -> str:
     )
 
 
+# The gobby proxy tools the seat's handoff path calls. get_skill, set_handoff and the daemon's
+# get_handoff continuation all route through call_tool; the schema fetch uses get_tool_schema.
+_GOBBY_PROXY_TOOLS = ("mcp__gobby__call_tool", "mcp__gobby__get_tool_schema")
+
+
 def _seat_command(provider: Provider, binary: Path, scenario: str) -> list[str]:
-    # MCP stays enabled: the seat itself loads the reference and calls set_handoff.
+    # Fixture-only exception to the composer's disabled tools: the seat may call the gobby proxy
+    # tools above, and the restart hold may run its shell sleep. Nothing else is pre-approved.
     prompt = _seat_prompt(scenario)
     if provider == "claude":
-        allowed = ["mcp__gobby"]
+        allowed = list(_GOBBY_PROXY_TOOLS)
         if scenario == "restart_hold":
             # The only added permission is the shell sleep that holds the launch turn.
             allowed.append("Bash(sleep:*)")
         return [str(binary), prompt, "--allowedTools", *allowed]
-    return [str(binary), "--sandbox", "read-only", "--ask-for-approval", "never", prompt]
+    return [
+        str(binary),
+        "-c",
+        "mcp_servers.gobby.enabled=true",
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
+        prompt,
+    ]
 
 
 def _is_turn_end(event: dict[str, Any], seat: Seat) -> bool:
