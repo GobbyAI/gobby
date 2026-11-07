@@ -152,10 +152,11 @@ class MailboxService:
         """Send a mailbox message to an explicit resolved target selector.
 
         ``wake=None`` takes the target default: direct and global targets wake, and
-        project fanout stays queued. Fanout never live-wakes a recipient parked between
-        turns with no claimed task; its row waits for that seat's next turn. Recipient
-        definitions declare required sender capabilities; direct targets refuse
-        unauthorized senders and fanout withholds those recipients.
+        project fanout stays queued. Fanout with a wake applies the same rule to each
+        recipient, with no claimed-task filter: a seat that is idle at an empty, confirmed
+        composer gets a typed wake, and any other recipient keeps its row queued for its
+        next turn. Recipient definitions declare required sender capabilities; direct
+        targets refuse unauthorized senders and fanout withholds those recipients.
         """
         result = self.persist(
             from_session_id=from_session_id,
@@ -173,7 +174,7 @@ class MailboxService:
             attachment=attachment,
         )
         if result.wake_requested:
-            result.wake_results = await self.dispatch_wakes(result, priority=priority)
+            result.wake_results = await self.dispatch_wakes(result)
         return result
 
     def persist(
@@ -313,9 +314,7 @@ class MailboxService:
             wake_session_ids=wake_session_ids,
         )
 
-    async def dispatch_wakes(
-        self, result: MailboxSendResult, *, priority: str = "normal"
-    ) -> list[dict[str, Any]]:
+    async def dispatch_wakes(self, result: MailboxSendResult) -> list[dict[str, Any]]:
         """Wake the recipients whose committed rows still owe a live wake."""
         # Persistence is complete. The dispatcher owns live-wake policy and
         # channel-specific bounds; an outer timeout can interrupt tmux submission.
@@ -334,7 +333,6 @@ class MailboxService:
             self._session_manager,
             [message for message, _ in pairs],
             [session_id for _, session_id in pairs],
-            priority=priority,
         )
 
     async def wake_committed(self, message_id: str) -> list[dict[str, Any]]:
@@ -347,7 +345,6 @@ class MailboxService:
             self._session_manager,
             [message],
             [message.to_session],
-            priority=message.priority,
         )
 
     def resolve_target(

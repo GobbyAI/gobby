@@ -729,22 +729,22 @@ async def test_managed_wake_is_withheld_while_the_composer_holds_a_draft() -> No
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
+async def test_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
     terminal_sender = AsyncMock()
     dispatcher = _managed_dispatcher(_draft, terminal_sender)
 
-    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
     terminal_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_injects_an_empty_composer() -> None:
+async def test_wake_injects_an_empty_composer() -> None:
     terminal_sender = AsyncMock()
     dispatcher = _managed_dispatcher(_empty, terminal_sender)
 
-    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result["delivered"] is True
     terminal_sender.assert_awaited_once_with(
@@ -977,7 +977,7 @@ async def test_batch_wake_holds_a_focused_recipient_and_sends_the_rest() -> None
         assert [result["session_id"] for result in results] == session_ids
         assert results[0].get("skipped") == PANE_FOCUSED
         assert results[1]["delivered"] is True
-        assert dispatcher._focus_holds == {held_terminal: {held_id: "normal"}}
+        assert dispatcher._focus_holds == {held_terminal: {held_id}}
     finally:
         tasks = [
             *dispatcher._deferred_refreshes.values(),

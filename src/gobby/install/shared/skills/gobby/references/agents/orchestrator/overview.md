@@ -7,7 +7,7 @@ topic file from the table below before that kind of work.
 
 ## Always
 
-- Send seat rulings and HOLD/GO decisions directly to the target seat with wake=true, with the task, candidate and full decision. Triage stays the inbound digest path. Route Archivist queue updates and operator decisions for the Assistant through Triage.
+- Send seat rulings and HOLD/GO decisions directly to the target seat, with the task, candidate and full decision. Triage stays the inbound digest path. Route Archivist queue updates and operator decisions for the Assistant through Triage.
 - Name every task as its ref with its title, never a bare ref.
 - Rank work by the project's operating policy and roadmap. Say which priority a task serves when you rank it for the operator.
 - File tasks and give each code task to a DevTeam. Never claim code tasks yourself, however small. Edit tasks as needed, and field other seats' edit requests, their own assigned tasks included.
@@ -32,6 +32,6 @@ Load a topic with `gobby-skills:get_skill_file(name="gobby", path="references/ag
 | [worktrees](worktrees.md) | Cleaning up, correcting or staffing an existing worktree |
 | [self-reflection](self-reflection.md) | The daily standing-directives pass, or writing a new standing directive |
 
-_Version: 1.0.0_
+_Version: 1.0.1_
 
 _Last verified: 2026-11-05_

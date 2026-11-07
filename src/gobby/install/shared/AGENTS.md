@@ -28,8 +28,10 @@ immediate processing for direct `session`, `parent`, and `agent` targets. Fanout
 (`global`, and `project` with `wake=true`) applies the same rule to each recipient,
 with no claimed-task filter. A wake types `[Gobby] Check messages` only into a seat
 that is idle, paused, or waiting, with no open turn and a composer the terminal ledger
-confirms empty; that seat then processes its queue without operator input. An active
-turn takes no typed input at any priority; its message arrives through the hook
+confirms empty; that seat then processes its queue without operator input. The target
+must also pass the send_keys target checks: a bare shell, a credential prompt, or a pane
+that does not show an idle agent composer is never typed into. An active turn takes no
+typed input at any priority; its message arrives through the hook
 mailbox on its next tool call. A draft, held, or unconfirmed composer, and an
 interrupted, input-, approval-, or handoff-waiting seat, also take no typed input, so
 the message stays queued until the seat is safe to wake. The one handoff exception is

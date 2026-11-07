@@ -6,6 +6,7 @@ process, and the inner run must not load this suite's conftest or database.
 
 from __future__ import annotations
 
+import gc
 import os
 import subprocess
 import sys
@@ -13,6 +14,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
+
+from tests.fixtures import hang_guard
 
 pytestmark = pytest.mark.integration
 
@@ -96,3 +99,15 @@ def test_run_that_never_exits_dumps_its_threads(
     assert "1 passed" in output
     assert result.returncode != 0
     assert "_leaked_worker" in output
+
+
+def test_session_finish_freezes_the_heap_before_unconfigure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unconfigure's full collections otherwise re-walk every object the suite imported (#25830).
+    frozen: list[bool] = []
+    monkeypatch.setattr(gc, "freeze", lambda: frozen.append(True))
+
+    hang_guard.pytest_sessionfinish()
+
+    assert frozen == [True]

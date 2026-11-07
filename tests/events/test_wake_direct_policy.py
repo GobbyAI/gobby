@@ -30,6 +30,15 @@ pytestmark = pytest.mark.integration
 _ACTIVE_AT = datetime(2026, 11, 6, 13, 22, tzinfo=UTC)
 _EMPTY = TerminalActivity(ComposerRead("empty"))
 _TURN_OPEN = TerminalActivity(ComposerRead("empty"), "transcript-turn-open")
+_CLAUDE_IDLE = "────────────────────\n❯ \n────────────────────"
+_CODEX_IDLE = (
+    "done\n› \n\n  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
+)
+_CODEX_DRAFT = (
+    "done\n› half-typed reply\n\n  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n"
+    "  ← for agents · ? for shortcuts"
+)
+_SHELL_PID = 4321
 
 
 async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -100,6 +109,7 @@ def _seat(
         lifecycle_refresh=_flush,
         activity_probe=probe,
     )
+    dispatcher.set_terminal_runtime_registry(object())
     return session_id, sender, dispatcher
 
 
@@ -108,7 +118,9 @@ async def test_idle_empty_codex_seat_takes_direct_wake_without_a_claimed_task(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    agent_target: Callable[..., None],
 ) -> None:
+    agent_target(foreground="codex", snapshot=_CODEX_IDLE)
     session_id, sender, dispatcher = _seat(
         temp_db,
         session_manager,
@@ -120,14 +132,137 @@ async def test_idle_empty_codex_seat_takes_direct_wake_without_a_claimed_task(
 
     result = await dispatcher.dispatch_live_wake(session_id)
 
-    assert result["delivered"] is True
+    assert result["delivered"] is True, result
     sender.assert_awaited_once()
     assert sender.await_args is not None
     assert sender.await_args.args[1] == CONTINUE_WAKE_MESSAGE
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_never_types_into_an_active_turn(
+async def test_stranded_codex_row_at_an_empty_prompt_idles_and_takes_the_wake(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_target: Callable[..., None],
+) -> None:
+    agent_target(foreground="codex", snapshot=_CODEX_IDLE)
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="codex",
+        status="active",
+        read=lambda _id: _EMPTY,
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["delivered"] is True, result
+    sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stranded_row_without_turn_settled_evidence_keeps_the_deferred_path(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="agy",
+        status="active",
+        read=lambda _id: _EMPTY,
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["skipped"] == "session_active"
+    sender.assert_not_awaited()
+    await _cancel_followups(dispatcher)
+
+
+@pytest.mark.asyncio
+async def test_bare_shell_target_is_never_typed_into(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_target: Callable[..., None],
+) -> None:
+    agent_target(foreground="zsh", snapshot=_CLAUDE_IDLE)
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="claude",
+        status="idle",
+        read=lambda _id: _EMPTY,
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["delivered"] is False
+    assert result["skipped"] == "send_keys_target_bare_shell"
+    sender.assert_not_awaited()
+    await _cancel_followups(dispatcher)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt", ["Password:", "[sudo] password for josh:", "Enter API key:"])
+async def test_credential_prompt_target_is_never_typed_into(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_target: Callable[..., None],
+    prompt: str,
+) -> None:
+    agent_target(foreground="claude", snapshot=prompt)
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="claude",
+        status="idle",
+        read=lambda _id: _EMPTY,
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["delivered"] is False
+    assert result["skipped"] == "send_keys_credential_prompt"
+    sender.assert_not_awaited()
+    await _cancel_followups(dispatcher)
+
+
+@pytest.mark.asyncio
+async def test_codex_draft_visible_in_the_frame_is_never_typed_into(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_target: Callable[..., None],
+) -> None:
+    """The ledger reads empty, but the codex frame shows a human draft: refuse, never type."""
+    agent_target(foreground="codex", snapshot=_CODEX_DRAFT)
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="codex",
+        status="idle",
+        read=lambda _id: _EMPTY,
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["delivered"] is False
+    assert result["skipped"] == "send_keys_composer_not_idle"
+    sender.assert_not_awaited()
+    await _cancel_followups(dispatcher)
+
+
+@pytest.mark.asyncio
+async def test_wake_never_types_into_an_active_turn(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -141,7 +276,7 @@ async def test_urgent_wake_never_types_into_an_active_turn(
         read=lambda _id: _TURN_OPEN,
     )
 
-    result = await dispatcher.dispatch_live_wake(session_id, priority="urgent")
+    result = await dispatcher.dispatch_live_wake(session_id)
 
     assert result["skipped"] == "session_active"
     sender.assert_not_awaited()

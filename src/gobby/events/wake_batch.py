@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.events.live_wake import wake_debounced_result, wake_failure
 from gobby.events.wake import NativeWakeTarget
+from gobby.events.wake_target import target_gate
 from gobby.hub.machine_routing import is_local_machine
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
@@ -23,8 +24,6 @@ logger = logging.getLogger(__name__)
 async def dispatch_live_wakes(
     dispatcher: WakeDispatcher,
     session_ids: list[str],
-    *,
-    priority: str,
 ) -> list[dict[str, Any]]:
     """Use one host exchange for native targets and existing paths for the rest."""
     if not session_ids:
@@ -103,19 +102,23 @@ async def dispatch_live_wakes(
             # batch send so a handoff cannot stage text between the empty read
             # and the wake write. The stack releases it after the batch lands.
             await stack.enter_async_context(composer_action_lock(str(terminal.id)))
-            current, state_failure = await dispatcher._preflight_live_side_effect(
-                session_id, priority=priority
-            )
+            current, state_failure = await dispatcher._preflight_live_side_effect(session_id)
             if state_failure is not None:
                 results[session_id] = state_failure
                 continue
             if current is not None:
                 session = current
             blocked, confirmed_empty = await dispatcher._composer_blocks_wake(
-                session_id, session, terminal, method="terminal", priority=priority
+                session_id, session, terminal, method="terminal"
             )
             if blocked is not None:
                 results[session_id] = blocked
+                continue
+            refused = await target_gate(
+                dispatcher, session_id, terminal, replacing=not confirmed_empty
+            )
+            if refused is not None:
+                results[session_id] = refused
                 continue
             target = NativeWakeTarget(
                 session_id=session_id,
@@ -140,9 +143,7 @@ async def dispatch_live_wakes(
                 else None
             )
             fallback_tasks = {
-                session_id: group.create_task(
-                    _send_fallback(dispatcher, session_id, session, priority=priority)
-                )
+                session_id: group.create_task(_send_fallback(dispatcher, session_id, session))
                 for session_id, session in fallback
             }
         if native_task is not None:
@@ -241,14 +242,11 @@ async def _send_fallback(
     dispatcher: WakeDispatcher,
     session_id: str,
     session: Any,
-    *,
-    priority: str,
 ) -> dict[str, Any]:
     try:
         return await dispatcher._dispatch_live_wake_unlocked(
             session_id,
             session=session,
-            priority=priority,
         )
     except asyncio.CancelledError:
         raise

@@ -289,7 +289,7 @@ async def test_operator_comms_wake_holds_while_the_pane_is_focused(
         assert PANE_FOCUSED in RETRYABLE_WAKE_SKIPS
         assert seat.session.id in seat.dispatcher._composer_retries
         seat.pane_sender.assert_not_awaited()
-        assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id: "normal"}}
+        assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id}}
     finally:
         _cancel_background(seat.dispatcher)
 
@@ -371,7 +371,7 @@ async def test_active_turn_protection_outranks_the_focus_hold(
 
         assert result.get("skipped") == expected
         seat.pane_sender.assert_not_awaited()
-        held_sessions = {TERMINAL_ID: {seat.session.id: "normal"}} if held else {}
+        held_sessions = {TERMINAL_ID: {seat.session.id}} if held else {}
         assert seat.dispatcher._focus_holds == held_sessions
     finally:
         _cancel_background(seat.dispatcher)
@@ -419,7 +419,7 @@ async def test_focus_hold_applies_only_to_comms_wakes_with_a_focused_holder(
         if held:
             assert result.get("skipped") == PANE_FOCUSED
             seat.pane_sender.assert_not_awaited()
-            assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id: "normal"}}
+            assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id}}
         else:
             assert result.get("skipped") != PANE_FOCUSED
             assert result.get("delivered") is True

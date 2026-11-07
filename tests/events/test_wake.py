@@ -237,7 +237,7 @@ class TestWakeDispatch:
         assert ism_manager.create_message.call_args.kwargs["priority"] == "normal"
 
     @pytest.mark.asyncio
-    async def test_urgent_active_completion_interrupts_immediately(
+    async def test_active_completion_never_types_into_the_turn_at_urgent_priority(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
@@ -245,8 +245,8 @@ class TestWakeDispatch:
     ) -> None:
         """An urgent completion never types into an active turn (#25830).
 
-        Typed input steers the running turn whatever the priority, so the urgent
-        notification persists for the hook mailbox and no terminal write happens.
+        Message priority is stored with the row only; it never changes the wake.
+        The notification persists for the hook mailbox and no terminal write happens.
         """
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
@@ -1080,7 +1080,7 @@ class TestWakeDispatch:
         await asyncio.wait_for(wake_delivered.wait(), 0.5)
         assert session.status == "idle"
 
-    async def test_idle_codex_prompt_touched_after_restart_receives_deferred_wake(
+    async def test_idle_codex_prompt_touched_after_restart_takes_direct_wake(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
@@ -1121,10 +1121,7 @@ class TestWakeDispatch:
         async def flush(_session_id: str) -> None:
             return None
 
-        delivered = asyncio.Event()
-
         async def send_terminal(*_args: object, **_kwargs: object) -> dict[str, object]:
-            delivered.set()
             return {"session_id": session.id, "delivered": True, "method": "terminal"}
 
         dispatcher = WakeDispatcher(
@@ -1141,8 +1138,7 @@ class TestWakeDispatch:
         monkeypatch.setattr(dispatcher, "_send_managed_terminal_wake", send_terminal)
 
         result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
-        assert result["skipped"] == "session_active"
-        await asyncio.wait_for(delivered.wait(), 0.5)
+        assert result["delivered"] is True, result
         assert session.status == "idle"
         assert (probe_count, reconcile_count) == (2, 1)
 
@@ -1781,7 +1777,7 @@ class TestComposerGate:
         assert "TOKEN" not in logged
 
     @pytest.mark.asyncio
-    async def test_urgent_wake_defers_when_the_composer_holds_a_draft(self) -> None:
+    async def test_wake_defers_when_the_composer_holds_a_draft(self) -> None:
         from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity, composer_occupied_result
 
@@ -1789,14 +1785,14 @@ class TestComposerGate:
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
         dispatcher = self._dispatcher(probe, pane_sender)
 
-        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
         probe.assert_awaited_once()
         pane_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_urgent_wake_delivers_when_the_composer_is_empty(self) -> None:
+    async def test_wake_delivers_when_the_composer_is_empty(self) -> None:
         from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity
 
@@ -1804,7 +1800,7 @@ class TestComposerGate:
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("empty")))
         dispatcher = self._dispatcher(probe, pane_sender)
 
-        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is True
         probe.assert_awaited_once()

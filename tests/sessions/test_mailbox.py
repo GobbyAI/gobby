@@ -35,18 +35,14 @@ pytestmark = pytest.mark.unit
 
 
 class WakeDispatcherProtocol(Protocol):
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]: ...
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
 
 
 class FakeWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]:
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
         self.calls.append(session_id)
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
@@ -61,13 +57,11 @@ class BatchWakeDispatcher(FakeWakeDispatcher):
         super().__init__()
         self.message_manager = message_manager
         self.fail = fail
-        self.batch_calls: list[tuple[list[str], str]] = []
+        self.batch_calls: list[list[str]] = []
         self.durable_seen = False
 
-    async def dispatch_live_wakes(
-        self, session_ids: list[str], *, priority: str = "normal"
-    ) -> list[dict[str, Any]]:
-        self.batch_calls.append((list(session_ids), priority))
+    async def dispatch_live_wakes(self, session_ids: list[str]) -> list[dict[str, Any]]:
+        self.batch_calls.append(list(session_ids))
         self.durable_seen = all(
             self.message_manager.get_messages(session_id) for session_id in session_ids
         )
@@ -80,9 +74,7 @@ class BatchWakeDispatcher(FakeWakeDispatcher):
 
 
 class FailingWakeDispatcher:
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]:
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
         raise RuntimeError(f"wake failed for {session_id}")
 
 
@@ -96,9 +88,7 @@ class StalledWakeDispatcher:
         self.finished: set[str] = set()
         self.tasks: list[asyncio.Task[Any]] = []
 
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]:
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
         self.calls.append(session_id)
         task = asyncio.current_task()
         assert task is not None
@@ -1068,7 +1058,7 @@ class TestMailboxBroadcast:
         assert ids["child-paused"] in result.recipient_session_ids
         assert ids["child-paused"] in result.wake_session_ids
         assert dispatcher.calls == []
-        assert dispatcher.batch_calls == [(result.wake_session_ids, "urgent")]
+        assert dispatcher.batch_calls == [result.wake_session_ids]
         assert dispatcher.durable_seen is True
         assert len(result.message_ids) == len(result.recipient_session_ids)
         assert [item["session_id"] for item in result.wake_results] == result.wake_session_ids
@@ -1556,9 +1546,7 @@ async def test_mailbox_nonroutine_decline_stays_at_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     class DecliningDispatcher:
-        async def dispatch_live_wake(
-            self, session_id: str, *, priority: str = "normal"
-        ) -> dict[str, Any]:
+        async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
             return {
                 "session_id": session_id,
                 "delivered": False,

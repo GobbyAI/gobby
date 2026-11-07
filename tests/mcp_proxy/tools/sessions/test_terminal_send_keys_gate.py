@@ -13,6 +13,7 @@ import psutil
 import pytest
 
 from gobby.agents.detection.safe_regex import RegexOutcome, RegexSearchResult, SafeRegex
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as gate
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import register_send_keys_tool
@@ -521,6 +522,65 @@ async def test_clear_key_drains_a_held_compact_so_a_later_handoff_does_not_repla
         None,
         "empty",
     )
+
+
+@pytest.fixture
+def held_wake_line() -> Iterator[ComposerLedger]:
+    """Bind a ledger whose composer holds the daemon's unsubmitted wake line (#21670)."""
+    ledger = ComposerLedger()
+    ledger.release(TERMINAL_ID)
+    ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload=CONTINUE_WAKE_MESSAGE)
+    bind_composer_ledger(ledger)
+    assert read_composer(TERMINAL_ID).state == "held"
+    yield ledger
+    bind_composer_ledger(None)
+
+
+@pytest.mark.asyncio
+async def test_clear_key_drains_a_held_wake_line_so_the_next_wake_types_fresh(
+    monkeypatch: pytest.MonkeyPatch, held_wake_line: ComposerLedger
+) -> None:
+    pane = _Pane(IDLE_COMPOSER)
+    manager = _scene(monkeypatch, composer=None, live_pane=pane)
+
+    cleared = await gate.send_keys_target_refusal(SESSION_ID, manager, object(), clear_held=True)
+
+    assert isinstance(cleared, gate.ComposerCleared)
+    assert "ctrl_u" in pane.keys
+    assert read_composer(TERMINAL_ID).state == "empty"
+    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        ({"foreground": {TERMINAL_ID: "zsh"}}, "send_keys_target_bare_shell"),
+        ({"snapshot": "Password:"}, "send_keys_credential_prompt"),
+    ],
+    ids=["bare-shell", "credential"],
+)
+async def test_replacing_a_composer_still_refuses_a_bare_shell_or_credential_prompt(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, Any], code: str
+) -> None:
+    manager = _scene(monkeypatch, composer="draft", **overrides)
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object(), replacing=True)
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == code
+
+
+@pytest.mark.asyncio
+async def test_replacing_a_visible_draft_admits_an_idle_agent_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft_frame = "────────────────────\n❯ hello\n────────────────────"
+    manager = _scene(monkeypatch, composer="draft", snapshot=draft_frame)
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object(), replacing=True)
+
+    assert refusal is None
 
 
 @pytest.mark.asyncio

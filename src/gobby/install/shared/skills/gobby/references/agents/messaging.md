@@ -22,7 +22,9 @@ Content never implies wake. Omitting `wake` requests immediate processing for di
 `wake=true`) applies that same rule to each recipient, with no claimed-task filter. A
 wake types `[Gobby] Check messages` only into an idle, paused, or waiting seat whose
 composer the terminal ledger confirms empty and that has no open turn; the seat then
-processes its queue without operator input. An active turn takes no typed input at any
+processes its queue without operator input. The target must also pass the send_keys
+target checks: a bare shell, a credential prompt, or a pane that does not show an idle
+agent composer is never typed into. An active turn takes no typed input at any
 priority: its message arrives through the hook mailbox on its next tool call. A draft,
 held, or unconfirmed composer, and an interrupted, input-, approval-, or
 handoff-waiting seat, take no typed input either, so the message stays queued until the
@@ -118,5 +120,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 2.3.0_
+_Version: 2.4.0_
 _Last verified: 2026-11-06_

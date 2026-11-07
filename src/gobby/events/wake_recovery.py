@@ -20,9 +20,7 @@ RunDb = Callable[..., Awaitable[Any]]
 
 
 class WakeReplayDispatcher(Protocol):
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]: ...
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
 
 
 class WakeReplayCoordinator:
@@ -140,10 +138,7 @@ class WakeReplayCoordinator:
         with self._state_lock:
             if self._closed:
                 return None
-        priority = (
-            "urgent" if any(message.priority == "urgent" for message in messages) else "normal"
-        )
-        return await self._dispatcher.dispatch_live_wake(session_id, priority=priority)
+        return await self._dispatcher.dispatch_live_wake(session_id)
 
     def _observe_task(
         self,

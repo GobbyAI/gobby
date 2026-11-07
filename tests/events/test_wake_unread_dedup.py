@@ -390,16 +390,16 @@ async def test_lost_wake_expires_and_the_next_message_wakes(
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_is_suppressed_while_a_fresh_wake_is_outstanding(
+async def test_repeat_wake_is_suppressed_while_a_fresh_wake_is_outstanding(
     harness: Harness,
 ) -> None:
     sender = RecordingSender()
     dispatcher = harness.dispatcher(sender)
     await harness.send(dispatcher, "first")
 
-    urgent = await dispatcher.dispatch_live_wake(harness.recipient, priority="urgent")
+    repeat = await dispatcher.dispatch_live_wake(harness.recipient)
 
-    assert urgent["skipped"] == "debounced"
+    assert repeat["skipped"] == "debounced"
     assert sender.submitted == [harness.terminal_id]
 
 

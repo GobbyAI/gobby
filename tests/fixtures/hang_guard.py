@@ -9,6 +9,7 @@ and exits the process instead.
 from __future__ import annotations
 
 import faulthandler
+import gc
 
 import pytest
 
@@ -29,3 +30,11 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     faulthandler.dump_traceback_later(
         float(config.getini("exit_watchdog_timeout")), exit=True, file=_STDERR_FD
     )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionfinish() -> None:
+    # Every full collection walks each object the suite imported, about 0.6M by the end
+    # of tests/memory. Freezing them first keeps unconfigure's collections and the
+    # interpreter's final collection from re-walking that heap (#25830).
+    gc.freeze()

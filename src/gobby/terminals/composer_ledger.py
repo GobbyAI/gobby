@@ -77,7 +77,6 @@ WriteKind = Literal["text", "key", "paste", "input"]
 STATE_VERSION = 1
 _HUMAN_ORIGINS = frozenset({"operator", "attention"})
 _INTERRUPT_KEYS = frozenset({"escape", "ctrl_c"})
-_CURSOR_KEYS = frozenset({"up", "down", "left", "right"})
 # Terminal replies are answers the viewer gives to the program's own queries (cursor
 # position, device attributes, DSR, DECRPM, kitty flags, DCS, OSC). They edit nothing,
 # so a composer holding only replies stays empty.
@@ -90,6 +89,10 @@ _INPUT_CONTROLS = re.compile(
     rf"{_TERMINAL_REPLIES}|"
     r"(?P<cursor>\x1b\[[\d;]*[ABCD]|\x1bO[ABCD])"
 )
+
+
+def _moves_cursor(payload: str) -> bool:
+    return any(match.group("cursor") is not None for match in _INPUT_CONTROLS.finditer(payload))
 
 
 @dataclass(frozen=True)
@@ -189,14 +192,9 @@ class ComposerLedger:
                 return
             entry = self._entries.get(event.terminal_id)
             if entry is not None:
-                if (
-                    not event.submit
-                    and event.interrupt is None
-                    and (
-                        event.effect == "control"
-                        or (event.effect == "cursor" and entry.pending_seq <= entry.clean_seq)
-                    )
-                ):
+                # A viewer report (focus, mouse, reply) edits nothing; every other host
+                # input may edit the composer, so it drafts it.
+                if not event.submit and event.interrupt is None and event.effect == "control":
                     return
                 self._human(entry, submit=event.submit, interrupt=event.interrupt is not None)
 
@@ -225,28 +223,18 @@ class ComposerLedger:
                     )
                 )
                 is_interrupt = kind == "key" and payload in _INTERRUPT_KEYS
-                has_text = not (kind == "key" and payload in _CURSOR_KEYS) and (
-                    (kind == "paste" and bool(payload)) or "\x1b[200~" in payload or bool(text)
-                )
-                # History recall or cursor movement invalidates a held payload's
-                # exact text, so a retry cannot safely submit it with bare Enter.
-                edits_held = entry.pending_seq > entry.clean_seq and (
-                    (kind == "key" and payload in _CURSOR_KEYS)
-                    or (
-                        kind == "input"
-                        and any(
-                            match.group("cursor") is not None
-                            for match in _INPUT_CONTROLS.finditer(payload)
-                        )
+                # A viewer report (focus, mouse, reply) edits nothing and never comes from a
+                # person, so a pane click cannot block every wake. Any other human input
+                # fails closed: a cursor key recalls history and control-only input may
+                # delete or rewrite the composer, so it stays a draft until a submit or
+                # drain confirms it empty.
+                viewer_report = kind == "input" and not text and not _moves_cursor(payload)
+                if is_submit or is_interrupt or not viewer_report:
+                    self._human(
+                        entry,
+                        submit=is_submit,
+                        interrupt=is_interrupt,
                     )
-                )
-                if not (is_submit or is_interrupt or has_text or edits_held):
-                    return
-                self._human(
-                    entry,
-                    submit=is_submit,
-                    interrupt=is_interrupt,
-                )
                 return
             seq = self._next()
             if kind == "key":

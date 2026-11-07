@@ -172,6 +172,8 @@ async def send_keys_target_refusal(
     terminal_runtime_registry: Any | None,
     *,
     clear_held: bool = False,
+    replacing: bool = False,
+    resolved_terminal: Any | None = None,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
 
@@ -179,11 +181,21 @@ async def send_keys_target_refusal(
     text, the composer is drained through the pane (recording the drain, so no held
     command is replayed later) and ``ComposerCleared`` is returned; every other
     check still applies.
+
+    ``replacing`` is set when the caller clears leftover composer text itself before
+    its write, as an operator comms wake does. The composer-state checks then do not
+    apply; the target identity, credential prompt and turn checks still do.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
     try:
-        terminal = terminal_manager.get_live_for_session(session_id)
+        # A wake passes the terminal it resolved, which may be bound by context id
+        # rather than by session id; the session lookup is the send_keys fallback.
+        terminal = (
+            resolved_terminal
+            if resolved_terminal is not None
+            else terminal_manager.get_live_for_session(session_id)
+        )
         if terminal is None:
             return _refuse("send_keys_no_live_terminal", "the target has no live terminal")
 
@@ -210,7 +222,7 @@ async def send_keys_target_refusal(
 
         composer = read_composer(terminal.id)
         draining = clear_held and composer.state == "held"
-        if composer.state != "empty" and not draining:
+        if composer.state != "empty" and not (draining or replacing):
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
@@ -250,8 +262,8 @@ async def send_keys_target_refusal(
             or activity.match is None
             or busy
             or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
-            # A held draft is visible in the frame; only the drain may touch it.
-            or (not draining and read_frame(snapshot).state != "empty")
+            # A held draft is visible in the frame; only the drain or a replacement may touch it.
+            or (not (draining or replacing) and read_frame(snapshot).state != "empty")
         ):
             return _refuse(
                 "send_keys_composer_not_idle",
