@@ -108,6 +108,31 @@ def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
         click.echo(f"  Check runtime output: {runtime_log_file}", err=True)
 
 
+def _note_backend_state(resp: httpx.Response, noted: set[str]) -> None:
+    """Show each backend state the front door reports while readiness is awaited.
+
+    The front door's 503 body names the backend state and target that readiness waits on.
+    Each distinct state prints once, so a start that never leaves ``starting`` names it at
+    the wait instead of only in silence.
+    """
+    try:
+        payload = resp.json()
+    except ValueError:
+        return
+    backend = payload.get("backend") if isinstance(payload, dict) else None
+    if not isinstance(backend, dict):
+        return
+    state = backend.get("state")
+    target = backend.get("target")
+    if not isinstance(state, str) or not isinstance(target, str):
+        return
+    key = f"{state} {target}"
+    if key in noted:
+        return
+    noted.add(key)
+    _step(f"waiting for startup readiness: backend state '{state}' at {target}")
+
+
 def _poll_startup_progress(
     http_port: int,
     max_wait: float = STARTUP_READINESS_TIMEOUT_SECONDS,
@@ -126,6 +151,7 @@ def _poll_startup_progress(
     displayed_errors: set[str] = set()
     deadline = time.monotonic() + max_wait
     shown_header = False
+    noted_backend_states: set[str] = set()
 
     while (remaining := deadline - time.monotonic()) > 0:
         if child_exited is not None and child_exited():
@@ -140,6 +166,7 @@ def _poll_startup_progress(
                 if refusal is not None:
                     _step(f"Backend unavailable: {refusal}", error=True)
                     return False
+                _note_backend_state(resp, noted_backend_states)
                 time.sleep(0.5)
                 continue
             progress = resp.json()

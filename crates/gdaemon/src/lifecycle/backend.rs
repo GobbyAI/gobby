@@ -24,7 +24,7 @@ use tokio::{
     process::{Child, Command},
     sync::{Mutex, watch},
     task::JoinHandle,
-    time::{Instant, interval, sleep_until, timeout},
+    time::{Instant, interval, interval_at, sleep_until, timeout},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,7 +146,10 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Stopped);
         }
         if let Some(lease) = &self.lease
-            && lease.lock().await.fence().is_none()
+            && lock_reporting(lease, self.config.report_interval, &*self.config.reporter)
+                .await
+                .fence()
+                .is_none()
         {
             return Ok(SupervisorExit::Standby);
         }
@@ -165,7 +168,12 @@ impl BackendSupervisor {
         }
         let release = match &self.lease {
             _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
-            Some(lease) => lease.lock().await.release().await,
+            Some(lease) => {
+                lock_reporting(lease, self.config.report_interval, &*self.config.reporter)
+                    .await
+                    .release()
+                    .await
+            }
             None => Ok(()),
         };
         match result {
@@ -187,6 +195,10 @@ impl BackendSupervisor {
             !self.config.heartbeat_interval.is_zero(),
             "heartbeat interval must be positive"
         );
+        ensure!(
+            !self.config.report_interval.is_zero(),
+            "report interval must be positive"
+        );
         let mut markers = IntentMarker::new(&self.config.home);
         let mut crashes = 0u32;
         let mut heartbeats = interval(self.config.heartbeat_interval);
@@ -207,7 +219,14 @@ impl BackendSupervisor {
             let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
-            let status: ExitStatus = loop {
+            let mut reports = interval_at(
+                Instant::now() + self.config.report_interval,
+                self.config.report_interval,
+            );
+            reports.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // The first intent this backend announced, and when the supervisor first saw it.
+            let mut announced: Option<(Intent, Instant)> = None;
+            let (status, reaped): (ExitStatus, bool) = loop {
                 tokio::select! { biased;
                     _ = shutdown_signal(shutdown) => {
                         backend.drain(self.config.drain_timeout).await?;
@@ -217,20 +236,43 @@ impl BackendSupervisor {
                         }
                         return Ok(SupervisorExit::Stopped);
                     }
-                    status = backend.child.wait() => break status?,
+                    status = backend.child.wait() => break (status?, false),
                     _ = heartbeats.tick() => {
                         if let Err(error) = self.heartbeat().await {
                             eprintln!("backend lease lost: {error:#}");
                             backend.drain(self.config.drain_timeout).await?;
+                            self.state.send_replace(BackendStatus::Stopped);
                             return Ok(SupervisorExit::LeaseLost);
                         }
+                        if announced.is_none() {
+                            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+                            if let Some(intent) = markers.pending(now).await? {
+                                announced = Some((intent, Instant::now()));
+                            }
+                        }
+                        // A backend that announced its own exit gets the grace to leave on its
+                        // own; a lingering one is drained, and its intent is then applied below.
+                        if let Some((_, seen)) = announced
+                            && seen.elapsed() >= self.config.exit_grace
+                        {
+                            break (backend.drain(self.config.drain_timeout).await?, true);
+                        }
+                    }
+                    _ = reports.tick() => {
+                        self.report_wait(
+                            pid,
+                            started_at,
+                            announced.map(|(intent, seen)| (intent, seen.elapsed())),
+                        );
                     }
                 }
             };
-            // The leader may exit while descendants retain sockets or stderr.
-            // Retain process-group ownership through reaping, including exit 78.
-            backend.kill_group()?;
-            backend.finish_stderr().await;
+            if !reaped {
+                // The leader may exit while descendants retain sockets or stderr.
+                // Retain process-group ownership through reaping, including exit 78.
+                backend.kill_group()?;
+                backend.finish_stderr().await;
+            }
             if started_at.elapsed() >= Duration::from_secs(30) {
                 crashes = 0;
             }
@@ -245,6 +287,8 @@ impl BackendSupervisor {
                 });
                 return Ok(SupervisorExit::Refused);
             }
+            // The child is gone: report it down until the next spawn or stop, not starting.
+            self.state.send_replace(BackendStatus::Stopped);
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
             let intent = markers.after_exit(now).await?;
             if shutdown_requested(shutdown) {
@@ -290,9 +334,25 @@ impl BackendSupervisor {
 
     async fn heartbeat(&self) -> Result<()> {
         if let Some(lease) = &self.lease {
-            lease.lock().await.heartbeat().await?;
+            lock_reporting(lease, self.config.report_interval, &*self.config.reporter)
+                .await
+                .heartbeat()
+                .await?;
         }
         Ok(())
+    }
+
+    /// Logs what a live backend is still waited on; called once per report interval.
+    fn report_wait(&self, pid: u32, started_at: Instant, announced: Option<(Intent, Duration)>) {
+        let elapsed = started_at.elapsed().as_secs();
+        let line = match announced {
+            None => format!("backend pid {pid} has run {elapsed}s; waiting on its exit"),
+            Some((intent, seen)) => format!(
+                "backend pid {pid} has run {elapsed}s; waiting on its exit after announced {intent:?} (drains in {}s)",
+                self.config.exit_grace.saturating_sub(seen).as_secs()
+            ),
+        };
+        (self.config.reporter)(&line);
     }
 }
 
@@ -428,21 +488,21 @@ impl BackendChild {
         }
     }
 
-    async fn drain(&mut self, deadline: Duration) -> Result<()> {
+    async fn drain(&mut self, deadline: Duration) -> Result<ExitStatus> {
         if !self.signal_owned_group(libc::SIGTERM)? {
             self.group = None;
-            self.child.wait().await?;
+            let status = self.child.wait().await?;
             self.finish_stderr().await;
-            return Ok(());
+            return Ok(status);
         }
         // Keep the group leader unreaped through the grace window: its PID
         // cannot be reused for an unrelated group even if a launcher exits
         // before its TERM-ignoring descendant. Then kill and reap the command.
         sleep_until(Instant::now() + deadline).await;
         self.kill_group()?;
-        timeout(Duration::from_secs(5), self.child.wait()).await??;
+        let status = timeout(Duration::from_secs(5), self.child.wait()).await??;
         self.finish_stderr().await;
-        Ok(())
+        Ok(status)
     }
 
     fn signal_owned_group(&mut self, signal: i32) -> io::Result<bool> {
@@ -503,13 +563,18 @@ fn publish_line(line: &mut Vec<u8>, last: &watch::Sender<String>) {
     line.clear();
 }
 
-/// Takes the lease lock. Behavior-free stub: reporting is added with the fix.
+/// Takes `lock`, reporting through `reporter` at each `interval` it stays held by another task.
 async fn lock_reporting<'a, T>(
     lock: &'a Mutex<T>,
-    _interval: Duration,
-    _reporter: &(dyn Fn(&str) + Send + Sync),
+    interval: Duration,
+    reporter: &(dyn Fn(&str) + Send + Sync),
 ) -> tokio::sync::MutexGuard<'a, T> {
-    lock.lock().await
+    loop {
+        if let Ok(guard) = timeout(interval, lock.lock()).await {
+            return guard;
+        }
+        reporter("backend supervisor waiting on the lease lock held by another daemon task");
+    }
 }
 
 #[cfg(test)]

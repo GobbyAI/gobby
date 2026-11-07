@@ -942,13 +942,14 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
 async fn lingering_backend_after_announced_restart_is_drained_and_respawned() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;
-        let script = r#"import os,pathlib,time
+        let script = r#"import os,pathlib,signal
 from gobby.shutdown_intent import write_shutdown_intent
 home=pathlib.Path(os.environ['GOBBY_HOME']); p=home/'starts'
 n=len(p.read_text())+1 if p.exists() else 1
 p.write_text('a'*n)
 write_shutdown_intent('test_restart' if n==1 else 'test_stop', 'restart' if n==1 else 'stop', home=home)
-time.sleep(3600)
+while True:
+    signal.pause()
 "#;
         let mut supervisor = db.supervisor(home.path(), script).await?;
         let (_tx, rx) = watch::channel(false);
@@ -969,25 +970,25 @@ time.sleep(3600)
 async fn silent_backend_wait_is_reported_each_interval() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;
-        let lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let sink = Arc::clone(&lines);
+        let (line_tx, mut lines) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut supervisor = db
             .supervisor_with(
                 home.path(),
-                "import time\ntime.sleep(3600)\n",
+                "import signal\nwhile True:\n    signal.pause()\n",
                 move |config| {
                     config.report_interval = Duration::from_millis(100);
                     config.reporter = Arc::new(move |line: &str| {
-                        sink.lock().expect("report sink").push(line.to_owned());
+                        let _ = line_tx.send(line.to_owned());
                     });
                 },
             )
             .await?;
         let (stop, rx) = watch::channel(false);
         let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let mut reports = Vec::new();
         timeout(Duration::from_secs(10), async {
-            while lines.lock().expect("report sink").len() < 3 {
-                sleep(Duration::from_millis(20)).await;
+            while reports.len() < 3 {
+                reports.push(lines.recv().await.expect("report channel open"));
             }
         })
         .await?;
@@ -996,7 +997,9 @@ async fn silent_backend_wait_is_reported_each_interval() -> Result<()> {
             timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::Stopped
         );
-        let reports = lines.lock().expect("report sink").clone();
+        while let Ok(line) = lines.try_recv() {
+            reports.push(line);
+        }
         assert!(
             reports
                 .iter()
