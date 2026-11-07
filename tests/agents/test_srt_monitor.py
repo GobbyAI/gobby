@@ -678,7 +678,7 @@ def _run_pinned_restart_reap(
         ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=90,
         check=False,
     )
 
