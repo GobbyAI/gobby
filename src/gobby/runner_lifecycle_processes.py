@@ -17,6 +17,9 @@ logger = logging.getLogger("gobby.runner_lifecycle")
 # Bounds the managed-run listing that gates the child reap, so a stalled hub cannot
 # consume the deadline-path reap budget. A timeout skips the reap, as a failed listing does.
 _AGENT_RUN_LISTING_SECONDS = 3.0
+# Bounds the reaper's pre-kill enumeration. The live-broker and node-launcher probes in
+# srt_monitor each take at most _PROBE_TIMEOUT_SECONDS (2s); the psutil reads are synchronous.
+_CHILD_ENUMERATION_BUDGET_SECONDS = 4.0
 
 
 def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
@@ -94,7 +97,12 @@ async def _reap_remaining_child_processes(
     preserved_agent_pids: set[int] | None = None,
     preserve_srt_monitor: bool = False,
 ) -> None:
-    """Terminate then force-kill child processes that survived graceful shutdown."""
+    """Terminate then force-kill child processes that survived graceful shutdown.
+
+    Enumeration is bounded and names the step it was in when it overran. Once the reapable
+    children are known, the sweeps run in a shielded task: a cancelled caller still waits
+    for every SIGKILLed child to be reaped before the cancellation is raised.
+    """
     try:
         import psutil
 
@@ -104,92 +112,138 @@ async def _reap_remaining_child_processes(
             logger.debug("No child processes remaining after graceful shutdown")
             return
 
-        if preserve_agents:
-            from gobby.agents.srt_monitor import (
-                live_monitor_identities,
-                pinned_monitor_identities,
-                verified_monitor_paths,
-            )
-
-            monitor_identities: dict[int, float] = {}
-            pinned_only: set[int] = set()
-            if preserve_srt_monitor:
-                registered = await asyncio.to_thread(live_monitor_identities)
-                paths = await asyncio.to_thread(verified_monitor_paths)
-                pinned: dict[int, float] = {}
-                if paths is not None:
-                    node, runner = paths
-                    pinned = await asyncio.to_thread(
-                        pinned_monitor_identities, children, node, runner
+        step = "child enumeration"
+        try:
+            async with asyncio.timeout(_CHILD_ENUMERATION_BUDGET_SECONDS):
+                if preserve_agents:
+                    from gobby.agents.srt_monitor import (
+                        live_monitor_identities,
+                        pinned_monitor_identities,
+                        verified_monitor_paths,
                     )
-                pinned_only = set(pinned) - set(registered)
-                monitor_identities = {**pinned, **registered}
-            preserved_pids = _expand_preserved_agent_processes(
-                psutil,
-                children,
-                (preserved_agent_pids or set()) | set(monitor_identities),
-                monitor_identities,
+
+                    monitor_identities: dict[int, float] = {}
+                    pinned_only: set[int] = set()
+                    if preserve_srt_monitor:
+                        step = "live_monitor_identities"
+                        registered = await asyncio.to_thread(live_monitor_identities)
+                        step = "verified_monitor_paths"
+                        paths = await asyncio.to_thread(verified_monitor_paths)
+                        pinned: dict[int, float] = {}
+                        if paths is not None:
+                            node, runner = paths
+                            step = "pinned_monitor_identities"
+                            pinned = await asyncio.to_thread(
+                                pinned_monitor_identities, children, node, runner
+                            )
+                        pinned_only = set(pinned) - set(registered)
+                        monitor_identities = {**pinned, **registered}
+                    step = "preserved-process expansion"
+                    preserved_pids = _expand_preserved_agent_processes(
+                        psutil,
+                        children,
+                        (preserved_agent_pids or set()) | set(monitor_identities),
+                        monitor_identities,
+                    )
+                    for pid in sorted(monitor_identities):
+                        if pid in preserved_pids:
+                            source = "pinned-argv" if pid in pinned_only else "registry-or-record"
+                            logger.info(
+                                "Preserving SRT monitor broker pid=%d source=%s", pid, source
+                            )
+                    reapable_children = [
+                        child for child in children if child.pid not in preserved_pids
+                    ]
+                    preserved_count = len(children) - len(reapable_children)
+                    if preserved_count:
+                        logger.info(
+                            "Preserving %d agent and monitor child process(es) during restart",
+                            preserved_count,
+                        )
+                    children = reapable_children
+                    if not children:
+                        logger.debug(
+                            "No non-agent child processes remaining after restart preservation"
+                        )
+                        return
+        except TimeoutError:
+            logger.error(
+                "Child process enumeration exceeded %.1fs during %s; left unreaped: %s",
+                _CHILD_ENUMERATION_BUDGET_SECONDS,
+                step,
+                _describe_children(children, root_pid=current_process.pid),
             )
-            for pid in sorted(monitor_identities):
-                if pid in preserved_pids:
-                    source = "pinned-argv" if pid in pinned_only else "registry-or-record"
-                    logger.info("Preserving SRT monitor broker pid=%d source=%s", pid, source)
-            reapable_children = [child for child in children if child.pid not in preserved_pids]
-            preserved_count = len(children) - len(reapable_children)
-            if preserved_count:
-                logger.info(
-                    "Preserving %d agent and monitor child process(es) during restart",
-                    preserved_count,
-                )
-            children = reapable_children
-            if not children:
-                logger.debug("No non-agent child processes remaining after restart preservation")
-                return
+            return
+        except asyncio.CancelledError:
+            logger.warning(
+                "Child process enumeration was cancelled during %s; left unreaped: %s",
+                step,
+                _describe_children(children, root_pid=current_process.pid),
+            )
+            raise
 
         logger.info(
             "Reaping %d remaining child process(es) after graceful shutdown: %s",
             len(children),
-            "; ".join(
-                _describe_child_process(child, root_pid=current_process.pid) for child in children
-            ),
+            _describe_children(children, root_pid=current_process.pid),
         )
-        for child in children:
+        # Shielded: a caller's cancellation waits for the sweep, so every SIGKILLed child is
+        # waited on before the cancellation propagates.
+        sweep = asyncio.create_task(
+            _sweep_children(children, timeout=timeout, root_pid=current_process.pid),
+            name="child-process-sweep",
+        )
+        cancellation: asyncio.CancelledError | None = None
+        while not sweep.done():
             try:
-                child.terminate()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-
-        gone, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout=timeout)
-        logger.debug(
-            "Child process termination sweep complete",
-            extra={"terminated": len(gone), "remaining": len(alive)},
-        )
-
-        if alive:
-            logger.warning(
-                "Force-killing %d child process(es) still alive after graceful shutdown: %s",
-                len(alive),
-                "; ".join(
-                    _describe_child_process(child, root_pid=current_process.pid) for child in alive
-                ),
-            )
-            for child in alive:
-                try:
-                    child.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            _, still_alive = await asyncio.to_thread(psutil.wait_procs, alive, timeout=timeout)
-            if still_alive:
-                logger.error(
-                    "%d child process(es) still alive after force-kill: %s",
-                    len(still_alive),
-                    "; ".join(
-                        _describe_child_process(child, root_pid=current_process.pid)
-                        for child in still_alive
-                    ),
-                )
+                await asyncio.shield(sweep)
+            except asyncio.CancelledError as exc:
+                cancellation = cancellation or exc
+        if cancellation is not None:
+            raise cancellation
     except Exception as e:
         logger.warning("Child process reap failed: %s", e)
+
+
+async def _sweep_children(children: list[Any], *, timeout: float, root_pid: int) -> None:
+    """Terminate each child, then force-kill and reap each one still alive after the grace."""
+    import psutil
+
+    for child in children:
+        try:
+            child.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    gone, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout=timeout)
+    logger.debug(
+        "Child process termination sweep complete",
+        extra={"terminated": len(gone), "remaining": len(alive)},
+    )
+    if not alive:
+        return
+
+    logger.warning(
+        "Force-killing %d child process(es) still alive after graceful shutdown: %s",
+        len(alive),
+        _describe_children(alive, root_pid=root_pid),
+    )
+    for child in alive:
+        try:
+            child.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    _, still_alive = await asyncio.to_thread(psutil.wait_procs, alive, timeout=timeout)
+    if still_alive:
+        logger.error(
+            "%d child process(es) still alive after force-kill: %s",
+            len(still_alive),
+            _describe_children(still_alive, root_pid=root_pid),
+        )
+
+
+def _describe_children(processes: list[Any], *, root_pid: int) -> str:
+    return "; ".join(_describe_child_process(child, root_pid=root_pid) for child in processes)
 
 
 def _expand_preserved_agent_processes(

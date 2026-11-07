@@ -47,9 +47,9 @@ _OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
 _HEALTH_CHECK_SETTLE_SECONDS = 2.0
 _TERMINAL_DELIVERY_SETTLE_SECONDS = 6.0
 _FINALIZER_SETTLE_SECONDS = 10.0
-# Budget for the child-process tail when the overall deadline cut the cleanup before its
-# reap. Each step is bounded: pool drain 2s, CLI calls 5s, agent listing 3s, reap ~2s.
-_DEADLINE_CHILD_REAP_BUDGET_SECONDS = 15.0
+# Child-process tail after an overrun, worst case: pool drain 3s (2s wait, 1s kill reap), CLI
+# calls 5s, agent listing 3s, reaper enumeration 4s, sweeps 2s (1s SIGTERM wait, 1s SIGKILL wait).
+_DEADLINE_CHILD_REAP_BUDGET_SECONDS = 17.0
 # Per-step bounds for the async cleanup steps that ran without their own timeout. A step
 # that overruns is named in the log instead of silently consuming the overall deadline.
 _CLEANUP_STEP_TIMEOUT_SECONDS = 2.0
