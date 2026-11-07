@@ -174,57 +174,111 @@ def _executable(path: Path, *, mtime: float, mode: int = 0o755) -> Path:
     return path
 
 
-def test_live_tree_prunes_superseded_executables_and_keeps_the_newest(
+def _test_unit(profile: Path, package: str, meta: str) -> None:
+    """Record a Cargo test unit: its fingerprint names a test target, as Cargo writes it."""
+    unit = profile / ".fingerprint" / f"{package}-{meta}"
+    unit.mkdir(parents=True, exist_ok=True)
+    (unit / "test-gobby_core").write_text("", encoding="utf-8")
+
+
+def test_under_budget_a_live_tree_keeps_every_test_executable(
     root: Path, trees: dict[str, Path]
 ) -> None:
-    deps = trees["live_operator"] / "debug" / "deps"
-    superseded = _executable(deps / "gobby_core-0123456789abcdef", mtime=STALE)
-    newest = _executable(deps / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
+    profile = trees["live_operator"] / "debug"
+    _test_unit(profile, "gobby-core", "0123456789abcdef")
+    _test_unit(profile, "gobby-core", "fedcba9876543210")
+    older = _executable(profile / "deps" / "gobby_core-0123456789abcdef", mtime=STALE)
+    newer = _executable(profile / "deps" / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
 
     findings = sweep_build_root(root, [trees["live"], trees["other"]], apply=True, now=NOW)
 
-    assert _action_for(findings, superseded) is SweepAction.REMOVED
-    assert not superseded.exists()
-    assert newest.is_file()
-
-
-def test_recent_superseded_executables_stay_in_a_live_tree(
-    root: Path, trees: dict[str, Path]
-) -> None:
-    deps = trees["live_operator"] / "debug" / "deps"
-    older = _executable(deps / "gobby_core-0123456789abcdef", mtime=RECENT - 120)
-    newest = _executable(deps / "gobby_core-fedcba9876543210", mtime=RECENT)
-
-    findings = sweep_build_root(root, [trees["live"], trees["other"]], apply=True, now=NOW)
-
-    assert _action_for(findings, older) is SweepAction.KEEP_RECENT
     assert older.is_file()
-    assert newest.is_file()
+    assert newer.is_file()
+    assert not [finding for finding in findings if finding.path in (older, newer)]
 
 
-def test_dry_run_reports_superseded_executables_without_removing(
+def test_over_budget_the_oldest_test_executable_goes_first(
     root: Path, trees: dict[str, Path]
 ) -> None:
-    deps = trees["live_operator"] / "debug" / "deps"
-    superseded = _executable(deps / "gobby_core-0123456789abcdef", mtime=STALE)
-    _executable(deps / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
+    profile = trees["live_operator"] / "debug"
+    _test_unit(profile, "gobby-core", "0123456789abcdef")
+    _test_unit(profile, "gobby-core", "fedcba9876543210")
+    older = _executable(profile / "deps" / "gobby_core-0123456789abcdef", mtime=STALE)
+    newer = _executable(profile / "deps" / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
 
-    findings = sweep_build_root(root, [trees["live"], trees["other"]], apply=False, now=NOW)
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=True, now=NOW, executable_budget_bytes=64
+    )
 
-    assert _action_for(findings, superseded) is SweepAction.WOULD_REMOVE
-    assert superseded.is_file()
+    assert _action_for(findings, older) is SweepAction.REMOVED
+    assert not older.exists()
+    assert newer.is_file()
+
+
+def test_a_variant_built_within_the_quiet_window_survives_an_over_budget_trim(
+    root: Path, trees: dict[str, Path]
+) -> None:
+    profile = trees["live_operator"] / "debug"
+    _test_unit(profile, "gobby-core", "0123456789abcdef")
+    _test_unit(profile, "gobby-core", "fedcba9876543210")
+    stale_variant = _executable(profile / "deps" / "gobby_core-0123456789abcdef", mtime=STALE)
+    live_variant = _executable(profile / "deps" / "gobby_core-fedcba9876543210", mtime=RECENT)
+
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=True, now=NOW, executable_budget_bytes=0
+    )
+
+    assert _action_for(findings, stale_variant) is SweepAction.REMOVED
+    assert _action_for(findings, live_variant) is SweepAction.KEEP_RECENT
+    assert live_variant.is_file()
+
+
+def test_bin_executables_are_never_trimmed(root: Path, trees: dict[str, Path]) -> None:
+    profile = trees["live_operator"] / "debug"
+    bin_unit = profile / ".fingerprint" / "gobby-core-0123456789abcdef"
+    bin_unit.mkdir(parents=True)
+    (bin_unit / "bin-gobby_core").write_text("", encoding="utf-8")
+    binary = _executable(profile / "deps" / "gobby_core-0123456789abcdef", mtime=STALE)
+
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=True, now=NOW, executable_budget_bytes=0
+    )
+
+    assert binary.is_file()
+    assert not [finding for finding in findings if finding.path == binary]
+
+
+def test_dry_run_reports_the_trim_without_removing(root: Path, trees: dict[str, Path]) -> None:
+    profile = trees["live_operator"] / "debug"
+    _test_unit(profile, "gobby-core", "0123456789abcdef")
+    _test_unit(profile, "gobby-core", "fedcba9876543210")
+    older = _executable(profile / "deps" / "gobby_core-0123456789abcdef", mtime=STALE)
+    _executable(profile / "deps" / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
+
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=False, now=NOW, executable_budget_bytes=64
+    )
+
+    assert _action_for(findings, older) is SweepAction.WOULD_REMOVE
+    assert older.is_file()
 
 
 def test_prune_ignores_non_executables_and_unhashed_names(
     root: Path, trees: dict[str, Path]
 ) -> None:
-    deps = trees["live_operator"] / "debug" / "deps"
+    profile = trees["live_operator"] / "debug"
+    _test_unit(profile, "gobby-core", "0123456789abcdef")
+    _test_unit(profile, "gobby-core", "fedcba9876543210")
+    deps = profile / "deps"
     data = _executable(deps / "gobby_core-0123456789abcdef", mtime=STALE, mode=0o644)
     unhashed = _executable(deps / "gobby_core", mtime=STALE)
-    _executable(deps / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
+    trimmed = _executable(deps / "gobby_core-fedcba9876543210", mtime=STALE + 3600)
 
-    findings = sweep_build_root(root, [trees["live"], trees["other"]], apply=True, now=NOW)
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=True, now=NOW, executable_budget_bytes=0
+    )
 
+    assert _action_for(findings, trimmed) is SweepAction.REMOVED
     assert data.is_file()
     assert unhashed.is_file()
     assert not [finding for finding in findings if finding.path in (data, unhashed)]

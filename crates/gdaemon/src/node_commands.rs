@@ -330,6 +330,9 @@ pub struct SpawnPayload {
     #[serde(deserialize_with = "Option::deserialize")]
     pub title: Option<String>,
     pub source_root: String,
+    /// The daemon's configured build-output root (`agent_build.build_root`): an absolute,
+    /// canonical directory. Cargo target folders for every launch live under it.
+    pub build_root: String,
     pub workspace: SpawnWorkspace,
     #[serde(deserialize_with = "Option::deserialize")]
     pub agent_name: Option<String>,

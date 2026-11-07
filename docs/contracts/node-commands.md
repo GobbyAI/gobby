@@ -162,6 +162,7 @@ Payload, in order:
 | `timeout_seconds` | number |
 | `title` | string or null |
 | `source_root` | string |
+| `build_root` | string, the daemon's configured build-output root (`agent_build.build_root`), absolute and canonical; cargo target folders for every launch live under it |
 | `workspace` | `{mode, path, branch_name, base_branch}` |
 | `agent_name`, `api_base`, `api_token`, `codex_oss_provider`, `resume_session_id`, `execution_mode`, `code_index_preflight`, `task_id` | string or null |
 | `extra_env` | object of strings |
@@ -713,6 +714,8 @@ Each `SpawnRequest` field (`src/gobby/agents/spawn_models.py`) that the
 - `initial_variables`: the hub writes them to the child session in
   `prepare_terminal_spawn` before it sends, and agy's second merge is
   redundant on that path.
+- `placement_releaser`: a hub-side callable that frees the terminal placement;
+  the node never receives it.
 - `claimed_session_id`, `machine_id`, `is_local`: run-row attributes the hub
   records. A loopback endpoint is refused with `remote_loopback_endpoint`,
   and node bodies name no machine.

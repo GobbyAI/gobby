@@ -259,6 +259,7 @@ fn policy_inputs(
         workspace: cwd.to_owned(),
         home: context.home.clone(),
         gobby_home: gobby_home.to_owned(),
+        build_root: PathBuf::from(&payload.build_root),
         env,
         provider_executable: find_on_path(&context.path_env, &payload.provider),
         daemon_port: context.daemon_port,

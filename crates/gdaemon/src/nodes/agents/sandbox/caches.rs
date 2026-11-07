@@ -255,8 +255,7 @@ pub(super) fn grant_declared_nextest(config: &mut Sandbox, source_root: &Path, p
 /// `ensure_agent_cargo_target_dir`: the unsandboxed agent target for this checkout.
 pub(super) fn agent_cargo_target_dir(inputs: &PolicyInputs) -> String {
     let project_root = inputs
-        .gobby_home
-        .join("cache")
+        .build_root
         .join("cargo-target-v2")
         .join(safe_component(&inputs.project_id, 80, "unknown-project"));
     let checkout = super::checkout_component(&inputs.workspace);
@@ -350,6 +349,8 @@ pub(super) struct RunLayout {
     pub logs: PathBuf,
     pub cache: PathBuf,
     pub shared_cache: PathBuf,
+    /// The build root's `sandbox` folder. `cargo_target` must resolve under it.
+    pub build_sandbox: PathBuf,
     pub cargo_target: PathBuf,
 }
 
@@ -423,11 +424,18 @@ pub(super) fn run_layout(
         None => secure_policy_directory(gobby, &inputs.run_id)?,
     };
     let shared_cache = gobby.join("cache").join("sandbox");
-    let cargo_target = shared_cache
+    if !inputs.build_root.is_absolute() {
+        bail!(
+            "Agent build root {} is not absolute; the hub sends the canonical configured root",
+            inputs.build_root.display()
+        );
+    }
+    let build_sandbox = inputs.build_root.join("sandbox");
+    let cargo_target = build_sandbox
         .join("cargo-target")
         .join(super::checkout_component(&inputs.workspace));
     check_cache_path(&shared_cache, &shared_cache.join("cargo-home"))?;
-    check_cache_path(&shared_cache, &cargo_target)?;
+    check_cache_path(&build_sandbox, &cargo_target)?;
     Ok(RunLayout {
         root: root.clone(),
         tmp: root.join("tmp"),
@@ -435,6 +443,7 @@ pub(super) fn run_layout(
         logs: root.join("logs"),
         cache: root.join("cache"),
         shared_cache,
+        build_sandbox,
         cargo_target,
     })
 }
@@ -442,8 +451,11 @@ pub(super) fn run_layout(
 /// Re-checks the cargo grants once `compile_policy` has rendered them, so a link
 /// swapped in during compilation is refused as one present at layout time would be.
 pub(super) fn recheck_cache_grants(layout: &RunLayout, write_paths: &[String]) -> Result<()> {
-    for path in [layout.cargo_home(), layout.cargo_target.clone()] {
-        check_cache_path(&layout.shared_cache, &path)?;
+    for (shared, path) in [
+        (&layout.shared_cache, layout.cargo_home()),
+        (&layout.build_sandbox, layout.cargo_target.clone()),
+    ] {
+        check_cache_path(shared, &path)?;
         if !write_paths.contains(&text(&resolve_nonstrict(&path))) {
             bail!(
                 "Sandbox cache grant {} resolved outside the sandbox cache",

@@ -6,11 +6,13 @@ import logging
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from gobby.agents import build_root as build_root_module
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor_providers import _agent_prompt_prefix
@@ -226,6 +228,18 @@ def test_sandbox_is_resolved_config(temp_db: HubDatabase) -> None:
     wire = payload.model_dump(mode="json")
     assert wire["sandbox"] == sandbox.model_dump(mode="json")
     assert "network" not in wire["sandbox"]
+
+
+def test_payload_carries_the_configured_build_root(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "GobbyBuild").resolve()
+    root.mkdir()
+    monkeypatch.setattr(build_root_module, "_configured", root)
+
+    payload = _build(temp_db, _run(), _request())
+
+    assert payload.build_root == str(root)
 
 
 def test_endpoint_fields(

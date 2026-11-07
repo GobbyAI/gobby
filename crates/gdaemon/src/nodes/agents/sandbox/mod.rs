@@ -41,6 +41,8 @@ pub struct PolicyInputs {
     pub workspace: PathBuf,
     pub home: PathBuf,
     pub gobby_home: PathBuf,
+    /// The configured build-output root, canonical. Cargo target folders live under it.
+    pub build_root: PathBuf,
     pub env: BTreeMap<String, String>,
     pub provider_executable: Option<PathBuf>,
     pub daemon_port: u16,

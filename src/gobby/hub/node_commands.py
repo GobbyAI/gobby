@@ -118,6 +118,8 @@ class SpawnPayload(NodeModel):
     timeout_seconds: int
     title: str | None
     source_root: str
+    # The daemon's configured build-output root (agent_build.build_root), absolute and canonical.
+    build_root: str
     workspace: SpawnWorkspace
     agent_name: str | None
     api_base: str | None

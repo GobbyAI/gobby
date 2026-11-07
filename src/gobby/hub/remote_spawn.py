@@ -26,9 +26,12 @@ from gobby.agents.sandbox_network import definition_sandbox_config
 from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawn import PreparedSpawn, prepare_terminal_resume, prepare_terminal_spawn
 from gobby.config.app import DaemonConfig
+
+# A module reference: spawn_payload imports the spawn_agent package, which imports this module
+# back, so its names may not exist yet when this module loads.
+from gobby.hub import spawn_payload
 from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError, node_command_client
-from gobby.hub.spawn_payload import build_spawn_payload
 from gobby.mcp_proxy.tools.spawn_agent._code_index import code_index_preflight_mode
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _roll_back_run
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
@@ -371,7 +374,7 @@ async def spawn_remote_agent(
                 run = runner.run_storage.get(run_id)
                 if run is None:
                     raise RuntimeError(f"agent run {run_id} was not recorded")
-                payload = build_spawn_payload(
+                payload = spawn_payload.build_spawn_payload(
                     db,
                     run=run,
                     request={

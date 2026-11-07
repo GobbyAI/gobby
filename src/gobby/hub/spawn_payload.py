@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.agents.build_root import agent_build_root
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor_providers import render_agent_prompt_prefix
@@ -142,6 +143,7 @@ def build_spawn_payload(
         timeout_seconds=int(timeout),
         title=request.get("title"),
         source_root=request["project_path"],
+        build_root=str(agent_build_root()),
         workspace=_workspace(db, run, request, body, resume_existing=resume_existing),
         agent_name=request.get("agent_lookup_name") or (body.name if body is not None else None),
         api_base=endpoint.api_base,

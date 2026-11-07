@@ -16,10 +16,15 @@ from gobby.agents.cargo_target import checkout_component
 from gobby.agents.constants import agent_home_cache_root
 
 QUIET_SECONDS = 24 * 60 * 60
+# Test executables one live tree keeps before its oldest unrecent copies go. Cargo relinks a
+# removed test executable on its next run, so a trim costs a relink, never a wrong build.
+TEST_EXECUTABLE_BUDGET_BYTES = 8 * 1024**3
 _AGENT_SUFFIX = "-agent"
 _PROFILES = ("debug", "release")
-# Cargo's hashed copies of test and bin executables: ``<stem>-<16 hex digits>``.
-_HASHED_EXECUTABLE = re.compile(r"^(?P<stem>.+)-[0-9a-f]{16}$")
+# Cargo's hashed executables: ``<stem>-<16 hex digits>``, the digits being the unit's metadata hash.
+_HASHED_EXECUTABLE = re.compile(r"^(?P<stem>.+)-(?P<meta>[0-9a-f]{16})$")
+# A unit's fingerprint directory: ``<package>-<metadata hash>``.
+_FINGERPRINT_UNIT = re.compile(r"^.+-(?P<meta>[0-9a-f]{16})$")
 
 
 class SweepAction(StrEnum):
@@ -46,14 +51,15 @@ def sweep_build_root(
     apply: bool = False,
     now: float | None = None,
     quiet_seconds: float = QUIET_SECONDS,
+    executable_budget_bytes: int = TEST_EXECUTABLE_BUDGET_BYTES,
 ) -> list[SweepFinding]:
     """Classify every build folder under ``root``; remove the stale unowned ones when ``apply``.
 
     A folder is owned when its checkout component matches a registered checkout, in any
     project and either trust domain. Folders touched within ``quiet_seconds`` are kept
     because a build may still be writing them. Links and non-directories are reported
-    as refused and never followed. Owned folders also get their superseded executables
-    pruned; unowned folders are removed whole instead.
+    as refused and never followed. Owned folders also get their test executables trimmed
+    to ``executable_budget_bytes``, oldest first; unowned folders are removed whole instead.
     """
     live = {checkout_component(checkout) for checkout in checkouts}
     clock = time.time() if now is None else now
@@ -62,7 +68,11 @@ def sweep_build_root(
         finding = _classify(folder, live, clock, quiet_seconds, apply=apply)
         findings.append(finding)
         if finding.action is SweepAction.KEEP_LIVE:
-            findings.extend(_prune_superseded(folder, clock, quiet_seconds, apply=apply))
+            findings.extend(
+                _trim_test_executables(
+                    folder, clock, quiet_seconds, executable_budget_bytes, apply=apply
+                )
+            )
     return findings
 
 
@@ -123,44 +133,66 @@ def _classify(
     return SweepFinding(folder, SweepAction.REMOVED, size_bytes=size)
 
 
-def _prune_superseded(
-    tree: Path, clock: float, quiet_seconds: float, *, apply: bool
-) -> list[SweepFinding]:
-    """Report or remove hashed executables that a newer build superseded in a live tree.
+def _test_metas(profile: Path) -> set[str]:
+    """Metadata hashes of the profile's units whose fingerprint names a test target."""
+    fingerprints = profile / ".fingerprint"
+    if fingerprints.is_symlink() or not fingerprints.is_dir():
+        return set()
+    metas: set[str] = set()
+    for unit in fingerprints.iterdir():
+        match = _FINGERPRINT_UNIT.match(unit.name)
+        if match is None or unit.is_symlink() or not unit.is_dir():
+            continue
+        if any(child.name.startswith("test-") for child in unit.iterdir()):
+            metas.add(match["meta"])
+    return metas
 
-    The most recently written executable per name stem always stays. A superseded copy
-    written inside the quiet window stays too. Only executables directly in each profile's
-    ``deps`` folder are candidates, so data files and unhashed names are never touched.
+
+def _trim_test_executables(
+    tree: Path, clock: float, quiet_seconds: float, budget_bytes: int, *, apply: bool
+) -> list[SweepFinding]:
+    """Report or remove the oldest test executables above ``budget_bytes`` in a live tree.
+
+    Only hashed executables whose unit is a test target are candidates, so bins, data
+    files and unhashed names are never touched. A tree at or under the budget keeps all of
+    them. Above it, the oldest copies go first and the trim stops once the tree is back
+    under budget. A copy written inside the quiet window is never trimmed, so a feature or
+    RUSTFLAGS variant that a build just linked survives.
     """
     findings: list[SweepFinding] = []
     for profile in _PROFILES:
-        deps = tree / profile / "deps"
+        profile_dir = tree / profile
+        deps = profile_dir / "deps"
         if deps.is_symlink() or not deps.is_dir():
             continue
-        copies: dict[str, list[tuple[float, int, Path]]] = {}
+        metas = _test_metas(profile_dir)
+        candidates: list[tuple[float, int, Path]] = []
         for entry in sorted(deps.iterdir()):
             match = _HASHED_EXECUTABLE.match(entry.name)
-            if match is None or not _is_executable_file(entry):
+            if match is None or match["meta"] not in metas or not _is_executable_file(entry):
                 continue
             info = entry.lstat()
-            copies.setdefault(match["stem"], []).append((info.st_mtime, info.st_size, entry))
-        for stem_copies in copies.values():
-            stem_copies.sort()
-            for mtime, size, entry in stem_copies[:-1]:
-                if clock - mtime < quiet_seconds:
-                    findings.append(SweepFinding(entry, SweepAction.KEEP_RECENT, size_bytes=size))
-                    continue
-                if not apply:
-                    findings.append(SweepFinding(entry, SweepAction.WOULD_REMOVE, size_bytes=size))
-                    continue
-                try:
-                    entry.unlink()
-                except OSError as exc:
-                    findings.append(
-                        SweepFinding(entry, SweepAction.REFUSED, size_bytes=size, detail=str(exc))
-                    )
-                    continue
-                findings.append(SweepFinding(entry, SweepAction.REMOVED, size_bytes=size))
+            candidates.append((info.st_mtime, info.st_size, entry))
+        excess = sum(size for _, size, _ in candidates) - budget_bytes
+        for mtime, size, entry in sorted(candidates):
+            if excess <= 0:
+                break
+            if clock - mtime < quiet_seconds:
+                findings.append(SweepFinding(entry, SweepAction.KEEP_RECENT, size_bytes=size))
+                continue
+            if not apply:
+                findings.append(SweepFinding(entry, SweepAction.WOULD_REMOVE, size_bytes=size))
+                excess -= size
+                continue
+            try:
+                entry.unlink()
+            except OSError as exc:
+                findings.append(
+                    SweepFinding(entry, SweepAction.REFUSED, size_bytes=size, detail=str(exc))
+                )
+                continue
+            findings.append(SweepFinding(entry, SweepAction.REMOVED, size_bytes=size))
+            excess -= size
     return findings
 
 
