@@ -8,7 +8,7 @@ mod host_support;
 use embed_support::{
     attach, connect_frames, crate_src, gclient_views, list_terminals, read_msg, read_msg_timeout,
     spawn_host, spawn_host_with_env, spawn_host_with_env_removed, start_tmux, start_tmux_sized,
-    wait_until, write_msg,
+    wait_until_host, write_msg,
 };
 use gobby_terminal::host::{
     classify_poll, parse_poll_batch, truncate_attach_history, PollClass, POLL_FIELD_COUNT,
@@ -87,7 +87,7 @@ fn tmux_capture_poll_round_trip() {
     );
     let pane = start_tmux();
     pane.send_hex(b"echo GOBBY-ROUNDTRIP\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(&pane.dir, Duration::from_secs(2), || {
         pane.tmux(&["capture-pane", "-p", "-t", &pane.pane_id])
             .contains("GOBBY-ROUNDTRIP")
     });
@@ -145,7 +145,9 @@ fn tmux_clients_start_unmasked() {
         matches!(attached, ServerMessage::Attached { .. }),
         "{attached:?}"
     );
-    wait_until(Duration::from_secs(5), || bin.path().join("ran").exists());
+    wait_until_host(host.socket_dir(), Duration::from_secs(5), || {
+        bin.path().join("ran").exists()
+    });
     assert!(
         !bin.path().join("blocked").exists(),
         "a tmux client started with SIGTERM blocked"
@@ -160,7 +162,7 @@ fn tmux_clients_start_unmasked() {
 fn tmux_poll_survives_a_host_without_a_utf8_locale() {
     let pane = start_tmux();
     pane.send_hex(b"echo GOBBY-LOCALE\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(&pane.dir, Duration::from_secs(2), || {
         pane.tmux(&["capture-pane", "-p", "-t", &pane.pane_id])
             .contains("GOBBY-LOCALE")
     });
@@ -194,7 +196,7 @@ fn observation_is_zero_footprint() {
     let during = pane.snapshot();
     write_msg(&mut stream, &ClientMessage::Detach);
     drop(stream);
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(host.socket_dir(), Duration::from_secs(2), || {
         list_terminals(&host)["terminals"]
             .as_array()
             .is_some_and(|t| t.is_empty())
@@ -413,7 +415,7 @@ fn attach_creates_and_reaps_atomically() {
         },
     );
     drop(partial);
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(host.socket_dir(), Duration::from_secs(2), || {
         list_terminals(&host)["terminals"]
             .as_array()
             .is_some_and(|t| t.is_empty())
@@ -435,7 +437,7 @@ fn pane_death_releases_attachments() {
             .any(|m| matches!(m, ServerMessage::TerminalExited { .. })),
         "{msgs:?}"
     );
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(host.socket_dir(), Duration::from_secs(2), || {
         list_terminals(&host)["terminals"]
             .as_array()
             .is_some_and(|t| t.is_empty())
@@ -474,7 +476,7 @@ fn sampled_observations_are_faithful_and_bounded() {
     assert!(!src_has_pipe_pane());
     let pane = start_tmux();
     pane.send_hex(b"printf 'VISIBLE\\n'\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(&pane.dir, Duration::from_secs(2), || {
         pane.tmux(&["capture-pane", "-p", "-t", &pane.pane_id])
             .contains("VISIBLE")
     });
@@ -514,7 +516,7 @@ fn mode_transitions_are_observed() {
         matches!(m, ServerMessage::Frame(_))
     });
     pane.send_hex(b"printf '\\033[?25l'\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(host.socket_dir(), Duration::from_secs(2), || {
         pane.tmux(&[
             "display-message",
             "-p",
@@ -609,7 +611,7 @@ fn poll_rate_and_memory_are_bounded_by_attachments() {
         other => panic!("{other:?}"),
     }
     write_msg(&mut sa, &ClientMessage::Detach);
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(host.socket_dir(), Duration::from_secs(2), || {
         matches!(attach(&mut sc, c.locator()), ServerMessage::Attached { .. })
     });
 }
@@ -719,7 +721,7 @@ fn attach_history_is_bounded_and_one_shot() {
     assert_eq!(total, 6);
     let pane = start_tmux();
     pane.send_hex(b"printf 'HIST-A\\nHIST-B\\n'\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(&pane.dir, Duration::from_secs(2), || {
         pane.tmux(&["capture-pane", "-p", "-t", &pane.pane_id])
             .contains("HIST-A")
     });
@@ -754,7 +756,7 @@ fn attach_history_is_bounded_and_one_shot() {
 fn attach_history_preserves_soft_wraps() {
     let pane = start_tmux_sized(8, 6);
     pane.send_hex(b"printf 'WWWWWWWWWW\\nhard\\n'\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(&pane.dir, Duration::from_secs(2), || {
         pane.tmux(&["capture-pane", "-p", "-t", &pane.pane_id])
             .contains("hard")
     });
@@ -800,7 +802,7 @@ fn attach_history_cache_saturates_and_releases() {
     assert!(bytes <= 2 * 1024, "{bytes}");
     write_msg(&mut sa, &ClientMessage::Detach);
     write_msg(&mut sb, &ClientMessage::Detach);
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(host.socket_dir(), Duration::from_secs(2), || {
         list_terminals(&host)["terminals"]
             .as_array()
             .is_some_and(|t| t.is_empty())
@@ -828,7 +830,7 @@ fn external_geometry_over_max_cells_is_recoverable() {
 fn live_capture_preserves_trailing_styled_blanks() {
     let pane = start_tmux_sized(10, 3);
     pane.send_hex(b"printf '\\033[41m          \\033[0m\\n'\n");
-    wait_until(Duration::from_secs(2), || {
+    wait_until_host(&pane.dir, Duration::from_secs(2), || {
         !pane
             .tmux(&["capture-pane", "-p", "-e", "-N", "-t", &pane.pane_id])
             .is_empty()

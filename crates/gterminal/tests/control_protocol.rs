@@ -9,7 +9,7 @@ use host_support::{
     candidate_script, committed_pane, connect, control, gterm_bin, held_probe, host_upgrade,
     pane_text, recv_json, recv_json_within, rpc, send_held_upgrade, send_json,
     send_json_without_id, send_upgrade, spawn_host, temp_socket_dir, wait_exit, wait_outcome,
-    wait_socket, wait_until, write_text, write_token, CONTROL_SOCKET,
+    wait_socket, wait_until_host, write_text, write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -1404,7 +1404,7 @@ fn snapshot_truncates_on_char_boundaries() {
     assert_eq!(recv_json(&mut stream)["ok"], true);
 
     let mut full_snapshot = None;
-    wait_until("UTF-8 snapshot output", || {
+    wait_until_host(&dir, "UTF-8 snapshot output", || {
         send_json(
             &mut stream,
             &json!({
@@ -1883,7 +1883,7 @@ fn snapshot_mode_selects_the_returned_representation() {
     );
 
     let mut defaulted = None;
-    wait_until("snapshot output with an omitted mode", || {
+    wait_until_host(&dir, "snapshot output with an omitted mode", || {
         let snapshot = snapshot_request(&mut stream, &host_terminal_id, None, 1024 * 1024, 50);
         if snapshot["text"]
             .as_str()
@@ -2006,7 +2006,7 @@ fn snapshot_text_mode_answers_plainly_when_history_holds_only_styling() {
         "printf '\\033[41m   \\033[0m'; exec sleep 30",
     );
 
-    wait_until("styled blank output", || {
+    wait_until_host(&dir, "styled blank output", || {
         let styled = snapshot_request(
             &mut stream,
             &host_terminal_id,
@@ -2076,7 +2076,7 @@ fn list_envelope_fits_under_line_cap() {
     admit_native_population(&host, &mut control, &native_title);
     let panes = admit_tmux_population(&host, &tmux_title);
 
-    embed_support::wait_until(LIST_SETTLE_TIMEOUT, || {
+    embed_support::wait_until_host(host.socket_dir(), LIST_SETTLE_TIMEOUT, || {
         let rows = list_rows(&host);
         rows.len() == NATIVE_LIST_CEILING + TMUX_LIST_CEILING
             && rows
@@ -2240,7 +2240,7 @@ fn admit_native_population(
             let committed = embed_support::recv_json(control);
             assert_eq!(committed["ok"], true, "commit {index}: {committed}");
         }
-        embed_support::wait_until(LIST_SETTLE_TIMEOUT, || {
+        embed_support::wait_until_host(host.socket_dir(), LIST_SETTLE_TIMEOUT, || {
             list_rows(host)
                 .iter()
                 .filter(|row| title_bytes(row) == Some(LIST_TITLE_BYTES))
@@ -2496,7 +2496,7 @@ fn ping_reports_generation_and_attempt() {
         serde_json::Value::Null,
     );
     let mut probing = serde_json::Value::Null;
-    wait_until("ping reports the probe", || {
+    wait_until_host(&dir, "ping reports the probe", || {
         probing = ping(&mut stream);
         probing["upgrade"]["phase"] == "probing"
             && probing["upgrade"]["candidate_sha256"].is_string()
@@ -2711,7 +2711,7 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
     let (mut child, mut stream) = authed(dir.path(), token);
     let pane = committed_pane(&mut child, &mut stream, 1, "gated", ECHO_LINES);
     let id = pane.host_terminal_id.clone();
-    wait_until("the echo pane is ready", || {
+    wait_until_host(&dir, "the echo pane is ready", || {
         pane_text(&mut stream, &id).contains("READY")
     });
 
@@ -2741,7 +2741,7 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
             }],
         }),
     );
-    wait_until("the batch's first operation lands", || {
+    wait_until_host(&dir, "the batch's first operation lands", || {
         pane_text(&mut stream, &id).contains("got:first")
     });
     drop(release);
@@ -2750,7 +2750,7 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
     assert_deferred(&mut stream, "attempt-batch", "host_busy");
     let batch = recv_json_within(&mut batcher, Duration::from_secs(10));
     assert_eq!(batch["ok"], true, "{batch}");
-    wait_until("the last delayed operation lands", || {
+    wait_until_host(&dir, "the last delayed operation lands", || {
         pane_text(&mut stream, &id).contains("got:sixth")
     });
 
@@ -2774,7 +2774,7 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
             data: b"framed\n".to_vec(),
         },
     );
-    wait_until("frame input lands", || {
+    wait_until_host(&dir, "frame input lands", || {
         pane_text(&mut stream, &id).contains("got:framed")
     });
 
@@ -2849,7 +2849,7 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
     let written = write_text(&mut after, 1, &id, "after\n");
     assert_eq!(written["ok"], true, "{written}");
     let mut text = String::new();
-    wait_until("input after the restore lands", || {
+    wait_until_host(&dir, "input after the restore lands", || {
         text = pane_text(&mut after, &id);
         text.contains("got:after")
     });

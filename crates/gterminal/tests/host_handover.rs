@@ -23,8 +23,8 @@ use gobby_terminal::protocol::{
 };
 use gobby_terminal::terminal_theme::{RgbColor, TerminalTheme, ThemeDeclaration};
 use handover_support::{
-    ino, is_zombie, launch, list_rows, mtime_ns, pgid_file, restore, wait_until, Bound, HelperPane,
-    HelperSpec, StateEdit, BOUND_FILE, WAIT,
+    ino, is_zombie, launch, list_rows, mtime_ns, pgid_file, restore, wait_until_host, Bound,
+    HelperPane, HelperSpec, StateEdit, BOUND_FILE, WAIT,
 };
 use host_support::{
     connect, recv_json, rpc, temp_socket_dir, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
@@ -90,7 +90,9 @@ async fn rollback_reaps_exit_seen_while_frozen() {
     std::fs::write(dir.path().join("go"), b"").expect("release child");
     // A reaper that kept running would reap the exit before any poll saw it
     // as a zombie, so seeing one proves the frozen pane left it unreaped.
-    wait_until("the frozen child to linger as a zombie", || is_zombie(pid));
+    wait_until_host(dir.path(), "the frozen child to linger as a zombie", || {
+        is_zombie(pid)
+    });
     assert_eq!(
         runtime.child_exit(),
         None,
@@ -243,13 +245,18 @@ fn next_event(stream: &mut UnixStream, timeout: Duration) -> Option<Value> {
 
 /// Collects `terminal_exited` exit codes by host terminal id until `done`.
 fn collect_exits(
+    dir: impl AsRef<Path>,
     stream: &mut UnixStream,
     exits: &mut HashMap<String, Vec<Value>>,
     done: impl Fn(&HashMap<String, Vec<Value>>) -> bool,
 ) {
     let deadline = Instant::now() + WAIT;
     while !done(exits) {
-        assert!(Instant::now() < deadline, "exits so far: {exits:?}");
+        assert!(
+            Instant::now() < deadline,
+            "exits so far: {exits:?}; {}",
+            host_support::host_report(dir.as_ref())
+        );
         if let Some(event) = next_event(stream, Duration::from_millis(100)) {
             if event["event"] == "terminal_exited" {
                 let id = event["host_terminal_id"].as_str().unwrap_or_default();
@@ -304,19 +311,21 @@ fn exit_and_output_during_window_survive() {
     assert_eq!(ack["gap"], false, "{ack}");
 
     let mut exits = HashMap::new();
-    collect_exits(&mut events, &mut exits, |exits| {
+    collect_exits(&dir, &mut events, &mut exits, |exits| {
         ["ht-a", "ht-b", "ht-c"]
             .iter()
             .all(|id| exits.contains_key(*id))
     });
     let mut control = host.control();
     let mut text = String::new();
-    wait_until("window output after restore", || {
+    wait_until_host(&dir, "window output after restore", || {
         text = snapshot_text(&mut control, "ht-d");
         text.contains("window-output")
     });
     std::fs::write(path("d-exit"), b"").expect("release ht-d");
-    collect_exits(&mut events, &mut exits, |exits| exits.contains_key("ht-d"));
+    collect_exits(&dir, &mut events, &mut exits, |exits| {
+        exits.contains_key("ht-d")
+    });
     while let Some(event) = next_event(&mut events, Duration::from_millis(300)) {
         if event["event"] == "terminal_exited" {
             panic!("duplicate exit {event} after {exits:?}");
@@ -505,7 +514,7 @@ fn restored_panes_keep_wrapper_state_and_entitlements() {
         );
         assert_eq!(written["ok"], true, "{written}");
         let mut screen = String::new();
-        wait_until(&format!("{id} answers after its marker"), || {
+        wait_until_host(&dir, &format!("{id} answers after its marker"), || {
             screen = snapshot_text(&mut control, id);
             answer_after(&screen, &marker).is_some()
         });
@@ -580,7 +589,7 @@ fn restored_panes_accept_input_after_commit() {
         let first = format!("{id}-first");
         let second = format!("{id}-second");
         let mut text = String::new();
-        wait_until(&format!("{id} echoes its input"), || {
+        wait_until_host(&dir, &format!("{id} echoes its input"), || {
             text = snapshot_text(&mut control, id);
             text.contains(&second)
         });
@@ -670,7 +679,9 @@ fn stage_failure_falls_back_with_checkpoint_intact() {
         let ack = rpc(&mut events, "subscribe_events", json!({"since": 0}));
         assert_eq!(ack["gap"], false, "{kind}: {ack}");
         let mut exits = HashMap::new();
-        collect_exits(&mut events, &mut exits, |exits| exits.contains_key("ht-c"));
+        collect_exits(&dir, &mut events, &mut exits, |exits| {
+            exits.contains_key("ht-c")
+        });
         assert_eq!(
             exits["ht-c"],
             vec![json!(4)],
@@ -678,18 +689,18 @@ fn stage_failure_falls_back_with_checkpoint_intact() {
         );
 
         let mut text = String::new();
-        wait_until(&format!("{kind}: window output"), || {
+        wait_until_host(&dir, &format!("{kind}: window output"), || {
             text = snapshot_text(&mut control, "ht-d");
             text.contains("window-output")
         });
-        assert_writes_echo(&mut control, kind, &["ht-a", "ht-b", "ht-d"]);
+        assert_writes_echo(dir.path(), &mut control, kind, &["ht-a", "ht-b", "ht-d"]);
     }
 }
 
 /// Waits for a restore to commit and returns every committed restore line.
 fn committed_restores(socket_dir: &Path, label: &str) -> Vec<String> {
     let mut restored = Vec::new();
-    wait_until(&format!("{label}: a restore commits"), || {
+    wait_until_host(socket_dir, &format!("{label}: a restore commits"), || {
         restored = restored_lines(socket_dir);
         !restored.is_empty()
     });
@@ -699,7 +710,7 @@ fn committed_restores(socket_dir: &Path, label: &str) -> Vec<String> {
 /// Writes a line to each pane and waits for it to echo. An attempt records
 /// its outcome before it releases the mutation gate (plan 1.3 step 7), so a
 /// write refused `host_upgrading` just after the outcome is sent again.
-fn assert_writes_echo(control: &mut UnixStream, label: &str, ids: &[&str]) {
+fn assert_writes_echo(dir: &Path, control: &mut UnixStream, label: &str, ids: &[&str]) {
     for (seq, id) in (1..).zip(ids) {
         let line = format!("{id}-after-{label}");
         let request = json!({
@@ -710,12 +721,12 @@ fn assert_writes_echo(control: &mut UnixStream, label: &str, ids: &[&str]) {
             "data": base64::engine::general_purpose::STANDARD.encode(format!("{line}\n")),
         });
         let mut written = Value::Null;
-        wait_until(&format!("{label}: the gate opens for {id}"), || {
+        wait_until_host(dir, &format!("{label}: the gate opens for {id}"), || {
             written = rpc(control, "write", request.clone());
             written["error"] != "host_upgrading"
         });
         assert_eq!(written["ok"], true, "{label}: {written}");
-        wait_until(&format!("{label}: {id} echoes"), || {
+        wait_until_host(dir, &format!("{label}: {id} echoes"), || {
             snapshot_text(control, id).contains(&line)
         });
     }
@@ -741,7 +752,7 @@ fn setup_failure_in_new_image_falls_back() {
             restored[0].contains("Fallback"),
             "{label}: the earlier image committed: {restored:?}"
         );
-        assert_writes_echo(&mut host.control(), label, &["ht-a", "ht-b"]);
+        assert_writes_echo(dir.path(), &mut host.control(), label, &["ht-a", "ht-b"]);
     }
 }
 
@@ -768,7 +779,12 @@ fn previous_release_state_restores_every_pane() {
         .collect();
     listed.sort();
     assert_eq!(listed, ["ht-a", "ht-b"], "every carried pane is restored");
-    assert_writes_echo(&mut control, "previous-release", &["ht-a", "ht-b"]);
+    assert_writes_echo(
+        dir.path(),
+        &mut control,
+        "previous-release",
+        &["ht-a", "ht-b"],
+    );
 }
 
 /// #24946: a new image that cannot read the state file at all still execs
@@ -930,9 +946,11 @@ fn echo_panes(host: &mut HostProc, ctl: &mut UnixStream, count: u64) -> Vec<Comm
         .map(|n| committed_pane(host, ctl, n, &format!("term-{n}"), ECHO))
         .collect();
     for pane in &panes {
-        wait_until(&format!("{} is ready", pane.host_terminal_id), || {
-            snapshot_text(ctl, &pane.host_terminal_id).contains("READY")
-        });
+        wait_until_host(
+            host.socket_dir(),
+            &format!("{} is ready", pane.host_terminal_id),
+            || snapshot_text(ctl, &pane.host_terminal_id).contains("READY"),
+        );
     }
     panes
 }
@@ -987,7 +1005,7 @@ fn assert_outcome(ping: &Value, attempt_id: &str, outcome: &str, reason: Option<
 }
 
 fn wait_phase(socket_dir: &Path, attempt_id: &str, phase: &str) {
-    wait_until(&format!("{attempt_id} reaches {phase}"), || {
+    wait_until_host(socket_dir, &format!("{attempt_id} reaches {phase}"), || {
         try_ping(socket_dir, UPGRADE_TOKEN).is_some_and(|ping| {
             ping["upgrade"]["attempt_id"] == attempt_id && ping["upgrade"]["phase"] == phase
         })
@@ -1007,7 +1025,11 @@ fn shutdown(host: &mut HostProc, ctl: &mut UnixStream) {
 }
 
 /// Reads lines until the peer closes, as the old image's connections do at exec.
-fn lines_until_closed(stream: &mut UnixStream, timeout: Duration) -> Vec<Value> {
+fn lines_until_closed(
+    dir: impl AsRef<Path>,
+    stream: &mut UnixStream,
+    timeout: Duration,
+) -> Vec<Value> {
     // macOS refuses a timeout with EINVAL once the peer has closed; the
     // buffered lines then read to EOF without blocking.
     if let Err(err) = stream.set_read_timeout(Some(Duration::from_millis(200))) {
@@ -1027,7 +1049,8 @@ fn lines_until_closed(stream: &mut UnixStream, timeout: Duration) -> Vec<Value> 
             Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 assert!(
                     Instant::now() < deadline,
-                    "the connection outlived the exec: {lines:?}"
+                    "the connection outlived the exec: {lines:?}; {}",
+                    host_support::host_report(dir.as_ref())
                 );
             }
             Err(err) => panic!("read lines: {err}"),
@@ -1079,7 +1102,12 @@ fn list_until_closed(socket_dir: &Path) -> usize {
 
 /// Waits for the host to die and returns its status and when it died.
 fn wait_death(host: &mut HostProc, within: Duration) -> (std::process::ExitStatus, Instant) {
-    let status = host_support::wait_exit(host, within).expect("the host ends");
+    let status = host_support::wait_exit(host, within).unwrap_or_else(|| {
+        panic!(
+            "the host ends; {}",
+            host_support::host_report(host.socket_dir())
+        )
+    });
     (status, Instant::now())
 }
 
@@ -1126,7 +1154,7 @@ fn upgrade_keeps_pids_epoch_and_panes() {
                 pane.host_terminal_id
             );
         }
-        assert_writes_echo(&mut ctl, attempt_id, &ids(&panes));
+        assert_writes_echo(&dir, &mut ctl, attempt_id, &ids(&panes));
     }
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     shutdown(&mut host, &mut ctl);
@@ -1154,7 +1182,7 @@ fn fallback_outcome_names_why_the_restore_failed() {
     );
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     assert_eq!(pane_rows(&mut ctl), rows, "the panes survive the fallback");
-    assert_writes_echo(&mut ctl, "typed-fallback", &ids(&panes));
+    assert_writes_echo(&dir, &mut ctl, "typed-fallback", &ids(&panes));
     shutdown(&mut host, &mut ctl);
 }
 
@@ -1278,7 +1306,9 @@ fn assert_stale_attachment_grant_after_restore_is_refused(
     let accepted = host_upgrade(&mut ctl, &gterm_bin(), "stale-grant", hold);
     assert_eq!(accepted["accepted"], true);
     if late_attach {
-        wait_until("the capture is written", || dir.join(STATE_FILE).exists());
+        wait_until_host(&dir, "the capture is written", || {
+            dir.join(STATE_FILE).exists()
+        });
         assert_late_frame_attach_is_refused(&dir, terminal);
     }
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "stale-grant", OUTCOME_WAIT);
@@ -1378,7 +1408,12 @@ fn probe_refusal_leaves_panes_untouched() {
         if slow {
             wait_phase(&dir, attempt_id, "probing");
             let mut writer = connect_control(&dir, UPGRADE_TOKEN);
-            assert_writes_echo(&mut writer, &format!("{label}-probing"), &[id.as_str()]);
+            assert_writes_echo(
+                &dir,
+                &mut writer,
+                &format!("{label}-probing"),
+                &[id.as_str()],
+            );
         }
         let refused = recv_json_within(&mut upgrader, Duration::from_secs(20));
         let elapsed = started.elapsed();
@@ -1408,7 +1443,7 @@ fn probe_refusal_leaves_panes_untouched() {
             "{label}: the running pin stays"
         );
         let mut writer = connect_control(&dir, UPGRADE_TOKEN);
-        assert_writes_echo(&mut writer, label, &[id.as_str()]);
+        assert_writes_echo(&dir, &mut writer, label, &[id.as_str()]);
     }
     shutdown(&mut host, &mut ctl);
 }
@@ -1423,7 +1458,7 @@ fn committed_panes_are_admitted_and_pending_reservations_are_busy() {
     {
         let mut creator = connect_control(&dir, UPGRADE_TOKEN);
         let orphan = committed_pane(&mut host, &mut creator, 1, "orphan", ECHO);
-        wait_until("the orphan is ready", || {
+        wait_until_host(&dir, "the orphan is ready", || {
             snapshot_text(&mut creator, &orphan.host_terminal_id).contains("READY")
         });
         panes.push(orphan);
@@ -1454,7 +1489,7 @@ fn committed_panes_are_admitted_and_pending_reservations_are_busy() {
     assert_eq!(after["generation"], 1, "{after}");
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     assert_eq!(pane_rows(&mut ctl), rows);
-    assert_writes_echo(&mut ctl, "committed", &ids(&panes));
+    assert_writes_echo(&dir, &mut ctl, "committed", &ids(&panes));
 
     let pending = rpc(
         &mut ctl,
@@ -1497,7 +1532,7 @@ fn background_mutators_wait_through_exec() {
     // An exit recorded before the write guard, whose watcher is still held:
     // a `list` just before the guard keeps its slot.
     std::fs::write(dir.join("early-go"), b"").expect("release the early pane");
-    wait_until("the early child ends", || {
+    wait_until_host(&dir, "the early child ends", || {
         !process_exists(early.pgid) || is_zombie(early.pgid as u32)
     });
     assert!(
@@ -1521,7 +1556,7 @@ fn background_mutators_wait_through_exec() {
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     std::fs::write(dir.join("exit-go"), b"").expect("release the exiting pane");
-    wait_until("the exiting child ends", || {
+    wait_until_host(&dir, "the exiting child ends", || {
         !process_exists(exiting.pgid) || is_zombie(exiting.pgid as u32)
     });
     let mut window_list = connect_control(&dir, UPGRADE_TOKEN);
@@ -1533,10 +1568,10 @@ fn background_mutators_wait_through_exec() {
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "attempt-window", OUTCOME_WAIT);
     assert_outcome(&after, "attempt-window", "succeeded", None);
     assert!(
-        lines_until_closed(&mut window_list, OUTCOME_WAIT).is_empty(),
+        lines_until_closed(&dir, &mut window_list, OUTCOME_WAIT).is_empty(),
         "a list in the window is never answered by the old image"
     );
-    let before_exec = lines_until_closed(&mut old_events, OUTCOME_WAIT);
+    let before_exec = lines_until_closed(&dir, &mut old_events, OUTCOME_WAIT);
     assert!(
         before_exec
             .iter()
@@ -1568,12 +1603,21 @@ fn background_mutators_wait_through_exec() {
     }
 
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
-    wait_until("the exited panes leave the list after their events", || {
-        pane_rows(&mut ctl)
-            .iter()
-            .all(|(id, _)| id != &early.host_terminal_id && id != &exiting.host_terminal_id)
-    });
-    assert_writes_echo(&mut ctl, "window", &[survivor.host_terminal_id.as_str()]);
+    wait_until_host(
+        &dir,
+        "the exited panes leave the list after their events",
+        || {
+            pane_rows(&mut ctl)
+                .iter()
+                .all(|(id, _)| id != &early.host_terminal_id && id != &exiting.host_terminal_id)
+        },
+    );
+    assert_writes_echo(
+        &dir,
+        &mut ctl,
+        "window",
+        &[survivor.host_terminal_id.as_str()],
+    );
     shutdown(&mut host, &mut ctl);
 }
 
@@ -1653,7 +1697,7 @@ fn rollback_case(case: &RollbackCase) -> Value {
     }
     if let Some(exiting) = &exiting {
         std::fs::write(dir.join("exit-go"), b"").expect("release the exiting pane");
-        wait_until("the exiting child ends", || {
+        wait_until_host(&dir, "the exiting child ends", || {
             !process_exists(exiting.pgid) || is_zombie(exiting.pgid as u32)
         });
     }
@@ -1713,7 +1757,7 @@ fn rollback_case(case: &RollbackCase) -> Value {
     }
 
     let mut writer = connect_control(&dir, UPGRADE_TOKEN);
-    assert_writes_echo(&mut writer, label, &ids(&panes));
+    assert_writes_echo(&dir, &mut writer, label, &ids(&panes));
 
     // The attempt cleared its alarm: the host outlives the hard deadline.
     let past_deadline = accepted_at + remaining + Duration::from_millis(1500);
@@ -1754,7 +1798,8 @@ fn wait_state_files(dir: &Path, label: &str, kept: &[&str]) {
         }
         assert!(
             Instant::now() < deadline,
-            "{label}: state files left: {left:?}"
+            "{label}: state files left: {left:?}; {}",
+            host_support::host_report(dir)
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -1938,7 +1983,7 @@ fn retry_after_a_late_state_write_keeps_its_own_state() {
     let orphan = dir.join(format!(".{STATE_FILE}.orphan.tmp"));
     std::fs::write(&orphan, b"{}").expect("plant an orphaned staged file");
     let hold = json!({"hold_before_exec_ms": 5000});
-    let accepted = upgrade_once_idle(&mut upgrader, &gterm_bin(), "after-late-write", hold);
+    let accepted = upgrade_once_idle(&dir, &mut upgrader, &gterm_bin(), "after-late-write", hold);
     assert_eq!(accepted["accepted"], true, "{accepted}");
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "after-late-write", OUTCOME_WAIT);
     assert_outcome(&after, "after-late-write", "succeeded", None);
@@ -1950,7 +1995,7 @@ fn retry_after_a_late_state_write_keeps_its_own_state() {
         assert!(process_exists(pane.pgid), "{} lives", pane.host_terminal_id);
     }
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
-    assert_writes_echo(&mut ctl, "after-late-write", &ids(&panes));
+    assert_writes_echo(&dir, &mut ctl, "after-late-write", &ids(&panes));
     wait_state_files(&dir, "after-late-write", &[]);
     shutdown(&mut host, &mut ctl);
 }
@@ -2075,6 +2120,7 @@ fn fallback_image_survives_other_starts_and_same_image_attempts() {
     assert!(pin.exists(), "a refused probe keeps the running pin");
 
     let refused = upgrade_once_idle(
+        &dir,
         &mut ctl,
         &gterm_bin(),
         "attempt-same-refused",
@@ -2085,6 +2131,7 @@ fn fallback_image_survives_other_starts_and_same_image_attempts() {
     assert!(pin.exists(), "a same-image refusal keeps the running pin");
 
     let accepted = upgrade_once_idle(
+        &dir,
         &mut ctl,
         &gterm_bin(),
         "attempt-same-rollback",
@@ -2100,7 +2147,13 @@ fn fallback_image_survives_other_starts_and_same_image_attempts() {
     );
     assert!(pin.exists(), "a same-image rollback keeps the running pin");
 
-    let accepted = upgrade_once_idle(&mut ctl, &gterm_bin(), "attempt-fallback", Value::Null);
+    let accepted = upgrade_once_idle(
+        &dir,
+        &mut ctl,
+        &gterm_bin(),
+        "attempt-fallback",
+        Value::Null,
+    );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "attempt-fallback", OUTCOME_WAIT);
     assert_outcome(&after, "attempt-fallback", "fallback", None);
@@ -2111,16 +2164,22 @@ fn fallback_image_survives_other_starts_and_same_image_attempts() {
         "the earlier image committed: {restored:?}"
     );
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
-    assert_writes_echo(&mut ctl, "fallback", &ids(&panes));
+    assert_writes_echo(&dir, &mut ctl, "fallback", &ids(&panes));
     shutdown(&mut host, &mut ctl);
 }
 
 /// Sends `host_upgrade` again while it is refused `upgrade_in_progress`: an
 /// attempt replies before it releases the upgrade lock (plan 1.3 step 7), so
 /// one sent right after it can meet the lock still held.
-fn upgrade_once_idle(stream: &mut UnixStream, exe: &Path, attempt_id: &str, fault: Value) -> Value {
+fn upgrade_once_idle(
+    dir: &Path,
+    stream: &mut UnixStream,
+    exe: &Path,
+    attempt_id: &str,
+    fault: Value,
+) -> Value {
     let mut reply = Value::Null;
-    wait_until(&format!("{attempt_id} is admitted"), || {
+    wait_until_host(dir, &format!("{attempt_id} is admitted"), || {
         reply = host_upgrade(stream, exe, attempt_id, fault.clone());
         reply["error"] != "upgrade_in_progress"
     });
@@ -2164,7 +2223,7 @@ fn deferral_then_stalled_cleanup() {
             }],
         }),
     );
-    wait_until("the batch's first operation lands", || {
+    wait_until_host(&dir, "the batch's first operation lands", || {
         snapshot_text(&mut ctl, &id).contains("first")
     });
     let released = Instant::now();
@@ -2194,6 +2253,7 @@ fn deferral_then_stalled_cleanup() {
     let refused = host_upgrade(&mut ctl, &refusal, "attempt-refused", Value::Null);
     assert_eq!(refused["error"], "upgrade_refused", "{refused}");
     let accepted = upgrade_once_idle(
+        &dir,
         &mut next,
         &gterm_bin(),
         "attempt-stall",
@@ -2246,6 +2306,7 @@ fn reservation_deferral_then_alarm_after_release() {
     assert_eq!(released["released"], true, "{released}");
 
     let accepted = upgrade_once_idle(
+        &dir,
         &mut upgrader,
         &gterm_bin(),
         "attempt-release",
@@ -2257,7 +2318,7 @@ fn reservation_deferral_then_alarm_after_release() {
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "attempt-release", OUTCOME_WAIT);
     assert_outcome(&after, "attempt-release", "aborted", Some("capture_failed"));
     let mut writer = connect_control(&dir, UPGRADE_TOKEN);
-    assert_writes_echo(&mut writer, "released", &[id.as_str()]);
+    assert_writes_echo(&dir, &mut writer, "released", &[id.as_str()]);
     let (status, died_at) = wait_death(&mut host, remaining + Duration::from_secs(5));
     assert_eq!(status.signal(), Some(libc::SIGALRM), "{status:?}");
     assert!(
@@ -2341,7 +2402,7 @@ fn stalled_quiesce_recovers_within_hard_budget() {
     assert_eq!(after["host_pid"], host.id(), "{after}");
     assert!(restored_lines(&dir).is_empty(), "no execve ran");
     let mut writer = connect_control(&dir, UPGRADE_TOKEN);
-    assert_writes_echo(&mut writer, "stalled", &ids(&panes));
+    assert_writes_echo(&dir, &mut writer, "stalled", &ids(&panes));
 
     let past_alarm = (accepted_at + remaining + Duration::from_millis(1500))
         .saturating_duration_since(Instant::now());
@@ -2364,7 +2425,8 @@ fn many_full_panes_upgrade_within_deadline() {
         .map(|n| committed_pane(&mut host, &mut ctl, n, &format!("full-{n}"), &fill))
         .collect();
     for pane in &panes {
-        wait_until(
+        wait_until_host(
+            &dir,
             &format!("{} fills its scrollback", pane.host_terminal_id),
             || snapshot_text(&mut ctl, &pane.host_terminal_id).contains("FILLED"),
         );
@@ -2392,7 +2454,7 @@ fn many_full_panes_upgrade_within_deadline() {
     assert_eq!(after["host_pid"], host.id(), "{after}");
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     assert_eq!(pane_rows(&mut ctl), expected_rows(&panes));
-    assert_writes_echo(&mut ctl, "full", &ids(&panes));
+    assert_writes_echo(&dir, &mut ctl, "full", &ids(&panes));
     shutdown(&mut host, &mut ctl);
 }
 
@@ -2462,7 +2524,7 @@ fn sigterm_before_exec_aborts_and_exits() {
         json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
-    wait_until("the state file is written", || {
+    wait_until_host(&dir, "the state file is written", || {
         dir.join(STATE_FILE).exists()
     });
     terminate(&host);
@@ -2560,7 +2622,7 @@ fn pane_children_start_unmasked() {
     let script = r#"sh -c 'kill -TERM $$; echo "BLOCK""ED"'; echo CHECKED; exec cat"#;
     let pane = committed_pane(&mut host, &mut ctl, 1, "masked", script);
     let mut text = String::new();
-    wait_until("the mask check runs", || {
+    wait_until_host(&dir, "the mask check runs", || {
         text = snapshot_text(&mut ctl, &pane.host_terminal_id);
         text.contains("CHECKED")
     });
@@ -2595,7 +2657,7 @@ fn clipboard_writers_start_unmasked() {
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     let script = r"printf '\033]52;c;aGk=\a'; exec cat";
     committed_pane(&mut host, &mut ctl, 1, "clipboard", script);
-    wait_until("the clipboard writer runs", || {
+    wait_until_host(&dir, "the clipboard writer runs", || {
         bin.path().join("ran").exists()
     });
     assert!(

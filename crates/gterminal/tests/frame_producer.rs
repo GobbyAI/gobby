@@ -148,7 +148,10 @@ fn broadcast_task_exits_on_closed_channel() {
                 ) =>
             {
                 if Instant::now() >= deadline {
-                    panic!("frame task did not close its socket: {error}");
+                    panic!(
+                        "frame task did not close its socket: {error}; {}",
+                        host_support::host_report(dir.path())
+                    );
                 }
             }
             Err(error) => panic!("frame task did not close its socket: {error}"),
