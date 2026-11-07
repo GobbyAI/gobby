@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.stdio import DaemonProxy
+from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 
 pytestmark = pytest.mark.unit
 
@@ -207,7 +208,7 @@ async def test_interactive_tmux_omits_guessed_wrapper_session_header() -> None:
 
 
 @pytest.mark.asyncio
-async def test_variable_tools_send_requested_session_as_target_and_header() -> None:
+async def test_variable_tools_send_target_in_path_and_caller_identity_in_headers() -> None:
     proxy = DaemonProxy(60887)
 
     with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
@@ -217,10 +218,33 @@ async def test_variable_tools_send_requested_session_as_target_and_header() -> N
         await proxy.get_variable("flag", session_id="new-session")
 
     set_call, get_call = client.request.call_args_list
-    assert set_call.kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
     assert set_call.args[1].endswith("/api/sessions/new-session/variables/set")
     assert set_call.kwargs["json"] == {"name": "flag", "value": True, "scope": "session"}
-    assert get_call.kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
     assert get_call.args[1].endswith("/api/sessions/new-session/variables/get")
     assert get_call.kwargs["json"] == {"name": "flag", "scope": "session", "brief": True}
+    for call in (set_call, get_call):
+        # The target names the path only. A headless caller is identified by its own
+        # terminal context, never by the session it is writing to.
+        assert "X-Gobby-Session-Id" not in call.kwargs["headers"]
+        assert TERMINAL_CONTEXT_HEADER in call.kwargs["headers"]
     assert not hasattr(proxy, "_session_id")
+
+
+@pytest.mark.asyncio
+async def test_variable_tools_keep_managed_caller_header_over_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_SESSION_ID", "spawn-session-uuid")
+    proxy = DaemonProxy(60887)
+
+    with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+        client = _mock_http_client(mock_client_cls)
+
+        await proxy.set_variable("flag", True, session_id="new-session")
+        await proxy.get_variable("flag", session_id="new-session")
+
+    set_call, get_call = client.request.call_args_list
+    assert set_call.kwargs["headers"]["X-Gobby-Session-Id"] == "spawn-session-uuid"
+    assert set_call.args[1].endswith("/api/sessions/new-session/variables/set")
+    assert get_call.kwargs["headers"]["X-Gobby-Session-Id"] == "spawn-session-uuid"
+    assert get_call.args[1].endswith("/api/sessions/new-session/variables/get")
