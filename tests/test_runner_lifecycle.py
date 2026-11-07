@@ -1878,6 +1878,65 @@ class TestShutdownDaemonServices:
         cleanup_pid_file.assert_called_once_with()
 
     @pytest.mark.asyncio
+    async def test_caller_cancellation_during_hold_notice_still_stops_pool_and_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: tmp_path / "shutdown_intent_active.json",
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "gobby.runner_background_services.shutdown_background_services",
+            lambda: calls.append("pool"),
+        )
+        entered = asyncio.Event()
+
+        async def stalled_hold_notice(_runner: object) -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "send_hold_notice_if_restarting", stalled_hold_notice
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        reap = AsyncMock(side_effect=lambda **_kwargs: calls.append("reap"))
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, SimpleNamespace(should_exit=False)),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=cleanup_pid_file,
+            )
+        )
+        async with asyncio.timeout(10):
+            await entered.wait()
+        shutdown.cancel()
+        outcome = await asyncio.gather(shutdown, return_exceptions=True)
+
+        # A cancel at the first await still stops the pool and reaps children.
+        assert isinstance(outcome[0], asyncio.CancelledError)
+        assert calls == ["pool", "reap"]
+        reap.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+
+    @pytest.mark.asyncio
     async def test_cancelled_step_is_named_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
 

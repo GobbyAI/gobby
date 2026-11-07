@@ -867,12 +867,6 @@ async def shutdown_daemon_services(
     loop = asyncio.get_running_loop()
     overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
     _overall_shutdown_deadline = overall_deadline
-    # Inside the overall deadline, and before the host stops: wakes reach terminals
-    # only while the host still accepts input.
-    await send_hold_notice_if_restarting(runner)
-    host = getattr(runner, "terminal_host_manager", None)
-    if host is not None:
-        host.begin_shutdown()
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     graceful_deadline = min(
@@ -882,6 +876,13 @@ async def shutdown_daemon_services(
     overall_timeout = asyncio.timeout_at(overall_deadline)
     cleanup_completed = False
     try:
+        # Inside the overall deadline, and before the host stops: wakes reach terminals
+        # only while the host still accepts input. Inside the try, so a cancel or an error
+        # here still reaches the finally, which stops the pool and reaps children.
+        await send_hold_notice_if_restarting(runner)
+        host = getattr(runner, "terminal_host_manager", None)
+        if host is not None:
+            host.begin_shutdown()
         try:
             async with overall_timeout:
                 await stop_restart_recovery(runner)
