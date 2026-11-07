@@ -445,7 +445,7 @@ RUFF_SHAPES = (
 def test_literal_ruff_check_proves_its_workdir(
     event_handlers: EventHandlers, tmp_path: Path, prior: str, ruff: str
 ) -> None:
-    """Report 756fe608: a literal, read-only ruff check was refused in a Codex developer tree."""
+    """Report 756fe608: a literal, read-only ruff check was refused in a Codex task worktree."""
     workdir = tmp_path / "task"
     records: list[dict[str, Any]] = []
     if prior == "after_yielded_batch":
