@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any
 
 from gobby.hooks._normalization_base_commands import (
+    apply_uv_project_redirect,
     classify_base_command,
     execution_context_is_read_only,
     unresolved_execution_metadata,
@@ -182,7 +183,7 @@ def _normalize_shell_tool_metadata(
                 initial_scan=initial_scan,
             )
             if directory.altered_loops <= unstable:
-                return result
+                return apply_uv_project_redirect(result, command, *bodies.values())
             unstable |= directory.altered_loops
             exported_git_selector.set(entry[0])
             _script_reads_left.set(entry[1])

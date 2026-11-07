@@ -1,8 +1,10 @@
 """Classify plain shell commands independently of recursive shell execution."""
 
 import re
+import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from gobby.hooks._inline_interpreter_classifier import (
     _classify_inline_interpreter,
@@ -32,8 +34,10 @@ from gobby.hooks._normalization_shell import (
     _looks_file_like,
     _looks_path_target,
     _rebase_navigation_shell_paths,
+    _rebase_shell_path,
     _rebase_shell_paths,
     _shell_positional_args,
+    scan_shell_command,
 )
 from gobby.hooks._python_pipeline_classifier import (
     _classify_python_pipeline_evidence,
@@ -41,6 +45,7 @@ from gobby.hooks._python_pipeline_classifier import (
     _PythonExecutionClassification,
 )
 from gobby.hooks._shell_execution_words import _unwrap
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.code_navigation import (
     HEAD_TAIL_VALUE_OPTIONS,
     MAX_NARROW_SOURCE_BYTES,
@@ -95,6 +100,7 @@ def _uv_options(
     *,
     interspersed: bool = False,
     value_options: frozenset[str] = UV_VALUE_OPTIONS,
+    values: dict[str, str] | None = None,
 ) -> tuple[int, str | None, set[str]] | None:
     """Parse known option arities; an unknown option cannot prove the executable boundary."""
     flags: set[str] = set()
@@ -115,6 +121,8 @@ def _uv_options(
                 if start >= len(parts):
                     return None
                 value = parts[start]
+            if values is not None:
+                values[option] = value
             if option == "--directory":
                 cwd = _rebase_shell_paths([value], cwd)[0]
         elif word in _UV_FLAG_OPTIONS:
@@ -127,6 +135,95 @@ def _uv_options(
             return None
         start += 1
     return start, cwd, flags
+
+
+# uv takes its project root and working directory from these variables as well as options,
+# so a command that sets one can move the lockfile outside the command's literal paths.
+UV_PROJECT_ENV_VARS = frozenset({"UV_PROJECT", "UV_WORKING_DIR"})
+# Lockfile writers and the files each one rewrites at the resolved project root.
+_UV_LOCKFILE_OPERATIONS: dict[str, tuple[str, ...]] = {
+    "lock": ("uv.lock",),
+    "add": ("uv.lock", "pyproject.toml"),
+    "remove": ("uv.lock", "pyproject.toml"),
+}
+# Scripts keep inline metadata in their own file, and --package selects another member.
+_UV_UNRESOLVED_TARGET_FLAGS = frozenset({"--script", "-s", "--package"})
+
+
+def _uv_workspace_declared(path: Path) -> bool:
+    """Whether a pyproject.toml declares [tool.uv.workspace]; unreadable or invalid counts as declared."""
+    if not path.is_file():
+        return False
+    try:
+        table = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return True
+    tool = table.get("tool")
+    uv = tool.get("uv") if isinstance(tool, dict) else None
+    return isinstance(uv, dict) and "workspace" in uv
+
+
+def _uv_project_is_proven(directory: str) -> bool:
+    """Whether uv resolves this directory to itself: its own pyproject, and no ancestor workspace.
+
+    uv walks upward from a directory for its project, and a workspace member's lockfile
+    belongs to the workspace root. Without both proofs the lockfile target is unproven.
+    A node-origin checkout is never proven here: the hub's disk is not the node's disk.
+    """
+    if node_origin():
+        return False
+    try:
+        project = Path(directory).resolve()
+        if not (project / "pyproject.toml").is_file():
+            return False
+        return not any(_uv_workspace_declared(a / "pyproject.toml") for a in project.parents)
+    except (OSError, RuntimeError):
+        return False
+
+
+def _uv_lockfile_targets(parts: list[str], cwd: str | None) -> tuple[str, ...] | None:
+    """Literal files a uv lock, add or remove writes, or None when its project is not literal."""
+    values: dict[str, str] = {}
+    lead = _uv_options(parts, 1, cwd, value_options=UV_VALUE_OPTIONS, values=values)
+    if lead is None or lead[0] >= len(parts):
+        return None
+    index, root, leading_flags = lead
+    operation = parts[index]
+    if operation not in _UV_LOCKFILE_OPERATIONS:
+        return None
+    trailing = _uv_options(parts, index + 1, root, interspersed=True, values=values)
+    if trailing is None:
+        return None
+    _, root, trailing_flags = trailing
+    if (leading_flags | trailing_flags) & _UV_UNRESOLVED_TARGET_FLAGS:
+        return None
+    project = values.get("--project")
+    directory = root if project is None else _rebase_shell_path(project, root)
+    if directory is None or not directory.startswith("/"):
+        return None
+    if not _uv_project_is_proven(directory):
+        return None
+    return tuple(f"{directory.rstrip('/')}/{name}" for name in _UV_LOCKFILE_OPERATIONS[operation])
+
+
+def _names_uv_project_variable(text: str) -> bool:
+    """Whether shell text sets a uv project variable, or cannot be parsed to rule one out."""
+    try:
+        tokens = scan_shell_command(text).tokens
+    except ValueError:
+        return True
+    return any(
+        token.value.split("=", 1)[0].removesuffix("+") in UV_PROJECT_ENV_VARS for token in tokens
+    )
+
+
+def apply_uv_project_redirect(result: dict[str, Any], *texts: str) -> dict[str, Any]:
+    """Fail a repository write closed when the command sets a uv project variable."""
+    if result.get("canonical_tool_kind") != "write" or not result.get("canonical_repo_mutation"):
+        return result
+    if any(_names_uv_project_variable(text) for text in texts):
+        return {**result, "_canonical_repo_mutation_scope_unknown": True}
+    return result
 
 
 def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[str]) -> int:
@@ -445,10 +542,16 @@ def classify_base_command(
                 {"--locked", "--frozen", "--dry-run", "--check", "--help", "-h"}
             ):
                 return _ShellSegmentMetadata("write", repo_mutation=True)
-        if operation in (["add"], ["remove"], ["init"]):
+        if operation == ["init"]:
             return _ShellSegmentMetadata("write", repo_mutation=True)
-        if operation == ["lock"] and not {"--check", "--check-exists"}.intersection(parts):
-            return _ShellSegmentMetadata("write", repo_mutation=True)
+        lock_check = operation == ["lock"] and bool({"--check", "--check-exists"} & set(parts))
+        if operation in (["add"], ["remove"], ["lock"]) and not lock_check:
+            targets = _uv_lockfile_targets(parts, cwd or (str(base_cwd) if base_cwd else None))
+            if targets is None:
+                return _ShellSegmentMetadata("write", repo_mutation=True)
+            return _ShellSegmentMetadata(
+                "write", paths=targets, write_paths=targets, repo_mutation=True
+            )
         if operation == ["version"] and "--dry-run" not in parts:
             values = _shell_positional_args_after(
                 parts, index + 1, option_args=set(UV_VALUE_OPTIONS) | {"--output-format", "--bump"}
