@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
@@ -392,6 +393,19 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert result == 16
     assert transcript_evidence_pool._pool is None
     assert fake.shutdown_args == (False, True)
+
+
+@pytest.fixture(autouse=True)
+def _stop_transcript_pool_after_test() -> Iterator[None]:
+    """Stop the shared process pool a derivation started, before the test ends.
+
+    Derivations run through the shared pool, and only an explicit shutdown stops it. A pool
+    left running keeps its workers and resource tracker alive into session end, where the
+    exit watchdog fires.
+    """
+    yield
+    if isinstance(transcript_evidence_pool._pool, ProcessPoolExecutor):
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
 
 @pytest.fixture
