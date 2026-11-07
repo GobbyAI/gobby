@@ -57,3 +57,5 @@ mocking strategy, or framework integration coverage.
 - Include malformed input, null/empty boundaries, dependency failures,
   cancellation/interruption paths, and serialization round trips when relevant.
 - Keep test names specific enough to explain the behavior under review.
+
+_Version: 1.0.0_

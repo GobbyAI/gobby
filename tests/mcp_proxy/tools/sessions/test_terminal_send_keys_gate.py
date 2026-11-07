@@ -376,7 +376,7 @@ def public_send_keys(
         agent_depth=0 if operator else 1,
     )
     if not operator:
-        SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "orchestrator")
+        SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "fixture-seat")
     target = session_manager.register(
         external_id="send-keys-public-target",
         machine_id=require_machine_id(),

@@ -9,7 +9,9 @@ import os
 import sys
 import time
 from collections.abc import Callable
-from typing import Any
+from contextlib import nullcontext
+from typing import Any, NoReturn
+from urllib.parse import urlsplit
 
 import click
 import httpx
@@ -24,7 +26,9 @@ from gobby.config.logging import (
     resolved_logs_dir,
 )
 from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+from gobby.runtime_grants.signed_request import RESTART_PATH
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
+from gobby.utils.daemon_url import validate_daemon_url
 from gobby.utils.dependency_requirements import (
     unsupported_platform_error,
 )
@@ -33,7 +37,12 @@ from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.status import fetch_rich_status, format_status_message
 
 from ._daemon_handoffs import protect_pending_handoffs
-from ._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
+from ._daemon_protected_runs import (
+    clear_protected_runs,
+    fetch_protected_runs,
+    fetch_signed_protected_runs,
+)
+from ._signed_daemon_request import signed_daemon_headers
 from .daemon import _services_stop
 from .installers.service import (
     get_service_status,
@@ -238,7 +247,7 @@ def _do_stop(
 
     if force and wait:
         raise click.UsageError("--force and --wait are mutually exclusive")
-    if refusal := agent_activation_refusal():
+    if refusal := agent_activation_refusal(shutdown_intent):
         _step(f"Refusing to stop: {refusal}", error=True)
         return False
 
@@ -492,11 +501,19 @@ def restart(
     if verbose:
         setup_logging(True)
 
+    from gobby.releases.activation import caller_is_spawned, spawned_whole_daemon_refusal
+
+    if caller_is_spawned():
+        if full or docker_flag or expected_identity is not None or os.name == "nt":
+            _refuse_restart(spawned_whole_daemon_refusal())
+        _restart_from_spawned_seat(ctx, force=force, wait=wait, drain_terminals=drain_terminals)
+        return
+
     # Check before stopping: refusing after the stop would leave no daemon.
     from gobby.cli.runtime import get_cli_runtime
     from gobby.releases.activation import agent_activation_refusal
 
-    refusal = agent_activation_refusal() or restart_start_refusal(
+    refusal = agent_activation_refusal("restart") or restart_start_refusal(
         get_cli_runtime(ctx), expected_identity=expected_identity
     )
     if refusal:
@@ -538,6 +555,46 @@ def restart(
     ctx.invoke(start, verbose=verbose)
 
 
+def _refuse_restart(reason: str) -> NoReturn:
+    _step(f"Refusing to restart: {reason}", error=True)
+    _step("The running daemon was left alone.")
+    sys.exit(1)
+
+
+def _restart_from_spawned_seat(
+    ctx: click.Context, *, force: bool, wait: bool, drain_terminals: bool
+) -> None:
+    """Post a spawned seat's restart to the daemon route, which decides and starts the successor.
+
+    The seat runs no local stop or start half and reads no operator bootstrap. The route verifies
+    the presented token with the daemon's own key and installed definition, and refuses before
+    any stop.
+    """
+    from gobby.releases.activation import spawned_restart_refusal
+
+    if force and wait:
+        raise click.UsageError("--force and --wait are mutually exclusive")
+    if refusal := spawned_restart_refusal():
+        _refuse_restart(refusal)
+    result = _restart_backend(
+        ctx, force=force, wait=wait, drain_terminals=drain_terminals, spawned=True
+    )
+    if result is None:
+        _refuse_restart("the daemon did not accept the restart request")
+    if not result:
+        sys.exit(1)
+
+
+def _spawned_daemon_port() -> int:
+    """The port of the daemon URL a spawned seat was started with, read without the bootstrap.
+
+    The port is only a dial target. A spawned seat sends nothing authenticated to it
+    unless ``signed_daemon_headers`` produces a signed request for that port.
+    """
+    url = validate_daemon_url(os.environ.get("GOBBY_DAEMON_URL", ""), source="GOBBY_DAEMON_URL")
+    return urlsplit(url).port or 0
+
+
 def _restart_backend(
     ctx: click.Context,
     *,
@@ -545,36 +602,62 @@ def _restart_backend(
     wait: bool,
     drain_terminals: bool,
     logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
+    spawned: bool = False,
 ) -> bool | None:
-    """Restart a serving backend; None requires a full lifecycle replacement."""
+    """Restart a serving backend; None requires a full lifecycle replacement.
+
+    A spawned seat has no runtime: it takes the port from the URL it was spawned with, sends only
+    signed requests, and never sends its bearer, and it leaves the handoff admission to the daemon
+    route that the CLI owns for an operator.
+    """
     from gobby.cli.runtime import get_cli_runtime
 
     from .daemon_start import _poll_startup_progress
 
-    runtime = get_cli_runtime(ctx)
-    port = runtime.read_only_operational_config().daemon_port
+    runtime = None if spawned else get_cli_runtime(ctx)
+    port = (
+        _spawned_daemon_port()
+        if runtime is None
+        else runtime.read_only_operational_config().daemon_port
+    )
     if is_test_protect_enabled() and os.environ.get(E2E_ISOLATED_HOME_ENV) != str(get_gobby_home()):
         return None
     if not _is_daemon_healthy(port):
         return None
-    if not clear_protected_runs(
-        port, force=force, wait=wait, step=_step, fetch=fetch_protected_runs
-    ):
+    fetch = fetch_signed_protected_runs if spawned else fetch_protected_runs
+    if not clear_protected_runs(port, force=force, wait=wait, step=_step, fetch=fetch):
         return False
     try:
-        with protect_pending_handoffs(
-            runtime,
-            force=force,
-            wait=wait,
-            report=_step,
-            logged_stale_markers=logged_stale_markers,
+        with (
+            nullcontext()
+            if runtime is None
+            else protect_pending_handoffs(
+                runtime,
+                force=force,
+                wait=wait,
+                report=_step,
+                logged_stale_markers=logged_stale_markers,
+            )
         ):
+            # The CLI guard above owns admission; a spawned seat's route does. A spawned seat signs
+            # this request instead of sending its bearer.
+            params = {
+                "force": "true" if runtime is not None else str(force).lower(),
+                "terminals": str(drain_terminals).lower(),
+            }
+            headers = (
+                signed_daemon_headers(port, method="POST", path=RESTART_PATH, params=params)
+                if spawned
+                else daemon_auth_headers()
+            )
+            if headers is None:
+                _step("No signed restart request could be made; no bearer was sent", error=True)
+                return False
             try:
                 response = httpx.post(
-                    f"http://localhost:{port}/api/admin/restart",
-                    # Admission is owned by the CLI guard above.
-                    params={"force": "true", "terminals": str(drain_terminals).lower()},
-                    headers=daemon_auth_headers(),
+                    f"http://localhost:{port}{RESTART_PATH}",
+                    params=params,
+                    headers=headers,
                     timeout=RESTART_REQUEST_TIMEOUT_SECONDS,
                 )
             except httpx.HTTPError as exc:

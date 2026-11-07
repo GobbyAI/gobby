@@ -251,8 +251,8 @@ gobby skills list --category documentation --tags docs,api --enabled --limit 20
 gobby skills list --json
 
 # Show skill details
-gobby skills show tech-writer
-gobby skills show tech-writer --json
+gobby skills show docs-writer
+gobby skills show docs-writer --json
 
 # Create local authoring files
 gobby skills init
@@ -340,7 +340,7 @@ call_tool(
 call_tool(
     server_name="gobby-skills",
     tool_name="get_skill",
-    arguments={"name": "tech-writer"},
+    arguments={"name": "docs-writer"},
 )
 
 call_tool(

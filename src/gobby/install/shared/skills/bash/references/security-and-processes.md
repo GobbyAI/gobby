@@ -65,3 +65,5 @@ inspect, and execute as distinct operations under the required trust policy.
 
 Use absolute paths or a controlled PATH in privileged automation. Clear or
 allowlist environment variables crossing privilege boundaries.
+
+_Version: 1.0.0_

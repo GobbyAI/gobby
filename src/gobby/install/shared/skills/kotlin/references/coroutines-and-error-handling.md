@@ -46,3 +46,5 @@ dispatchers, retries, resources, or exception translation.
   fakes for coroutine timing.
 - Test cancellation, timeout, retry, dispatcher, and failure paths, not just the
   happy path.
+
+_Version: 1.0.0_

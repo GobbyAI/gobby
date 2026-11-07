@@ -59,4 +59,6 @@ Guides: [Graph operations](../../../../../../../../docs/guides/gcode-user-guide.
 [ownership contract](../../../../../../../../docs/guides/gcode-graph-core.md#ownership-boundaries),
 [HTTP routes](../../../../../../../../docs/guides/code-index.md#http-endpoints).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-23_

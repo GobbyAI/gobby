@@ -71,3 +71,5 @@ Review the updated section against at least one representative surface and the
 canonical token/component sources. Report what was recorded, any unresolved
 conflicts, and the source paths used. The flow is complete when
 `.impeccable.md` describes the incumbent system without competing authorities.
+
+_Version: 1.0.0_

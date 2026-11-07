@@ -45,3 +45,5 @@ Prefer the narrowest command that proves the changed behavior:
 - `bundle exec rake test TEST=test/foo_test.rb`
 
 Then run related lint/type commands for touched files.
+
+_Version: 1.0.0_

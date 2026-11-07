@@ -35,3 +35,5 @@
 - Run formatter, focused tests, compile, and configured analysis before closing.
 - Include failing-path tests for result tuples, changesets, retries, and
   supervision behavior affected by the change.
+
+_Version: 1.0.0_

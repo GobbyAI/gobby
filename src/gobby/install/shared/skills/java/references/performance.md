@@ -47,3 +47,5 @@ adapter, database path, or concurrency primitive.
   patterns for them.
 - Test stale data, eviction, failure, and stampede behavior when cache logic is
   changed.
+
+_Version: 1.0.0_

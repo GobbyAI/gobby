@@ -48,4 +48,5 @@ installed definition's scope and source filter when a name is unavailable.
 
 Guide: [Usage surfaces](../../../../../../../../docs/guides/agents.md#usage-surfaces).
 
-_Last verified: 2026-10-23_
+_Version: 2.1.0_
+_Last verified: 2026-11-04_

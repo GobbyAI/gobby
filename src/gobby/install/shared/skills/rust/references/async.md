@@ -117,3 +117,5 @@ async fn good_example(mutex: &tokio::sync::Mutex<Vec<String>>) {
 ```
 
 Same applies to `Rc`, `RefCell`, and `std::sync::MutexGuard` — none are `Send`. If you see "future is not Send", check what's alive across an `.await` point.
+
+_Version: 1.0.0_

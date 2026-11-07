@@ -25,3 +25,5 @@ Top-level communications enablement and webhook origin require operator
 configuration and daemon lifecycle work. Do not infer active settings from
 bundled defaults. See [channel management](../../../../../../../../docs/guides/comm-integrations.md#manage-channels)
 and [safe Telegram updates](../../../../../../../../docs/guides/telegram.md#safe-channel-updates).
+
+_Version: 1.0.0_

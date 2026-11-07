@@ -47,7 +47,7 @@ class TestSpawnAgentDedup:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -114,7 +114,7 @@ class TestSpawnAgentDedup:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )

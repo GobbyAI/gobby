@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [memory-lifecycle, memory, enforcement, planning, gobby, default]
 
 rules:

@@ -27,14 +27,7 @@ accepts no destination, and preserves conversation attachment state. The same
 workspace containment and delivery checks apply.
 
 Whole files and plans use `send_operator_attachment`, which sends the workspace
-file whole without redaction. The bundled `no-comms-attach` rule blocks the
-stdin attachment CLI for every seat except the Reporter, Log Monitor,
-Metrics Monitor and Trajectory Monitor. Those four definitions exclude the
-rule by name so they may send redacted log excerpts with `gobby comms attach`.
-Every other seat uses `send_operator_attachment` for authorized whole-file
-delivery. The Assistant asks the Log Monitor through `gobby-agents:send_message`
-to send cited log lines redacted; its own message says what happened and when,
-never the log lines or a path.
+file whole without redaction. The bundled `no-comms-attach` rule blocks the stdin attachment CLI for every seat whose definition does not exclude the rule by name. Other seats send operator reports that need attachments to the Assistant through `gobby-agents:send_message`, and the Assistant delivers them with `send_operator_attachment`. Its own message says what happened and when, never the log lines or a path.
 
 To send text as a document without a file, operators use
 `gobby comms attach CHANNEL_NAME FILENAME`, which reads stdin, or the
@@ -52,4 +45,12 @@ See [attachment sends](../../../../../../../../docs/guides/telegram.md#mcp-sends
 and [provider limits](../../../../../../../../docs/guides/telegram.md#limits-and-dependencies).
 Documenting an attachment workflow does not authorize uploading user files.
 
-_Last verified: 2026-10-13_
+The operator status report is a daemon-run attachment. The bundled status-report
+pipeline calls `gobby-communications:compose_status_report`, which builds the report
+from hub evidence, git and live agent runs and writes it under the project's reports
+directory; the pipeline then delivers the returned `file_path` with
+`send_operator_attachment`. The tool refuses any caller outside a daemon-run step, so
+agents never call it.
+
+_Version: 2.1.0_
+_Last verified: 2026-11-06_

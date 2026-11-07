@@ -1,0 +1,329 @@
+{
+ "batch": "config-tasks",
+ "part": 2,
+ "reviewer": "G1",
+ "dispositions": [
+  {
+   "ref": "#25495",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "B0-WRITE's tree_nodes and goal list #25495 (P3). The convention is the same as for #21559; close it after its 11 children, which include #25524-#25526 (disposed to B0-CLOSE; see the map-fix note).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 3.1-3.11 (3.8 is deferred to #21546); its leaves split between B0-WRITE (#25507-#25510, #25512, #25513, #25517) and B0-CLOSE (#25511, #25514-#25516, which lands later), so the prefill's 'chunk' kind is wrong. B0-WRITE's goal names 'P3 #25495' and its tree_nodes anchor it."
+  },
+  {
+   "ref": "#25507",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.1 task writes and the expansion write service, on #25262's advisory_lock_keys). B0-WRITE's goal covers create, update and delete with Python's lock keys, its selectors own POST /api/tasks and create_task, update_task and delete_task, and PLANS consumes the write service ('#25507 in B0-WRITE').",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25508",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.2 dependency edges, on #25262's lock keys). B0-WRITE's goal covers 'dependencies with cycle checks', and its selectors own the dependency routes and add_dependency and remove_dependency.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25509",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.3 affected files, artifacts and isolation pairs; #21581 consumes the affected-file service). B0-WRITE's goal covers artifacts, affected files and isolation pairs, and its gobby-tasks-ops selector owns set_affected_files, set_artifact, set_artifacts_atomic and clear_isolation_pair.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25510",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.4 comments). B0-WRITE's goal covers comments, and its selectors own POST and DELETE /api/tasks/{task_id}/comments.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25511",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit keep (3.4a attestations); verify adds that recording an attestation now advances claim_flow between DevTeam seats (2e34c9035c). B0-CLOSE's goal and tree_nodes hold attestations and its selector owns record_attestation and list_attestations, while B0-WRITE's goal starts from the post-friction claim_flow.py.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25512",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.5 claims, takeover grounds and session links); verify wants it rewritten after the friction epic settles. B0-WRITE's goal covers claim, release and hand-off and starts from Python after the friction queue (claim_flow.py 2e34c9035c, one Dev Team Lead per epic ec241d34cf), and its selectors own the claim routes and tools.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25513",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.6 escalation, de-escalation and reopen). B0-WRITE's goal covers reopen, escalate and de-escalate, and its selectors own those routes and tools.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25514",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit keep (3.7 close snapshot and ClosurePolicy port); verify flags that prepare_closure now reads project_policy from installed rule effects (674594feaa). B0-CLOSE's goal names that contract (installed_project_policy through RuleDefinitionManager.list_effective, plus project_policy_available) and lists #25514 in tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25515",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit keep (3.9 commit links and observed files). B0-CLOSE's goal and tree_nodes hold commit linking, with link_commit, unlink_commit and auto_link_commits in its selector; update_observed_files is a B0-WRITE selector that lands earlier, so the node completes at B0-CLOSE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25516",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit keep; verify asks to re-verify, because candidate_scope_paths may return None and receipts now carry candidate_paths_available and the landed_tip match (674594feaa). B0-CLOSE's goal names land_commit and the landing freeze with exactly those points, and its selector owns land_commit and set_landing_freeze.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25517",
+   "disposition": "chunk",
+   "target": "B0-WRITE",
+   "rationale": "Audit keep (3.11 backup, restore, doctor, stats, history and reindex; restore re-inserts ON CONFLICT DO NOTHING). B0-WRITE's goal covers reindex and backup under its sync engine, and its selectors own backup_tasks and reindex_tasks.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": false
+  },
+  {
+   "ref": "#25252",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "Audit done, upheld by verify: the plan is committed and stamped (fddd830d6d), Q1-Q13 are recorded and expansion run 3f75e1d9 created the leaves, so no work remains. B0-READ lists it in tree_nodes, and D31 closes a node whose criterion is met as done at chunk-task creation; tasks-family.md stays evidence for the B0 briefs (decisions.md: old plans are evidence only).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false
+  },
+  {
+   "ref": "#25492",
+   "disposition": "chunk",
+   "target": "REC-PILOT",
+   "rationale": "REC-PILOT's tree_nodes list #25492. The convention is the same as for #21559. Its descendants closing at V2 (#25499) do not hold it open under D31's single creation-time sweep, as long as children close first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-PILOT",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 0.1-0.3; its leaves split between REC-PILOT (#25500, #25501) and V2 (#25499; Stage 3, the last to land), so the prefill's 'chunk' kind is wrong. REC-PILOT's tree_nodes anchor it, and its '(depends: #25468)' R0 edge is one D31 drops."
+  },
+  {
+   "ref": "#25499",
+   "disposition": "chunk",
+   "target": "V2",
+   "rationale": "Audit keep; verify says needs-josh because deleting Python surfaces after the cut conflicts with ruling 6. The map settles it: V2's goal records tasks compact and clean (5 rows) as drops, which D20 keeps, and D14 names #25499 among the per-family deletions that become 'stop serving and freeze', with the code deleted in S3-DELETE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V2",
+   "changed": false
+  },
+  {
+   "ref": "#25500",
+   "disposition": "chunk",
+   "target": "REC-PILOT",
+   "rationale": "Audit keep (0.2 characterizes the HTTP, browser and event surface on tests/contracts/http_corpus.py, the ruling-7 oracle). REC-PILOT's goal records every Tasks row after the friction queue, as verify requires, and lists #25500 in tree_nodes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-PILOT",
+   "changed": false
+  },
+  {
+   "ref": "#25501",
+   "disposition": "chunk",
+   "target": "REC-PILOT",
+   "rationale": "Audit keep (0.3 fixtures for services, authority, MCP and CLI, plus closure vectors). REC-PILOT's goal takes its surface list from #25500 and #25501 and records after the friction queue and #25621's claim-fence change, as verify requires; the 33-verb CLI fixture's oracle role passes to REC-CLI's goldens (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "REC-PILOT",
+   "changed": false
+  },
+  {
+   "ref": "#25493",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "B0-READ's tree_nodes list #25493. The convention is the same as for #21559.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 1.1-1.3; all three leaves (#25502-#25504) are disposed to B0-READ, so it carries no work of its own and closes with them, which makes container the right kind. B0-READ's tree_nodes anchor it."
+  },
+  {
+   "ref": "#25502",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "Audit keep (1.1 family crate, row model and scoped references; its own #21559 edge carries the A1-before-B0 order, CC-4). B0-READ's goal builds the gtasks crate with its row model and scoped references, D25 keeps A1 first (B0-READ depends on A1-SECRETS), and its 1.1.3 bump set follows D39 instead of per-leaf promotion (CC-1).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false
+  },
+  {
+   "ref": "#25503",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "Audit keep (1.2 listing, readiness, search and dependency reads). B0-READ's goal covers listing, readiness with parity to the parent-chain CTE (_queries.py:408-443), search (porting src/gobby/search into gcore) and dependency reads, under its GET /api/tasks and read-tool selectors.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false
+  },
+  {
+   "ref": "#25504",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "Audit keep (1.3 detail, links and suggestion reads). B0-READ's goal covers 'detail, link and suggestion reads', and its selector owns get_task, get_task_diff, get_task_sessions and suggest_next_task.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false
+  },
+  {
+   "ref": "#25496",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "B0-CLOSE's tree_nodes list #25496. The convention is the same as for #21559; close #25521 (superseded CP-TEMPLATE-CLOSE-CUT) first.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 4.1-4.4; its leaves split across B0-READ (#25522), B0-CLOSE (#25518-#25520) and CP-TEMPLATE-CLOSE-CUT (#25521, the last to land), so the prefill's 'chunk' kind is wrong. B0-CLOSE's tree_nodes anchor it."
+  },
+  {
+   "ref": "#25518",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit keep (4.1 tasks HTTP routes, events and the assignment port, modeled on gruntime's RuntimeFamily). B0-CLOSE's goal names the HTTP family and event wiring (#25518, #25519); the read and write routes are B0-READ and B0-WRITE selectors that land earlier, so the node completes at B0-CLOSE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25519",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit keep (4.1a links gtasks into gdaemon, passive on a Proxy default; its 4.1a.3 bump is CC-1). B0-CLOSE's goal names it (#25519); D37 keeps the family dormant on code defaults, and D39 sets the gdaemon bumps.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25520",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Audit needs-josh, upheld (CC-2: keep the race-aware live compare and the 72 h soak?). D13 settles it with a bounded replay soak at CP-TEMPLATE-REVIEW and a live Compare day at CP-TEMPLATE-CUT, and B0-CLOSE's goal builds #25520's check_proxied comparison for both, alongside corpus replay (4.2.2) and node-to-hub routing (4.2.4).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false
+  },
+  {
+   "ref": "#25521",
+   "disposition": "superseded",
+   "target": "CP-TEMPLATE-CLOSE-CUT",
+   "rationale": "D31's binding move, kind corrected from chunk. The leaf promotes the coherent set through promote_workspace_binary_set with installed hashes and has 'Only the Orchestrator' delegate the cutover (audit CC-3; verify needs-josh on that ownership), which rulings 11, 14 and 20 replace with the checkpoint cut. B0-CLOSE builds the key-caller default dormant, and CP-TEMPLATE-CLOSE-CUT's goal 'holds #25521' with 4.3.4's installed hashes and announcement.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CP-TEMPLATE-CLOSE-CUT",
+   "changed": true
+  },
+  {
+   "ref": "#25522",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "Audit keep (4.4 cookie class on the 17 tasks routes through the shared verifier; 6.1 needs its exact-SHA security attestation). B0-READ's goal covers 'browser admission through the shared verifier', the cookie verifier #24967 that D3 builds in SEAM-CALLERS, on which B0-READ depends.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false
+  },
+  {
+   "ref": "#25497",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "B0-CLOSE's tree_nodes and goal list #25497 ('front-door service handoffs (#25497)'). The convention is the same as for #21559.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 5.1-5.5; its leaves split across B0-READ (#25523), B0-CLOSE (#25524-#25526) and V2 (#25527; Stage 3, the last to land), so the prefill's 'chunk' kind is wrong. B0-CLOSE's goal names 'front-door service handoffs (#25497)' and anchors it."
+  },
+  {
+   "ref": "#25523",
+   "disposition": "chunk",
+   "target": "B0-READ",
+   "rationale": "Audit keep (5.1 read descriptors). Task text: its eleven tools (get_task through suggest_next_task) call 1.2 and 1.3 and match B0-READ's gobby-tasks selector exactly, so the leaf closes with B0-READ.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-READ",
+   "changed": false
+  },
+  {
+   "ref": "#25524",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Override: the task text's twelve tools have handlers calling 3.4a and 3.5-3.7, and four of them (close_task, repair_closed_candidate, record_attestation, list_attestations) are in B0-CLOSE's gobby-tasks selector over 3.4a (#25511) and 3.7 (#25514), both in B0-CLOSE's tree_nodes. B0-CLOSE depends on B0-WRITE, so B0-WRITE can build only the other eight (claim_task through reopen_task, its selectors), and the leaf first completes at B0-CLOSE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": true
+  },
+  {
+   "ref": "#25525",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Override: the task text's twelve tools run over 3.1, 3.2, 3.9 and 3.11, and link_commit, unlink_commit and auto_link_commits are in B0-CLOSE's selector over 3.9 (#25515, in its tree_nodes). B0-WRITE builds the other nine (its selectors), but the leaf first completes at B0-CLOSE, which depends on B0-WRITE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": true
+  },
+  {
+   "ref": "#25526",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "Override: the task text's eleven gobby-tasks-ops tools include land_commit and set_landing_freeze, which are B0-CLOSE selectors over 3.10 (#25516, in its tree_nodes), and get_affected_files, get_artifacts and find_file_overlaps, which are B0-READ selectors. B0-WRITE builds the server assembly, its six write tools and Q12's four operator tools over 3.11, but the leaf first completes at B0-CLOSE.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-WRITE",
+   "changed": true
+  },
+  {
+   "ref": "#25527",
+   "disposition": "chunk",
+   "target": "V2",
+   "rationale": "Audit keep (5.5 maps the 33 tasks CLI verbs to the public API, and #21571 ports them). V2's goal builds the tasks, plan and plans verbs 'from the CLI verb-to-public-API map (#25527)', with REC-CLI goldens as the oracle (D16).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V2",
+   "changed": false
+  },
+  {
+   "ref": "#25498",
+   "disposition": "chunk",
+   "target": "B0-CLOSE",
+   "rationale": "B0-CLOSE's tree_nodes list #25498. The convention is the same as for #21559.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": false,
+   "reviewer_rationale": "Phase epic the audit keeps as the container for 6.1; its only leaf #25528 is disposed to B0-CLOSE, so it carries no work of its own and closes with it, which makes container the right kind. B0-CLOSE's tree_nodes anchor it."
+  },
+  {
+   "ref": "#25528",
+   "disposition": "superseded",
+   "target": "B0-CLOSE",
+   "rationale": "Item 6.1 publishes the tasks ledger shard through scripts/generate_parity_ledger.py, and its owner notes name #21562, #24151, #21570, #21567 and #21571. Under D5 the owner column takes chunk ids at the cut instead, and D15's gport ledger replaces the generator, as G1's own rationale notes. This matches #25120 and #25065, and #25528 has no commits. B0-CLOSE's goal ('parity ownership (#25528)') stays the home.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "B0-CLOSE",
+   "changed": true,
+   "reviewer_rationale": "Audit keep (6.1 publishes the tasks ledger shard; 15 rows go delegated after 4.4's security attestation). B0-CLOSE's goal names 'parity ownership (#25528)'; under D5 the owner column takes chunk ids from the map's selectors in place of the plan's owner notes to #21562, #24151, #21570, #21567, #21571 and #21581."
+  }
+ ]
+}

@@ -31,4 +31,6 @@ its execution ID before retrying. Use the capability owning a child operation
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

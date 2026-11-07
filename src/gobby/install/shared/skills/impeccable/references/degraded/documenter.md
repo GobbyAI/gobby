@@ -22,3 +22,5 @@ Expect: the project root; the artifact path(s); the direction contract text (THE
 ## Output Contract
 
 Return: the file paths written, a five-line summary of the recorded system (palette strategy, type ramp shape, named rules), and one line naming anything in the build you deliberately did not canonize and why. No other prose.
+
+_Version: 1.0.0_

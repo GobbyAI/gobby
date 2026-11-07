@@ -179,6 +179,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `capabilities` | Explicit permissions and workflow opt-ins; a definition's name grants no authority. Rule applicability and exemptions belong in `workflows.rule_selectors`. |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
+| `spawner_capabilities` | Capabilities a caller must hold, any one of them, to spawn this definition, whatever the caller's `spawnable_agents` or capability set says; empty (the default) admits every caller. A fallback hop to this definition is checked the same way. The bundled Assistant requires `spawn_any_definition`, so only the Orchestrator can spawn it. |
 | `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`, and a single-task team's manager relaunches only a seat type its team recorded and no longer runs. |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
@@ -214,41 +215,37 @@ checks. The current bundled catalogue is:
 
 | Definition | Responsibility |
 | --- | --- |
-| `assistant` | Runs in an operator-opened pane. Communicates with the operator and coordinates decisions; never spawned |
+| `assistant` | Operator's chat agent. Carries the operator's words to the Orchestrator and brings fleet news and decisions back; a spawned child |
 | `orchestrator` | Runs in an operator-opened pane. Assigns and coordinates repository work; never spawned |
 | `dev-team-lead` | Leads a task or epic; checks security, lands, validates the integrated SHA, closes and cleans up |
-| `test-writer` | Commits a DevTeam task's failing tests before implementation and records the test step |
+| `plan-team-lead` | Leads one plan team: relays the plan writer, plan adversary and plan advocate that the plan-team runbook launches for one task, and delivers the reviewed plan and open objections to its report target. Writes no plan text; blocks `kill_agent` and `stop_agent` |
 | `developer` | Owns tests-first implementation for one DevTeam task and sends its CANDIDATE to the Dev Team Lead and Code Reviewer |
 | `code-reviewer` | Independently reviews and validates the exact candidate; claim_flow hands approved work to the lead |
 | `security-auditor` | Reviews candidate security, audits trust boundaries, and drafts security_paths for operator approval via Assistant and Orchestrator application |
 | `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
-| `debugger` | Tests one bug hypothesis and reports CONFIRMED, REFUTED or INCONCLUSIVE with its evidence |
-| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed; the Orchestrator owns every daemon restart and activation |
+| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed, and runs daemon restarts and cutovers only when the Orchestrator directs them; it reports to Triage |
 | `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts Triage on quiet DevTeams |
 | `researcher` | Answers bounded research requests |
-| `reporter` | Standing spawned seat that drafts the operator status each `report_cadence_seconds` tick and yields between ticks |
+| `research-team-lead` | Leads one research team: relays the researcher and research reviewer that the research-team runbook launches for one research task, and delivers the reviewed report to its report target. Writes no research or code; blocks `kill_agent` and `stop_agent` |
 | `archivist` | Maintains the operational digest |
-| `log-monitor` | Monitor-only check of daemon health, status and logs every ten minutes; reports to Triage |
-| `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to Triage and Log Monitor |
 | `triage` | Receives the reports meant for the Orchestrator and hands it one queued digest every five minutes |
 | `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; applies Orchestrator-directed folds and retirements (`superseded` or `moot` closes, with criteria merged into the survivor), and excludes protected triage and plan-expanded subtrees |
 
 These templates are global installed definitions tagged `gobby` in storage;
 their YAML `seat` tag marks the file-based catalogue. The Assistant and
 Orchestrator declare only the `persona` surface, because they run in
-operator-opened panes and are never spawned. The other standing seats declare
-both `spawn` and `persona` surfaces and share one anchored prompt between the
-two. Standing seats inherit provider and checkout mode, omit a model override,
-and use `execution_mode: interactive` with `timeout: 0`. The reporter declares
-only the `spawn` surface. It waits between ticks with `wait_for_coordination`
-on the project-policy `report_cadence_seconds` and does not end after one
-report. Definitions never select a terminal backend. The researcher
-additionally declares `idle_ttl_seconds: 900`.
+operator-opened root panes and are never spawned. The other standing seats declare
+both `spawn` and `persona` surfaces and share one anchored prompt between the two. Standing seats
+inherit checkout mode, take their model from the project policy's
+`agent_model_defaults` entry or from the definition when the policy names none,
+and use `execution_mode: interactive` with `timeout: 0`. Definitions never select a
+terminal backend. The researcher additionally declares `idle_ttl_seconds: 900`.
 
 Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
 rule group. The `no-send-keys` rule (default tag, so every bundled definition
-selects it) withholds `send_keys` from every definition except the Orchestrator
-and Assistant, which carry the `send_keys` capability. It does not withhold
+selects it) withholds `send_keys` from every definition except the Orchestrator,
+which carries the `send_keys` capability. The Assistant carries `send_wake` instead,
+which `no-send-wake` gates the same way. It does not withhold
 `capture_output`. Dev Team Leads, the Recovery Steward and Triage report stalled
 seats to Triage, which relays each resume to the Orchestrator. Spawn and
 pipeline-launch restrictions prevent seats from bypassing their assigned role.
@@ -265,7 +262,7 @@ task and routes additional skills by the touched paths:
 | `web/` | `impeccable`, `typescript` |
 | `crates/` | `rust` |
 | Python only | No addition beyond the required skill set |
-| Docs only | `tech-writer` |
+| Docs only | `docs-writer` |
 
 Task-specific skills and named methodologies are added; `tdd:required` adds
 `test-driven-development`. Required loads precede implementation. The task
@@ -275,13 +272,13 @@ compact in place under context pressure. Closing a DevTeam task ends every seat
 of that team; other standing seats outlive the tasks they work on. See
 [runbooks](runbooks.md) for the Support and DevTeam launches.
 
-### Team Planning Agents
+### Plan Team Agents
 
-`plan-writer`, `plan-enhancer`, and `plan-adversary` are run-scoped planning
-agents, separate from the standing-seat catalogue. The team-planning runbook launches
-them; they complete their run through `end_agent_run`. Their own definitions
-control provider, lifetime, and workflow choices, so standing-seat invariants
-do not apply to them.
+`plan-writer`, `plan-adversary`, and `plan-advocate` are run-scoped planning
+agents, separate from the standing-seat catalogue. The plan-team runbook launches
+them and their `plan-team-lead`, and the lead relays them for one task. They complete
+their run through `end_agent_run`. Their own definitions control provider,
+lifetime, and workflow choices, so standing-seat invariants do not apply to them.
 
 ## Strict Execution Fields
 

@@ -10,6 +10,7 @@ project slot before any row is written.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,7 @@ from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.machine_routing import RoutedMachine, is_local_machine, resolve_target_machine
 from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
     LaunchRefused,
+    load_model_defaults,
     resolve_launch_model,
     resume_launch_defaults,
     standing_seat_suffix,
@@ -42,6 +44,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 if TYPE_CHECKING:
+    from gobby.agents.model_defaults import ModelDefaults
     from gobby.hub.remote_spawn import RemoteSpawnRequest
 
 
@@ -119,12 +122,14 @@ async def spawn_remote_route(
     placement: dict[str, Any] | None,
     request: RemoteSpawnRequest,
     completion_registry: Any | None = None,
+    model_defaults: ModelDefaults | None = None,
 ) -> dict[str, Any]:
     """Launch the run on ``routed``'s node. Call only when ``routed`` is not local.
 
     Every check that can refuse runs before a row is written: the resume target, the
     launch settings, the task, and the project slot. Only then does
-    ``spawn_remote_agent`` prepare the run with the shared path and send it.
+    ``spawn_remote_agent`` prepare the run with the shared path and send it. The caller
+    passes the project policy it resolved the provider with; without one, it is read here.
     """
     if placement is not None:
         return spawn_refusal(
@@ -186,12 +191,18 @@ async def spawn_remote_route(
     if missing_provider is not None:
         return missing_provider.to_response()
     try:
+        policy = (
+            model_defaults
+            if model_defaults is not None
+            else await asyncio.to_thread(load_model_defaults, db, request.project_id)
+        )
         launch = await resolve_launch_model(
             provider=provider,
             model=model,
             agent_body=request.agent_body,
             reasoning_effort=reasoning_effort,
             reasoning_required=request.reasoning_required,
+            model_defaults=policy,
         )
         run_lifetime = resolve_run_lifetime(
             request.agent_body, request.execution_mode, resumed=resume_target is not None

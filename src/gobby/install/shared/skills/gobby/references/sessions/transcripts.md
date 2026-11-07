@@ -42,4 +42,6 @@ assuming a raw file or summary exists.
 
 Guide: [Reading session data](../../../../../../../../docs/guides/sessions.md#reading-session-data).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -33,6 +33,12 @@ repos:
       - id: check-toml
       - id: check-added-large-files
         args: [--maxkb=500]
+        # The 1.0 port map's generated files; they are reviewed through their sources.
+        exclude: |
+          (?x)^(
+            \.gobby/plans/research/1\.0-ultracode-chunk-map-2026-11-03\.(md|json)|
+            docs/port/map-v2\.(md|json)
+          )$
       - id: check-merge-conflict
       - id: debug-statements
       - id: check-case-conflict

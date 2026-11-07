@@ -41,3 +41,5 @@ session rather than deleting local layout or session data.
 
 See [web access](../../../../../../../../docs/guides/web-ui.md)
 and [gclient](../../../../../../../../docs/guides/gclient-user-guide.md).
+
+_Version: 1.0.0_

@@ -35,3 +35,5 @@ MCP vocabulary operation. Restore trials with a fresh revision and only their
 changed values, then refresh models and verify status again.
 
 See [configuration](../../../../../../../../docs/guides/voice.md#configuration).
+
+_Version: 1.0.0_

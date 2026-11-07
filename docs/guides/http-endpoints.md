@@ -504,13 +504,12 @@ and `validation_criteria`.
 | `POST` | `/api/agents/spawn` | Spawn one agent. |
 | `POST` | `/api/agents/spawn/batch` | Spawn multiple agents. |
 | `POST` | `/api/agents/spawn/prompt-preview` | Preview a spawn prompt. |
-| `GET` | `/api/agents/launch-defaults` | Read agent launch defaults. |
 | `POST` | `/api/agents/cleanup` | Reconcile stale runs using timeout criteria. |
 
 Agent HTTP routes are operator/client interfaces. Spawn requires `task_id` and
 uses `agent_name`; MCP spawn requires `prompt` and uses `agent`. HTTP batches
-contain individual spawn requests. `GET /api/agents/launch-defaults` is read-only;
-there is no corresponding PUT route. Use configuration management for changes.
+contain individual spawn requests. Launch models come from the project policy's
+`agent_model_defaults` map and the agent definition; see the agent spawning reference.
 
 ## Memory, Skills, Workflows, And Rules
 

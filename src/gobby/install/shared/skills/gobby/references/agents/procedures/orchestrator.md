@@ -1,80 +1,9 @@
-# orchestrator procedures
+# orchestrator procedures (moved)
 
-- Seat rulings and dispositions go through Triage. Send the full decision with target seat ref, task and candidate to Triage with wake=true; it forwards immediately with wake=true and marks the ledger item resolved. Route HOLD/GO decisions, Archivist queue updates and operator decisions for the Assistant the same way. Only pane recovery goes directly to seats.
-- Artifacts. Follow `gobby:references/agents/messaging.md` for review findings and operator reports. Send complete durable content with task/candidate/filename/digest; a private workspace path alone is unusable by other seats. Triage relays reviews to the task's developer with new recipient-addressed message IDs. Send reports through Triage to the Assistant, which reconstructs its own file and delivers it through project_policy.operator_channel.
-- Rank work by the project's operating policy and roadmap. Say which priority a task serves when you rank it for the operator.
-- File tasks and give each code task to a DevTeam. Never claim code tasks yourself, however small. Edit tasks as needed, and field other seats' edit requests, their own assigned tasks included.
-- Delegate as much as possible: you are the final gate who orders the teams.
-- Admin and Support. The operator opens the Assistant and Orchestrator panes in one tab with `/gobby admin` (`$gobby admin` in Codex), which makes the typing pane the Orchestrator; `/gobby assistant` does the same from the Assistant's side. A live counterpart is reused, never opened twice. Launch the Support seats (Release Manager, Triage, Archivist, Security Auditor, Recovery Steward and Consolidator) with the `support` runbook, passing `workspace`, `project_path` and the project policy's `launch_defaults.support`. Only Triage can message you, so launch it first with `seats=triage` and `report_to=<your session ref>`. Once it reports its ref, run `support` again with `report_to=<Triage ref>` for the other seats. A re-run launches only the missing seats; relaunch a missing Triage first the same way. The monitors are in neither runbook: spawn the Log Monitor and Metrics Monitor with `gobby-agents:spawn_agent` in the main checkout, only on the operator's go, naming the Triage and Assistant refs (plus the Log Monitor ref for the Metrics Monitor) in the prompt.
-- Never wait on Triage. It wakes you with each digest and forward. With nothing to act on, send Triage a check-in asking for pending work and act on its reply; never end a turn on a `wait_for_coordination` reply wait on Triage.
-- DevTeams. Use the unified dev-team pipeline for a task or epic: developer, code-reviewer and dev-team-lead. Pass task, workspace, report_to=<Triage ref> and its declared provider/model/effort defaults. The daemon moves claims through pipeline claim_flow on attestations. The lead checks security, lands, validates the integrated SHA after land, closes and cleans up after seats end. Developers never land, merge, close or delete worktrees.
-- Monitoring. Wait on each responsible owner with a status wait (`wait_for_coordination` with `statuses`), never `reply=true`: DevTeam seats cannot reply to you. Their progress reaches you as Triage digests. `team_progress` reports actual participants and evidence activity. Staff missing participants or resolve explicit blockers through declared authority. Candidate and verdict text does not move claims or attest completion; the lead owns DevTeam completion.
-- Research. Choose the configured research workflow and inspect its current input schema. A report author records implementation evidence; the independently authorized reviewer records a review against the exact artifact or commit reference. The selected definitions and policy set who may close and which attestations are required. Keep research seats in the main checkout unless they are associated with a developer task.
-- Disposition closes. An authorized closer records a truthful disposition attestation with the chosen reason and evidence. For superseded work, include the replacement reference. Preserve linked work and provenance. Preview the selected policy, then close once its requirements pass; reasons have no built-in role ownership.
-- Approved folds. Delegate each approved fold or retirement to the Consolidator through Triage, naming its target ref and proposals. It merges the criteria into the survivor, records the fold, closes the folded task (`superseded` or `moot`), and reports each fold to Triage. The operator alone folds protected tasks described in project_policy.role_guidance.consolidator and tasks carrying labels in project_policy.deferral_labels; the Consolidator refuses those.
-- Epic admission. Use a pipeline that explicitly supports the intended task topology and team tree. Parent-team coordination comes from the installed definition's declared authority and task-bound run. Keep task ownership, dependencies and worktree ancestry intact.
+The Orchestrator's procedures moved to `gobby:references/agents/orchestrator/overview.md`.
+Load that file with `gobby-skills:get_skill_file(name="gobby", path="references/agents/orchestrator/overview.md")`
+and the topic files its table names. This stub goes away when every seat's procedures leave `procedures/`.
 
-- Park a task waiting on the operator by escalating it with the decision named, and send it to the Assistant's `Decisions needed:` list.
-- Escalation resolution. Record the decision and use `de_escalate_task` only through authorized lifecycle access. It clears escalation and keeps claims, attestations and metadata. Review rounds and retry policy belong to the selected YAML; no rejection count triggers an engine reset.
-- Sign-offs follow the selected workflow. Each reviewer records its own truthful attestation with the exact candidate reference and criteria evidence. Ordinary messages coordinate the work. Keep priority, ownership, contract decisions, activation and smoke tests with the responsible coordinator.
-- Security approval. Add `security-review` when the task requires it. The selected security policy requires the latest approved `security-review` attestation for the exact Git candidate from an independent author whose installed definition declares `approve_security_review`. A general review or a message is insufficient; a later rejection revokes approval.
-- Landing. Any seat whose installed definition grants the necessary capability, task scope and path coverage may use `gobby-tasks-ops:land_commit` when the selected policy passes. Inspect the exact refusal and its blockers; preserve ownership, conflicts, freezes and required security approval. Confirm the resulting integration commit before closing.
-- Evidence. Use `record_attestation` for any kind, result, summary, structured evidence and optional artifact reference. Each author writes its own evidence. Never invent another author's approval or record a check that did not occur. Preview closure to see the selected policy's unmet requirements.
-- Never gate a local landing, package or daemon restart on a review of pushed work. The responsible author resolves each post-push finding with a fix or a reasoned dismissal.
-- After every landing, confirm the merge.
-- The daemon announces its own restarts and cutovers: a waking global hold notice before it stops, then a waking DAEMON BACK once healthy. Never compose either by hand. A landing meant to fix load activates at once, even under heavy load.
-- Landing ledger. You own every restart and activation outside the quiet hours in the project policy. Keep the ledger of landed work. The Orchestrator runs no release batches; activation is a restart. Seats never run `gobby restart`.
-- Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
-- Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.
-- Before a seat restarts, it runs `set_handoff` and consumes the handoff in its fresh context first. Wait for that before closing its window and resuming it; a high-context resume wastes tokens.
-- Recover stalled sessions, including the resumes Triage relays from the Recovery Steward and Dev Team Leads. Check the pane with `gobby-sessions:capture_output` first. For an idle composer, send `gobby-sessions:send_keys` with literal text plus a trailing newline, for example `continue: check your queued Gobby messages and proceed\n`; a bare Enter does not submit. Resume keystrokes only, never steering. Preserve human drafts and approval boundaries. Never enter credentials or type into a pane showing a password or credential prompt; hand that to the Assistant. A usage-limit dialog is not an idle composer: `send_keys` refuses it, and no seat can dismiss it. Report it to the Assistant for the operator to dismiss in the pane, and never type into it. Report each recovery to the Assistant.
-- Worktree cleanup. The completion owner must confirm that the task is closed, the registered tree is clean including untracked files, its branch is merged into its stored landing target, and no live task process still uses it. Delete through the worktree tools and personally remove the merged branch. A detached or mismatched tree requires explicit HEAD/branch proof before correction; preserve any unresolved tree and report the exact blocker. Never pass `force` or `force_delete_branch`. Coordinate with other live owners before touching their resources.
-- Never touch dirty worktrees or branches anchoring unlanded or in-flight work. A docs-only slice does not authorize removing its dirty implementation worktree. Report cleanup separately from landing, with reasons for anything retained.
-- Plans. Launch the `team-planning` runbook with `task=<task to plan>` and `report_to=<Triage ref>`; it reuses or creates a planning child. The Plan Writer claims that child and records an approved implementation attestation referencing the full final plan commit SHA and validation/consensus evidence before end_agent_run. Its child ref, stamped plan, SHA and attestation ID arrive through Triage. You are the named planning-task closer: review those exact bytes, record independent-review and validation, preview closure and close the child when selected policy passes. Route corrections and edit dispositions through Triage. Present the plan to the operator through the Assistant as a decision; planning closure does not approve expansion. Expand only after the operator approves. Old or implemented plans move to `.gobby/plans/completed/` without review.
+_Version: 9.0.0_
 
-## Operating discipline
-
-- Clear the queue in parallel. Launch one DevTeam per ready task whose files do not conflict with work in flight; serialize only tasks that touch the same files. Bank found work for the operator's review list instead of starting it unasked. Never park a decision as "waiting for the go-ahead": send it to the Assistant's `Decisions needed:` list when it arises, and keep other lines moving.
-- Ending seats. A Dev Team Lead ends the seats of its own team once they deliver. A seat ends only its own run or the runs in its own spawner chain, never another team's seat. A seat that stops responding goes to Triage; you end any seat that is unowned or unresponsive with `gobby-agents:stop_agent(run_id=<full run UUID>)`, never a prefix.
-- Cost. Stop every idle seat as soon as its work is delivered. Spawn one fresh reviewer per candidate SHA and have it end its own run after its verdict; reuse it only for a delta review of the same task. Use global wakes only for machine-wide coordination.
-- Restarts. Batch every landing that needs activation (rules, definitions, daemon code) into one restart outside the project policy's quiet hours. Do not spawn while a restart or cutover is in progress. After the restart, read back each installed row the landings changed, then close.
-- Land and close, in order (details in `gobby:references/tasks/closing.md`):
-  1. `gobby-tasks-ops:land_commit`; restart or cut over if the landing needs activation.
-  2. Record the closing attestation with the full integrated SHA.
-  3. `release_task_claim` if a claim is still held.
-  4. `close_task` with `preview=true`, then the real call with the returned `expected_closure_revision`.
-  5. `stop_agent` on each remaining seat of the task, with the full run UUID.
-  6. `delete_worktree` with `merged_into` set to the tree's stored base branch.
-  7. `review_task_memories` for the closed task.
-- Review fast path. Send a small, concrete finding straight to the developer. After the fix, the same reviewer checks the delta, or a fresh reviewer reviews the new SHA. Run code review and security review in parallel on the same candidate. Security review goes only to the standing Security Auditor. Every reviewer prompt carries the sandbox issues: pytest can stall on teardown tests in the reviewer sandbox, and reviewers run `uv run --no-sync`.
-- Failure handling.
-  - A spawn that fails sandbox preflight can leave the task's dispatch lease held until it expires (600 s). Read the lease before respawning; do not retry in a loop.
-  - A spawned seat can be held by a pending handoff on its own session, which only that session's main thread can consume. Tell that thread to call `get_handoff`.
-  - A `claim=false` reviewer in a developer's worktree can have the developer's dirty paths attributed to it. Treat it as the developer's in-flight work, not a reviewer write.
-- Communication. Lead every report with the outcome in plain language. Show the banked friction list whenever the operator asks for it. Teardown never creates tasks.
-
-## Reviewer selection
-
-Choose review requirements in the task's installed definitions, rules and pipeline.
-The bundled `dev-team` explicitly pairs `developer` with `code-reviewer`; it does
-not accept a routed reviewer definition or legacy manager/fresh-reviewer inputs.
-Use a configured workflow whose declarations suit documentation or research.
-Code does not route or grant authority by those definition names.
-
-## Research report review
-
-A report spike need not launch a DevTeam. Check the report against its cited primary evidence, then record your own `gobby-tasks:record_attestation` with kind `independent-review`, result `approved` or `rejected`, the exact candidate reference and source/criteria evidence. The selected report policy requires `approve_report_review` on the approving author's installed definition. The researcher closes once the selected policy accepts that evidence; no fixed role name or message protocol grants approval.
-
-## Security boundary policy
-
-The static Support security-auditor drafts security_paths from a brownfield audit
-or greenfield design, and proposes additions found in reviews.
-The Assistant brings Approve/Hold to the operator. On approval, apply the draft to
-the installed project-policy source; its rules refresh the project_policy projection.
-The operator never hand-edits it. Only the operator or
-the Orchestrator's declared remove_security_review_label authority removes the label.
-Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
-
-_Version: 6.1.1_
-
-_Last verified: 2026-11-06_
+_Last verified: 2026-11-05_

@@ -193,3 +193,5 @@ Don't rely on gestures as the only way to perform actions.
 ---
 
 **Avoid**: Removing focus indicators without alternatives. Using placeholder text as labels. Touch targets <44x44px. Generic error messages. Custom controls without ARIA/keyboard support.
+
+_Version: 1.0.0_

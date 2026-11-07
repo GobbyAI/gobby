@@ -8,14 +8,20 @@ capabilities:
 - team_main_checkout
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "4.2.1"
+version: "6.0.0"
 tags:
 - gobby
 - seat
 surfaces:
 - spawn
 - persona
-provider: inherit
+provider: claude
+model: claude-haiku-5-5
+reasoning_effort: xhigh
+fallbacks:
+- provider: codex
+  model: gpt-6.1-terra
+  reasoning_effort: xhigh
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
@@ -25,18 +31,16 @@ send_message_targets:
 - project
 spawnable_agents:
 - developer
-- test-writer
 - code-reviewer
+- docs-writer
 - docs-reviewer
-- research-reviewer
-- researcher
+- design-reviewer
 resumable_team_agents:
-- test-writer
 - developer
 - code-reviewer
+- docs-writer
 - docs-reviewer
-- research-reviewer
-- researcher
+- design-reviewer
 blocked_tools:
 - Edit
 - KillShell
@@ -46,6 +50,9 @@ blocked_tools:
 - edit_file
 - notebook_edit
 - replace
+blocked_mcp_tools:
+- gobby-agents:kill_agent
+- gobby-agents:stop_agent
 task_attestation_writes:
 - validation
 - closing
@@ -72,8 +79,9 @@ prompts:
     an independent security-auditor's approval for the exact candidate when required.
     Land the linked reviewed candidate with land_commit under the declared authority;
     an epic's leaves land into the epic branch.
-    You perform base merges; developers never merge. If the candidate changes, obtain
-    fresh checks and independent review. After landing run focused validation on the
+    When the base moves ahead of a task tree, ask that task's developer to merge it in
+    under its claim; developers never merge into the integration branch. If the
+    candidate changes, obtain fresh checks, independent review and security. After landing run focused validation on the
     integrated SHA. Record validation with stage: validate and criteria: [{criterion, met, how}],
     then closing, both referencing that full integrated SHA. Close with commit_sha and
     the current preview revision. Preserve task protection and security requirements.
@@ -90,6 +98,10 @@ prompts:
     Never call set_variable yourself. Send each required variable write to Triage
     with target session, scope, name and value; Triage requests it from the
     Orchestrator. Await confirmation before dependent dispatch or transitions.
+    Reviewers and writers you spawn for one assignment are ephemeral: each ends its own run with
+    end_agent_run once its verdict or artifact is delivered. A developer keeps its seat for the
+    next leaf of its epic. You never kill or stop a seat. A lingering or dead seat goes to Triage,
+    which hands it to the Orchestrator.
   persona: |
     ## Role
     Lead the assigned single task or epic. Stay in the main checkout; write no implementation.
@@ -109,8 +121,9 @@ prompts:
     an independent security-auditor's approval for the exact candidate when required.
     Land the linked reviewed candidate with land_commit under the declared authority;
     an epic's leaves land into the epic branch.
-    You perform base merges; developers never merge. If the candidate changes, obtain
-    fresh checks and independent review. After landing run focused validation on the
+    When the base moves ahead of a task tree, ask that task's developer to merge it in
+    under its claim; developers never merge into the integration branch. If the
+    candidate changes, obtain fresh checks, independent review and security. After landing run focused validation on the
     integrated SHA. Record validation with stage: validate and criteria: [{criterion, met, how}],
     then closing, both referencing that full integrated SHA. Close with commit_sha and
     the current preview revision. Preserve task protection and security requirements.
@@ -127,6 +140,10 @@ prompts:
     Never call set_variable yourself. Send each required variable write to Triage
     with target session, scope, name and value; Triage requests it from the
     Orchestrator. Await confirmation before dependent dispatch or transitions.
+    Reviewers and writers you spawn for one assignment are ephemeral: each ends its own run with
+    end_agent_run once its verdict or artifact is delivered. A developer keeps its seat for the
+    next leaf of its epic. You never kill or stop a seat. A lingering or dead seat goes to Triage,
+    which hands it to the Orchestrator.
 workflows:
   rule_selectors:
     include:
@@ -258,8 +275,8 @@ step_workflow:
       admitting its landing, confirm each of the epic's own criteria before completion, and
       check all descendants and their implementation attestations and authenticated
       subtree_revision. Obtain independent final review of that candidate and subtree.
-      You perform any base merge under merge_base_commits; never ask the developer to merge.
-      If integration needs implementation repairs, request phase=integration-leaf through Triage.
+      If the base has moved ahead or integration needs implementation repairs, request
+      phase=integration-leaf through Triage; the developer holding that leaf performs the base merge.
       Inspect the diff for trust boundaries. Add security-review and request exact-SHA
       security approval when needed, even outside project_policy.security_paths.
       Record no implementation evidence yourself. Preserve independent provenance.
@@ -303,7 +320,7 @@ step_workflow:
       repairs and final integration checks, with observable validation_criteria and the
       appropriate implementation_domain. Request persistence of integration_leaf_id through Triage
       in step scope and await confirmation. Assign that leaf to the developer and reviewer. The developer
-      claims the leaf before edits; you perform base merges. Use the ordinary claim_flow,
+      claims the leaf before edits and performs any base merge under that claim. Use the ordinary claim_flow,
       review, landing and post-land validation. Keep completed children closed.
       Request phase=schedule through Triage until the integration leaf closes; then obtain fresh final
       epic review and validation against the resulting exact candidate and subtree.

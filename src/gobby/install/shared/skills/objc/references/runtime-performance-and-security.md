@@ -42,3 +42,5 @@
   to the unsafe boundary.
 - Add regression tests for invalid inputs and teardown, then use sanitizers or
   runtime diagnostics appropriate to the failure mode.
+
+_Version: 1.0.0_

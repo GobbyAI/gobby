@@ -353,7 +353,7 @@
         "source-audit",
         "focused-agents"
       ],
-      "audience": "operator pane; /gobby admin and /gobby assistant cold start",
+      "audience": "operator pane; /gobby admin cold start",
       "server": "gobby-agents",
       "tool": "cold_start_admin"
     },
@@ -1132,20 +1132,6 @@
       ],
       "audience": "operator/client",
       "route": "POST /api/agents/spawn/batch"
-    },
-    {
-      "surface": "http",
-      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/agent_spawn.py",
-        "symbol": "create_agent_spawn_router.get_launch_defaults"
-      },
-      "verification": [
-        "source-audit",
-        "focused-agents"
-      ],
-      "audience": "operator/client",
-      "route": "GET /api/agents/launch-defaults"
     },
     {
       "surface": "http",

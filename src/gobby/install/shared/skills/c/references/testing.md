@@ -53,3 +53,5 @@ Run commands scoped to touched targets, for example:
 - repo wrapper plus configured sanitizer target
 
 Record the exact focused command that proves the change.
+
+_Version: 1.0.0_

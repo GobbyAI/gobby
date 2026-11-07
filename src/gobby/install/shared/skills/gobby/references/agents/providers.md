@@ -33,4 +33,6 @@ switching cannot change these execution settings. Speed is not a spawn parameter
 
 Guide: [Providers and models](../../../../../../../../docs/guides/providers-and-models.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

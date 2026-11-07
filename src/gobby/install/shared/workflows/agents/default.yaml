@@ -1,4 +1,4 @@
-version: "1.3.2"
+version: "1.4.0"
 name: default
 capabilities:
   - accept_resume_retype
@@ -9,6 +9,7 @@ capabilities:
   - manage_task_claims
   - coordinate_tasks
   - message_restricted_seats
+  - manage_mcp_servers
   - manage_workflow_definitions
   - activate_agent_definitions
 direct_integration_commit_paths: ["**"]
@@ -130,7 +131,7 @@ workflows:
       - "name:unassigned-session-no-task-close"
   skill_selectors:
     include: []
-    # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other
+    # Every context epoch requests gobby:references/memory/overview.md, brevity, then restraint. Other
     # guidance stays on-demand through file, task, and tool-specific rules.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   variables: {}

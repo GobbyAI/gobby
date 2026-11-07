@@ -16,7 +16,8 @@ priority defaults to 2. For `validation_criteria`: Outline the evaluation criter
 an agent will use to ensure a high-quality deliverable. Be precise. Use
 `test: path::test_symbol` for named tests and `file: path` for evidence artifacts;
 those references join the task's declared file scope when its description declares
-targets. When an
+targets. A check that can only run after landing and activation is not a review
+criterion: put it in the description as the closer's post-land obligation. When an
 agent-authored description rests on specific source behavior, cite it as
 [evidence](../code-index/evidence.md) describes. User-authored text needs no
 citations, and the task tools take no citation field.
@@ -125,6 +126,6 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Version: 2.0.1_
+_Version: 2.1.0_
 
-_Last verified: 2026-11-03_
+_Last verified: 2026-11-04_

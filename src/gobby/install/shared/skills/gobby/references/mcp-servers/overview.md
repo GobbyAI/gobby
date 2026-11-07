@@ -29,4 +29,6 @@ import, or remove a server. Use isolated state for verification mutations.
 
 Guide: [MCP tools](../../../../../../../../docs/guides/mcp-tools.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -1,0 +1,302 @@
+{
+ "dispositions": [
+  {
+   "ref": "#25537",
+   "disposition": "chunk",
+   "target": "MEM-4",
+   "rationale": "Audit keep with its children split (per-family deletion versus Stage 3 as its open item, which D14 settles). MEM-4 lists #25537 and carries #25561 and #25559's dormant activation readiness; its other children go to MEM-1 (#25558, earlier), CP-WAVE3-CUT (#25559), V4 (#25560) and S3-DELETE (#25562, #25563), which land later but do not hold it open, because D31 closes owned nodes at chunk-task creation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": false
+  },
+  {
+   "ref": "#25558",
+   "disposition": "chunk",
+   "target": "MEM-1",
+   "rationale": "Audit keep: 3 targets and 4 acceptance items, blocked on the shared admission seam #25068 (A1-RUNTIME) and projects' #25046 (SEAM-CALLERS), which both land before MEM-1. MEM-1's goal names admission (#25558).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-1",
+   "changed": false
+  },
+  {
+   "ref": "#25559",
+   "disposition": "superseded",
+   "target": "CP-WAVE3-CUT",
+   "rationale": "Override of chunk MEM-4: audit and verify rate it rewrite because it promotes the coherent gdaemon, gcode and ghook trio through promote_workspace_binary_set, has 'only the Orchestrator' delegate the cutover, and selects front_door.routes.memory at the activating restart, which rulings 11 and 20 and D37 allow only inside a checkpoint cut. CP-WAVE3-CUT's activation commit carries that work (CP-WAVE3-REVIEW's activation list: 'the memory ... family defaults Native', plus the version bumps), so the cut supersedes it, as D31 moves #24474 and #25521 to theirs. MEM-4's goal still names #25559 under 'family activation': the dormant gateway registration in serve.rs and 8.2.1-8.2.3's harness-only compare and readiness proofs stay MEM-4 work, while 8.2.4's pins and 8.2.5's installed hashes and announcement are the cut's.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": true
+  },
+  {
+   "ref": "#25560",
+   "disposition": "superseded",
+   "target": "V4",
+   "rationale": "Override of chunk to superseded, keeping V4: verify upholds the rewrite (the forwarder waits until '8.2 has released the binary' and calls the installed gdaemon memory) and keeps the nine cli/memory deletions in the leaf as one ownership switch. V4's goal builds '#25560's verbs as gclient verbs over the public API, with no gdaemon memory host and no Python forwarder' (D16), and D14 moves the Python deletions to S3-DELETE, so nothing of the planned approach is built and 'chunk' would close it against forwarding tests that never exist (the same call as #25006 for skills).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "V4",
+   "changed": true
+  },
+  {
+   "ref": "#25561",
+   "disposition": "superseded",
+   "target": "MEM-4",
+   "rationale": "The leaf flips the ledger notes for the 80 memory rows through the old generator, which D15 and D5 replace with gport ledger and cut-time owner writes. This matches #25120 and #25065, and #25561 has no commits. MEM-4's brief keeps the five docs targets. G2 already sent the sibling activation leaf, #25559, to CP-WAVE3-CUT.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "MEM-4",
+   "changed": true,
+   "reviewer_rationale": "Audit keep ('it belongs in the activation chunk'): 5 docs targets and 4 acceptance items that flip the ledger notes for the 80 rows. MEM-4's goal names 'family activation and parity ownership (#25559, #25561)'."
+  },
+  {
+   "ref": "#25562",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "Verify partly refuted the audit's split: the refusal, the default change and the route deletions are one ownership switch (memory-family.md:2614-2616), so 'if deletion must wait, defer the whole leaf'. S3-DELETE lists #25562 and D14 does that: the memory family stops serving and freezes at CP-WAVE3-CUT's activation, and servers/routes/memory.py and memory_dream.py go with src/gobby in S3-DELETE's one commit; its coupling to 8.2's promotion and an Orchestrator cutover drops, since S3-DELETE lands unpromoted (D39).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  },
+  {
+   "ref": "#25563",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "Audit merge into #21574, verify upheld with the caveat that it overrides the Josh-approved per-family 8.6: an atomic retirement of 126 Python targets (36,449 lines) behind 13 blockers, 10 of them whole epics. S3-DELETE lists #25563 and deletes it with src/gobby after S3-FREEZE under D14 (flagged as a reversal for map approval); its re-pin on code-index 8.3's runner_startup_vectors.py is moot if #24701's rewrite creates no new Python file, as CIX-2's 'python_edits: None' requires.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  },
+  {
+   "ref": "#21586",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit rewrite (verify upheld): the card asks for 'a replan without P1-P4' (task-25460 Decision 10), has no attestations, and relies on Stage 4 artifacts that are absent. CIX-2 lists #21586 and CIX-1's first deliverable is the #21586 P5-P9 replan; its descendants split across CIX-1 (P5-P7), CIX-2 (P8, P9), S4-CIX (#24703, #24704), CP-WAVE3-CUT (#24707), S3-DELETE and CP-FINAL-CUT, which does not hold it open, because D31 closes owned nodes at chunk-task creation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24665",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit keep: the P5 container holding #24694 (GET graph/search), whose crate-bootstrap question falls to CIX-1's replan. CIX-1 lists #24665 and its goal opens with '#24665-#24667: the code_index family and GET /graph/search'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24694",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit rewrite (verify upheld): it targets crates/gcodeindex/src/lib.rs with no Cargo.toml or workspace member (Stage 4's 1.9, #24678, creates the crate), and 5.1.2 asserts node-family routing. CIX-1's goal names the code_index family and GET /graph/search, and its first deliverable, the #21586 P5-P9 replan, must bootstrap the crate in Stage 2 and drop the node assertion, since node routes are S4-CIX's.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24666",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit keep: the P6 container holding #24695 and #24696, framed as serving Python's five graph read routes from hub entry points that P2 built for nodes. CIX-1 lists #24666 and its goal names the graph read routes (overview, file, neighbors, blast radius, path).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24695",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit rewrite (verify upheld): it calls 2.7's node::hub::graph_views (#24687, an S4-CIX node), which has 0 hits under crates/. CIX-1's goal names the overview, file, neighbors and blast-radius routes, so CIX-1's replan builds the hub-side views there instead of waiting on Stage 4.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24696",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit rewrite (verify upheld): it uses 2.6's /nav/path (#24686, an S4-CIX node), which has 0 Rust hits. CIX-1's goal names the path route, so the replan builds its hub-side lookup in CIX-1, as for #24695.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24667",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit keep: the P7 container holding #24697 and #24698, the 3 POST rows. CIX-1 lists #24667 and its goal names 'graph clear, rebuild and invalidate routes over gcode's tables'.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24697",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Verify refuted the audit's rewrite: 2.6 defines no new Falkor selection, which exists today as ServiceConfigSelection::falkordb_only() (crates/gcode/src/config/context.rs:115), so the leaf is keep with a brief refresh. CIX-1's goal records exactly that ('2.6's Falkor selection is the existing ServiceConfigSelection::falkordb_only() (#24697)') beside the clear and rebuild routes.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24698",
+   "disposition": "chunk",
+   "target": "CIX-1",
+   "rationale": "Audit keep with a brief refresh: it builds on gcode's indexer::invalidate, which now also deletes code_overlay_pins and code_overlay_pin_gaps, and #23835 is closed. CIX-1's goal names the invalidate route over gcode's tables.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-1",
+   "changed": false
+  },
+  {
+   "ref": "#24668",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit keep with its children rewritten or moved; its job-host question is settled by ROADMAP decision 18 (verify on finding 9) and R4's registry, and its timeout removal by D32. CIX-2 lists #24668 and its goal opens with '#24668's hub code-index jobs'; its children #24703 and #24704 move to S4-CIX (see those rows), which does not hold it open, because D31 closes owned nodes at chunk-task creation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24699",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit rewrite (verify upheld, basis corrected: HubJobs on the heartbeat host is decision 18's design): it uses db::pending_vector_files from 4.2 (#24692, S4-CIX, 0 hits), edits R0-frozen runner files, and overlaps #25569. CIX-2's goal names the job seam and sync worker and its python_edits are None, so the rewrite drops the runner edits and builds or re-homes the pending-vector query in Stage 2.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24700",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit rewrite (verify upheld): it sits on 8.1's host, uses job_sync::sync_rows (0 hits) and assumes node vectors from 4.3. CIX-2's goal names reconcile and reindex maintenance, and node vectors stay S4-CIX's ('node-local embeddings'), so the brief drops that assumption.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24701",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit rewrite (verify upheld, plus the stale delete-lines blob 0909c6a910): it creates a new Python runner_startup_vectors.py and edits runner files, which CIX-2's 'python_edits: None' rules out. CIX-2's goal names symbol summaries and community labels (LLM through AI-1A and AI-1B) and refreshes code-index 8.3's runner_lifecycle_shutdown.py base blob (now b2aca3939c); its Python deletions go to S3-DELETE (D14).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24702",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit rewrite (verify upheld): it uses db::pending_vector_files (4.2), adds a new Python storage/cron_job_names.py, and overlaps cron #21582 and R4. CIX-2's goal names 'the hourly prune (the route is CIX-1's)', so the job runs on R4's registry with no new Python file, and POST /api/code-index/prune falls under CIX-1's selector.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24703",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Gap at review time, since closed in the map: override of CIX-2: the audit moves it to Stage 4 #23276 (verify upheld) because 8.5 collects old content for projects that only nodes index, whose rows come from P1's hub apply (1.4) and whose vectors come from 4.2, and its step 2 releases node agent workspaces' rows, all S4-CIX work that lands after CIX-2. CIX-2's goal still lists 'content GC for projects-only nodes', but the same goal adopts E3 (#24707 gains its edge on #24706), which verify wrote for the case where #24703 and #24704 leave CIX-2's chain, and S4-CIX's goal does not yet name this GC.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": true
+  },
+  {
+   "ref": "#24704",
+   "disposition": "chunk",
+   "target": "S4-CIX",
+   "rationale": "Gap at review time, since closed in the map: override of CIX-2: its own text says 'this leaf belongs to the hub-node lane', it edits crates/gdaemon/src/nodes/agents/workspace.rs, and it needs 1.7-1.9 (#24676-#24678), all S4-CIX nodes that land after CIX-2, so the audit's move (verify upheld) is forced by the DAG. CIX-2's goal lists 'node workspace removal releasing its rows' against its own E3 edit and its 'node routes are S4-CIX', and S4-CIX's goal does not name the release, so the map needs both edits.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": true
+  },
+  {
+   "ref": "#24705",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit keep: D18 ships the entry point without callers, #24151 later calls notify_file_changed, and its 1.8 mention is informational. CIX-2's goal names the edit-trigger entry point.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24706",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit keep: no Stage 4 references, and cron #25023 registers it. CIX-2's goal names the nightly repair handler 'registered with CRON', and D32 keeps code_index.nightly_repair_timeout_seconds, so the native repair keeps its per-project timeout.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24669",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit keep with its children split (per-family deletion as its open item, which D14 settles). CIX-2 lists #24669 and its goal names '#24669's native default (#24707), corpus replay (#24708) and grants no longer listing projection operations (#24712)', sending #24709, #24710 and #24713 to S3-DELETE and #24711 to CP-FINAL-CUT; the default flip itself is CP-WAVE3-CUT's (see #24707), and none of these hold the epic open, because D31 closes owned nodes at chunk-task creation.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24707",
+   "disposition": "superseded",
+   "target": "CP-WAVE3-CUT",
+   "rationale": "Override of chunk CIX-2: verify refutes the audit's edge-fix and asks for a new brief, because 9.1.1 asserts node-family routing (1.9, Stage 4) and the leaf still cuts code_index over as it lands, with Orchestrator #15977 having the operator set front_door.routes.code_index: compare on the live hub. D37 bars that key on the live daemon and makes the default flip a checkpoint's activation commit, and CP-WAVE3-REVIEW's activation list for CP-WAVE3-CUT names 'the memory, code index ... family defaults Native', so the cut supersedes it, as D31 moves #24474 ('runtime defaults to native') to CP-TEMPLATE-READS-CUT. CIX-2's goal lists #24707 (dropping 9.1.1's node assertion), but CIX-2 can land only the dormant family, so the map should list #24707 under CP-WAVE3-CUT.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": true
+  },
+  {
+   "ref": "#24708",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "Audit keep: it replays the HTTP contract corpus natively (including the disabled-search and disabled-overview cases) with no Python, after A1-SECRETS' runtime corpus #24475. CIX-2's goal names corpus replay (#24708), which runs in CIX-2's isolated harness with the backend chosen there (D37).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24709",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "Audit merge into #21574, refuted by verify because #24711 stayed in Stage 2 behind #24710 and would deadlock; the map takes verify's alternative of moving 9.3-9.5 together, with #24711 at CP-FINAL-CUT and #24712 re-anchored on #24708 (D31). S3-DELETE lists #24709, and D14 makes the pruner stop serving and freeze at CP-WAVE3-CUT, then deletes prune.py, maintenance.py, prune_dirty.py and projection_cleanup.py with src/gobby.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  },
+  {
+   "ref": "#24710",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "Audit merge, refuted by verify on the same #24711 cycle, which D31's move of #24711 to CP-FINAL-CUT removes. S3-DELETE lists #24710: under D14, Python's graph path, clear, rebuild and invalidate routes stop serving once code_index goes Native at CP-WAVE3-CUT and are deleted with src/gobby.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  },
+  {
+   "ref": "#24711",
+   "disposition": "chunk",
+   "target": "CP-FINAL-CUT",
+   "rationale": "D31's binding move: #24711 goes to CP-FINAL-CUT, which lists it, and D22 keeps drops out of every earlier cut (the audit's 'must follow 9.3 wherever 9.3 lands' holds, since S3-DELETE precedes CP-FINAL-CUT). CP-FINAL-CUT's activation commit carries 'migrations for the pruner's tables (#24711; migration 470 is already taken by 470_validation_run_records.sql, so it takes the next free number at landing)', which also settles verify's N4 collision.",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CP-FINAL-CUT",
+   "changed": false
+  },
+  {
+   "ref": "#24712",
+   "disposition": "chunk",
+   "target": "CIX-2",
+   "rationale": "D31's binding move: #24712 re-anchors on #24708 and takes its disposition, chunk CIX-2. Audit keep (verify: its place after 9.5 was release order only), and CIX-2's goal names 'grants no longer listing projection operations (#24712)'; its Rust issuer change lands there, and under CIX-2's 'python_edits: None' the brief must say whether the Python issuer edit (runtime_grants/service.py) is dropped while frozen Python waits for S3-DELETE (D14).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "CIX-2",
+   "changed": false
+  },
+  {
+   "ref": "#24713",
+   "disposition": "chunk",
+   "target": "S3-DELETE",
+   "rationale": "Audit merge into #21574 (verify upheld: nothing depends on it, and moving it breaks the latent N1 cycle through #24151). S3-DELETE lists #24713 and deletes sync_breaker.py, maintenance_log.py and eligibility.py with src/gobby (D14), without its config-key removals: D32 keeps nightly_repair_timeout_seconds, ported as-is in CIX-2, and CP-FINAL-CUT's activation commit removes maintenance_log_file (D65).",
+   "prefill_disposition": "chunk",
+   "prefill_target": "S3-DELETE",
+   "changed": false
+  }
+ ]
+}

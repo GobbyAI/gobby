@@ -39,3 +39,5 @@ rules/skills capabilities; historical usage does not establish current state.
 
 See [metrics](../../../../../../../../docs/guides/observability.md#metrics)
 and [Prometheus](../../../../../../../../docs/guides/observability.md#prometheus-and-admin-routes).
+
+_Version: 1.0.0_

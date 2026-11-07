@@ -131,7 +131,11 @@ _FALLBACK_CHAIN_MAX_HOPS = 5
 
 
 def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
-    """``target`` and every fallback agent spawn_agent may start in its place."""
+    """``target`` and every fallback agent spawn_agent may start in its place.
+
+    A chain longer than the hop bound raises: an unwalked hop cannot be checked, so the
+    launch fails closed instead of admitting the names it did walk.
+    """
     chain = [target]
     body = resolve_agent(target, db, project_id=project_id)
     for _ in range(_FALLBACK_CHAIN_MAX_HOPS):
@@ -142,6 +146,11 @@ def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
         if body is None:
             break
         chain.append(candidate)
+    candidate = None if body is None else body.fallback_agent
+    if candidate and candidate not in chain:
+        raise ValueError(
+            f"spawn fallback chain of {target!r} exceeds {_FALLBACK_CHAIN_MAX_HOPS} hops"
+        )
     return chain
 
 
@@ -516,7 +525,7 @@ def session_condition_helpers(
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
     from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
-    from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed
+    from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed, spawner_admitted
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
@@ -527,6 +536,12 @@ def session_condition_helpers(
         parent_session_id=None,
         authority_capability=None: spawn_capabilities_allowed(
             session_manager, caller_id, agent, project_path, parent_session_id, authority_capability
+        ),
+        "spawner_admitted": lambda caller_id,
+        agent,
+        project_path=None,
+        parent_session_id=None: spawner_admitted(
+            session_manager, caller_id, agent, project_path, parent_session_id
         ),
         "session_has_capability": lambda caller_id, capability: (
             session_manager is not None

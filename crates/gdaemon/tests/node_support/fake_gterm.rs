@@ -25,7 +25,7 @@ pub struct FakeGterm {
     writes: Arc<WriteGate>,
     process: Child,
     task: JoinHandle<()>,
-    requests: Arc<Mutex<Vec<Value>>>,
+    requests: Arc<Mutex<Vec<(Value, tokio::time::Instant)>>>,
     drop_next_list: Arc<AtomicBool>,
     reject_next_commit: Arc<AtomicBool>,
     lose_commit_reply: Arc<AtomicBool>,
@@ -183,7 +183,10 @@ impl FakeGterm {
                                             continue;
                                         }
                                     };
-                                    requests.lock().expect("fixture requests").push(request.clone());
+                                    requests
+                                        .lock()
+                                        .expect("fixture requests")
+                                        .push((request.clone(), tokio::time::Instant::now()));
                                     let method = request["method"].as_str().unwrap_or("");
                                     if method == "write" {
                                         if writes.pause.swap(false, Ordering::SeqCst) {
@@ -343,7 +346,23 @@ impl FakeGterm {
     }
 
     pub fn requests(&self) -> Vec<Value> {
-        self.requests.lock().expect("fixture requests").clone()
+        self.requests
+            .lock()
+            .expect("fixture requests")
+            .iter()
+            .map(|(request, _)| request.clone())
+            .collect()
+    }
+
+    /// Receipt times of one method's requests on the paused test clock, in arrival order.
+    pub fn request_times(&self, method: &str) -> Vec<tokio::time::Instant> {
+        self.requests
+            .lock()
+            .expect("fixture requests")
+            .iter()
+            .filter(|(request, _)| request["method"] == method)
+            .map(|(_, at)| *at)
+            .collect()
     }
 
     pub fn set_pane(&self, text: &str) {

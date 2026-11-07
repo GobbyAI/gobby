@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [plan-mode, context-handoff, handoff, enforcement, gobby, default]
 
 rules:

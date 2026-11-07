@@ -7,3 +7,5 @@ Establish the design contract and call `get_skill_file(name="impeccable", path="
 - Load `references/critique-personas.md` when testing multiple user perspectives.
 
 Use at most two conditional references alongside the workflow. Preserve the persisted critique snapshot, recommended actions, validators, and recovery behavior from the workflow.
+
+_Version: 1.0.0_

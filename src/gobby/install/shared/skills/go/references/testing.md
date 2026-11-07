@@ -58,3 +58,5 @@ go test ./internal/parser
 ```
 
 Then run the package group affected by imports. Use `./...` only when the change touches shared contracts, module files, or cross-package behavior.
+
+_Version: 1.0.0_

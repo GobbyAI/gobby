@@ -21,6 +21,7 @@ from gobby.hooks.agent_run_ingress import (
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.codex_seat import codex_stored_clear_context
+from gobby.hooks.compaction_ownership import CompactionOwnership, merge_replayed_context
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import (
@@ -192,6 +193,9 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             inter_session_msg_manager=self._inter_session_msg_manager,
         )
 
+        # Auto-compaction hooks whose owner (parent or subagent) is unknown (#25683)
+        self._compaction_ownership = CompactionOwnership()
+
         # Session lookup service (resolves platform session IDs from CLI external IDs)
         from gobby.hooks.session_lookup import SessionLookupService
 
@@ -293,6 +297,30 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
 
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
+        replays, held = self._compaction_ownership.route(event)
+        if held:
+            return HookResponse(decision="allow")
+        replayed = self._run_replays(replays)
+        return merge_replayed_context(self._handle_routed(event), replayed)
+
+    def _run_replays(self, replays: list[HookEvent]) -> list[HookResponse]:
+        """Run settled compaction replays before the event that settled them.
+
+        Only SessionStart responses are kept: the reset's context is returned to Claude on
+        the settling event. PreCompact and PostCompact responses are not.
+        """
+        results: list[HookResponse] = []
+        for replayed in replays:
+            try:
+                result = self._handle_internal(replayed)
+            except Exception:
+                self.logger.exception("Replaying held %s failed", replayed.event_type.value)
+                continue
+            if replayed.event_type == HookEventType.SESSION_START:
+                results.append(result)
+        return results
+
+    def _handle_routed(self, event: HookEvent) -> HookResponse:
         # A not-ready cached status makes this gate check synchronously and, for
         # critical hooks, sleep between retries on the adapter thread (#23063).
         daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
@@ -308,6 +336,29 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
 
     async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
         """Internal async handle logic wrapped by span."""
+        if self._compaction_ownership.needs_transcripts(event):
+            replays, held = await asyncio.to_thread(self._compaction_ownership.route, event)
+        else:
+            replays, held = self._compaction_ownership.route(event)
+        if held:
+            return HookResponse(decision="allow")
+        replayed = await self._run_replays_async(replays)
+        return merge_replayed_context(await self._handle_routed_async(event), replayed)
+
+    async def _run_replays_async(self, replays: list[HookEvent]) -> list[HookResponse]:
+        """Async twin of _run_replays."""
+        results: list[HookResponse] = []
+        for replayed in replays:
+            try:
+                result = await self._handle_internal_async(replayed)
+            except Exception:
+                self.logger.exception("Replaying held %s failed", replayed.event_type.value)
+                continue
+            if replayed.event_type == HookEventType.SESSION_START:
+                results.append(result)
+        return results
+
+    async def _handle_routed_async(self, event: HookEvent) -> HookResponse:
         daemon_unavailable = await ensure_daemon_ready_async(
             event,
             self._health_monitor,

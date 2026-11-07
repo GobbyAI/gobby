@@ -1,7 +1,7 @@
 ---
 name: gobby
 description: "Router contract for provider-aware Gobby help and installed skill dispatch."
-version: "3.2.0"
+version: "4.1.1"
 category: core
 triggers: help
 metadata:
@@ -61,7 +61,7 @@ reference requirement. Tool schemas remain authoritative for parameters.
 
 Only bare space forms cold start; colon forms and commands with trailing
 requests use ordinary capability/skill routing. The bundled aliases include
-`admin` and `assistant`; installed declarations determine available commands. Otherwise
+`admin`; installed declarations determine available commands. Otherwise
 capability names take precedence. Singular `skill` escapes to standalone
 resolution; plural `skills` is the skill-management capability. Honor project
 overrides and existing skill-name resolution. These provider forms are supported:

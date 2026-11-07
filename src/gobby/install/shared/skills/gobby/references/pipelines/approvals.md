@@ -30,4 +30,6 @@ fresh attempt. Approval itself does not guarantee downstream success.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#approval).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-06_

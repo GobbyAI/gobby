@@ -45,3 +45,5 @@ code less obvious.
 - Watch for optimizer-dependent undefined behavior. A debug-only pass is weak
   evidence for C changes.
 - Keep LTO, PGO, and architecture-specific flags in existing build channels.
+
+_Version: 1.0.0_

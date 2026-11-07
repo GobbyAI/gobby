@@ -71,3 +71,5 @@ Keep the brief small: scope and visitor mode; audience, job, action/task, proof/
 Whenever image generation is available in the current session, the locked direction is visualized before it is built: call `get_skill_file(name="impeccable", path="references/visualize.md")` on `gobby-skills` and follow it, with three compositional options rendered and put before the user for approval. This step is proven to produce the most compositional and ambitious work.
 
 For `shape`, call `get_skill_file(name="impeccable", path="references/shape.md")` on `gobby-skills`, return the selected direction to that flow, and stop before persistence or implementation.
+
+_Version: 1.0.0_

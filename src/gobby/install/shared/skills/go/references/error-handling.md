@@ -52,3 +52,5 @@ func writeFile(path string, data []byte) (err error) {
 ## External Boundaries
 
 Validate environment variables, JSON, CLI arguments, file contents, and network responses before constructing trusted domain values. Include enough context in errors to identify the operation, not secret values.
+
+_Version: 1.0.0_

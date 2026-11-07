@@ -49,3 +49,5 @@ serialization shapes, Java interop, or multiplatform contracts.
 - Do Java and framework callers still see the same contract?
 - Are `suspend`, `Flow`, nullable, and generic types part of the API story?
 - Does the test suite cover both accepted and rejected states?
+
+_Version: 1.0.0_

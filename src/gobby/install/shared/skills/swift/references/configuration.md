@@ -49,3 +49,5 @@ Choose focused commands that compile and test the changed target:
 
 Record exact commands and explain why they cover the changed module, target,
 platform, and toolchain.
+
+_Version: 1.0.0_

@@ -32,3 +32,5 @@ termination command: a spawned agent still ends through `end_agent_run`.
 Read [hook schemas](../../../../../../../../docs/guides/hook-schemas.md),
 [ghook recovery](../../../../../../../../docs/guides/ghook-user-guide.md#troubleshooting),
 and [hook commands](../../../../../../../../docs/guides/cli-commands.md#gobby-hooks-and-gobby-webhooks).
+
+_Version: 1.0.0_

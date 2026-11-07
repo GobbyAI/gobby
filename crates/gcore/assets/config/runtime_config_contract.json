@@ -221,7 +221,7 @@
     {
       "activation": "live",
       "default": null,
-      "description": "Decision endpoint base URL; unset leaves the decide capability unavailable.",
+      "description": "Decision endpoint base URL; unset means this endpoint serves no decision type.",
       "key": "ai.decisions.api_base",
       "machineExport": false,
       "namespace": "ai.decisions",
@@ -558,6 +558,618 @@
         "string",
         "null"
       ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint base URL; unset means this endpoint serves no decision type.",
+      "key": "ai.decisions.overrides.box.api_base",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint API key or a secret-store reference.",
+      "key": "ai.decisions.overrides.box.api_key",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "State plus one question maximum; OpenRouter defaults to 32000 tokens.",
+      "key": "ai.decisions.overrides.box.backend_max_question_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Backend whole-request token maximum; unset uses the wire's default.",
+      "key": "ai.decisions.overrides.box.backend_max_state_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Seconds the capability stays unavailable after a failed request.",
+      "key": "ai.decisions.overrides.box.failure_cooldown_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "How the decision model identity is proven; model_card needs systemone.",
+      "key": "ai.decisions.overrides.box.identity_contract",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED.",
+      "key": "ai.decisions.overrides.box.long_context",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Application request input budget; below the backend's whole-request maximum.",
+      "key": "ai.decisions.overrides.box.max_input_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Maximum compact UTF-8 request body bytes, including assets; unset is unbounded.",
+      "key": "ai.decisions.overrides.box.max_request_bytes",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision model; required with api_base.",
+      "key": "ai.decisions.overrides.box.model",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2.0,
+      "description": "Decision request timeout in seconds.",
+      "key": "ai.decisions.overrides.box.timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "systemone",
+      "description": "Wire protocol the decision endpoint speaks.",
+      "key": "ai.decisions.overrides.box.wire_api",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint base URL; unset means this endpoint serves no decision type.",
+      "key": "ai.decisions.overrides.choice.api_base",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint API key or a secret-store reference.",
+      "key": "ai.decisions.overrides.choice.api_key",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "State plus one question maximum; OpenRouter defaults to 32000 tokens.",
+      "key": "ai.decisions.overrides.choice.backend_max_question_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Backend whole-request token maximum; unset uses the wire's default.",
+      "key": "ai.decisions.overrides.choice.backend_max_state_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Seconds the capability stays unavailable after a failed request.",
+      "key": "ai.decisions.overrides.choice.failure_cooldown_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "How the decision model identity is proven; model_card needs systemone.",
+      "key": "ai.decisions.overrides.choice.identity_contract",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED.",
+      "key": "ai.decisions.overrides.choice.long_context",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Application request input budget; below the backend's whole-request maximum.",
+      "key": "ai.decisions.overrides.choice.max_input_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Maximum compact UTF-8 request body bytes, including assets; unset is unbounded.",
+      "key": "ai.decisions.overrides.choice.max_request_bytes",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision model; required with api_base.",
+      "key": "ai.decisions.overrides.choice.model",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2.0,
+      "description": "Decision request timeout in seconds.",
+      "key": "ai.decisions.overrides.choice.timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "systemone",
+      "description": "Wire protocol the decision endpoint speaks.",
+      "key": "ai.decisions.overrides.choice.wire_api",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint base URL; unset means this endpoint serves no decision type.",
+      "key": "ai.decisions.overrides.noul.api_base",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint API key or a secret-store reference.",
+      "key": "ai.decisions.overrides.noul.api_key",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "State plus one question maximum; OpenRouter defaults to 32000 tokens.",
+      "key": "ai.decisions.overrides.noul.backend_max_question_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Backend whole-request token maximum; unset uses the wire's default.",
+      "key": "ai.decisions.overrides.noul.backend_max_state_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Seconds the capability stays unavailable after a failed request.",
+      "key": "ai.decisions.overrides.noul.failure_cooldown_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "How the decision model identity is proven; model_card needs systemone.",
+      "key": "ai.decisions.overrides.noul.identity_contract",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED.",
+      "key": "ai.decisions.overrides.noul.long_context",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Application request input budget; below the backend's whole-request maximum.",
+      "key": "ai.decisions.overrides.noul.max_input_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Maximum compact UTF-8 request body bytes, including assets; unset is unbounded.",
+      "key": "ai.decisions.overrides.noul.max_request_bytes",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision model; required with api_base.",
+      "key": "ai.decisions.overrides.noul.model",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2.0,
+      "description": "Decision request timeout in seconds.",
+      "key": "ai.decisions.overrides.noul.timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "systemone",
+      "description": "Wire protocol the decision endpoint speaks.",
+      "key": "ai.decisions.overrides.noul.wire_api",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint base URL; unset means this endpoint serves no decision type.",
+      "key": "ai.decisions.overrides.score.api_base",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision endpoint API key or a secret-store reference.",
+      "key": "ai.decisions.overrides.score.api_key",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "State plus one question maximum; OpenRouter defaults to 32000 tokens.",
+      "key": "ai.decisions.overrides.score.backend_max_question_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Backend whole-request token maximum; unset uses the wire's default.",
+      "key": "ai.decisions.overrides.score.backend_max_state_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Seconds the capability stays unavailable after a failed request.",
+      "key": "ai.decisions.overrides.score.failure_cooldown_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "How the decision model identity is proven; model_card needs systemone.",
+      "key": "ai.decisions.overrides.score.identity_contract",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED.",
+      "key": "ai.decisions.overrides.score.long_context",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Application request input budget; below the backend's whole-request maximum.",
+      "key": "ai.decisions.overrides.score.max_input_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Maximum compact UTF-8 request body bytes, including assets; unset is unbounded.",
+      "key": "ai.decisions.overrides.score.max_request_bytes",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision model; required with api_base.",
+      "key": "ai.decisions.overrides.score.model",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2.0,
+      "description": "Decision request timeout in seconds.",
+      "key": "ai.decisions.overrides.score.timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "systemone",
+      "description": "Wire protocol the decision endpoint speaks.",
+      "key": "ai.decisions.overrides.score.wire_api",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "string",
       "visibility": "public"
     },
     {
@@ -6292,17 +6904,6 @@
       "pattern": "hooks.additional_context_limits.{provider}",
       "secrecy": "none",
       "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": [],
-      "description": "Per-project native launch defaults.",
-      "machineExport": false,
-      "namespace": "launch_defaults",
-      "pattern": "launch_defaults.{project_id}",
-      "secrecy": "none",
-      "type": "object",
       "visibility": "public"
     },
     {

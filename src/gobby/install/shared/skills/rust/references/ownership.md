@@ -110,3 +110,5 @@ for item in items.iter_mut() {
     log.push(format!("Processing {}", item.name));
 }
 ```
+
+_Version: 1.0.0_

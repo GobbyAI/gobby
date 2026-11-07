@@ -48,4 +48,5 @@ class StrictYamlLoader(yaml.SafeLoader):
 
 def load_strict_yaml(text: str) -> Any:
     """Parse one YAML document, refusing duplicate mapping keys at any depth."""
-    return yaml.load(text, Loader=StrictYamlLoader)
+    # StrictYamlLoader subclasses yaml.SafeLoader and only adds duplicate-key refusal.
+    return yaml.load(text, Loader=StrictYamlLoader)  # nosec B506 # safe: SafeLoader subclass

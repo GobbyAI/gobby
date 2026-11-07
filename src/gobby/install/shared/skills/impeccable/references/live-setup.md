@@ -114,3 +114,5 @@ Per-framework: Next.js inline `headers()` in `next.config.*`; Nuxt `routeRules['
 If the user said "no" to the CSP patch and later reports live not working: their dev CSP blocks `http://localhost:8400`. Delete `cspChecked` from `.impeccable/live/config.json` and re-run `live.mjs`; setup asks again.
 
 After setup, re-run `live.mjs`.
+
+_Version: 1.0.0_

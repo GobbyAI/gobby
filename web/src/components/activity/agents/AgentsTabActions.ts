@@ -128,6 +128,7 @@ const CREATE_REFUSED_KEYS = new Set([
   "required_review_capabilities",
   "respect_task_protections",
   "resumable_team_agents",
+  "reviews",
   "supplemental_review",
   "task_close_reasons",
   "task_close_scope",

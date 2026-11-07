@@ -35,4 +35,6 @@ from an unmerged worktree to repair a connection that supports scoped refresh.
 
 Guide: [Diagnostics](../../../../../../../../docs/guides/mcp-tools.md#diagnostics).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_
