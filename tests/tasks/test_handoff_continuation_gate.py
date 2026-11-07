@@ -40,7 +40,7 @@ def _gate_rows() -> list[RuleDefinitionRow]:
     selector tag, so the lander selects the bundled gate without naming its bundled group.
     """
     rows: list[RuleDefinitionRow] = []
-    for path in sorted((get_bundled_rules_path() / "task-closure").glob("*.yaml")):
+    for path in sorted(get_bundled_rules_path().rglob("*.yaml")):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         tags = [_GATE_TAG]
         for name, rule in (document.get("rules") or {}).items():
@@ -125,7 +125,7 @@ def _decide(
 def _declared_paths() -> list[str]:
     """Every surface path the bundled e2e gate names, read from the closure YAML conditions."""
     paths: set[str] = set()
-    for path in sorted((get_bundled_rules_path() / "task-closure").glob("*.yaml")):
+    for path in sorted(get_bundled_rules_path().rglob("*.yaml")):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         for rule in (document.get("rules") or {}).values():
             when = str(rule.get("when", ""))
