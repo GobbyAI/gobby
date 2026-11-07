@@ -25,8 +25,9 @@ composer the terminal ledger confirms empty and that has no open turn; the seat 
 processes its queue without operator input. The target must also pass the send_keys
 target checks: a bare shell, a credential prompt, or a pane that does not show an idle
 agent composer is never typed into. An active turn takes no typed input at any
-priority: its message arrives through the hook mailbox on its next tool call. A draft,
-held, or unconfirmed composer, and an interrupted, input-, approval-, or
+priority: its message arrives through the hook mailbox on its next tool call. No wake
+clears or replaces composer text, operator comms included. A draft, held, or unconfirmed
+composer, and an interrupted, input-, approval-, or
 handoff-waiting seat, take no typed input either, so the message stays queued until the
 seat is safe to wake. The one handoff exception is the `get_handoff` continuation of an
 awaiting-handoff terminal with a confirmed compact boundary and an empty composer.
@@ -120,5 +121,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 2.4.0_
+_Version: 2.4.1_
 _Last verified: 2026-11-06_

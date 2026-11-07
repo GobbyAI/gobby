@@ -172,8 +172,8 @@ async def send_keys_target_refusal(
     terminal_runtime_registry: Any | None,
     *,
     clear_held: bool = False,
-    replacing: bool = False,
     resolved_terminal: Any | None = None,
+    ledger_vouches: bool = False,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
 
@@ -182,9 +182,10 @@ async def send_keys_target_refusal(
     command is replayed later) and ``ComposerCleared`` is returned; every other
     check still applies.
 
-    ``replacing`` is set when the caller clears leftover composer text itself before
-    its write, as an operator comms wake does. The composer-state checks then do not
-    apply; the target identity, credential prompt and turn checks still do.
+    ``ledger_vouches`` is set by a live wake. A CLI whose manifest has no composer rules
+    (Grok) has no frame to read, so the ledger's empty verdict confirms its composer; the
+    identity, credential, busy and idle-pane checks still apply. Without it, such a CLI is
+    refused, as send_keys has always refused it.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
@@ -222,7 +223,7 @@ async def send_keys_target_refusal(
 
         composer = read_composer(terminal.id)
         draining = clear_held and composer.state == "held"
-        if composer.state != "empty" and not (draining or replacing):
+        if composer.state != "empty" and not draining:
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
@@ -232,7 +233,7 @@ async def send_keys_target_refusal(
         registry = _detection_registry(terminal_manager)
         read_frame = composer_reader(registry, cli)
         manifest = registry.for_provider(cli)
-        if read_frame is None or manifest is None:
+        if manifest is None or (read_frame is None and not ledger_vouches):
             return _refuse(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",
@@ -262,8 +263,8 @@ async def send_keys_target_refusal(
             or activity.match is None
             or busy
             or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
-            # A held draft is visible in the frame; only the drain or a replacement may touch it.
-            or (not (draining or replacing) and read_frame(snapshot).state != "empty")
+            # A draft visible in the frame is touched by the drain alone.
+            or (not draining and read_frame is not None and read_frame(snapshot).state != "empty")
         ):
             return _refuse(
                 "send_keys_composer_not_idle",

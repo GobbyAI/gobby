@@ -13,10 +13,9 @@ from gobby.events.comms_wake import is_operator_comms_wake
 from gobby.events.live_wake import (
     PANE_FOCUSED,
     RETRYABLE_WAKE_SKIPS,
-    ActivityProbe,
     TerminalActivity,
 )
-from gobby.events.wake import WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessage
@@ -26,7 +25,6 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.events.test_wake_composer_attention import TERMINAL_ID, _seat
 from tests.events.test_wake_native_terminal import (
     NATIVE_TERMINAL_CONTEXT,
-    WAKE_SEQUENCE,
     WAKE_SESSION_ID,
     ManagedChain,
     _draft,
@@ -137,11 +135,7 @@ async def test_only_authenticated_operator_comms_authorize_replacement(
     assert is_operator_comms_wake(message) is False
 
 
-@pytest.mark.parametrize("probe", [_draft, _empty], ids=["real-draft", "stale-ledger"])
-async def test_native_comms_wake_clears_before_submitting(
-    native_chain: ManagedChain,
-    probe: ActivityProbe,
-) -> None:
+def _operator_dm_mailbox() -> MagicMock:
     messages = MagicMock()
     messages.get_undelivered_wake_messages.return_value = [
         InterSessionMessage(
@@ -160,26 +154,50 @@ async def test_native_comms_wake_clears_before_submitting(
             ),
         )
     ]
+    return messages
+
+
+async def test_native_comms_wake_withholds_a_real_draft(native_chain: ManagedChain) -> None:
+    # A visible draft is never typed into or replaced, operator comms included (#25830).
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
-        ism_manager=messages,
+        ism_manager=_operator_dm_mailbox(),
         tmux_sender=_send_tmux_session_wake,
         terminal_manager=native_chain.store,
-        activity_probe=probe,
+        activity_probe=_draft,
+    )
+    PendingWakeLedger(dispatcher)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is False
+    assert result["skipped"] == "composer_occupied"
+    assert native_chain.native.write_log == []
+    assert native_chain.tmux.write_log == []
+
+
+async def test_native_comms_wake_types_into_an_empty_composer(native_chain: ManagedChain) -> None:
+    # An empty composer has nothing to replace, so the wake types without a clear.
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=_operator_dm_mailbox(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=native_chain.store,
+        activity_probe=_empty,
     )
     PendingWakeLedger(dispatcher)
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result["delivered"] is True
-    assert native_chain.native.write_log == WAKE_SEQUENCE
+    assert native_chain.native.write_log == [("text", CONTINUE_WAKE_MESSAGE), ("key", "enter")]
     assert native_chain.tmux.write_log == []
 
 
 @pytest.mark.parametrize("channel", ["telegram", "slack", "teams"])
 @pytest.mark.parametrize("active", [False, True], ids=["idle", "active"])
-@pytest.mark.parametrize("composer", ["draft", "blocked"])
-async def test_operator_comms_wake_replaces_idle_composer_only(
+@pytest.mark.parametrize("composer", ["draft", "held", "blocked"])
+async def test_operator_comms_wake_never_replaces_a_non_empty_composer(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -190,12 +208,26 @@ async def test_operator_comms_wake_replaces_idle_composer_only(
 ) -> None:
     seat = _seat(temp_db, session_manager, sample_project)
     composer_ledger.record_spawn("terminal-1", "host-epoch-1")
-    composer_ledger.observe_write("terminal-1", origin="operator", kind="text", payload="leftover")
+    if composer == "held":
+        # Daemon text staged and unsubmitted: only the existing drain path may clear it.
+        composer_ledger.observe_write(
+            "terminal-1", origin="daemon", kind="text", payload="continue"
+        )
+    else:
+        composer_ledger.observe_write(
+            "terminal-1", origin="operator", kind="text", payload="leftover"
+        )
     if composer == "blocked":
-        # A gap leaves the composer unvouched; an operator comms wake still replaces it.
+        # A gap leaves the composer unvouched; an unknown composer counts as a draft.
         composer_ledger.block("terminal-1", "gap")
     assert composer_ledger.read("terminal-1").state == composer
     seat.session.status = "active" if active else "paused"
+    if active:
+        expected_skip = "session_active"
+    elif composer == "draft":
+        expected_skip = "composer_occupied"
+    else:
+        expected_skip = "composer_unconfirmed"
     messages = MagicMock()
     messages.get_undelivered_wake_messages.return_value = [
         InterSessionMessage(
@@ -220,15 +252,10 @@ async def test_operator_comms_wake_replaces_idle_composer_only(
     try:
         result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
 
-        assert result["delivered"] is (not active)
-        if active:
-            assert result["skipped"] == "session_active"
-            seat.pane_sender.assert_not_awaited()
-            assert composer_ledger.read("terminal-1").state == composer
-        else:
-            seat.pane_sender.assert_awaited_once()
-            assert seat.pane_sender.await_args is not None
-            assert seat.pane_sender.await_args.kwargs["clear_before_submit"] is True
+        assert result["delivered"] is False
+        assert result["skipped"] == expected_skip
+        seat.pane_sender.assert_not_awaited()
+        assert composer_ledger.read("terminal-1").state == composer
     finally:
         tasks = [
             *seat.dispatcher._deferred_refreshes.values(),
@@ -294,7 +321,7 @@ async def test_operator_comms_wake_holds_while_the_pane_is_focused(
         _cancel_background(seat.dispatcher)
 
 
-async def test_focus_release_dispatches_the_held_wake_with_a_wipe(
+async def test_focus_release_withholds_a_held_comms_wake_over_a_draft(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -322,15 +349,15 @@ async def test_focus_release_dispatches_the_held_wake_with_a_wipe(
         await registry.set_focus(attachment_id, False)
         results = await asyncio.gather(*list(seat.dispatcher._focus_releases))
 
-        assert [result["delivered"] for result in results] == [True]
-        seat.pane_sender.assert_awaited_once()
-        assert seat.pane_sender.await_args is not None
-        assert seat.pane_sender.await_args.kwargs["clear_before_submit"] is True
+        # The released wake meets the draft: it is withheld, never typed over it.
+        assert [result["skipped"] for result in results] == ["composer_occupied"]
+        seat.pane_sender.assert_not_awaited()
+        assert composer_ledger.read(TERMINAL_ID).state == "draft"
 
         # The hold was consumed, so a second release dispatches nothing.
         seat.dispatcher.release_focus_hold(TERMINAL_ID)
         await asyncio.gather(*list(seat.dispatcher._focus_releases))
-        seat.pane_sender.assert_awaited_once()
+        seat.pane_sender.assert_not_awaited()
     finally:
         _cancel_background(seat.dispatcher)
 

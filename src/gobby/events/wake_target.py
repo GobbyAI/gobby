@@ -21,15 +21,13 @@ async def target_gate(
     dispatcher: WakeDispatcher,
     session_id: str,
     terminal: Any,
-    *,
-    replacing: bool,
 ) -> dict[str, Any] | None:
     """Return the withheld outcome when the gate refuses the wake's target, else ``None``.
 
-    ``replacing`` is set when the wake clears leftover composer text itself before its
-    write: an operator comms wake, or any wake whose composer is not confirmed empty.
-    The composer-state checks then do not apply, while the identity, credential and
-    turn checks still do.
+    No wake replaces composer text: a draft, held or unknown composer is refused on every
+    path, operator comms included (#25830 criterion 3). A CLI with no composer rules,
+    Grok, has no frame to read, so the ledger's verdict stands for it, as the wake's
+    composer probe already read it.
     """
     if terminal is not None and not is_local_machine(terminal.machine_id):
         return None
@@ -44,8 +42,8 @@ async def target_gate(
         session_id,
         dispatcher._terminal_manager,
         dispatcher._terminal_runtime_registry,
-        replacing=replacing,
         resolved_terminal=terminal,
+        ledger_vouches=True,
     )
     if refusal is None or isinstance(refusal, ComposerCleared):
         return None

@@ -774,12 +774,12 @@ class WakeDispatcher:
         reconciled idle earlier, so a turn that started since then would be
         steered or cancelled by this write.
 
-        An operator comms wake is the exception to the composer-state blocks: it
-        replaces a ``draft`` or ``unknown`` composer, delivering through
-        clear-before-submit. It only waits while a focused holder of the terminal
-        is typing into it. The hold is recorded for ``release_focus_hold``, which
-        re-dispatches it. The turn checks above run first, so a running turn is
-        never steered, and the hold does not apply to other wakes.
+        An operator comms wake meets the same composer rules: it never replaces a
+        ``draft``, ``held`` or ``unknown`` composer, whatever the operator's policy.
+        It also waits while a focused holder of the terminal is typing into it. The
+        hold is recorded for ``release_focus_hold``, which re-dispatches it. The turn
+        checks above run first, so a running turn is never steered, and the hold does
+        not apply to other wakes.
 
         A gap or interrupt block raises the seat's attention item naming
         ``release_composer``; any other read retires it (``composer_attention``).
@@ -825,10 +825,6 @@ class WakeDispatcher:
                 return pane_focused_result(session_id, method=method), False
             # The pane is unfocused now, so a hold recorded earlier is stale.
             self._focus_holds.get(terminal_id, set()).discard(session_id)
-        if comms_pending:
-            # Josh's operator policy: a comms wake replaces leftover composer text.
-            # False forces the existing clear-before-submit path, even on an empty ledger.
-            return None, False
         state = activity.composer.state
         if state == "empty":
             return None, True
@@ -879,7 +875,7 @@ class WakeDispatcher:
             )
             if blocked is not None:
                 return blocked
-            refused = await target_gate(self, session_id, terminal, replacing=not confirmed_empty)
+            refused = await target_gate(self, session_id, terminal)
             if refused is not None:
                 return refused
             if handoff_attempt_id is not None:

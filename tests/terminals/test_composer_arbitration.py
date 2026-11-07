@@ -502,10 +502,7 @@ async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff
     from gobby.sessions.handoff import clear_handoff_turn_end_pending, stage_handoff_attempt
     from gobby.sessions.handoff_records import build_handoff_payload
     from gobby.sessions.mailbox import MailboxService
-    from gobby.terminals.composer_ledger import (
-        record_composer_command_consumed,
-        record_composer_submit,
-    )
+    from gobby.terminals.composer_ledger import record_composer_command_consumed
     from gobby.utils.session_context import session_context_for_test
 
     dispatcher, messages, runtime, session_id, pane = _editor_seat(
@@ -611,17 +608,16 @@ async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff
             )
             assert wake.success is True
             assert len(wake.wake_results) == 1
-            # Grok ships no composer probe, so the gate cannot confirm an idle composer: the
-            # wake types nothing and its durable row waits for the next turn.
-            assert wake.wake_results[0]["delivered"] is False, wake.wake_results
-            assert wake.wake_results[0]["decline_reason"] == "send_keys_target_unconfirmed"
-            assert runtime.submitted[-1] == "/compact"
-            record_composer_submit(pane.target)
+            # Grok ships no composer frame rules, so the ledger alone vouches for its empty
+            # composer. The wake types the continue line, as a Grok seat's wake did before the
+            # send_keys gate joined the wake path (#25830).
+            assert wake.wake_results[0]["delivered"] is True, wake.wake_results
+            assert runtime.submitted[-1] == CONTINUE_WAKE_MESSAGE
             unread = messages.get_undelivered_messages(session_id)
             assert [message.content for message in unread] == [f"compact-cycle-{cycle}-wake"]
             messages.mark_delivered_batch([message.id for message in unread], session_id)
             assert runtime.buffer == ""
-        assert runtime.submitted == ["/compact", "/compact"]
+        assert runtime.submitted == ["/compact", CONTINUE_WAKE_MESSAGE] * 2
     finally:
         await _cancel_retries(dispatcher)
 

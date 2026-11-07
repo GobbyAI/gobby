@@ -560,27 +560,30 @@ async def test_clear_key_drains_a_held_wake_line_so_the_next_wake_types_fresh(
     ],
     ids=["bare-shell", "credential"],
 )
-async def test_replacing_a_composer_still_refuses_a_bare_shell_or_credential_prompt(
+async def test_a_bare_shell_or_credential_prompt_is_refused_with_an_empty_composer(
     monkeypatch: pytest.MonkeyPatch, overrides: dict[str, Any], code: str
 ) -> None:
-    manager = _scene(monkeypatch, composer="draft", **overrides)
+    # An empty ledger isolates the target check: a draft would refuse first on composer state.
+    manager = _scene(monkeypatch, **overrides)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object(), replacing=True)
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == code
 
 
 @pytest.mark.asyncio
-async def test_replacing_a_visible_draft_admits_an_idle_agent_composer(
+async def test_a_visible_draft_refuses_an_idle_agent_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # A draft is never typed into or replaced, whichever wake asks (#25830 criterion 3).
     draft_frame = "────────────────────\n❯ hello\n────────────────────"
     manager = _scene(monkeypatch, composer="draft", snapshot=draft_frame)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object(), replacing=True)
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is None
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_composer_not_idle"
 
 
 @pytest.mark.asyncio

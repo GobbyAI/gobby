@@ -32,8 +32,9 @@ confirms empty; that seat then processes its queue without operator input. The t
 must also pass the send_keys target checks: a bare shell, a credential prompt, or a pane
 that does not show an idle agent composer is never typed into. An active turn takes no
 typed input at any priority; its message arrives through the hook
-mailbox on its next tool call. A draft, held, or unconfirmed composer, and an
-interrupted, input-, approval-, or handoff-waiting seat, also take no typed input, so
+mailbox on its next tool call. No wake clears or replaces composer text, operator comms
+included. A draft, held, or unconfirmed composer, and an interrupted, input-, approval-,
+or handoff-waiting seat, also take no typed input, so
 the message stays queued until the seat is safe to wake. The one handoff exception is
 the `get_handoff` continuation of an awaiting-handoff terminal with a confirmed compact
 boundary and an empty composer. Otherwise `project` fanout stays queued without live

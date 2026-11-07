@@ -114,9 +114,7 @@ async def dispatch_live_wakes(
             if blocked is not None:
                 results[session_id] = blocked
                 continue
-            refused = await target_gate(
-                dispatcher, session_id, terminal, replacing=not confirmed_empty
-            )
+            refused = await target_gate(dispatcher, session_id, terminal)
             if refused is not None:
                 results[session_id] = refused
                 continue
