@@ -282,3 +282,48 @@ def test_prune_ignores_non_executables_and_unhashed_names(
     assert data.is_file()
     assert unhashed.is_file()
     assert not [finding for finding in findings if finding.path in (data, unhashed)]
+
+
+@pytest.mark.parametrize("profile", ["debug", "release"])
+def test_a_profile_dir_linked_outside_the_root_is_never_trimmed(
+    root: Path, trees: dict[str, Path], tmp_path: Path, profile: str
+) -> None:
+    outside = tmp_path / "outside" / profile
+    _test_unit(outside, "gobby-core", "0123456789abcdef")
+    victim = _executable(outside / "deps" / "gobby_core-0123456789abcdef", mtime=STALE)
+    tree = root / "cargo-target-v2" / "proj-c" / f"{checkout_component(trees['live'])}-agent"
+    tree.mkdir(parents=True)
+    link = tree / profile
+    link.symlink_to(outside, target_is_directory=True)
+
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=True, now=NOW, executable_budget_bytes=0
+    )
+
+    assert victim.is_file()
+    assert link.is_symlink()
+    assert _action_for(findings, link / "deps") is SweepAction.REFUSED
+    assert not [finding for finding in findings if finding.path == victim]
+
+
+def test_a_sandbox_root_linked_outside_the_root_is_never_swept(root: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside-sandbox"
+    stale = _folder(outside / "cargo-target" / "gone-task", mtime=STALE)
+    (root / "sandbox").symlink_to(outside, target_is_directory=True)
+
+    sweep_build_root(root, [], apply=True, now=NOW)
+
+    assert stale.is_dir()
+
+
+def test_a_symlinked_build_root_is_refused_whole(tmp_path: Path) -> None:
+    real = tmp_path / "real-build"
+    stale = _folder(real / "cargo-target-v2" / "proj-a" / "gone-task", mtime=STALE)
+    link = tmp_path / "linked-build"
+    link.symlink_to(real, target_is_directory=True)
+
+    findings = sweep_build_root(link, [], apply=True, now=NOW)
+
+    assert stale.is_dir()
+    assert _action_for(findings, link) is SweepAction.REFUSED
+    assert len(findings) == 1

@@ -61,6 +61,8 @@ def sweep_build_root(
     as refused and never followed. Owned folders also get their test executables trimmed
     to ``executable_budget_bytes``, oldest first; unowned folders are removed whole instead.
     """
+    if root.is_symlink():
+        return [SweepFinding(root, SweepAction.REFUSED, detail="symbolic link, not followed")]
     live = {checkout_component(checkout) for checkout in checkouts}
     clock = time.time() if now is None else now
     findings: list[SweepFinding] = []
@@ -70,7 +72,7 @@ def sweep_build_root(
         if finding.action is SweepAction.KEEP_LIVE:
             findings.extend(
                 _trim_test_executables(
-                    folder, clock, quiet_seconds, executable_budget_bytes, apply=apply
+                    root, folder, clock, quiet_seconds, executable_budget_bytes, apply=apply
                 )
             )
     return findings
@@ -94,17 +96,27 @@ def legacy_empty_cache_target() -> SweepFinding | None:
 def _build_folders(root: Path) -> list[Path]:
     """List entries one level below each trust-domain root, without following links."""
     folders: list[Path] = []
-    for project in _children(root / "cargo-target-v2"):
+    for project in _children(root, root / "cargo-target-v2"):
         if project.is_symlink() or not project.is_dir():
             folders.append(project)
             continue
-        folders.extend(_children(project))
-    folders.extend(_children(root / "sandbox" / "cargo-target"))
+        folders.extend(_children(root, project))
+    folders.extend(_children(root, root / "sandbox" / "cargo-target"))
     return folders
 
 
-def _children(directory: Path) -> list[Path]:
-    if directory.is_symlink() or not directory.is_dir():
+def _path_has_link(anchor: Path, path: Path) -> bool:
+    """True when a component of ``path`` below ``anchor`` is a symbolic link."""
+    current = anchor
+    for part in path.relative_to(anchor).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _children(anchor: Path, directory: Path) -> list[Path]:
+    if _path_has_link(anchor, directory) or not directory.is_dir():
         return []
     return sorted(directory.iterdir())
 
@@ -149,7 +161,13 @@ def _test_metas(profile: Path) -> set[str]:
 
 
 def _trim_test_executables(
-    tree: Path, clock: float, quiet_seconds: float, budget_bytes: int, *, apply: bool
+    anchor: Path,
+    tree: Path,
+    clock: float,
+    quiet_seconds: float,
+    budget_bytes: int,
+    *,
+    apply: bool,
 ) -> list[SweepFinding]:
     """Report or remove the oldest test executables above ``budget_bytes`` in a live tree.
 
@@ -163,7 +181,12 @@ def _trim_test_executables(
     for profile in _PROFILES:
         profile_dir = tree / profile
         deps = profile_dir / "deps"
-        if deps.is_symlink() or not deps.is_dir():
+        if _path_has_link(anchor, deps):
+            findings.append(
+                SweepFinding(deps, SweepAction.REFUSED, detail="symbolic link, not followed")
+            )
+            continue
+        if not deps.is_dir():
             continue
         metas = _test_metas(profile_dir)
         candidates: list[tuple[float, int, Path]] = []
