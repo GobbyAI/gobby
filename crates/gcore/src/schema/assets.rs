@@ -476,6 +476,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "fe7e5507c77bffaa5724bc2a47466f79d2476a4d4e4d87e71724d18beb032ace",
         sql: include_str!("../../assets/schema/migrations/489_session_startup_marks.sql"),
     },
+    EmbeddedMigration {
+        version: 490,
+        filename: "490_worktree_notes.sql",
+        checksum: "19ff29bc58e2cba31705bf9e8c186fb7348bffac52f4a615110bf7192240c870",
+        sql: include_str!("../../assets/schema/migrations/490_worktree_notes.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

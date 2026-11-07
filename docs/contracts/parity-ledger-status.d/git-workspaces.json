@@ -495,6 +495,10 @@
     "status": "proxied",
     "note": "Blocked on #21564 Attention/agents/dispatch/worktrees (#24148 node-local worktrees): port the Python checkout lifecycle, ownership and Git operation contract to Rust; registered Python handler `src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py:86 (create_lifecycle_registry.<locals>.release_worktree)`."
   },
+  "MCP gobby-worktrees:set_worktree_note": {
+    "status": "proxied",
+    "note": "Blocked on #21564 Attention/agents/dispatch/worktrees (#24148 node-local worktrees): port the reconcile note store (`worktree_notes`, migration 490) and its freshness contract to Rust; registered Python handler `src/gobby/mcp_proxy/tools/worktrees/_notes.py:43 (create_notes_registry.<locals>.set_worktree_note)`."
+  },
   "MCP gobby-worktrees:sync_worktree": {
     "status": "proxied",
     "note": "Blocked on #21564 Attention/agents/dispatch/worktrees (#24148 node-local worktrees): port the Python checkout lifecycle, ownership and Git operation contract to Rust; registered Python handler `src/gobby/mcp_proxy/tools/worktrees/_sync.py:69 (create_sync_registry.<locals>.sync_worktree)`."
