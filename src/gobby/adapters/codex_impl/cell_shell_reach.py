@@ -21,8 +21,9 @@ _STATIC_TOOL_CALL_RE = re.compile(r"\btools(?:\.[$A-Za-z_][$\w]*)+\s*\(")
 # does not read: a regex literal, division, an unmatched quote, or an escape.
 _AMBIGUOUS_RE = re.compile(r"[/\\\"'`]")
 # An empty poll only reads a running session's output. A poll that types input can run a
-# command in that shell, so only a literal object whose one chars key is "" is blanked
-# (or, for may_type_input, a literal write to a shell an attributed execution owns).
+# command in that shell, so only a literal object with no chars key, or whose one chars key
+# is "", is blanked (or, for may_type_input, a literal write to a shell an attributed
+# execution owns).
 _INERT_POLL_RE = re.compile(
     r"""\btools\.write_stdin\s*\(\s*(\{(?:[^{}"]|"(?:\\.|[^"\\])*")*\})\s*\)"""
 )
@@ -50,13 +51,15 @@ def static_code(source: str) -> str | None:
 def _blank_inert_poll(match: re.Match[str], owned_session: str | None) -> str:
     """Replace one write_stdin call that cannot type into an unowned shell with a plain call.
 
-    Its object must be literal, and either its one chars key is "" or its one session ID is
-    ``owned_session``, a shell an attributed execution owns.
+    Its object must be literal, and either it has no chars key (the tool reads that as a
+    poll), its one chars key is "", or its one session ID is ``owned_session``, a shell an
+    attributed execution owns.
     """
     body = match.group(1)
     if _LITERAL_OBJECT_RE.fullmatch(body) is None:
         return match.group(0)
-    if len(_CHARS_WORD_RE.findall(body)) == 1 and _EMPTY_CHARS_RE.search(body):
+    chars = len(_CHARS_WORD_RE.findall(body))
+    if chars == 0 or (chars == 1 and _EMPTY_CHARS_RE.search(body)):
         return "tools.idle_poll()"
     sessions = [value.strip('"') for value in _SESSION_PAIR_RE.findall(body)]
     if owned_session is not None and sessions == [owned_session]:
@@ -88,8 +91,9 @@ def may_reach_shell(arguments: Any) -> bool:
 def may_type_input(arguments: Any, owned_session: str | None = None) -> bool:
     """Return whether a cell could type into a shell that no attributed execution owns.
 
-    A static exec_command call starts a new shell, so it types nothing. A literal empty poll,
-    or a literal write to ``owned_session``, is attributed. Everything else fails closed as
-    in may_reach_shell, so a computed session ID or chars value counts as typing.
+    A static exec_command call starts a new shell, so it types nothing. A literal empty poll
+    (chars omitted or ""), or a literal write to ``owned_session``, is attributed. Everything
+    else fails closed as in may_reach_shell, so a computed session ID or chars value counts as
+    typing.
     """
     return _may_run(arguments, frozenset({"exec_command"}), owned_session)

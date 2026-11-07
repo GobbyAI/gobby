@@ -533,9 +533,27 @@ def test_empty_poll_to_unmapped_shell_keeps_later_literal_cwd_proof(
 STICKY_REFUSAL = "typed input reached an unmapped session; a pending cell is unattributed"
 TYPED_JS = json.dumps(TYPED + "\n")
 UNMAPPED_WRITE = f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:{TYPED_JS}}}));"
-# Cells that may type into the yielded batch's unmapped shell. Only a literal empty poll of a
-# literal session types nothing, so each of these must mark the batch.
+# The write_stdin contract reads omitted chars as an empty poll.
+OMITTED_CHARS_POLL = (
+    f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},yield_time_ms:1000}}));"
+)
+# Cells that may type into the yielded batch's unmapped shell. Only a literal poll of a literal
+# session, with chars omitted or exactly "", types nothing, so each of these must mark the batch.
 TYPING_CELLS = {
+    "computed_key": (
+        f'const k="chars"; '
+        f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},[k]:{TYPED_JS}}}));"
+    ),
+    "escaped_key": (
+        f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},"cha\\u0072s":{TYPED_JS}}}));'
+    ),
+    "escaped_identifier_key": (
+        f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},cha\\u0072s:{TYPED_JS}}}));"
+    ),
+    "single_quoted_key": (
+        f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},'chars':'ls'}}));"
+    ),
+    "omitted_beside_typed": f"{OMITTED_CHARS_POLL} {UNMAPPED_WRITE}",
     "concat": f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:"" + "ls\\n"}}));',
     "concat_tight": f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""+"id"}}));',
     "concat_method": (
@@ -592,13 +610,25 @@ def test_nested_input_that_is_not_a_literal_empty_poll_blocks_later_literal_cwd_
         f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}}));',
         _literal("git status", "/opt/elsewhere")
         + f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}}));',
+        OMITTED_CHARS_POLL,
+        f"text(await tools.write_stdin({{session_id:{SHELL_SESSION}}}));",
+        f'text(await tools.write_stdin({{"session_id":{SHELL_SESSION},"yield_time_ms":1000}}));',
     ],
-    ids=["two_polls", "poll_beside_literal_exec"],
+    ids=[
+        "two_polls",
+        "poll_beside_literal_exec",
+        "omitted_chars",
+        "omitted_chars_bare",
+        "omitted_chars_quoted_keys",
+    ],
 )
 def test_literal_empty_polls_keep_later_literal_cwd_proof(
     event_handlers: EventHandlers, tmp_path: Path, cell: str
 ) -> None:
-    """Literal empty polls type nothing, however many a cell holds or what it launches beside."""
+    """Literal empty polls type nothing, however many a cell holds or what it launches beside.
+
+    So they leave the pending yielded cell unmarked.
+    """
     workdir = tmp_path / "task"
     records = [
         _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
@@ -610,6 +640,7 @@ def test_literal_empty_polls_keep_later_literal_cwd_proof(
     event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
     assert response.decision == "allow", response.reason
     assert current_tool_cwd(event.data) == workdir
+    assert _lookup(tmp_path, records, REPLAY_PYTEST).refusal == ""
 
 
 MAPPED_SESSION = 905
