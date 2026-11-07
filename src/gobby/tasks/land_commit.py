@@ -17,7 +17,7 @@ from pydantic import JsonValue
 from gobby.agents.isolation_git_hygiene import blocking_status_lines
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
-from gobby.code_index.gcode_gateway import GcodeGateway
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeIndexLock
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.releases.activation import project_checkout_root
 from gobby.storage.hub.async_ops import IndeterminateCommitError
@@ -500,9 +500,11 @@ async def _refresh_index(
         return
     factory = code_index.launch_factory if code_index is not None else None
     try:
+        # Waits for a busy index lock: a skipped refresh exits 3 without indexing, and
+        # nothing else would index the landed paths before the next maintenance pass.
         if factory is None:
             result = await GcodeGateway().incremental_index(
-                main, sorted(paths), timeout=_LANDING_TIMEOUT
+                main, sorted(paths), timeout=_LANDING_TIMEOUT, lock=GcodeIndexLock.WAIT
             )
         else:
             async with open_launch_async(
@@ -512,13 +514,16 @@ async def _refresh_index(
                 code_overlay_project_id=overlay_project_id_for_root(main),
             ) as launch:
                 result = await GcodeGateway().incremental_index(
-                    main, sorted(paths), timeout=_LANDING_TIMEOUT, env=launch.env
+                    main,
+                    sorted(paths),
+                    timeout=_LANDING_TIMEOUT,
+                    env=launch.env,
+                    lock=GcodeIndexLock.WAIT,
                 )
     except Exception as exc:  # Launch and gateway faults never fail a landed commit.
         logger.warning("Index refresh failed after landing %s: %s", sha, exc)
         return
-    # Exit 3 is --skip-if-locked yielding to a concurrent indexer, not a failure.
-    if result.returncode not in (0, 3):
+    if not result.success:
         logger.warning(
             "Index refresh exited %s after landing %s: %s", result.returncode, sha, result.stderr
         )

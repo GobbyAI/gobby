@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path, PurePath, PureWindowsPath
 from time import perf_counter
 from typing import Any
@@ -29,6 +30,14 @@ from gobby.runtime_output import (
 )
 from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
+
+
+class GcodeIndexLock(Enum):
+    """How an index run treats a project lock another indexer holds."""
+
+    SKIP = "skip"  # exit 3 at once; the caller owns the retry
+    WAIT = "wait"  # block until the lock frees, under gcode's bounded wait
+
 
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
@@ -638,6 +647,7 @@ class GcodeGateway:
         *,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        lock: GcodeIndexLock = GcodeIndexLock.SKIP,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         base_env = env if env is not None else self._child_env
@@ -651,7 +661,7 @@ class GcodeGateway:
                 str(project_root),
                 *(f"--files={file}" for file in files),
                 "--quiet",
-                "--skip-if-locked",
+                *(["--skip-if-locked"] if lock is GcodeIndexLock.SKIP else []),
                 "--format",
                 "json",
             ],

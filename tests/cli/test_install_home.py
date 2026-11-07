@@ -193,4 +193,4 @@ def test_git_reindex_hook_uses_configured_binary(relocated_home: Path, tmp_path:
         check=False,
     )
     assert completed.returncode == 0
-    assert invoked.read_text() == "index --quiet --skip-if-locked --files=changed.py"
+    assert invoked.read_text() == "index --quiet --files=changed.py"
