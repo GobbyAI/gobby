@@ -5,6 +5,7 @@ the bundled rules that reference the e2e attestation kind and evaluates them thr
 the closure engine; it never names a bundled rule.
 """
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -119,8 +120,39 @@ def _decide(
     return evaluate_closure_policy(snapshot, agent=_lander(), rules=_gate_rows())
 
 
+def _declared_paths() -> list[str]:
+    """Every surface path the bundled handoff gate names, read from its YAML conditions."""
+    document = yaml.safe_load(
+        (get_bundled_rules_path() / "task-closure" / "handoff-continuation.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    paths: set[str] = set()
+    for rule in (document.get("rules") or {}).values():
+        paths.update(re.findall(r"'(src/[^']+)'", str(rule.get("when", ""))))
+    return sorted(paths)
+
+
 def test_declared_handoff_path_is_a_real_file() -> None:
     assert (_REPO_ROOT / _HANDOFF_PATH).is_file()
+
+
+def test_every_declared_handoff_path_matches_a_real_file() -> None:
+    paths = _declared_paths()
+    assert paths
+    for path in paths:
+        assert any(_REPO_ROOT.glob(path)), f"declared handoff path {path} matches no file"
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
+        "src/gobby/mcp_proxy/tools/sessions/_terminal_clear.py",
+    ],
+)
+def test_terminal_set_handoff_and_clear_dispatch_are_declared(surface: str) -> None:
+    assert surface in _declared_paths()
 
 
 def test_gate_rows_cover_landing_and_closure() -> None:
@@ -143,6 +175,18 @@ def test_gate_rows_cover_landing_and_closure() -> None:
         ),
         ("task_land", [_HANDOFF_PATH], [_e2e_record(1, result="rejected")], False),
         ("task_land", [_UNRELATED_PATH], [], True),
+        (
+            "task_land",
+            ["src/gobby/mcp_proxy/tools/sessions/_terminal.py"],
+            [],
+            False,
+        ),
+        (
+            "task_close",
+            ["src/gobby/mcp_proxy/tools/sessions/_terminal_clear.py"],
+            [],
+            False,
+        ),
     ],
 )
 def test_e2e_pass_must_name_the_exact_candidate_for_handoff_paths(
