@@ -17,6 +17,7 @@ from typing import Literal, cast
 from urllib.parse import urlsplit
 
 from gobby.config.app import McpExposureConfig, UiExposureConfig
+from gobby.utils import spawn
 from gobby.utils.env import is_test_protect_enabled
 
 _READ_TIMEOUT_SECONDS = 5.0
@@ -535,7 +536,7 @@ def _run_json(arguments: list[str]) -> dict[str, object]:
     if executable is None:
         raise UiExposeError("tailscale executable was not found")
     try:
-        result = subprocess.run(  # nosec B603 # executable resolved from PATH, fixed arguments
+        result = spawn.run(  # nosec B603 # executable resolved from PATH, fixed arguments
             [executable, *arguments],
             capture_output=True,
             text=True,
@@ -565,7 +566,7 @@ def _run_mutation(arguments: list[str]) -> None:
     if executable is None:
         raise UiExposeError("tailscale executable was not found")
     try:
-        result = subprocess.run(  # nosec B603 # executable resolved from PATH, fixed arguments
+        result = spawn.run(  # nosec B603 # executable resolved from PATH, fixed arguments
             [executable, *arguments],
             capture_output=True,
             text=True,
