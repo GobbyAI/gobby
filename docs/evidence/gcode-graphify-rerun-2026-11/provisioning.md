@@ -43,11 +43,11 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
      existing services receipt and skips the start;
    - builds `tools/graphify/venv` (`graphifyy==0.9.103`) and `tools/gobby/venv` (`uv sync --frozen`
      from `sources/gobby`), each through a probe receipt;
-   - runs `prepare_daemon.py` and `prepare_identity.py`. Every step that touches `gobby` runs in `runtime_gobby.py` under `tools/gobby/venv/bin/python` (the gobby-sync environment) with `-I`, one subprocess per operation (`identity`, `prepare-daemon`, `prepare-identity`). Each operation first checks that its `gobby` resolves under `sources/gobby` and that `gdaemon` resolves to `gobby-home/bin/gdaemon`, and refuses otherwise. `prepare()` and `prepare_identity()` run no `gobby` import in the harness process; the tests check this;
+   - copies the installed binary set into `gobby-home/bin` through `install_binary_set`, with member names from `runtime_gobby.py` (`binary-set-files`); runs `prepare_daemon.py` and `prepare_identity.py`. Every step that touches `gobby` in step 3 runs in `runtime_gobby.py` under `tools/gobby/venv/bin/python` (the gobby-sync environment) with `-I`, one subprocess per operation (`binary-set-files`, `identity`, `prepare-daemon`, `prepare-identity`). Each operation first checks that its `gobby` resolves under `sources/gobby`; every operation except `binary-set-files` also checks that `gdaemon` resolves to `gobby-home/bin/gdaemon`, and refuses otherwise. `prepare()`, `prepare_identity()` and `launch_services.py` load no `gobby` module in the harness process; the tests check this. `prepare-identity` writes the account file before it creates the user, and keeps a file that already exists;
    - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by
      nothing, through probe receipts;
    - asserts zero `code_indexed_file_states` rows for every workspace project.
-4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox.
+4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules listed under "Gobby modules checked before step 4".
 5. `record_installations.py --owner-session <session> --attempt <id>`.
 6. `launch_services.py observe --owner-session <session> --attempt <id>` writes the after-snapshot
    if absent.
@@ -63,6 +63,23 @@ Teardown is leaf 2.2, not one of these eight steps. `launch_services.py teardown
 
 Every step writes a receipt under `receipts/` or `logs/install/`. A probe whose receipt exists and
 verifies is skipped on rerun. A failed probe is preserved, and a new attempt ID is required.
+
+## Gobby modules checked before step 4
+
+Steps 4, 7 and 8 import `gobby` from the epic tree in the harness process. Before step 4 starts
+the daemon, `launch_daemon.py` hashes each module below in the epic tree and in
+`tools/gobby/venv`, writes both hashes to `receipts/gobby-module-identity-<attempt>.json`, and
+stops, naming the module, when a copy is missing or the two differ. The `tools/gobby/venv` column
+gives the `GOBBY_SHA` blob that `sources/gobby` is archived from; the harness hashes the installed
+copy on each run. The table lists direct imports only. The transitive closure, about 100 gobby
+modules, is not hashed; that is a residual.
+
+| Module | Direct importer | Epic-tree sha256 (`src/gobby`) | `tools/gobby/venv` sha256 (`GOBBY_SHA`) | Check |
+| --- | --- | --- | --- | --- |
+| `gobby.agents.srt_monitor` | `launch_daemon.py` (step 4) | 86958462fb14e08e373c718f6ed387a853541e351cf0c4f4f226c83876f12af3 | 86958462fb14e08e373c718f6ed387a853541e351cf0c4f4f226c83876f12af3 | equal |
+| `gobby.agents.srt_runtime` | `launch_daemon.py` (step 4) | cb4424dd49ab8ba0e5c3d58e7c9f2c58e1dc6daad4f9932e768aa80a0b40edf5 | cb4424dd49ab8ba0e5c3d58e7c9f2c58e1dc6daad4f9932e768aa80a0b40edf5 | equal |
+| `gobby.storage.schema_divergence` | `validate_environment.py` (step 8) | 5b054b2da21c043fb77825c7517fd7cf0e8d07889045fc6f4da9a20fe7d63d69 | 5b054b2da21c043fb77825c7517fd7cf0e8d07889045fc6f4da9a20fe7d63d69 | equal |
+| `gobby.utils.native_bin` | `validate_environment.py` (step 8), `schema_head.py` | c37671789aa81b1eef3835d8f89f9212ab4cbb11349bf932b08098b1ed8151e9 | c37671789aa81b1eef3835d8f89f9212ab4cbb11349bf932b08098b1ed8151e9 | equal |
 
 ## Command lines for attempt `rerun2611b`
 

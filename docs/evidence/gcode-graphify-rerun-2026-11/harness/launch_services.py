@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -33,8 +34,6 @@ from runtime_boundary import assert_owned_runtime, require, write_once
 from service_safety import validate_container, validate_rendered
 from validate_environment import _load_env_file
 from violation_copy import copy_attempt_violations
-
-from gobby.agents.srt_socket_paths import existing_srt_mux_tmpdir
 
 DAEMON_PORTS = (59480, 59481, 59482)
 OPERATOR_BIN_DIR = Path.home() / ".gobby/bin"
@@ -92,6 +91,9 @@ def check_fresh() -> None:
 
 
 def _shared_monitor_dir() -> Path | None:
+    # Deferred: the step-3 process loads no gobby at import time.
+    from gobby.agents.srt_socket_paths import existing_srt_mux_tmpdir
+
     try:
         return existing_srt_mux_tmpdir()
     except OSError:
@@ -313,7 +315,13 @@ def provision(root: Path, attempt: str) -> None:
         check_fresh()
         start_services(root, command, image_ids)
     _build_environments(root, attempt)
-    install_binary_set(OPERATOR_BIN_DIR, root / "gobby-home/bin")
+    set_files = prepare_daemon.run_runtime_gobby(
+        root,
+        prepare_daemon.isolated_environment(root, dict(os.environ)),
+        "binary-set-files",
+        {},
+    )["set_files"]
+    install_binary_set(OPERATOR_BIN_DIR, root / "gobby-home/bin", set_files)
     prepare_daemon.prepare(root)
     prepare_identity.prepare_identity(root)
     _init_workspaces(root, attempt)

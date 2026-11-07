@@ -12,8 +12,6 @@ from typing import Any
 
 from runtime_boundary import EvidenceError, contained_file, require
 
-from gobby.utils.native_bin import native_bin_name
-
 IDENTITY_KEYS = (
     "assets_root_hash",
     "baseline_checksum",
@@ -68,8 +66,11 @@ def check_schema_head(
 
 
 def _run_binary(root: Path, name: str, arguments: list[str]) -> str:
-    # Deferred: prepare_daemon imports validate_environment, which imports this module.
+    # Deferred: prepare_daemon imports validate_environment, which imports this module. The
+    # gobby import is deferred too, so importing this module in step 3 loads no gobby.
     from prepare_daemon import isolated_environment
+
+    from gobby.utils.native_bin import native_bin_name
 
     binary = contained_file(root, f"{BINARY_DIR_RELATIVE}/{native_bin_name(name)}")
     completed = subprocess.run(

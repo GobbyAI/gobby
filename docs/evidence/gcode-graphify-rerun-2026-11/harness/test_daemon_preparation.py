@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import types
 from importlib.abc import MetaPathFinder
 from pathlib import Path
 
@@ -178,3 +179,105 @@ def test_identity_runs_every_gobby_step_under_the_runtime_interpreter(
 
     assert _invocations(root) == [f"{runtime} prepare-identity"]
     assert json.loads((root / "receipts/daemon-identity.json").read_text()) == {"user_id": "user-1"}
+
+
+ACCOUNT = {"email": "bakeoff-22948@example.invalid", "password": "generated-secret"}
+DATABASE_URL = "postgresql://gobby_bakeoff:bakeoff-secret@127.0.0.1:61234/gobby_bakeoff_22948"
+
+
+def _fake_identity_modules(
+    monkeypatch: pytest.MonkeyPatch, created_seen: list[bool], account_path: Path
+) -> None:
+    """Stand-ins for the gobby identity modules; create records whether the account file exists."""
+
+    class Database:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class Users:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def list(self) -> list[object]:
+            return []
+
+        def create(self, **_fields: object) -> None:
+            created_seen.append(account_path.exists())
+
+    fakes: dict[str, dict[str, object]] = {
+        "gobby.identity": {"hash_password": lambda password: f"hash:{password}"},
+        "gobby.cli.install_identity": {
+            "ensure_install_identity": lambda _db, no_interactive: types.SimpleNamespace(
+                id="user-1", email="bakeoff-22948@example.invalid"
+            )
+        },
+        "gobby.storage.hub.postgres": {"PostgresHubDatabase": Database},
+        "gobby.storage.users": {"LocalUserManager": Users},
+    }
+    for name, attributes in fakes.items():
+        module = types.ModuleType(name)
+        vars(module).update(attributes)
+        monkeypatch.setitem(sys.modules, name, module)
+
+
+def test_worker_writes_a_new_account_before_it_creates_the_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account_path = tmp_path / "config/daemon-account.json"
+    created_seen: list[bool] = []
+    _fake_identity_modules(monkeypatch, created_seen, account_path)
+    monkeypatch.setattr(runtime_gobby, "verify", lambda _root: {})
+
+    runtime_gobby.prepare_identity(
+        tmp_path,
+        {"database_url": DATABASE_URL, "account": ACCOUNT, "account_path": str(account_path)},
+    )
+
+    assert created_seen == [True]
+    assert json.loads(account_path.read_text()) == ACCOUNT
+
+
+def test_worker_keeps_an_account_file_that_already_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account_path = tmp_path / "config/daemon-account.json"
+    account_path.parent.mkdir(parents=True)
+    kept = {"email": "bakeoff-22948@example.invalid", "password": "kept-secret"}
+    account_path.write_text(json.dumps(kept))
+    _fake_identity_modules(monkeypatch, [], account_path)
+    monkeypatch.setattr(runtime_gobby, "verify", lambda _root: {})
+
+    runtime_gobby.prepare_identity(
+        tmp_path, {"database_url": DATABASE_URL, "account": kept, "account_path": str(account_path)}
+    )
+
+    assert json.loads(account_path.read_text()) == kept
+
+
+def test_binary_set_names_come_from_the_gobby_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
+
+    monkeypatch.setattr(runtime_gobby, "verify_gobby", lambda _root: {})
+
+    result = runtime_gobby.binary_set_files(tmp_path, {})
+
+    assert result == {
+        "set_files": [native_bin_name(member) for member in SET_MEMBERS] + [IDENTITY_STAMP_NAME]
+    }
+
+
+def test_module_origins_are_resolved_by_the_runtime_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_gobby, "verify", lambda _root: {})
+
+    result = runtime_gobby.module_origins(
+        tmp_path, {"modules": ["json", "gobby_no_such_module_for_bakeoff"]}
+    )
+
+    assert result == {"origins": {"json": json.__file__, "gobby_no_such_module_for_bakeoff": None}}

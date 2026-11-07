@@ -30,7 +30,7 @@ def test_copies_every_member_with_identical_bytes_and_returns_its_path(tmp_path:
     dest = tmp_path / "gobby-home/bin"
     _stage_source(source)
 
-    copied = install_binary_set(source, dest)
+    copied = install_binary_set(source, dest, MEMBERS)
 
     assert sorted(copied) == sorted(MEMBERS)
     for name in MEMBERS:
@@ -47,7 +47,7 @@ def test_binaries_stay_executable_and_the_stamp_is_a_plain_file(tmp_path: Path) 
     dest = tmp_path / "gobby-home/bin"
     _stage_source(source)
 
-    install_binary_set(source, dest)
+    install_binary_set(source, dest, MEMBERS)
 
     for name in MEMBERS:
         if name != IDENTITY_STAMP_NAME:
@@ -63,7 +63,7 @@ def test_replaces_an_existing_member_by_new_inode(tmp_path: Path) -> None:
     old.write_bytes(b"stale")
     old_inode = old.stat().st_ino
 
-    install_binary_set(source, dest)
+    install_binary_set(source, dest, MEMBERS)
 
     assert (dest / native_bin_name("gcode")).stat().st_ino != old_inode
     assert (dest / native_bin_name("gcode")).read_bytes() == (
@@ -76,7 +76,7 @@ def test_leaves_no_staging_file_behind(tmp_path: Path) -> None:
     dest = tmp_path / "gobby-home/bin"
     _stage_source(source)
 
-    install_binary_set(source, dest)
+    install_binary_set(source, dest, MEMBERS)
 
     assert sorted(path.name for path in dest.iterdir()) == sorted(MEMBERS)
 
@@ -101,7 +101,7 @@ def test_a_copy_that_fails_midway_leaves_no_staging_file_behind(
     monkeypatch.setattr(shutil, "copymode", copymode_interrupted_on_the_second_member)
 
     with pytest.raises(OSError, match="copy interrupted"):
-        install_binary_set(source, dest)
+        install_binary_set(source, dest, MEMBERS)
 
     assert list(dest.glob(".*.staging")) == []
 
@@ -114,6 +114,6 @@ def test_refuses_an_incomplete_source_set_and_copies_nothing(tmp_path: Path, mis
     (source / missing).unlink()
 
     with pytest.raises(EvidenceError, match="incomplete binary set"):
-        install_binary_set(source, dest)
+        install_binary_set(source, dest, MEMBERS)
 
     assert not dest.exists()

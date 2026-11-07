@@ -39,15 +39,17 @@ def prepare_identity(root: Path) -> None:
         account["email"] == "bakeoff-22948@example.invalid",
         "check failed: account['email'] == 'bakeoff-22948@example.invalid'",
     )
-    # The runtime creates the account only when no user exists; the file is written only then.
+    # The runtime writes the account file before creating the user, and only when no user exists.
     result = run_runtime_gobby(
         root,
         clean,
         "prepare-identity",
-        {"database_url": bootstrap["database_url"], "account": account},
+        {
+            "database_url": bootstrap["database_url"],
+            "account": account,
+            "account_path": str(account_path),
+        },
     )
-    if result["created"] and account_is_new:
-        _write_json(account_path, account, mode=0o600)
     require(
         result["email"] == "bakeoff-22948@example.invalid",
         "check failed: user.email == 'bakeoff-22948@example.invalid'",

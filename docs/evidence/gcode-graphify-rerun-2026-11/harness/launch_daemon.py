@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import os
 import shutil
 import socket
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from prepare_daemon import isolated_environment
+from prepare_daemon import isolated_environment, run_runtime_gobby
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
-from runtime_boundary import assert_owned_runtime, contained_file, require
+from runtime_boundary import EvidenceError, assert_owned_runtime, contained_file, require
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,14 @@ OPERATOR_HOME_DENY_READS = (
     ".gobby/.secret_salt",
     ".gobby/local_cli_token",
     ".codex/auth.json",
+)
+# The gobby modules that steps 4, 7 and 8 import directly, from the epic tree. Before step 4,
+# each one's copy must match its copy in tools/gobby/venv, or the step stops naming the module.
+GOBBY_STEP_MODULES = (
+    "gobby.agents.srt_monitor",
+    "gobby.agents.srt_runtime",
+    "gobby.storage.schema_divergence",
+    "gobby.utils.native_bin",
 )
 
 
@@ -81,6 +92,55 @@ def srt_wrapped_argv(
         violation_path=str(violations),
     )
     return wrapper.wrap(daemon)
+
+
+def epic_origins(names: Sequence[str]) -> dict[str, Path | None]:
+    """Where this process's gobby resolves each module: the epic tree, since the harness loads it."""
+    origins: dict[str, Path | None] = {}
+    for name in names:
+        try:
+            spec = importlib.util.find_spec(name)
+        except ImportError:
+            spec = None
+        origins[name] = Path(spec.origin) if spec is not None and spec.origin else None
+    return origins
+
+
+def _module_digest(path: Path | None, name: str, side: str) -> str:
+    if path is None or not path.is_file():
+        raise EvidenceError(f"{name}: no {side} copy to compare")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def compare_module_copies(
+    names: Sequence[str], epic: Mapping[str, Path | None], runtime: Mapping[str, Path | None]
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Hash each module in both copies; a missing copy or a mismatch stops the step, naming it."""
+    record: dict[str, dict[str, dict[str, str]]] = {}
+    for name in names:
+        epic_path = epic.get(name)
+        runtime_path = runtime.get(name)
+        epic_digest = _module_digest(epic_path, name, "epic-tree")
+        runtime_digest = _module_digest(runtime_path, name, "tools/gobby/venv")
+        if epic_digest != runtime_digest:
+            raise EvidenceError(f"{name}: epic-tree and tools/gobby/venv copies differ")
+        record[name] = {
+            "epic_tree": {"path": str(epic_path), "sha256": epic_digest},
+            "runtime_venv": {"path": str(runtime_path), "sha256": runtime_digest},
+        }
+    return record
+
+
+def verify_gobby_modules(
+    root: Path, attempt: str, env: dict[str, str]
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Record both copies of each step-4 module for this attempt, or stop before the daemon starts."""
+    names = list(GOBBY_STEP_MODULES)
+    origins = run_runtime_gobby(root, env, "module-origins", {"modules": names})["origins"]
+    runtime = {name: Path(origin) if origin else None for name, origin in origins.items()}
+    record = compare_module_copies(names, epic_origins(names), runtime)
+    _write_json(root / f"receipts/gobby-module-identity-{attempt}.json", record, mode=0o600)
+    return record
 
 
 def resolve_srt_runner(root: Path, attempt: str) -> SrtRunner:
@@ -181,5 +241,7 @@ if __name__ == "__main__":
     parser.add_argument("--attempt", required=True)
     args = parser.parse_args()
     assert_owned_runtime(DEFAULT_RUNTIME_ROOT, args.owner_session)
+    env = isolated_environment(DEFAULT_RUNTIME_ROOT, dict(os.environ))
+    verify_gobby_modules(DEFAULT_RUNTIME_ROOT, args.attempt, env)
     srt = resolve_srt_runner(DEFAULT_RUNTIME_ROOT, args.attempt)
     launch(DEFAULT_RUNTIME_ROOT, args.attempt, srt)

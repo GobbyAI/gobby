@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import subprocess
 from pathlib import Path
 
+import launch_daemon
 import pytest
 from launch_daemon import SrtRunner, daemon_argv, launch, srt_policy, srt_wrapped_argv
+from runtime_boundary import EvidenceError
 
 ROOT = Path("/runtime/root")
 HOME = Path("/operator/home")
@@ -202,3 +205,86 @@ def test_launch_writes_a_root_confined_policy_and_an_empty_violation_log(
     assert violations_path.read_text() == ""
     assert policy_path.stat().st_mode & 0o777 == 0o600
     assert violations_path.stat().st_mode & 0o777 == 0o600
+
+
+GOBBY_MODULE = "gobby.utils.native_bin"
+
+
+def _module_copy(path: Path, body: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    return path
+
+
+def test_matching_module_copies_pass_and_record_both_hashes(tmp_path: Path) -> None:
+    epic = _module_copy(tmp_path / "epic/native_bin.py", b"same bytes")
+    venv = _module_copy(tmp_path / "venv/native_bin.py", b"same bytes")
+
+    record = launch_daemon.compare_module_copies(
+        [GOBBY_MODULE], {GOBBY_MODULE: epic}, {GOBBY_MODULE: venv}
+    )
+
+    digest = hashlib.sha256(b"same bytes").hexdigest()
+    assert record == {
+        GOBBY_MODULE: {
+            "epic_tree": {"path": str(epic), "sha256": digest},
+            "runtime_venv": {"path": str(venv), "sha256": digest},
+        }
+    }
+
+
+def test_mismatched_module_copy_stops_and_names_the_module(tmp_path: Path) -> None:
+    epic = _module_copy(tmp_path / "epic/native_bin.py", b"epic bytes")
+    venv = _module_copy(tmp_path / "venv/native_bin.py", b"runtime bytes")
+
+    with pytest.raises(EvidenceError, match=r"gobby\.utils\.native_bin"):
+        launch_daemon.compare_module_copies(
+            [GOBBY_MODULE], {GOBBY_MODULE: epic}, {GOBBY_MODULE: venv}
+        )
+
+
+def test_missing_module_copy_stops_and_names_the_module(tmp_path: Path) -> None:
+    epic = _module_copy(tmp_path / "epic/native_bin.py", b"same bytes")
+
+    with pytest.raises(EvidenceError, match=r"gobby\.utils\.native_bin"):
+        launch_daemon.compare_module_copies(
+            [GOBBY_MODULE], {GOBBY_MODULE: epic}, {GOBBY_MODULE: None}
+        )
+    with pytest.raises(EvidenceError, match=r"gobby\.utils\.native_bin"):
+        launch_daemon.compare_module_copies(
+            [GOBBY_MODULE],
+            {GOBBY_MODULE: epic},
+            {GOBBY_MODULE: tmp_path / "venv/absent.py"},
+        )
+
+
+def test_provisioning_table_lists_exactly_the_step_module_set() -> None:
+    doc = (Path(__file__).parents[1] / "provisioning.md").read_text()
+    listed = {line.split("`")[1] for line in doc.splitlines() if line.startswith("| `gobby.")}
+
+    assert listed == set(launch_daemon.GOBBY_STEP_MODULES)
+
+
+def test_module_identity_receipt_records_both_hashes_for_the_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    names = list(launch_daemon.GOBBY_STEP_MODULES)
+    epic = {name: _module_copy(tmp_path / f"epic/{name}.py", b"same bytes") for name in names}
+    venv = {name: _module_copy(tmp_path / f"venv/{name}.py", b"same bytes") for name in names}
+    monkeypatch.setattr(launch_daemon, "epic_origins", lambda _names: epic)
+    monkeypatch.setattr(
+        launch_daemon,
+        "run_runtime_gobby",
+        lambda _root, _env, _operation, payload: {
+            "origins": {name: str(venv[name]) for name in payload["modules"]}
+        },
+    )
+    root = tmp_path / "root"
+    (root / "receipts").mkdir(parents=True)
+
+    launch_daemon.verify_gobby_modules(root, "attempt-1", {})
+
+    receipt = json.loads((root / "receipts/gobby-module-identity-attempt-1.json").read_text())
+    assert set(receipt) == set(names)
+    for name in names:
+        assert receipt[name]["epic_tree"]["sha256"] == receipt[name]["runtime_venv"]["sha256"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,22 @@ import pytest
 from launch_services import assert_no_indexed_rows, prepare, start_services, step_complete
 from provision_environment import COMPOSE_PROJECT, CONTAINERS
 from runtime_boundary import EvidenceError, write_once
+
+HARNESS = Path(__file__).parent
+
+
+def test_step_three_modules_load_no_gobby_at_import() -> None:
+    # A fresh interpreter, because this process already holds the epic tree's gobby.
+    script = (
+        "import importlib, sys\n"
+        "for name in ('launch_services', 'prepare_daemon', 'prepare_identity'):\n"
+        "    importlib.import_module(name)\n"
+        "print(sorted(m for m in sys.modules if m == 'gobby' or m.startswith('gobby.')))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script], cwd=HARNESS, capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"
 
 
 def test_prepare_rejects_a_foreign_owner_task(

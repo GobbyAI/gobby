@@ -8,7 +8,9 @@ and reads one JSON line from stdout. Only the standard library is imported at mo
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,16 +20,24 @@ class Refusal(Exception):
     """A check failed; the parent stops the step with this message."""
 
 
-def verify(root: Path) -> dict[str, Any]:
+def verify_gobby(root: Path) -> dict[str, Any]:
+    """Refuse unless this interpreter's gobby is the runtime's own source."""
     import gobby
-    from gobby.utils.native_bin import resolve_native_bin
 
     if not Path(gobby.__file__).resolve().is_relative_to((root / "sources/gobby").resolve()):
         raise Refusal(f"gobby resolves outside sources/gobby: {gobby.__file__}")
+    return {"gobby": gobby.__file__}
+
+
+def verify(root: Path) -> dict[str, Any]:
+    """Refuse unless gobby is the runtime's and gdaemon resolves to the installed binary."""
+    from gobby.utils.native_bin import resolve_native_bin
+
+    result = verify_gobby(root)
     gdaemon = resolve_native_bin("gdaemon")
     if gdaemon != str(root / "gobby-home/bin/gdaemon"):
         raise Refusal(f"gdaemon resolves to {gdaemon}")
-    return {"gobby": gobby.__file__, "gdaemon": gdaemon}
+    return {**result, "gdaemon": gdaemon}
 
 
 def known_config_values(values: dict[str, object]) -> tuple[dict[str, object], list[str]]:
@@ -48,6 +58,27 @@ def known_config_values(values: dict[str, object]) -> tuple[dict[str, object], l
 
 def identity(root: Path, _payload: dict[str, Any]) -> dict[str, Any]:
     return verify(root)
+
+
+def binary_set_files(root: Path, _payload: dict[str, Any]) -> dict[str, Any]:
+    # gdaemon is installed by this very step, so only the gobby check runs here.
+    verify_gobby(root)
+    from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
+
+    names = [native_bin_name(member) for member in SET_MEMBERS] + [IDENTITY_STAMP_NAME]
+    return {"set_files": names}
+
+
+def module_origins(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    verify(root)
+    origins: dict[str, str | None] = {}
+    for name in payload["modules"]:
+        try:
+            spec = importlib.util.find_spec(name)
+        except ImportError:
+            spec = None
+        origins[name] = spec.origin if spec is not None else None
+    return {"origins": origins}
 
 
 def prepare_daemon(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +110,25 @@ def prepare_daemon(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return {"revision": revision.revision, "dropped_keys": dropped_keys}
 
 
+def write_account_once(path: Path, account: dict[str, Any]) -> None:
+    """Record the account before its user exists; an account file that is already there is kept.
+
+    A crash after this write and before users.create leaves the recorded password in place, so
+    the next run creates the user from it.
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(account, indent=2) + "\n")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def prepare_identity(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     verify(root)
     from gobby.cli.install_identity import ensure_install_identity
@@ -95,6 +145,7 @@ def prepare_identity(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
         created = not existing
         if created:
             account = payload["account"]
+            write_account_once(Path(payload["account_path"]), account)
             users.create(
                 name="Wiki bakeoff 22948",
                 email=account["email"],
@@ -108,6 +159,8 @@ def prepare_identity(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
 
 OPERATIONS = {
     "identity": identity,
+    "binary-set-files": binary_set_files,
+    "module-origins": module_origins,
     "prepare-daemon": prepare_daemon,
     "prepare-identity": prepare_identity,
 }
