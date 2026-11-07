@@ -102,7 +102,7 @@ async def live_client() -> AsyncIterator[FalkorClient]:
     from gobby.memory.falkor_client import FalkorClient
 
     host = os.environ.get("GOBBY_TEST_FALKOR_HOST", "127.0.0.1")
-    port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "16379"))
+    port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "26379"))
     client = FalkorClient(
         host=host,
         port=port,
