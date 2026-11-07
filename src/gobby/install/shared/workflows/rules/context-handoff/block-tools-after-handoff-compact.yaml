@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 tags: [context-handoff, handoff, compact, enforcement, gobby, default]
 
 # These gates hold the parent's own turn. A Claude subagent shares its parent's
@@ -47,6 +47,15 @@ rules:
             ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'gobby'
             and ((tool_input.get('arguments') or tool_input) or {}).get('path') == 'references/sessions/handoffs.md'
           )
+          or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
+        )
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-skills'
+        and event.data.get('mcp_tool') == 'get_skill'
+        and (
+          list(((tool_input.get('arguments') or tool_input) or {}).get('names') or [])
+              == ['gobby:references/sessions/handoffs.md']
           or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
         )
       )

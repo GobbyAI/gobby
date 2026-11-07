@@ -200,3 +200,49 @@ async def test_subagent_cannot_consume_or_stage_the_parent_handoff(
     assert "parent" in (subagent_pull.reason or "")
     assert subagent_stage.decision == "block"
     assert subagent_work.decision == "allow", subagent_work.reason
+
+
+def _skill_load(arguments: dict[str, Any]) -> HookEvent:
+    return _event(
+        HookEventType.BEFORE_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": "gobby-skills",
+            "mcp_tool": "get_skill",
+            "tool_input": {
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "arguments": arguments,
+            },
+        },
+        subagent=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_limit_gate_admits_the_handoff_reference_load(
+    temp_db: HubDatabase,
+) -> None:
+    """At the context limit, the handoff gate's own fetch directive must stay callable.
+
+    The handoff-authoring gate tells the seat to load the handoffs reference with
+    get_skill; a context gate that blocks that call leaves no way to hand off.
+    """
+    engine = _engine(temp_db, _parent_turn_gates())
+    at_limit = {
+        "context_compact_mid_turn_pressure_band": "block",
+        "context_compact_block_message": "Context limit reached.",
+    }
+    handoffs = "gobby:references/sessions/handoffs.md"
+    other = "gobby:references/memory/overview.md"
+
+    async def decide(arguments: dict[str, Any]) -> str:
+        result = await engine.evaluate(
+            _skill_load(arguments), session_id=SESSION_ID, variables=dict(at_limit)
+        )
+        return str(result.decision)
+
+    assert await decide({"names": [handoffs]}) == "allow"
+    assert await decide({"cursor": "b.next-page"}) == "allow"
+    assert await decide({"names": [other]}) == "block"
+    assert await decide({"names": [handoffs, other]}) == "block"
