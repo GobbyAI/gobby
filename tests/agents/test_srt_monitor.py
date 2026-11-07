@@ -1326,8 +1326,9 @@ def test_acknowledged_records_stay_only_in_execution_log(monitor_harness: Monito
         child.send_signal(signal.SIGINT)
         child.communicate(timeout=15)
         assert child.returncode == -signal.SIGINT
+        # The broker retires the backlog after the runner's socket closes.
+        _wait_path(harness.root / "acked_SBX.srt-backlog.jsonl.active", absent=True)
         assert not (harness.root / "acked_SBX.srt-backlog.jsonl").exists()
-        assert not (harness.root / "acked_SBX.srt-backlog.jsonl.active").exists()
         assert Path(harness.socket_path + ".jsonl").stat().st_size == 0
         records = [
             json.loads(line)
