@@ -2057,6 +2057,20 @@ async def test_dirty_directory_owner_blocks_overlapping_edit(
         harness.foreign_task.id: [ledger_path],
     }
 
+    # The requester's own unbound edit to the same child stays refused under the holder (#25843).
+    await _bound_then_unbound_edit(
+        harness,
+        harness.current_session,
+        dirty_path,
+        "requester change\n",
+        boundary_before_post=True,
+    )
+    child_edit = await harness.handler._evaluate_rules(harness.edit_event(dirty_path))
+    assert child_edit.decision == "block", child_edit.reason
+    _git(harness.repo, "add", dirty_path)
+    staged_commit = await harness.handler._evaluate_rules(harness.event("git commit -m mine"))
+    assert staged_commit.decision == "block", staged_commit.reason
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["edit_owned", "commit_only", "commit_staged", "edit_clean"])
