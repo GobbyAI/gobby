@@ -642,6 +642,8 @@ async fn codex_launch() -> Result<LaunchFixture> {
     payload.project_id = base.project_id;
     payload.session_id = base.session_id;
     payload.sandbox = base.sandbox;
+    // The case's own temporary build root is already dropped; the node refuses a missing one.
+    payload.build_root = base.build_root;
     payload.extra_env.clear();
     payload.workspace = no_workspace();
     payload.prompt = PROMPT.into();
