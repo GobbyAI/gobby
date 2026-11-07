@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
+import shlex
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -133,6 +135,12 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         for entry in chain[key].values()
         if entry.get("session_id") is None
     }
+    # Typed input reached a shell this chain could not attribute: its pending cell may run it.
+    sticky = set(chain["sticky_unattributed"])
+    if any(entry["outer_call_id"] in sticky for entry in pending.values()):
+        return _PendingLookup(
+            None, "typed input reached an unmapped session; a pending cell is unattributed"
+        )
     invocations = [
         {**entry, "literal_command": call["cmd"], "workdir": call.get("workdir")}
         for entry in pending.values()
@@ -159,6 +167,21 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
     # A yielded or multi-command cell can no longer vouch for one inner invocation.
     unique_outer = outer if outer in chain["calls"] and outer in simple_cells else None
     return _PendingLookup(str(cwd), outer_call_id=unique_outer)
+
+
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_PLAIN_WORD = re.compile(r"[A-Za-z0-9_.+-]+")
+
+
+def _redacted_command_head(command: str) -> tuple[str, int]:
+    """Name the executable and count argv for diagnostics, never argument or env values."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return "<unparsed>", len(command.split())
+    words = [word for word in argv if not _ENV_ASSIGNMENT.match(word)]
+    head = words[0].rsplit("/", 1)[-1] if words else ""
+    return (head if _PLAIN_WORD.fullmatch(head) else "<redacted>"), len(argv)
 
 
 def _pending_shell_workdir(
@@ -191,7 +214,14 @@ def _pending_shell_workdir(
         time.sleep(_PENDING_RECORD_RETRY_DELAY_SECONDS)
         lookup = _pending_shell_lookup(transcript_path, command)
     if lookup.workdir is None:
-        logger.warning("cwd proof refused: %s", lookup.refusal)
+        head, argc = _redacted_command_head(command)
+        logger.warning(
+            "cwd proof refused: %s (session=%s head=%s argc=%d)",
+            lookup.refusal,
+            input_data.get("session_id"),
+            head,
+            argc,
+        )
     elif correlation is not None and lookup.outer_call_id is not None:
         explicit = any(tool_input.get(key) for key in ("workdir", "cwd"))
         if not explicit or current_tool_cwd(input_data) == Path(lookup.workdir):

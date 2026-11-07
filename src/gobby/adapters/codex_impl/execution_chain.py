@@ -340,6 +340,15 @@ def _decode_write_stdin_arguments(arguments: Any) -> dict[str, Any] | None:
     return decoded
 
 
+def write_stdin_sends_input(arguments: Any) -> bool:
+    """Whether a direct or nested write_stdin may type; only absent or literal empty chars polls."""
+    body = _nested_write_stdin_args(arguments)
+    if body is None:
+        decoded = _decode_write_stdin_arguments(arguments)
+        return decoded is None or decoded.get("chars") not in (None, "")
+    return bool(re.search(r"\bchars\b", body)) and _WRITE_STDIN_CHARS_RE.findall(body) != ['""']
+
+
 def _iter_output_text(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -628,6 +637,7 @@ class ExecutionChainCorrelator:
         self._sessions: dict[str, PendingExecution] = {}
         self._ambiguous_cells: dict[str, None] = {}
         self._ambiguous_sessions: dict[str, None] = {}
+        self._sticky_unattributed: dict[str, None] = {}
         self._live_sequence = 0
         self._overflowed = False
         self._pending_overflowed = False
@@ -671,17 +681,21 @@ class ExecutionChainCorrelator:
                 typed = extract_functions_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
+                if execution is None and write_stdin_sends_input(arguments):
+                    self._mark_sticky_unattributed()
             # Only a cell that can start a shell blocks cwd proof. An MCP-only cell that
             # merely mentions exec_command in its text stays out of the chain.
             elif allow_unattributed and may_reach_shell(arguments):
                 execution = PendingExecution(call_id)
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
+            typed = extract_direct_write_stdin_command(arguments)
             if session_id is not None and session_id not in self._ambiguous_sessions:
                 execution = self._sessions.get(session_id)
-                typed = extract_direct_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
+            if execution is None and write_stdin_sends_input(arguments):
+                self._mark_sticky_unattributed()
         elif name in WAIT_NAMES:
             decoded = arguments
             if isinstance(arguments, str):
@@ -882,6 +896,14 @@ class ExecutionChainCorrelator:
         """
         self._calls.clear()
 
+    def _mark_sticky_unattributed(self) -> None:
+        """Typed input reached a shell this chain cannot attribute, so each pending cell is suspect.
+
+        Empty polls never reach here; the marker clears when the marked cell leaves pending state.
+        """
+        for execution in self._cells.values():
+            self._sticky_unattributed[execution.outer_call_id] = None
+
     def snapshot_state(self) -> dict[str, Any]:
         return {
             "calls": {key: value.to_state() for key, value in self._calls.items()},
@@ -889,6 +911,7 @@ class ExecutionChainCorrelator:
             "sessions": {key: value.to_state() for key, value in self._sessions.items()},
             "ambiguous_cells": list(self._ambiguous_cells),
             "ambiguous_sessions": list(self._ambiguous_sessions),
+            "sticky_unattributed": list(self._sticky_unattributed),
             "complete": not self._overflowed,
             "pending_complete": not self._pending_overflowed,
         }
@@ -901,6 +924,7 @@ class ExecutionChainCorrelator:
         self._sessions = self._hydrate_map(state.get("sessions"))
         self._ambiguous_cells = self._hydrate_ambiguities(state.get("ambiguous_cells"))
         self._ambiguous_sessions = self._hydrate_ambiguities(state.get("ambiguous_sessions"))
+        self._sticky_unattributed = self._hydrate_ambiguities(state.get("sticky_unattributed"))
 
     def _hydrate_map(self, value: Any) -> dict[str, PendingExecution]:
         if not isinstance(value, dict):

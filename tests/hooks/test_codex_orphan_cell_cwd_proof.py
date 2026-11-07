@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from gobby.adapters.codex_impl import hooks_adapter
 from gobby.adapters.codex_impl.execution_chain import ExecutionChainCorrelator
-from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.hooks_adapter import (
+    CodexHooksAdapter,
+    _pending_shell_lookup,
+    _pending_shell_workdir,
+    _PendingLookup,
+)
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookResponse
@@ -426,12 +434,16 @@ def test_refused_unscoped_batch_does_not_block_later_literal_cwd_proof(
     assert current_tool_cwd(event.data) == workdir
 
 
-RUFF_CHECK = "uv run --no-sync ruff check src/gobby/adapters/codex_impl"
+RUFF_SHAPES = (
+    "uv run --no-sync ruff check src/gobby/adapters/codex_impl",
+    "uv run ruff check src/gobby/adapters/codex_impl",
+)
 
 
+@pytest.mark.parametrize("ruff", RUFF_SHAPES)
 @pytest.mark.parametrize("prior", ["alone", "after_yielded_batch", "after_refused_cell"])
 def test_literal_ruff_check_proves_its_workdir(
-    event_handlers: EventHandlers, tmp_path: Path, prior: str
+    event_handlers: EventHandlers, tmp_path: Path, prior: str, ruff: str
 ) -> None:
     """Report 756fe608: a literal, read-only ruff check was refused in a Codex developer tree."""
     workdir = tmp_path / "task"
@@ -443,7 +455,158 @@ def test_literal_ruff_check_proves_its_workdir(
         ]
     elif prior == "after_refused_cell":
         records += [_call("cell1", CELL_ONE), _output("cell1", REFUSED_ONE)]
-    records.append(_call("ruff", _literal(RUFF_CHECK, workdir)))
-    event, response = _hook(event_handlers, tmp_path, records, command=RUFF_CHECK)
+    records.append(_call("ruff", _literal(ruff, workdir)))
+    event, response = _hook(event_handlers, tmp_path, records, command=ruff)
     assert response.decision == "allow", response.reason
     assert current_tool_cwd(event.data) == workdir
+
+
+TYPED = "uv run --no-sync pytest tests/hooks/test_typed.py -q"
+STDIN_OUTPUT = "Wall time 1.0 seconds\nOutput:\n"
+SHELL_SESSION = 901
+
+
+def _stdin(call_id: str, chars: str) -> dict[str, Any]:
+    """A direct write_stdin into the shell session a yielded cell left running."""
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "call_id": call_id,
+            "arguments": json.dumps({"session_id": SHELL_SESSION, "chars": chars}),
+        },
+    }
+
+
+def _nested_stdin(call_id: str, chars: str) -> dict[str, Any]:
+    """A write_stdin nested in an exec cell: code mode types into the same shell session."""
+    source = (
+        f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:{json.dumps(chars)}}}));"
+    )
+    return _call(call_id, source)
+
+
+# Each way typed input reaches a shell session: (record builder, its output builder).
+STDIN_FORMS = {"direct": (_stdin, _wait_output), "nested": (_nested_stdin, _output)}
+
+
+@pytest.mark.parametrize("chars", [TYPED + "\n", "\n"], ids=["command", "enter"])
+@pytest.mark.parametrize("form", list(STDIN_FORMS))
+def test_typed_input_to_unmapped_shell_blocks_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path, form: str, chars: str
+) -> None:
+    """Typed input, even a bare Enter, reaches a shell the chain never mapped; the batch may run it."""
+    workdir = tmp_path / "task"
+    build_stdin, output_stdin = STDIN_FORMS[form]
+    records = [
+        _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+        build_stdin("stdin", chars),
+        output_stdin("stdin", STDIN_OUTPUT),
+        _call("probe", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "block", current_tool_cwd(event.data)
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+@pytest.mark.parametrize("form", list(STDIN_FORMS))
+def test_empty_poll_to_unmapped_shell_keeps_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path, form: str
+) -> None:
+    """An empty poll types nothing, so it cannot start a command and must not set the marker."""
+    workdir = tmp_path / "task"
+    build_stdin, output_stdin = STDIN_FORMS[form]
+    records = [
+        _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+        build_stdin("poll", ""),
+        output_stdin("poll", STDIN_OUTPUT),
+        _call("probe", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
+def _lookup(tmp_path: Path, records: list[dict[str, Any]], command: str) -> _PendingLookup:
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+    return _pending_shell_lookup(str(transcript), command)
+
+
+def _yield_text(cell_id: int) -> str:
+    return f"Script running with cell ID {cell_id}\nWall time 1.0 seconds\nOutput:\n"
+
+
+def test_literal_ruff_check_refused_once_pending_history_overflows(tmp_path: Path) -> None:
+    """Fail closed by design: an evicted yielded cell may still run a shell with no known command."""
+    workdir = tmp_path / "task"
+    records: list[dict[str, Any]] = []
+    for index in range(65):
+        records += [
+            _call(f"launch{index}", _literal(f"sleep {index}", workdir)),
+            _output(f"launch{index}", _yield_text(index)),
+        ]
+    records.append(_call("ruff", _literal(RUFF_SHAPES[0], workdir)))
+    lookup = _lookup(tmp_path, records, RUFF_SHAPES[0])
+    assert lookup.workdir is None
+    assert lookup.refusal == "pending calls overflowed or are ambiguous"
+
+
+def test_literal_ruff_check_refused_when_its_record_never_lands(tmp_path: Path) -> None:
+    """A probe with no rollout record is refused and stays retryable, not proven by absence."""
+    lookup = _lookup(tmp_path, [], RUFF_SHAPES[0])
+    assert lookup.workdir is None
+    assert lookup.refusal == "0 pending calls match the command"
+    assert lookup.retryable
+
+
+@pytest.mark.parametrize("tail", ["missing", "partial"])
+@pytest.mark.parametrize("ruff", RUFF_SHAPES)
+def test_literal_ruff_check_proves_cwd_once_its_unwritten_record_lands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ruff: str, tail: str
+) -> None:
+    """The rollout tail lags the PreToolUse hook; the record lands during the retry window."""
+    workdir = tmp_path / "task"
+    line = json.dumps(_call("ruff", _literal(ruff, workdir)))
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text("" if tail == "missing" else line[: len(line) // 2])
+
+    def land_record(_seconds: float) -> None:
+        transcript.write_text(line + "\n")
+
+    monkeypatch.setattr(time, "sleep", land_record)
+    cwd = _pending_shell_workdir(
+        {"transcript_path": str(transcript), "tool_input": {"command": ruff}}
+    )
+    assert cwd == str(workdir)
+
+
+def test_refused_cwd_proof_logs_only_redacted_command_head(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """Diagnostics name the session and a redacted command head, never argument values or paths."""
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text("")
+    input_data = {
+        "session_id": "sess-redact",
+        "transcript_path": str(transcript),
+        "cwd": str(tmp_path / "launcher"),
+        "tool_input": {"command": REPLAY_PYTEST},
+    }
+    caplog.set_level(logging.WARNING, logger=hooks_adapter.__name__)
+    assert _pending_shell_workdir(input_data) is None
+    [message] = [
+        record.getMessage()
+        for record in caplog.records
+        if "cwd proof refused" in record.getMessage()
+    ]
+    assert "sess-redact" in message
+    assert "0 pending calls match the command" in message
+    assert "head=uv" in message
+    assert "argc=" in message
+    for secret in ("gobby_test", "127.0.0.1", "tests/", "not e2e", str(tmp_path)):
+        assert secret not in message
