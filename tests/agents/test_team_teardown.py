@@ -412,6 +412,26 @@ async def test_cleanup_preserves_unsafe_trees(
     assert session_status(db, stranger) == "active"
 
 
+async def test_closed_tree_with_only_generated_dirt_is_cleared_without_force(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    team = await admitted_team(world, "Generated dirt team tree")
+    sha = land(world, team, "landed.py")
+    tree = tree_of(team.binding)
+    (tree / ".mcp.json").write_text("{}\n")
+    closed = close(world, team, sha)
+
+    with caplog.at_level(logging.INFO, logger="gobby.worktrees.deletion"):
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert not tree.exists()
+    assert not branch_exists(world, team.binding.branch)
+    assert "force=False generated_untracked=1" in caplog.text
+
+
 async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

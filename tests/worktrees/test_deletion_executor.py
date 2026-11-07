@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -77,7 +78,13 @@ class _BarrierGitManager:
     async def get_worktree_status(self, _path: str) -> SimpleNamespace:
         return SimpleNamespace(has_uncommitted_changes=False)
 
-    async def delete_worktree(self, _path: str, **_kwargs: Any) -> SimpleNamespace:
+    async def run_git_command(
+        self, _args: list[str], cwd: str | None = None, timeout: int | None = None
+    ) -> SimpleNamespace:
+        # Only the main checkout stays registered once every tree is removed.
+        return SimpleNamespace(returncode=0, stdout="worktree /main-checkout\0", stderr="")
+
+    async def delete_worktree(self, path: str, **_kwargs: Any) -> SimpleNamespace:
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -86,6 +93,7 @@ class _BarrierGitManager:
                 self.started.set()
         try:
             await asyncio.wait_for(self.release.wait(), timeout=2)
+            shutil.rmtree(path)
             return SimpleNamespace(success=True, message="deleted", error=None)
         finally:
             with self._lock:
