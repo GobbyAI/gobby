@@ -22,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.checkout_fingerprint import file_fingerprint, path_fingerprints
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
     normalize_task_checkout_root,
     task_checkout_edit_hashes,
     task_checkout_edit_times,
@@ -153,6 +154,30 @@ def content_recorded_paths(
             records.setdefault(entry, set()).add(digest)
     return {
         path for path in paths if path in records and _current_digest(root, path) in records[path]
+    }
+
+
+def unclaimed_content_paths(
+    variables: dict[str, Any], checkout_root: str, paths: Iterable[str]
+) -> set[str]:
+    """Return the paths, among ``paths``, this session recorded unclaimed and still holds.
+
+    An edit whose tool-start binding was lost is recorded in the session's unclaimed ledger
+    with the content it left. While the session holds an active claim, that content is still
+    its own: the claim adopts it, and no other session owns it in the meantime.
+    """
+    root = normalize_task_checkout_root(checkout_root)
+    records = variables.get("session_unclaimed_edits")
+    if root is None or not isinstance(records, dict) or active_task_id_for_edit(variables) is None:
+        return set()
+    root_records = records.get(root)
+    if not isinstance(root_records, dict):
+        return set()
+    return {
+        path
+        for path in paths
+        if isinstance(root_records.get(path), dict)
+        and _current_digest(root, path) == root_records[path].get("digest")
     }
 
 
