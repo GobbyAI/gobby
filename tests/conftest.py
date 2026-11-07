@@ -127,30 +127,28 @@ def isolated_darwin_cache_locations(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _select_schema_contract_gdaemon() -> Iterator[None]:
-    """Pin schema-contract gdaemon calls at the binary ``select_test_gdaemon`` chooses.
+def _checkout_schema_contract_gdaemon() -> Iterator[None]:
+    """Pin schema-contract gdaemon calls at this checkout's own gdaemon build.
 
-    The installed ``~/.gobby/bin`` binary is the default — the same authority the
-    daemon and runtime grants use. Only ``GOBBY_TEST_GDAEMON=checkout`` routes schema
-    actions at this checkout's ``target/debug`` build, which must be newer than its
-    crate sources. Session-scoped and autouse so the choice is active before the
-    session-scoped postgres fixtures run their first schema apply/sweep, and the choice
-    cannot vary between test modules.
+    The installed ``~/.gobby/bin`` binary is never the schema authority: it can lack this
+    checkout's migrations. The build happens on first schema use, through cargo's shared
+    target cache, and a failed build raises instead of falling back. Session-scoped and
+    autouse so the choice is active before the session-scoped postgres fixtures run their
+    first schema apply/sweep, and it cannot vary between test modules.
     """
     from gobby.utils.native_bin import native_bin_name, resolve_native_bin
-    from tests.fixtures.gdaemon_binary import select_test_gdaemon
+    from tests.fixtures.gdaemon_binary import build_checkout_gdaemon
 
-    binary = select_test_gdaemon(
-        Path(__file__).resolve().parents[1], os.environ, native_bin_name("gdaemon")
-    )
-    if binary is None:
-        yield
-        return
+    repo_root = Path(__file__).resolve().parents[1]
+    binary_name = native_bin_name("gdaemon")
+
+    def resolve(name: str) -> str | None:
+        if name == "gdaemon":
+            return str(build_checkout_gdaemon(repo_root, os.environ, binary_name))
+        return resolve_native_bin(name)
+
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(
-        "gobby.storage.schema_contract.resolve_native_bin",
-        lambda name: str(binary) if name == "gdaemon" else resolve_native_bin(name),
-    )
+    monkeypatch.setattr("gobby.storage.schema_contract.resolve_native_bin", resolve)
     yield
     monkeypatch.undo()
 

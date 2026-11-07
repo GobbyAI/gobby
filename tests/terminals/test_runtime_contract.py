@@ -572,8 +572,8 @@ def _start_isolated_daemon(
         )
         (home / "bootstrap.yaml").chmod(0o600)
         (home / "files").mkdir(exist_ok=True)
-        # Pin the gterm dir before prepare_daemon_env, so GOBBY_TEST_GDAEMON=checkout
-        # still puts the checkout gdaemon beside that gterm.
+        # Pin the gterm dir before prepare_daemon_env, so the checkout gdaemon
+        # still lands beside that gterm.
         base_env = os.environ.copy()
         if binary is not None:
             base_env["GOBBY_NATIVE_BIN_DIR"] = str(binary.parent)

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 168,
+  "site_count": 166,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -861,26 +861,6 @@
         "arg-type"
       ],
       "statement": "result = await clustering_mod . recluster_project_entities ( Reader ( ) , Writer ( ) , \"project-1\" , is_global = False , min_cluster_size = 7 , min_samples = None , )"
-    },
-    {
-      "fingerprint": "11a8948a4c4c80c0c0aa9dab8d801a0bf780a465a4a5dad1ab0693a6ed29aade",
-      "path": "tests/memory/test_recall_benchmark.py",
-      "symbol": "_run_arm",
-      "directive": "type: ignore",
-      "codes": [
-        "assignment"
-      ],
-      "statement": "service . _extractor = _StubExtractor ( by_content )"
-    },
-    {
-      "fingerprint": "e4c8851c9e2d0c98e348fc0adbb6134365280654bcdb5cfc4c9540abbabc56ef",
-      "path": "tests/memory/test_recall_benchmark_e2e.py",
-      "symbol": "_build_service",
-      "directive": "type: ignore",
-      "codes": [
-        "assignment"
-      ],
-      "statement": "service . _extractor = _StubExtractor ( { mem . memory_id : mem for mem in corpus } )"
     },
     {
       "fingerprint": "de005840292be1d1e00aa0f32b909f972a59922fc3f871dfe2513dda87504b7c",

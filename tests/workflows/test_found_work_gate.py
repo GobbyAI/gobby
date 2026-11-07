@@ -1161,7 +1161,7 @@ def test_pytest_usage_error_is_not_a_terminal_validation_failure(tmp_path: Path)
     _commit(tmp_path)
 
     prefix = (
-        "RTK_DISABLED=1 GOBBY_TEST_GDAEMON=checkout "
+        "RTK_DISABLED=1 "
         "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
         f"GOBBY_TEST_PROTECT=1 uv run --directory {shlex.quote(str(tmp_path))} pytest "
     )

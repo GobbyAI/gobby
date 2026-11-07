@@ -346,28 +346,22 @@ def prepare_daemon_env(
 
     # Pin native binaries before HOME moves, or ~/.gobby/bin would resolve inside
     # the temp home and the runner could not find the gdaemon front door it
-    # spawns. GOBBY_TEST_GDAEMON=checkout selects this checkout's debug build; a
+    # spawns. The spawned gdaemon is always this checkout's own build; a
     # GOBBY_NATIVE_BIN_DIR the test already set supplies every other binary.
     from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_dir, native_bin_name
-    from tests.fixtures.gdaemon_binary import select_test_gdaemon
+    from tests.fixtures.gdaemon_binary import build_checkout_gdaemon
 
     # Cargo's target belongs to the invoking checkout, before child identity/cache
     # cleanup removes it. The spawned daemon still receives the cleaned environment.
-    checkout_gdaemon = select_test_gdaemon(
+    checkout_gdaemon = build_checkout_gdaemon(
         root_dir, base_env if base_env is not None else os.environ, native_bin_name("gdaemon")
     )
     pinned_bin_dir = Path(env.get(NATIVE_BIN_DIR_ENV) or native_bin_dir())
-    if home_dir is not None or (
-        checkout_gdaemon is not None
-        and pinned_bin_dir.resolve() != checkout_gdaemon.parent.resolve()
-    ):
+    if home_dir is not None or pinned_bin_dir.resolve() != checkout_gdaemon.parent.resolve():
         env[NATIVE_BIN_DIR_ENV] = str(
             _isolated_native_bin_dir(checkout_gdaemon, pinned_bin_dir, home_dir)
         )
-    env.setdefault(
-        NATIVE_BIN_DIR_ENV,
-        str(checkout_gdaemon.parent if checkout_gdaemon is not None else pinned_bin_dir),
-    )
+    env.setdefault(NATIVE_BIN_DIR_ENV, str(checkout_gdaemon.parent))
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
     # the user's real home directory. This is the single most effective

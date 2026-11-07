@@ -20,11 +20,7 @@ from gobby.storage import schema_contract
 from gobby.storage.hub import postgres
 from gobby.storage.schema_identity_pin import SchemaIdentityError, probe_identity
 from gobby.utils.native_bin import native_bin_name
-from tests.fixtures.gdaemon_binary import (
-    CHECKOUT_BINARY_ENV,
-    CHECKOUT_BINARY_VALUE,
-    select_test_gdaemon,
-)
+from tests.fixtures.gdaemon_binary import build_checkout_gdaemon
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PRODUCTION_PYTHON_ROOT = _REPO_ROOT / "src" / "gobby"
@@ -319,12 +315,7 @@ def test_expected_identity_reports_packaged_contract_violations(
 
 def test_expected_identity_matches_gdaemon() -> None:
     """The packaged pin names exactly the identity this checkout's gdaemon embeds."""
-    binary = select_test_gdaemon(
-        _REPO_ROOT,
-        {**os.environ, CHECKOUT_BINARY_ENV: CHECKOUT_BINARY_VALUE},
-        native_bin_name("gdaemon"),
-    )
-    assert binary is not None
+    binary = build_checkout_gdaemon(_REPO_ROOT, os.environ, native_bin_name("gdaemon"))
 
     assert probe_identity(binary) == schema_contract.expected_schema_identity()
 

@@ -1,26 +1,28 @@
-"""Select the gdaemon binary that schema-contract calls use during tests.
+"""Build the gdaemon binary that schema-contract calls use during tests.
 
-The installed ``~/.gobby/bin`` binary is the default: it is what the daemon, runtime
-grants, and every CLI path use. A branch that carries unreleased migrations cannot use
-the installed binary to exercise those new assets without cutting the whole machine
-over, so ``GOBBY_TEST_GDAEMON=checkout`` opts into the checkout's own debug build — and
-that build must be newer than the crate sources it was built from.
+The test schema authority is this checkout's own gdaemon, built by cargo from the tree
+under test. The installed ``~/.gobby/bin`` binary is never used: it can lack migrations
+this checkout carries, so a schema applied from it would not describe the code under
+test. Cargo reuses the shared target cache, so an up-to-date checkout costs one cargo
+check. A failed build or a missing artifact raises CheckoutBinaryError; nothing falls
+back to an installed binary.
 """
 
 from __future__ import annotations
 
+import json
+import shlex
+import subprocess
 from collections.abc import Mapping
-from itertools import chain
 from pathlib import Path
 
-CHECKOUT_BINARY_ENV = "GOBBY_TEST_GDAEMON"
-CHECKOUT_BINARY_VALUE = "checkout"
-INSTALLED_BINARY_VALUE = "installed"
-SOURCE_DIRS = ("crates/gcore", "crates/gdaemon")
+CARGO_PACKAGE = "gobby-daemon"
+CARGO_BUILD_TIMEOUT_SECONDS = 1800
+_BUILT: dict[tuple[str, str, str], Path] = {}
 
 
 class CheckoutBinaryError(RuntimeError):
-    """The checkout's debug gdaemon was requested but cannot be trusted."""
+    """This checkout's gdaemon could not be built or located."""
 
 
 def checkout_debug_dir(repo_root: Path, env: Mapping[str, str]) -> Path:
@@ -31,62 +33,61 @@ def checkout_debug_dir(repo_root: Path, env: Mapping[str, str]) -> Path:
     return target / "debug"
 
 
-def newest_source(repo_root: Path) -> tuple[Path, int] | None:
-    """Return the newest binary input, excluding conventional test-only Rust paths.
+def build_checkout_gdaemon(repo_root: Path, env: Mapping[str, str], binary_name: str) -> Path:
+    """Build gdaemon from this checkout and return the artifact cargo produced.
 
-    Separate tests.rs / *_tests.rs modules and tests/benches/examples trees are
-    test-only. Inline cfg(test) blocks share a production file: retain that file's
-    mtime conservatively because timestamps cannot identify which block changed.
-    Keep crate assets/build metadata and workspace dependency resolution inputs.
+    The build runs once per process for each checkout, target directory and binary name.
     """
-    newest: tuple[Path, int] | None = None
-    candidates = chain(
-        (repo_root / name for name in ("Cargo.toml", "Cargo.lock")),
-        *((repo_root / relative).rglob("*") for relative in SOURCE_DIRS),
-    )
-    for path in candidates:
-        if not path.is_file():
-            continue
-        relative = path.relative_to(repo_root)
-        if any(part in {"tests", "benches", "examples"} for part in relative.parts):
-            continue
-        if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
-            continue
-        mtime = path.stat().st_mtime_ns
-        if newest is None or mtime > newest[1]:
-            newest = (path, mtime)
-    return newest
+    key = (str(repo_root), str(checkout_debug_dir(repo_root, env)), binary_name)
+    if key not in _BUILT:
+        _BUILT[key] = _cargo_build_gdaemon(repo_root, env, binary_name)
+    return _BUILT[key]
 
 
-def select_test_gdaemon(
-    repo_root: Path,
-    env: Mapping[str, str],
-    binary_name: str,
-) -> Path | None:
-    """Return the checkout debug binary when opted in, else None for the installed one.
-
-    Raises CheckoutBinaryError when the opt-in names a missing or stale build, and
-    ValueError for an unrecognized selector value, so a typo never silently falls back.
-    """
-    selector = env.get(CHECKOUT_BINARY_ENV, "")
-    if selector in ("", INSTALLED_BINARY_VALUE):
-        return None
-    if selector != CHECKOUT_BINARY_VALUE:
-        raise ValueError(
-            f"{CHECKOUT_BINARY_ENV}={selector!r} is not recognized; use "
-            f"{CHECKOUT_BINARY_VALUE!r} or {INSTALLED_BINARY_VALUE!r}"
+def _cargo_build_gdaemon(repo_root: Path, env: Mapping[str, str], binary_name: str) -> Path:
+    """Run ``cargo build --locked`` for gdaemon and return the executable it reports."""
+    command = [
+        "cargo",
+        "build",
+        "-p",
+        CARGO_PACKAGE,
+        "--bin",
+        "gdaemon",
+        "--locked",
+        "--message-format=json-render-diagnostics",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=repo_root,
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=CARGO_BUILD_TIMEOUT_SECONDS,
         )
-    binary = checkout_debug_dir(repo_root, env) / binary_name
-    if not binary.is_file():
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CheckoutBinaryError(f"could not run `{shlex.join(command)}`: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise CheckoutBinaryError(f"`cargo build -p {CARGO_PACKAGE}` failed: {detail}")
+    artifact = _artifact_from_cargo_json(result.stdout, binary_name)
+    if artifact is None:
         raise CheckoutBinaryError(
-            f"{CHECKOUT_BINARY_ENV}={CHECKOUT_BINARY_VALUE} but {binary} does not exist; "
-            "run `cargo build -p gobby-daemon`"
+            f"`cargo build -p {CARGO_PACKAGE}` produced no gdaemon artifact in {repo_root}"
         )
-    newest = newest_source(repo_root)
-    if newest is not None and newest[1] > binary.stat().st_mtime_ns:
-        raise CheckoutBinaryError(
-            f"{binary} is older than {newest[0]}; run `cargo build -p gobby-daemon` "
-            "before testing against the checkout binary. If cargo reports it already "
-            "fresh, that input does not reach gdaemon: `touch` the binary to acknowledge"
-        )
-    return binary
+    return artifact
+
+
+def _artifact_from_cargo_json(stdout: str, binary_name: str) -> Path | None:
+    """Return the executable cargo reports for ``binary_name``, fresh or rebuilt."""
+    found: Path | None = None
+    for line in stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        message = json.loads(line)
+        executable = message.get("executable")
+        if message.get("reason") == "compiler-artifact" and executable:
+            if Path(executable).name == binary_name:
+                found = Path(executable)
+    return found
