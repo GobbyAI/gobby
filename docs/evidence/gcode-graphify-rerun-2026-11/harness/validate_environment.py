@@ -15,6 +15,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -37,17 +38,22 @@ from provision_environment import (
 from runtime_boundary import (
     EvidenceError,
     contained_file,
+    file_record,
     require,
     verify_file_record,
     verify_symlink_record,
     write_once,
 )
+from schema_head import schema_head_proof
 from service_safety import validate_rendered
+from verify_corpora import compare_manifests, verify_corpora
 
 GRAPHIFY_ENTRYPOINT = "tools/graphify/venv/bin/graphify"
 GCODE_BINARY = "tools/gcode/bin/gcode"
 GCODE_VERSION = "1.9.104"
 GCODE_CONTRACT_VERSION = 12
+SEPTEMBER_ROOT = Path("/Users/josh/Projects/wiki-bakeoff-code-2026-09")
+BINARY_SET_DIR = "gobby-home/bin"
 ALLOWED_EXAMPLE_ENV = {".env.example", "Buylist/.env.example", "Restocks/.env.example"}
 SECRET_PATTERNS = {
     "private-key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -787,6 +793,36 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     }
 
 
+def validate_corpora_live(
+    root: Path,
+    september_root: Path,
+    cases: Mapping[str, tuple[str, ...]] | None = None,
+) -> dict[str, dict[str, list[str]]]:
+    """Fail the live run unless the corpora match the September manifests and their files."""
+    compare_manifests(root, september_root, cases)
+    report = verify_corpora(root, cases)
+    differing = sorted(name for name, item in report.items() if item["missing"] or item["changed"])
+    require(not differing, f"corpora differ from their manifests: {differing}")
+    return report
+
+
+def binary_set_proof(root: Path) -> dict[str, Any]:
+    """Record the isolated binary set; an empty or refused set fails, never passes vacuously."""
+    from gobby.storage.schema_divergence import binary_set_apply_refusal
+    from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
+
+    members: dict[str, Any] = {}
+    for member in SET_MEMBERS:
+        path = f"{BINARY_SET_DIR}/{native_bin_name(member)}"
+        require((root / path).is_file(), f"isolated binary set is missing {member}")
+        members[member] = file_record(root, path)
+    stamp = f"{BINARY_SET_DIR}/{IDENTITY_STAMP_NAME}"
+    require((root / stamp).is_file(), "isolated binary set has no identity stamp")
+    refusal = binary_set_apply_refusal(root / BINARY_SET_DIR)
+    require(refusal is None, f"binary set apply refused: {refusal}")
+    return {"refusal": None, "members": members, "stamp": file_record(root, stamp)}
+
+
 def validate_environment(root: Path, *, live: bool) -> None:
     require(
         root.resolve() == DEFAULT_RUNTIME_ROOT,
@@ -797,7 +833,13 @@ def validate_environment(root: Path, *, live: bool) -> None:
     validate_compose(root)
     validate_installations(root)
     if live:
+        binary_set = binary_set_proof(root)
+        schema_head = schema_head_proof(root)
+        corpora = validate_corpora_live(root, SEPTEMBER_ROOT)
         proof = probe_live_environment(root)
+        proof["binary_set"] = binary_set
+        proof["schema_head"] = schema_head
+        proof["corpora"] = corpora
         receipt = root / "receipts/runtime-verification.json"
         if not receipt.exists():
             write_once(receipt, json.dumps(proof, indent=2) + "\n", 0o600)

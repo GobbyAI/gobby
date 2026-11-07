@@ -13,6 +13,7 @@ from typing import Any
 
 import prepare_daemon
 import prepare_identity
+from binary_set import install_binary_set
 from provision_environment import (
     COMPARATOR_CASES,
     COMPOSE_PROJECT,
@@ -31,8 +32,12 @@ from record_installations import probe
 from runtime_boundary import assert_owned_runtime, require, write_once
 from service_safety import validate_container, validate_rendered
 from validate_environment import _load_env_file
+from violation_copy import copy_attempt_violations
+
+from gobby.agents.srt_socket_paths import existing_srt_mux_tmpdir
 
 DAEMON_PORTS = (59480, 59481, 59482)
+OPERATOR_BIN_DIR = Path.home() / ".gobby/bin"
 GRAPHIFY_PACKAGE = "graphifyy==0.9.103"
 PYTHON_VERSION = "3.13"
 
@@ -86,11 +91,19 @@ def check_fresh() -> None:
             port_probe.bind(("127.0.0.1", port))
 
 
-def observe(root: Path, image_ids: dict[str, str]) -> None:
+def _shared_monitor_dir() -> Path | None:
+    try:
+        return existing_srt_mux_tmpdir()
+    except OSError:
+        return None
+
+
+def observe(root: Path, image_ids: dict[str, str], attempt: str) -> None:
     healthy = record_services(root, image_ids)
     after = root / "isolation/external-state.after.json"
     if not after.exists():
         _write_json(after, external_state_snapshot(DEFAULT_SOURCE_REPO), mode=0o600)
+    copy_attempt_violations(root, attempt, monitor_dir=_shared_monitor_dir())
     require(healthy, "owned services not healthy; retain logs and ownership")
     print("all three owned services healthy; live containment checks passed")
 
@@ -162,7 +175,10 @@ def main() -> None:
     if args.action == "start":
         start_services(root, command, image_ids)
     elif args.action == "observe":
-        observe(root, image_ids)
+        require(
+            args.attempt != "", "observe needs --attempt to copy that attempt's violation lines"
+        )
+        observe(root, image_ids, args.attempt)
 
 
 def step_complete(receipt: Path, verify: Callable[[], object]) -> bool:
@@ -297,6 +313,7 @@ def provision(root: Path, attempt: str) -> None:
         check_fresh()
         start_services(root, command, image_ids)
     _build_environments(root, attempt)
+    install_binary_set(OPERATOR_BIN_DIR, root / "gobby-home/bin")
     prepare_daemon.prepare(root)
     prepare_identity.prepare_identity(root)
     _init_workspaces(root, attempt)
