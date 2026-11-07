@@ -213,8 +213,9 @@ class KnowledgeGraphReader:
             if entity_keys and memory_link_limit > 0:
                 try:
                     mem_rows = await self._falkor.query(
-                        "UNWIND $entity_keys AS entity_key WITH entity_key "
-                        "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+                        "UNWIND $entity_keys AS entity_key "
+                        "MATCH (e:_Entity {entity_key: entity_key}) WITH entity_key, e "
+                        "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                         "OR ($include_global AND e.is_global = true)) "
                         "AND ((m.project_id = $project_id AND m.is_global = false) "
@@ -428,12 +429,13 @@ class KnowledgeGraphReader:
             if cached_rows is not None:
                 rows = cached_rows
             else:
-                # WITH barrier: materialize the UNWIND rows before the indexed
-                # entity MATCH. Without it the planner scans _Entity per hop (1.5-5 s
-                # on the live graph); with it the same rows return in milliseconds.
+                # Bind the indexed source before expanding relationships. A WITH
+                # projecting only the UNWIND key still permits expansion without
+                # an entity-key index scan.
                 rows = await self._falkor.query(
-                    "UNWIND $source_keys AS source_key WITH source_key "
-                    "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity) "
+                    "UNWIND $source_keys AS source_key "
+                    "MATCH (start:_Entity {entity_key: source_key}) WITH source_key, start "
+                    "MATCH (start)-[r]-(neighbor:_Entity) "
                     "WHERE ((start.project_id = $project_id AND start.is_global = false) "
                     "OR ($include_global AND start.is_global = true)) "
                     "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
@@ -651,9 +653,9 @@ class KnowledgeGraphReader:
                 rows = await stage_timing.timed_await(
                     "graph_memory_links",
                     self._falkor.query(
-                        "UNWIND $entity_keys AS entity_key WITH entity_key "
-                        "MATCH (e:_Entity {entity_key: entity_key})"
-                        "-[:MENTIONED_IN]->(m:Memory) "
+                        "UNWIND $entity_keys AS entity_key "
+                        "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+                        "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                         "OR ($include_global AND e.is_global = true)) "
                         "AND ((m.project_id = $project_id AND m.is_global = false) "
@@ -725,8 +727,9 @@ class KnowledgeGraphReader:
             return {}
 
         rows = await self._falkor.query(
-            "UNWIND $entity_keys AS entity_key WITH entity_key "
-            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+            "UNWIND $entity_keys AS entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+            "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
             "WHERE m.memory_id IN $memory_ids "
             "AND ((e.project_id = $project_id AND e.is_global = false) "
             "OR ($include_global AND e.is_global = true)) "
@@ -872,8 +875,9 @@ class KnowledgeGraphReader:
             return {}
         try:
             rows = await self._falkor.query(
-                "UNWIND $entity_keys AS entity_key WITH entity_key "
-                "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+                "UNWIND $entity_keys AS entity_key "
+                "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+                "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                 "OR ($include_global AND e.is_global = true)) "
                 "AND ((m.project_id = $project_id AND m.is_global = false) "

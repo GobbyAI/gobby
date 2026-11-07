@@ -296,7 +296,7 @@ class TestFindRelatedMemoryIds:
         params = mock_falkor.query.call_args.args[1]
         assert "[*1.." not in cypher
         assert "UNWIND $source_keys AS source_key" in cypher
-        assert "(start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity)" in cypher
+        assert "MATCH (start)-[r]-(neighbor:_Entity)" in cypher
         assert "NOT (type(r) IN $excluded_relationship_types)" in cypher
         assert params["excluded_relationship_types"] == ["MENTIONED_IN", "RELATES_TO_CODE"]
         assert params["source_keys"] == [entity_key(PERSONAL_PROJECT_ID, "Python")]
@@ -304,17 +304,14 @@ class TestFindRelatedMemoryIds:
         assert "coalesce(r.weight, 1.0) AS edge_weight" in cypher
         assert "r.updated_at AS updated_at" in cypher
 
-    async def test_traversal_materializes_unwind_rows_before_indexed_match(
+    async def test_traversal_binds_entities_before_expansion(
         self,
         service: KnowledgeGraphService,
         mock_falkor: AsyncMock,
     ) -> None:
-        """UNWIND rows pass a WITH barrier before each indexed entity MATCH.
+        """Bind indexed entities before expanding their relationships.
 
-        Without the barrier FalkorDB plans the entity MATCH as a scan and
-        filters the rows afterwards: 1.5-5 s per hop on the live graph, against
-        4-460 ms with the rows materialized first. The real-server regression
-        lives in tests/memory/test_graph_traversal_live.py.
+        The real-server plan regression lives in test_graph_traversal_live.py.
         """
         python_key = entity_key(PERSONAL_PROJECT_ID, "Python")
         mock_falkor.query = AsyncMock(
@@ -330,12 +327,12 @@ class TestFindRelatedMemoryIds:
         assert len(cyphers) == 2
         hop_cypher, memory_cypher = cyphers
         assert (
-            "UNWIND $source_keys AS source_key WITH source_key "
-            "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity)"
+            "MATCH (start:_Entity {entity_key: source_key}) WITH source_key, start "
+            "MATCH (start)-[r]-(neighbor:_Entity)"
         ) in hop_cypher
         assert (
-            "UNWIND $entity_keys AS entity_key WITH entity_key "
-            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+            "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+            "MATCH (e)-[:MENTIONED_IN]->(m:Memory)"
         ) in memory_cypher
 
     async def test_caps_seed_entities(
@@ -589,15 +586,10 @@ class TestFindRelatedMemoryIds:
         assert result.memory_ids == []
 
 
-class TestGraphReadsMaterializeRowsBeforeIndexedMatch:
-    """Every UNWIND-driven read passes a WITH barrier before its indexed entity MATCH.
+class TestGraphReadIndexBarriers:
+    """Query-shape contracts complement the real-server plan regressions."""
 
-    Without the barrier FalkorDB scans _Entity once per row, which is what made the
-    live entity hop take 1.5-5 s. The real-server regression is in
-    tests/memory/test_graph_traversal_live.py.
-    """
-
-    async def test_entity_vector_memory_links_materialize_rows_first(
+    async def test_entity_vector_memory_links_bind_entities_before_expansion(
         self,
         service: KnowledgeGraphService,
         mock_falkor: AsyncMock,
@@ -621,11 +613,11 @@ class TestGraphReadsMaterializeRowsBeforeIndexedMatch:
 
         query, _params = mock_falkor.query.await_args.args
         assert (
-            "UNWIND $entity_keys AS entity_key WITH entity_key "
-            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+            "MATCH (e:_Entity {entity_key: entity_key}) WITH entity_key, e "
+            "MATCH (e)-[:MENTIONED_IN]->(m:Memory)"
         ) in query
 
-    async def test_edge_component_attribution_materializes_rows_first(
+    async def test_edge_component_attribution_binds_entities_before_expansion(
         self,
         mock_falkor: AsyncMock,
     ) -> None:
@@ -641,11 +633,11 @@ class TestGraphReadsMaterializeRowsBeforeIndexedMatch:
 
         query, _params = mock_falkor.query.await_args.args
         assert (
-            "UNWIND $entity_keys AS entity_key WITH entity_key "
-            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+            "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+            "MATCH (e)-[:MENTIONED_IN]->(m:Memory)"
         ) in query
 
-    async def test_entity_backing_lookup_materializes_rows_first(
+    async def test_entity_backing_lookup_binds_entities_before_expansion(
         self,
         mock_falkor: AsyncMock,
     ) -> None:
@@ -655,8 +647,8 @@ class TestGraphReadsMaterializeRowsBeforeIndexedMatch:
 
         query, _params = mock_falkor.query.await_args.args
         assert (
-            "UNWIND $entity_keys AS entity_key WITH entity_key "
-            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory)"
+            "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+            "MATCH (e)-[:MENTIONED_IN]->(m:Memory)"
         ) in query
 
     async def test_cluster_expansion_materializes_rows_first(
