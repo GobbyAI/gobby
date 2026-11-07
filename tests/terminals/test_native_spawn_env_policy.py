@@ -21,6 +21,17 @@ from gobby.terminals.runtime import TerminalSpawnRequest
 pytestmark = pytest.mark.unit
 
 AGY_DENIED = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS")
+# Every agent CLI loses the inherited Cargo wrapper and incremental keys.
+UNSET_CARGO_KEYS = [
+    "-u",
+    "CARGO_INCREMENTAL",
+    "-u",
+    "RUSTC_WRAPPER",
+    "-u",
+    "SCCACHE_DIR",
+    "-u",
+    "SCCACHE_SERVER_UDS",
+]
 UNSET_AGY_DENIED = [
     "/usr/bin/env",
     "-u",
@@ -29,6 +40,7 @@ UNSET_AGY_DENIED = [
     "GOOGLE_API_KEY",
     "-u",
     "GOOGLE_APPLICATION_CREDENTIALS",
+    *UNSET_CARGO_KEYS,
     "--",
 ]
 SRT_PREFIX = [
@@ -156,7 +168,7 @@ async def test_passthrough_fills_the_inferred_cli_without_overriding_the_caller(
 
     argv, env = await _spawn(["/opt/bin/codex", "--full-auto"], env=caller_env)
 
-    assert argv == ["/opt/bin/codex", "--full-auto"], "a CLI without denied keys keeps argv"
+    assert argv == ["/usr/bin/env", *UNSET_CARGO_KEYS, "--", "/opt/bin/codex", "--full-auto"]
     assert env["OPENAI_BASE_URL"] == "https://ambient.invalid/v1"
     assert env["OPENAI_API_KEY"] == "dummy-caller-openai"
 

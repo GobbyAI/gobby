@@ -409,10 +409,21 @@ async def test_srt_wrapped_native_launch() -> None:
     assert row.backend == "native"
     assert host.spawns, "control spawn must run"
     argv = host.spawns[0]["argv"]
-    assert argv == wrapped
-    assert argv[0] == "/managed/node"
-    assert "--settings" in argv
-    assert plan.launch.provider_executable in argv
+    # The native env policy removes the inherited Cargo keys before the wrapper execs.
+    unset_cargo_keys = [
+        "-u",
+        "CARGO_INCREMENTAL",
+        "-u",
+        "RUSTC_WRAPPER",
+        "-u",
+        "SCCACHE_DIR",
+        "-u",
+        "SCCACHE_SERVER_UDS",
+    ]
+    assert argv == ["/usr/bin/env", *unset_cargo_keys, "--", *wrapped]
+    assert wrapped[0] == "/managed/node"
+    assert "--settings" in wrapped
+    assert plan.launch.provider_executable in wrapped
     assert host.spawns[0]["reservation_id"]
     assert frame.attaches == [host.spawns[0]["reservation_id"]]
 

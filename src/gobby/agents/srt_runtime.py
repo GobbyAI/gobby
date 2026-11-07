@@ -630,7 +630,7 @@ async def prepare_sandbox_launch(
             "prepare_sandbox_run_paths",
             run_paths_started,
         )
-    run_environment = run_paths.environment(provider, run_sockets=run_sockets)
+    run_environment = run_paths.environment(provider)
     home_writes: tuple[str, ...] = ()
     home_denies: tuple[str, ...] = ()
     if config.backend == "srt" and provider == "grok":

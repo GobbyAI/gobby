@@ -2,8 +2,8 @@
 
 The build root is a restart-required setting. The daemon installs its configured value
 once at startup, so every cleanup, sandbox grant and launch in that process reads the
-same canonical directory. Cargo homes and sccache stay under the Gobby cache: they hold
-registries and compiled objects, not build output.
+same canonical directory. Cargo homes stay under the Gobby cache: they hold registries,
+not build output.
 """
 
 from __future__ import annotations

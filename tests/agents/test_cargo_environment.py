@@ -1,11 +1,19 @@
-"""Both agent launch paths build through one sccache and Cargo job-limit environment.
+"""Every agent launch path builds plain incremental, with no sccache wiring.
+
+Operator decision A on #25825 removed Rust sccache: its Rust compiles are keyed on the
+target path, so separate checkouts never shared a hit, and its edit loop was slower.
+Cargo reads any set CARGO_INCREMENTAL, blank included, as incremental off, and the gterm
+host hands each child the daemon's inherited environment, so agent launches remove
+these keys at exec instead of blanking them.
 
 Socket-present cases keep their roots directly under the system temp root, as live
 launches do: pytest's tmp_path exceeds macOS's 103-byte socket path limit.
 """
 
 import json
+import os
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -14,20 +22,22 @@ from types import SimpleNamespace
 import pytest
 
 from gobby.agents import srt_runtime
+from gobby.agents.cargo_environment import cargo_environment
 from gobby.agents.cargo_target import ensure_agent_cargo_target_dir
 from gobby.agents.constants import GOBBY_SESSION_ID, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.agents.spawn_cache_policy import build_spawn_cache_env, sandbox_config_for_spawn
 from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
+from gobby.terminals.native_env_policy import apply_native_env_policy
 
 pytestmark = pytest.mark.unit
 
-SCCACHE_KEYS = ("RUSTC_WRAPPER", "SCCACHE_DIR", "SCCACHE_SERVER_UDS", "CARGO_INCREMENTAL")
-# Incremental output is per-tree and sccache cannot cache it, so sccache-backed builds turn it
-# off to make workspace crates cacheable across trees. Without sccache every key is blank: a
-# blank value clears an inherited one, and Cargo reads any set value, blank included, as off.
-BLANK = ("", "", "", "")
+REMOVED_KEYS = ("CARGO_INCREMENTAL", "RUSTC_WRAPPER", "SCCACHE_DIR", "SCCACHE_SERVER_UDS")
+REPORT_REMOVED_KEYS = (
+    "for k in CARGO_INCREMENTAL RUSTC_WRAPPER SCCACHE_DIR SCCACHE_SERVER_UDS; "
+    'do printenv "$k" || echo absent; done'
+)
 
 
 @pytest.fixture
@@ -41,9 +51,9 @@ def fake_sccache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return sccache
 
 
-def _sccache_values(env: Mapping[str, str]) -> tuple[str | None, ...]:
-    # Blank, never omitted: callers merge this over an env that may hold other values.
-    return tuple(env.get(key) for key in SCCACHE_KEYS)
+def _wired(env: Mapping[str, str]) -> list[str]:
+    # Present at all, blank included: a blank CARGO_INCREMENTAL still turns incremental off.
+    return [key for key in REMOVED_KEYS if key in env]
 
 
 def _run_paths(root: Path) -> SandboxRunPaths:
@@ -59,61 +69,84 @@ def _run_paths(root: Path) -> SandboxRunPaths:
     )
 
 
-def test_launch_paths_share_one_cargo_environment(
-    fake_sccache: Path, monkeypatch: pytest.MonkeyPatch
+def test_launch_paths_set_no_sccache_or_incremental_keys(
+    fake_sccache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sandboxed = _run_paths(Path("/run"))
-    granted = sandboxed.environment("codex", run_sockets=True)
-    assert _sccache_values(granted) == (
-        str(fake_sccache),
-        "/shared/cargo-home/sccache",
-        "/run/tmp/sccache.sock",
-        "0",
-    )
-    assert granted["CARGO_BUILD_JOBS"] == "4"
-    ungranted = sandboxed.environment("codex")
-    assert _sccache_values(ungranted) == BLANK
-    assert ungranted["CARGO_BUILD_JOBS"] == "4"
-    long_socket = _run_paths(Path("/run") / ("r" * 100))
-    assert _sccache_values(long_socket.environment("codex", run_sockets=True)) == BLANK
+    # sccache on PATH wires nothing.
+    assert fake_sccache.is_file()
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    launches = {
+        "cargo_environment": cargo_environment(),
+        "sandboxed": _run_paths(Path("/run")).environment("codex"),
+        "unsandboxed": build_spawn_cache_env("session"),
+    }
 
-    with tempfile.TemporaryDirectory(prefix="", dir=tempfile.gettempdir()) as short:
-        home = Path(short)
-        monkeypatch.setenv("GOBBY_HOME", short)
-        monkeypatch.setattr("tempfile.tempdir", short)
-        unsandboxed = build_spawn_cache_env("session")
-        cache = home / "cache" / "sccache"
-        assert _sccache_values(unsandboxed) == (
-            str(fake_sccache),
-            str(cache),
-            str(home / "cache" / "sccache.sock"),
-            "0",
-        )
-        assert cache.is_dir()
-        assert unsandboxed["CARGO_BUILD_JOBS"] == "4"
-
-        monkeypatch.setenv("GOBBY_HOME", str(home / ("h" * 100)))
-        long_home = build_spawn_cache_env("session")
-        assert _sccache_values(long_home) == BLANK
-        assert long_home["CARGO_BUILD_JOBS"] == "4"
-
-        monkeypatch.setenv("GOBBY_HOME", short)
-        monkeypatch.setenv("PATH", "")
-        assert _sccache_values(build_spawn_cache_env("session")) == BLANK
-        assert _sccache_values(sandboxed.environment("codex", run_sockets=True)) == BLANK
+    for name, env in launches.items():
+        assert _wired(env) == [], name
+        assert env["CARGO_BUILD_JOBS"] == "4", name
+    # The unsandboxed spawn no longer creates the shared sccache folder.
+    assert not (gobby_home / "cache" / "sccache").exists()
 
 
 @pytest.mark.parametrize(
-    ("platform_name", "allow_run_sockets", "cached"),
+    "command",
+    [
+        ["codex", "--full-auto"],
+        ["/managed/node", "/managed/srt/runner.js", "--", "/opt/bin/claude"],
+        ["agy", "--yolo"],
+    ],
+)
+def test_agent_exec_removes_the_cargo_keys(command: list[str]) -> None:
+    caller_env = {**dict.fromkeys(REMOVED_KEYS, "0"), "EDITOR": "vi"}
+
+    argv, env = apply_native_env_policy(command, caller_env, None)
+
+    separator = argv.index("--")
+    unset = argv[1:separator]
+    assert argv[0] == "/usr/bin/env"
+    assert set(REMOVED_KEYS) <= set(unset[1::2])
+    assert unset[::2] == ["-u"] * (len(unset) // 2)
+    assert argv[separator + 1 :] == command
+    assert _wired(env) == []
+    assert env["EDITOR"] == "vi"
+
+
+def test_agent_exec_drops_an_inherited_cargo_incremental() -> None:
+    argv, env = apply_native_env_policy(["/bin/sh", "-c", REPORT_REMOVED_KEYS], {}, "codex")
+    # Stands in for the gterm host's inherited daemon environment.
+    host_env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        **dict.fromkeys(REMOVED_KEYS, "0"),
+        **env,
+    }
+
+    result = subprocess.run(
+        argv, env=host_env, capture_output=True, text=True, timeout=10, check=True
+    )
+
+    assert result.stdout.splitlines() == ["absent"] * len(REMOVED_KEYS)
+
+
+def test_non_agent_exec_keeps_its_cargo_environment() -> None:
+    argv, env = apply_native_env_policy(["/bin/zsh"], {"CARGO_INCREMENTAL": "1"}, None)
+
+    assert argv == ["/bin/zsh"]
+    assert env["CARGO_INCREMENTAL"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "allow_run_sockets", "socket_granted"),
     [("darwin", True, True), ("darwin", False, False), ("linux", True, False)],
 )
-async def test_sandbox_cache_grants_keep_the_trust_split(
+async def test_sandbox_launch_builds_plain_incremental(
     fake_sccache: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     platform_name: str,
     allow_run_sockets: bool,
-    cached: bool,
+    socket_granted: bool,
 ) -> None:
     monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform=platform_name))
     monkeypatch.setattr(srt_runtime, "srt_mux_tmpdir", lambda: tmp_path / "srt-sock")
@@ -175,32 +208,13 @@ async def test_sandbox_cache_grants_keep_the_trust_split(
             sockets = [Path(path) for path in policy["network"]["allowUnixSockets"]]
             # Launch callers merge the provider env over the spawn env.
             child_env = {**spawn_env, **launch.provider_env}
-            if cached:
-                cargo_home = Path(child_env["CARGO_HOME"])
-                wrapper, cache_dir, socket, incremental = _sccache_values(child_env)
-                assert (wrapper, cache_dir) == (str(fake_sccache), str(cargo_home / "sccache"))
-                assert incremental == "0"
-                assert cargo_home.resolve() in writes
-                assert Path(socket or "") == run_tmp / "sccache.sock"
-                assert run_tmp.resolve() in sockets
-            else:
-                assert _sccache_values(child_env) == BLANK
+            assert fake_sccache.is_file()
+            assert _wired(child_env) == []
             assert child_env["CARGO_BUILD_JOBS"] == "4"
-            unsandboxed = (
-                Path(spawn_env["SCCACHE_DIR"]),
-                Path(spawn_env["SCCACHE_SERVER_UDS"]),
-            )
-            assert unsandboxed == (
-                gobby_home / "cache" / "sccache",
-                gobby_home / "cache" / "sccache.sock",
-            )
-            exposed = [
-                granted
-                for granted in (*writes, *sockets)
-                for path in unsandboxed
-                if path.resolve().is_relative_to(granted.resolve())
-            ]
-            assert exposed == []
+            assert Path(child_env["CARGO_HOME"]).resolve() in writes
+            # The run tmp socket grant predates sccache (#21752) and stays for run sockets.
+            assert (run_tmp.resolve() in sockets) == socket_granted
+            assert not (gobby_home / "cache" / "sccache").exists()
         finally:
             shutil.rmtree(run_tmp, ignore_errors=True)
 
