@@ -6,7 +6,10 @@
 
 #[cfg(unix)]
 pub mod admin_api;
+mod named_lock;
 pub mod standby;
+
+pub use named_lock::{NamedGuard, NamedLock};
 
 use anyhow::{Result, bail};
 use deadpool_postgres::ClientWrapper;

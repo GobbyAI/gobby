@@ -4,8 +4,8 @@ use super::{
     pid_file::PidFileClaim,
     shutdown_intent::{Intent, IntentMarker},
 };
-use crate::lease::ActiveDaemonLease;
-use anyhow::{Context, Result, ensure};
+use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
+use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gobby_terminals::write_api::{TokenLease, TokenSlot};
 use rand::RngCore;
@@ -22,7 +22,7 @@ use std::{
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
-    sync::{Mutex, watch},
+    sync::watch,
     task::JoinHandle,
     time::{Instant, interval, interval_at, sleep_until, timeout},
 };
@@ -66,6 +66,8 @@ pub struct BackendConfig {
     pub exit_grace: Duration,
     /// Cadence of the supervisor's wait reports while a backend has not exited.
     pub report_interval: Duration,
+    /// Longest the supervisor waits for the lease lock before it fails, naming the holder.
+    pub lease_lock_limit: Duration,
     /// Sink for supervisor wait reports; stderr unless a caller captures them.
     pub reporter: Arc<dyn Fn(&str) + Send + Sync>,
 }
@@ -101,13 +103,14 @@ impl BackendConfig {
             write_token: TokenSlot::default(),
             exit_grace: Duration::from_secs(60),
             report_interval: Duration::from_secs(60),
+            lease_lock_limit: Duration::from_secs(120),
             reporter: Arc::new(|line: &str| eprintln!("{line}")),
         })
     }
 }
 
 pub struct BackendSupervisor {
-    lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+    lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
     pid_claim: Option<PidFileClaim>,
     config: BackendConfig,
     state: watch::Sender<BackendStatus>,
@@ -115,11 +118,11 @@ pub struct BackendSupervisor {
 
 impl BackendSupervisor {
     pub fn new(lease: ActiveDaemonLease, pid_claim: PidFileClaim, config: BackendConfig) -> Self {
-        Self::with_lease(Some(Arc::new(Mutex::new(lease))), pid_claim, config)
+        Self::with_lease(Some(Arc::new(NamedLock::new(lease))), pid_claim, config)
     }
 
     pub fn with_lease(
-        lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+        lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
         pid_claim: PidFileClaim,
         config: BackendConfig,
     ) -> Self {
@@ -146,10 +149,15 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Stopped);
         }
         if let Some(lease) = &self.lease
-            && lock_reporting(lease, self.config.report_interval, &*self.config.reporter)
-                .await
-                .fence()
-                .is_none()
+            && lock_reporting(
+                lease,
+                self.config.report_interval,
+                self.config.lease_lock_limit,
+                &*self.config.reporter,
+            )
+            .await?
+            .fence()
+            .is_none()
         {
             return Ok(SupervisorExit::Standby);
         }
@@ -168,12 +176,17 @@ impl BackendSupervisor {
         }
         let release = match &self.lease {
             _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
-            Some(lease) => {
-                lock_reporting(lease, self.config.report_interval, &*self.config.reporter)
-                    .await
-                    .release()
-                    .await
-            }
+            Some(lease) => match lock_reporting(
+                lease,
+                self.config.report_interval,
+                self.config.lease_lock_limit,
+                &*self.config.reporter,
+            )
+            .await
+            {
+                Ok(mut guard) => guard.release().await,
+                Err(error) => Err(error),
+            },
             None => Ok(()),
         };
         match result {
@@ -334,10 +347,15 @@ impl BackendSupervisor {
 
     async fn heartbeat(&self) -> Result<()> {
         if let Some(lease) = &self.lease {
-            lock_reporting(lease, self.config.report_interval, &*self.config.reporter)
-                .await
-                .heartbeat()
-                .await?;
+            lock_reporting(
+                lease,
+                self.config.report_interval,
+                self.config.lease_lock_limit,
+                &*self.config.reporter,
+            )
+            .await?
+            .heartbeat()
+            .await?;
         }
         Ok(())
     }
@@ -582,15 +600,28 @@ fn publish_line(line: &mut Vec<u8>, last: &watch::Sender<String>) {
     line.clear();
 }
 
-/// Takes `lock`, reporting through `reporter` at each `interval` it stays held by another task.
+/// Takes `lock` for the supervisor. While another task holds it, reports through `reporter` at
+/// each `interval`, and gives up once `limit` has passed, naming the holder.
 async fn lock_reporting<'a, T>(
-    lock: &'a Mutex<T>,
+    lock: &'a NamedLock<T>,
     interval: Duration,
+    limit: Duration,
     reporter: &(dyn Fn(&str) + Send + Sync),
-) -> tokio::sync::MutexGuard<'a, T> {
+) -> Result<NamedGuard<'a, T>> {
+    let started = Instant::now();
     loop {
-        if let Ok(guard) = timeout(interval, lock.lock()).await {
-            return guard;
+        let remaining = limit.saturating_sub(started.elapsed());
+        if let Ok(guard) =
+            timeout(interval.min(remaining), lock.lock_as("backend supervisor")).await
+        {
+            return Ok(guard);
+        }
+        // The attempt that ran out the remaining budget is the last one.
+        if remaining <= interval {
+            bail!(
+                "backend supervisor gave up after {limit:?} waiting on the lease lock, held by {}",
+                lock.holder()
+            );
         }
         reporter("backend supervisor waiting on the lease lock held by another daemon task");
     }

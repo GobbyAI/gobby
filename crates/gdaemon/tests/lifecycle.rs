@@ -5,7 +5,7 @@ use futures_util::FutureExt;
 use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_daemon::lifecycle::shutdown_intent::{Intent, IntentMarker};
 use gobby_daemon::{
-    lease::{ActiveDaemonLease, LeaseMode},
+    lease::{ActiveDaemonLease, LeaseMode, NamedLock},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit, crash_delay},
         pid_file::{Role, claim_pid_file},
@@ -965,6 +965,34 @@ while True:
             "the announced restart and stop are applied to lingering backends"
         );
         assert_eq!(fs::read_to_string(home.path().join("starts"))?, "aa");
+        Ok(())
+    })
+    .await
+}
+
+/// A lease lock another task holds past the supervisor's bound fails the supervisor with an error
+/// naming the holder, instead of waiting on the lock indefinitely.
+#[tokio::test]
+async fn lease_lock_held_by_another_task_fails_the_supervisor_at_its_bound() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let lease = Arc::new(NamedLock::new(db.lease("lock-holder")?));
+        let _held = lease.lock_as("test lease holder").await;
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = serde_json::to_string(&["uv", "run", "python", "-c", "pass"])?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config.lease_lock_limit = Duration::from_millis(300);
+        config.report_interval = Duration::from_millis(100);
+        let mut supervisor = BackendSupervisor::with_lease(Some(lease.clone()), claim, config);
+        let (_stop, rx) = watch::channel(false);
+        let error = timeout(Duration::from_secs(10), supervisor.run(rx))
+            .await?
+            .expect_err("a lock held past the bound must fail the supervisor");
+        assert!(
+            format!("{error:#}").contains("test lease holder"),
+            "the error must name the holder: {error:#}"
+        );
         Ok(())
     })
     .await

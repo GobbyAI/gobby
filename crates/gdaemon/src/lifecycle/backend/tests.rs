@@ -1,19 +1,25 @@
 use super::{BackendChild, BackendConfig, lock_reporting};
+use crate::lease::NamedLock;
 use std::{sync::Mutex as StdMutex, time::Duration};
-use tokio::{sync::Mutex, time::timeout};
+use tokio::time::timeout;
 
 /// A lease lock held by another task is reported each interval while it stays held, and taking
 /// it succeeds once the holder releases it.
 #[tokio::test]
 async fn lock_reporting_reports_each_interval_until_the_lock_is_released() {
-    let lock = Mutex::new(7u8);
-    let held = lock.lock().await;
+    let lock = NamedLock::new(7u8);
+    let held = lock.lock_as("test holder").await;
     let lines = StdMutex::new(Vec::<String>::new());
     let reporter = |line: &str| lines.lock().expect("report sink").push(line.to_owned());
 
     let waited = timeout(
         Duration::from_millis(250),
-        lock_reporting(&lock, Duration::from_millis(20), &reporter),
+        lock_reporting(
+            &lock,
+            Duration::from_millis(20),
+            Duration::from_secs(60),
+            &reporter,
+        ),
     )
     .await;
     assert!(
@@ -31,8 +37,44 @@ async fn lock_reporting_reports_each_interval_until_the_lock_is_released() {
     );
 
     drop(held);
-    let guard = lock_reporting(&lock, Duration::from_millis(20), &reporter).await;
+    let guard = lock_reporting(
+        &lock,
+        Duration::from_millis(20),
+        Duration::from_secs(60),
+        &reporter,
+    )
+    .await
+    .expect("the lock is free once released");
     assert_eq!(*guard, 7);
+}
+
+/// A lease lock still held past the supervisor's bound fails the wait, and the error names the
+/// holder. The wait does not go on silently.
+#[tokio::test]
+async fn lock_reporting_gives_up_at_its_bound_and_names_the_holder() {
+    let lock = NamedLock::new(7u8);
+    let _held = lock.lock_as("test holder").await;
+    let reporter = |_: &str| {};
+
+    let outcome = timeout(
+        Duration::from_secs(5),
+        lock_reporting(
+            &lock,
+            Duration::from_millis(20),
+            Duration::from_millis(200),
+            &reporter,
+        ),
+    )
+    .await;
+    let error = match outcome {
+        Ok(Err(error)) => error,
+        Ok(Ok(_)) => panic!("the lock is held, so the wait cannot succeed"),
+        Err(_) => panic!("the wait did not end within its bound"),
+    };
+    assert!(
+        format!("{error:#}").contains("test holder"),
+        "the error must name the holder: {error:#}"
+    );
 }
 
 /// Darwin reports EPERM for a group whose members have all exited, and `waitpid` reports an

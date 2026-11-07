@@ -32,6 +32,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
+    use gobby_daemon::lease::NamedLock;
     use gobby_daemon::{
         front_door::{
             FrontDoor, FrontDoorState,
@@ -43,7 +44,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         state::RuntimeState,
     };
     use std::{collections::BTreeMap, sync::Arc};
-    use tokio::sync::{Mutex, watch};
+    use tokio::sync::watch;
 
     struct StandbyKeyResolver;
     impl KeyResolver for StandbyKeyResolver {
@@ -66,7 +67,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         assert!(owner.try_acquire().await?);
         let standby = db.lease(&token)?;
         let lease_state = Some(standby.subscribe());
-        let standby = Arc::new(Mutex::new(standby));
+        let standby = Arc::new(NamedLock::new(standby));
         let (backend, rx) = watch::channel(BackendStatus::Standby);
         let runtime = Arc::new(RuntimeState {
             mode: LeaseMode::Hub,
@@ -93,7 +94,12 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         let door = FrontDoor::new(state, table);
 
         // Slow lease I/O must not stall health or other standby refusals.
-        let guard = runtime.lease.as_ref().expect("standby lease").lock().await;
+        let guard = runtime
+            .lease
+            .as_ref()
+            .expect("standby lease")
+            .lock_as("front door test")
+            .await;
         let response = tokio::time::timeout(
             std::time::Duration::from_millis(100),
             door.handle(
