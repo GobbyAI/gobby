@@ -259,7 +259,7 @@ async def test_three_native_recipients_use_one_ordered_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection() -> None:
+async def test_batch_keeps_active_recipient_out_of_terminal_injection() -> None:
     paused_id = WAKE_SESSION_ID
     active_id = REPRO_SESSION_ID
     sessions = {
@@ -281,10 +281,11 @@ async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection(
     batch_sender = AsyncMock(
         return_value=[{"session_id": paused_id, "delivered": True, "method": "terminal"}]
     )
+    tmux_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=AsyncMock(),
+        tmux_sender=tmux_sender,
         native_batch_sender=batch_sender,
         terminal_manager=store,
     )
@@ -299,6 +300,9 @@ async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection(
     assert results[1]["delivered"] is False
     assert results[1]["method"] == "next_call_context"
     assert results[1]["skipped"] == "session_active"
+    # An active turn takes no typed input: the batch excludes it and the tmux path is never reached.
+    tmux_sender.assert_not_awaited()
+    assert all(target.session_id != active_id for target in targets)
 
 
 @pytest.mark.asyncio

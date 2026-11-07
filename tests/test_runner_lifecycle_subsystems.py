@@ -326,7 +326,7 @@ async def test_wake_replay_gate_opens_after_reconciliation(
         excluded_session_ids=frozenset(),
         recovery_safe=True,
     )
-    terminal_write.assert_awaited_once_with(recipient.id, priority="normal")
+    terminal_write.assert_awaited_once_with(recipient.id)
     assert runner.http_server.services.restart_recovery_ready is True
 
 

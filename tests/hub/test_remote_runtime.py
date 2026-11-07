@@ -519,9 +519,7 @@ async def test_batch_node_wake_is_one_submitted_write(
     _report(str(uuid4()), terminal.id, composer="empty")
     batch = AsyncMock(return_value=[])
 
-    [result] = await dispatch_live_wakes(
-        _wake_dispatcher(store, batch), [WAKE_SESSION_ID], priority="normal"
-    )
+    [result] = await dispatch_live_wakes(_wake_dispatcher(store, batch), [WAKE_SESSION_ID])
 
     assert result["delivered"] is True
     assert node.sent == [_submitted_wake(terminal.id)]
@@ -546,9 +544,7 @@ async def test_batch_wake_to_node_terminal_settles_an_earlier_latch(
     _report(str(uuid4()), terminal.id, composer="empty")
     batch = AsyncMock(return_value=[])
 
-    [result] = await dispatch_live_wakes(
-        _wake_dispatcher(store, batch), [WAKE_SESSION_ID], priority="normal"
-    )
+    [result] = await dispatch_live_wakes(_wake_dispatcher(store, batch), [WAKE_SESSION_ID])
 
     assert result["delivered"] is True
     assert node.sent == [_submitted_wake(terminal.id)]
