@@ -12,7 +12,7 @@ from typing import Any
 
 from c0_poller import IndexPoller
 from prepare_daemon import isolated_environment
-from runtime_boundary import require, write_once
+from runtime_boundary import EvidenceError, require, write_once
 from schema_head import read_archived_gcode_version
 
 GRAPHIFY_PIN = "0.9.103"
@@ -361,6 +361,9 @@ def run_c0(
         outputs[command["name"]] = result
         write_once(log_dir / f"{command['name']}.stdout", result.stdout, mode=0o600)
         write_once(log_dir / f"{command['name']}.stderr", result.stderr, mode=0o600)
+        if command["name"] == COLD_INDEX_NAME and result.returncode != 0:
+            # The cold index is required: its failure stops C0 here, with its stderr kept above.
+            raise EvidenceError(f"required cold index exited {result.returncode}: {result.stderr}")
         results.append(
             {
                 "name": command["name"],

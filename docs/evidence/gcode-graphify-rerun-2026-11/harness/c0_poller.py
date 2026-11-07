@@ -83,18 +83,20 @@ class IndexPoller:
 
     def _sample(self, handle: TextIO) -> None:
         elapsed_ms = int((self._clock() - self._origin) * 1000)
-        row: dict[str, Any]
         try:
             count = self._count()
         except psycopg.Error as error:
-            # A failed read is evidence in the log, not a crash of the cold index.
-            row = {"t_ms": elapsed_ms, "error": f"{type(error).__name__}: {error}"}
-        else:
-            row = {"t_ms": elapsed_ms, "count": count}
-            if self.first_qualifying is None and 0 < count < self.clean:
-                self.first_qualifying = count
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
-        handle.flush()
+            # The failed read stays in the log; re-raising makes _run fail the poller closed.
+            _record(handle, {"t_ms": elapsed_ms, "error": f"{type(error).__name__}: {error}"})
+            raise
+        _record(handle, {"t_ms": elapsed_ms, "count": count})
+        if self.first_qualifying is None and 0 < count < self.clean:
+            self.first_qualifying = count
+
+
+def _record(handle: TextIO, row: dict[str, Any]) -> None:
+    handle.write(json.dumps(row, sort_keys=True) + "\n")
+    handle.flush()
 
 
 def index_row_count(root: Path, project_id: str) -> Callable[[], int]:

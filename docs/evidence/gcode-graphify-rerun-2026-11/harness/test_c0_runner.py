@@ -528,6 +528,33 @@ def test_run_fails_when_the_index_is_never_observed_partway(tmp_path: Path, coun
     assert receipt["passed"] is False
 
 
+def test_a_failed_cold_index_stops_c0_with_its_exact_stderr_and_no_passing_receipt(
+    tmp_path: Path,
+) -> None:
+    _stage_corpus(tmp_path)
+    freeze_command_manifest(tmp_path, probe_symbols=SYMBOLS, graphify_concurrency=SEPTEMBER)
+    names = [
+        command["name"]
+        for command in json.loads((tmp_path / "c0/command-manifest.json").read_text())["commands"]
+    ]
+    outputs = _passing_outputs(_manifest())
+    stderr = "malformed grant: grant project does not match local project\n"
+    outputs[COLD_INDEX_NAME] = CommandResult(stdout="", stderr=stderr, returncode=1)
+    answer = _runner_for(tmp_path, outputs)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str], cwd: Path, env: dict[str, str]) -> CommandResult:
+        calls.append(argv)
+        return answer(argv, cwd, env)
+
+    with pytest.raises(EvidenceError, match="malformed grant: grant project does not match"):
+        run_c0(tmp_path, "attempt-6", runner, ambient={}, **_run_kwargs(tmp_path))
+
+    assert len(calls) == names.index(COLD_INDEX_NAME) + 1
+    assert (tmp_path / "logs/c0/attempt-6/gcode-index-cold.stderr").read_text() == stderr
+    assert not (tmp_path / "receipts/c0-attempt-6.json").exists()
+
+
 def test_run_process_returns_the_stdout_and_exit_code_of_the_frozen_argv(tmp_path: Path) -> None:
     result = run_process(
         [sys.executable, "-c", "import sys; print('ok'); sys.exit(3)"],

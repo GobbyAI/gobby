@@ -98,17 +98,21 @@ this machine before step 2. Otherwise the orchestrator picks new digests.
    read-only connection, and logs to `receipts/c7-poller-<attempt>.jsonl`. The project id is read
    from `corpora/gcode/C0/.gobby/project.json`, as `launch_services` reads it. The clean count is
    `file_count` in `manifests/corpora/gcode/C1.json` (149), checked against its file entries. C7
-   passes only if a sample with `0 < count < 149` is observed.
+   passes only if a sample with `0 < count < 149` is observed. A failed sample read, of any kind,
+   fails the poller: the qualifying marker is withdrawn and `stop()` raises.
 4. **Probe symbols.** `load_policy`, `repository_root`, `plan_product`, `MCPError`, and `SettingsError`
    are verified in the September C0 corpus copy. They span three files, which meets the minimum of
    three: `src/game_goblins/platform/settings.py` (`SettingsError`, `repository_root`,
    `load_policy`), `src/game_goblins/replenishment/planner.py` (`plan_product`), and
    `src/game_goblins/platform/mcp.py` (`MCPError`).
 
-The receipt is `receipts/c0-<attempt>.json`. `c0.py` exits 0 only if every check passes. C0 checks
-that `gcode status --format json` reports an `id` equal to the project id in `project.json`
-(`gcode-status-project-id`). C0 has no schema-identity gate. `gcode schema-identity --json` is recorded
-as unchecked output in `logs/c0/<attempt>/gcode-schema-identity.stdout`. The archived six-key identity
+A non-zero exit from the cold index stops C0 with an `EvidenceError` that carries its exact stderr.
+The stderr is also kept in `logs/c0/<attempt>/gcode-index-cold.stderr`, and no
+`receipts/c0-<attempt>.json` is written. Otherwise the receipt is `receipts/c0-<attempt>.json`, and
+`c0.py` exits 0 only if every check passes. C0 checks that `gcode status --format json` reports an
+`id` equal to the project id in `project.json` (`gcode-status-project-id`). C0 has no schema-identity
+gate. `gcode schema-identity --json` is recorded as unchecked output in
+`logs/c0/<attempt>/gcode-schema-identity.stdout`. The archived six-key identity
 is checked at step 8 by `validate_environment.py --live`, through `schema_head.schema_head_proof`.
 
 ## Receipts

@@ -54,10 +54,13 @@ def test_an_empty_or_complete_count_never_qualifies(tmp_path: Path, count: int) 
     assert poller.first_qualifying is None
 
 
-def test_a_failed_count_is_logged_as_an_error_row_and_never_raised(tmp_path: Path) -> None:
+def test_a_failed_count_is_logged_as_an_error_row_and_fails_the_poller(tmp_path: Path) -> None:
     poller = _poller(tmp_path, count=None)
 
-    rows = _run_once(poller)
+    poller.start()
+    with pytest.raises(EvidenceError, match="index poller failed"):
+        poller.stop()
+    rows = [json.loads(row) for row in poller.log.read_text(encoding="utf-8").splitlines()]
 
     assert rows
     assert all("error" in row and "count" not in row for row in rows)
@@ -79,7 +82,11 @@ def test_a_poller_cannot_start_twice_or_stop_before_it_starts(tmp_path: Path) ->
 
 @pytest.mark.parametrize(
     "failure",
-    [RuntimeError("count broke"), EvidenceError("index row count returned no row")],
+    [
+        RuntimeError("count broke"),
+        EvidenceError("index row count returned no row"),
+        psycopg.OperationalError("owned database unreachable"),
+    ],
 )
 def test_an_unexpected_sampler_failure_is_raised_by_stop_and_fails_closed(
     tmp_path: Path, failure: Exception
