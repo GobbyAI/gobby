@@ -13,7 +13,7 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | --- | --- |
 | Runtime root | `DEFAULT_RUNTIME_ROOT` in `harness/provision_environment.py` |
 | Owner task | `#22948` (`TASK_REF`) |
-| Attempt | `rerun2611a` |
+| Attempt | `rerun2611b` |
 | Owner session | `7674aa11-70a3-40d5-91dd-1fe46140732b` (orchestrator root pane) |
 | Compose project | `gcode-graphify-rerun-2026-11` |
 | Source commit (gobby, gcode) | `30d2a5956241c208e670133efbc9d9452721118f`, the 0.5.0 tip at candidate time |
@@ -23,6 +23,11 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | Database and account | `gobby_bakeoff_22948`; account email `bakeoff-22948@example.invalid` (reserved placeholder) |
 
 ## Order of live steps (orchestrator)
+
+Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun2611a`, whose root is kept as evidence.
+
+0. Teardown: `uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py teardown --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b`. Then the lead records the evidence manifest of the `rerun2611a` root.
+0b. Move: `mv "/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11" "/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-22948/build/gcode-graphify-rerun-2026-11-rerun2611a-evidence"`. The root is `DEFAULT_RUNTIME_ROOT`. `init` refuses an existing root (`init_runtime` raises `FileExistsError`), and `launch_services` always uses `DEFAULT_RUNTIME_ROOT`, so the old root has to move aside. Nobody deletes it.
 
 1. `provision_environment.py init --owner-session <session>`: creates the runtime root, archives
    the sources at `GOBBY_SHA`, copies the templates and corpora, and writes the manifests.
@@ -38,7 +43,7 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
      existing services receipt and skips the start;
    - builds `tools/graphify/venv` (`graphifyy==0.9.103`) and `tools/gobby/venv` (`uv sync --frozen`
      from `sources/gobby`), each through a probe receipt;
-   - runs `prepare_daemon.py` and `prepare_identity.py`;
+   - runs `prepare_daemon.py` and `prepare_identity.py`. Each checks the runtime's `gobby` in a subprocess under `tools/gobby/venv/bin/python` (the gobby-sync environment), because the harness interpreter imports the epic tree;
    - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by
      nothing, through probe receipts;
    - asserts zero `code_indexed_file_states` rows for every workspace project.
@@ -59,18 +64,18 @@ Teardown is leaf 2.2, not one of these eight steps. `launch_services.py teardown
 Every step writes a receipt under `receipts/` or `logs/install/`. A probe whose receipt exists and
 verifies is skipped on rerun. A failed probe is preserved, and a new attempt ID is required.
 
-## Command lines for attempt `rerun2611a`
+## Command lines for attempt `rerun2611b`
 
 Run from the worktree root, as the orchestrator. Every line uses the same owner session.
 
 ```bash
 uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py init --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
 uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py write-compose --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --postgres-image gobby-postgres-local@sha256:443364cb8e901fcbf902ee0435e9fc2333cb000d7351e22bd78485365e4d3d02 --qdrant-image qdrant/qdrant@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc --falkordb-image falkordb/falkordb@sha256:e93fcd753fe612fb0a222166a0620a1ae31b826a12f223c3b6d06038d9d7a364
-uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py provision --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
-uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_daemon.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
-uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/record_installations.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
-uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py observe --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
-uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/c0.py rerun2611a --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py provision --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_daemon.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/record_installations.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py observe --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/c0.py rerun2611b --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
 uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/validate_environment.py --live
 ```
 

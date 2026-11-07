@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
-from prepare_daemon import isolated_environment
+from prepare_daemon import isolated_environment, require_runtime_gobby
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
 from runtime_boundary import assert_owned_runtime, contained_file, require
 
@@ -18,17 +18,13 @@ def prepare_identity(root: Path) -> None:
     clean = isolated_environment(root, dict(os.environ))
     os.environ.clear()
     os.environ.update(clean)
+    require_runtime_gobby(root, clean)
 
-    import gobby
     from gobby.cli.install_identity import ensure_install_identity
     from gobby.identity import hash_password
     from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.users import LocalUserManager
 
-    require(
-        Path(gobby.__file__).resolve().is_relative_to(root / "sources/gobby"),
-        "check failed: Path(gobby.__file__).resolve().is_relative_to(root / 'sources/gobby')",
-    )
     bootstrap = yaml.safe_load(contained_file(root, "gobby-home/bootstrap.yaml").read_text())
     parsed = urlparse(bootstrap["database_url"])
     require(

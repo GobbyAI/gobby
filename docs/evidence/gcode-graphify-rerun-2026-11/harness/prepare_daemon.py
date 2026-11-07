@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import yaml
 from provision_environment import DEFAULT_RUNTIME_ROOT, PORTS, _write_json, _write_text
-from runtime_boundary import assert_owned_runtime, contained_file, require
+from runtime_boundary import EvidenceError, assert_owned_runtime, contained_file, require
 from validate_environment import _load_env_file
 
 
@@ -96,6 +98,53 @@ def record_preparation(root: Path, revision: int, dropped_keys: list[str]) -> No
     )
 
 
+RUNTIME_GOBBY_PROBE = (
+    "import json\n"
+    "import gobby\n"
+    "from gobby.utils.native_bin import resolve_native_bin\n"
+    "print(json.dumps({'gobby': gobby.__file__, 'gdaemon': resolve_native_bin('gdaemon')}))\n"
+)
+
+
+def runtime_python(root: Path) -> Path:
+    # uv sync --frozen --project sources/gobby builds this gobby-sync environment.
+    return root / "tools/gobby/venv/bin/python"
+
+
+def require_runtime_gobby(root: Path, env: dict[str, str]) -> None:
+    """Resolve gobby under the runtime interpreter; this process imports the epic tree instead."""
+    try:
+        completed = subprocess.run(
+            [str(runtime_python(root)), "-I", "-c", RUNTIME_GOBBY_PROBE],
+            cwd=root / "sources/gobby",
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise EvidenceError(f"runtime interpreter probe failed: {error}") from error
+    require(
+        completed.returncode == 0,
+        f"runtime gobby probe exited {completed.returncode}: {completed.stderr.strip()}",
+    )
+    try:
+        identity = json.loads(completed.stdout.splitlines()[-1])
+    except (IndexError, ValueError) as error:
+        raise EvidenceError(
+            f"runtime gobby probe printed no identity: {completed.stdout!r}"
+        ) from error
+    require(
+        Path(identity["gobby"]).resolve().is_relative_to((root / "sources/gobby").resolve()),
+        f"runtime gobby resolves outside sources/gobby: {identity['gobby']}",
+    )
+    require(
+        identity["gdaemon"] == str(root / "gobby-home/bin/gdaemon"),
+        f"runtime gdaemon resolves to {identity['gdaemon']}",
+    )
+
+
 def prepare(root: Path) -> None:
     # These changes affect this isolated setup process only, never its parent session.
     clean = isolated_environment(root, dict(os.environ))
@@ -103,21 +152,12 @@ def prepare(root: Path) -> None:
         if name not in clean:
             os.environ.pop(name)
     os.environ.update(clean)
+    require_runtime_gobby(root, clean)
 
-    import gobby
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
     from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.schema_contract import apply_schema
-    from gobby.utils.native_bin import resolve_native_bin
 
-    require(
-        Path(gobby.__file__).resolve().is_relative_to(root / "sources/gobby"),
-        "check failed: Path(gobby.__file__).resolve().is_relative_to(root / 'sources/gobby')",
-    )
-    require(
-        resolve_native_bin("gdaemon") == str(root / "gobby-home/bin/gdaemon"),
-        "check failed: resolve_native_bin('gdaemon') == str(root / 'gobby-home/bin/gdaemon')",
-    )
     credentials = _load_env_file(contained_file(root, "config/services.env"))
     dsn = (
         f"postgresql://{credentials['BAKEOFF_POSTGRES_USER']}:"
