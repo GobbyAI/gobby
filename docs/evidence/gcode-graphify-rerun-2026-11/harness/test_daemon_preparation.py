@@ -1,8 +1,10 @@
 """Check child environment isolation without importing or starting the daemon."""
 
+import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import types
 from importlib.abc import MetaPathFinder
@@ -281,3 +283,48 @@ def test_module_origins_are_resolved_by_the_runtime_interpreter(
     )
 
     assert result == {"origins": {"json": json.__file__, "gobby_no_such_module_for_bakeoff": None}}
+
+
+def test_a_kill_after_the_create_leaves_no_account_file_under_its_name(tmp_path: Path) -> None:
+    # os._exit skips every cleanup, so the child is killed without any exception handler running.
+    account_path = tmp_path / "config/daemon-account.json"
+    script = (
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(Path(__file__).parent)!r})\n"
+        "import runtime_gobby\n"
+        "real_open = os.open\n"
+        "def open_then_die(*args, **kwargs):\n"
+        "    real_open(*args, **kwargs)\n"
+        "    os._exit(137)\n"
+        "os.open = open_then_die\n"
+        f"runtime_gobby.write_account_once(Path({str(account_path)!r}), {ACCOUNT!r})\n"
+    )
+
+    completed = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+
+    assert completed.returncode == 137, completed.stderr
+    assert not account_path.exists()
+
+
+def test_package_files_are_hashed_by_the_runtime_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "sources/gobby/src/gobby"
+    (package / "utils").mkdir(parents=True)
+    (package / "__pycache__").mkdir()
+    (package / "__init__.py").write_bytes(b"init")
+    (package / "utils/text.py").write_bytes(b"text")
+    (package / "__pycache__/text.cpython-313.pyc").write_bytes(b"compiled")
+    monkeypatch.setattr(
+        runtime_gobby, "verify_gobby", lambda _root: {"gobby": str(package / "__init__.py")}
+    )
+
+    result = runtime_gobby.package_files(tmp_path, {})
+
+    assert result == {
+        "files": {
+            "gobby/__init__.py": hashlib.sha256(b"init").hexdigest(),
+            "gobby/utils/text.py": hashlib.sha256(b"text").hexdigest(),
+        }
+    }

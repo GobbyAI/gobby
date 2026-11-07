@@ -18,6 +18,7 @@ from typing import Any
 from prepare_daemon import isolated_environment, run_runtime_gobby
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
 from runtime_boundary import EvidenceError, assert_owned_runtime, contained_file, require
+from runtime_gobby import hash_package_files, package_digest
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ GOBBY_STEP_MODULES = (
     "gobby.storage.schema_divergence",
     "gobby.utils.native_bin",
 )
+# The whole gobby package is also compared before step 4: every .py file, in both copies.
+GOBBY_PACKAGE = "gobby"
 
 
 def daemon_argv(root: Path, bootstrap: Path) -> list[str]:
@@ -131,14 +134,37 @@ def compare_module_copies(
     return record
 
 
-def verify_gobby_modules(
-    root: Path, attempt: str, env: dict[str, str]
-) -> dict[str, dict[str, dict[str, str]]]:
-    """Record both copies of each step-4 module for this attempt, or stop before the daemon starts."""
+def compare_package_copies(epic: Mapping[str, str], runtime: Mapping[str, str]) -> dict[str, Any]:
+    """Fail closed unless both copies hold the same gobby files with the same bytes, naming the first path."""
+    for path in sorted(set(epic) | set(runtime)):
+        if path not in runtime:
+            raise EvidenceError(f"{path}: only in the epic-tree gobby package")
+        if path not in epic:
+            raise EvidenceError(f"{path}: only in the tools/gobby/venv gobby package")
+        if epic[path] != runtime[path]:
+            raise EvidenceError(f"{path}: epic-tree and tools/gobby/venv copies differ")
+    return {
+        "files": len(epic),
+        "epic_tree_digest": package_digest(epic),
+        "runtime_venv_digest": package_digest(runtime),
+    }
+
+
+def verify_gobby_modules(root: Path, attempt: str, env: dict[str, str]) -> dict[str, Any]:
+    """Record both copies of each step-4 module and of the gobby package, or stop before the daemon starts."""
     names = list(GOBBY_STEP_MODULES)
     origins = run_runtime_gobby(root, env, "module-origins", {"modules": names})["origins"]
     runtime = {name: Path(origin) if origin else None for name, origin in origins.items()}
-    record = compare_module_copies(names, epic_origins(names), runtime)
+    epic = epic_origins([*names, GOBBY_PACKAGE])
+    modules = compare_module_copies(names, epic, runtime)
+    package_init = epic[GOBBY_PACKAGE]
+    if package_init is None:
+        raise EvidenceError(f"{GOBBY_PACKAGE}: no epic-tree copy to compare")
+    package = compare_package_copies(
+        hash_package_files(package_init.parent),
+        run_runtime_gobby(root, env, "package-files", {})["files"],
+    )
+    record = {"modules": modules, "package": package}
     _write_json(root / f"receipts/gobby-module-identity-{attempt}.json", record, mode=0o600)
     return record
 

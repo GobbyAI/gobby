@@ -7,9 +7,11 @@ import json
 import socket
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import launch_daemon
 import pytest
+import runtime_gobby
 from launch_daemon import SrtRunner, daemon_argv, launch, srt_policy, srt_wrapped_argv
 from runtime_boundary import EvidenceError
 
@@ -265,26 +267,81 @@ def test_provisioning_table_lists_exactly_the_step_module_set() -> None:
     assert listed == set(launch_daemon.GOBBY_STEP_MODULES)
 
 
-def test_module_identity_receipt_records_both_hashes_for_the_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    names = list(launch_daemon.GOBBY_STEP_MODULES)
-    epic = {name: _module_copy(tmp_path / f"epic/{name}.py", b"same bytes") for name in names}
-    venv = {name: _module_copy(tmp_path / f"venv/{name}.py", b"same bytes") for name in names}
-    monkeypatch.setattr(launch_daemon, "epic_origins", lambda _names: epic)
+def _origin_path(name: str) -> str:
+    return "gobby/__init__.py" if name == "gobby" else name.replace(".", "/") + ".py"
+
+
+def _package_tree(base: Path) -> Path:
+    """A gobby package: its init, the four step modules, and one module outside the step set."""
+    for name in [*launch_daemon.GOBBY_STEP_MODULES, "gobby", "gobby.utils.text"]:
+        _module_copy(base / _origin_path(name), b"same bytes")
+    return base
+
+
+def _patch_copies(monkeypatch: pytest.MonkeyPatch, epic: Path, venv: Path) -> None:
     monkeypatch.setattr(
         launch_daemon,
-        "run_runtime_gobby",
-        lambda _root, _env, _operation, payload: {
-            "origins": {name: str(venv[name]) for name in payload["modules"]}
-        },
+        "epic_origins",
+        lambda names: {name: epic / _origin_path(name) for name in names},
     )
+
+    def runtime(
+        _root: Path, _env: dict[str, str], operation: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if operation == "package-files":
+            return {"files": runtime_gobby.hash_package_files(venv / "gobby")}
+        return {"origins": {name: str(venv / _origin_path(name)) for name in payload["modules"]}}
+
+    monkeypatch.setattr(launch_daemon, "run_runtime_gobby", runtime)
+
+
+def test_module_identity_receipt_records_both_hashes_and_the_package_for_the_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_copies(monkeypatch, _package_tree(tmp_path / "epic"), _package_tree(tmp_path / "venv"))
     root = tmp_path / "root"
     (root / "receipts").mkdir(parents=True)
 
     launch_daemon.verify_gobby_modules(root, "attempt-1", {})
 
     receipt = json.loads((root / "receipts/gobby-module-identity-attempt-1.json").read_text())
-    assert set(receipt) == set(names)
-    for name in names:
-        assert receipt[name]["epic_tree"]["sha256"] == receipt[name]["runtime_venv"]["sha256"]
+    assert set(receipt) == {"modules", "package"}
+    for name in launch_daemon.GOBBY_STEP_MODULES:
+        module = receipt["modules"][name]
+        assert module["epic_tree"]["sha256"] == module["runtime_venv"]["sha256"]
+    assert receipt["package"]["files"] == 6
+    assert receipt["package"]["epic_tree_digest"] == receipt["package"]["runtime_venv_digest"]
+
+
+def test_one_changed_byte_in_a_non_direct_module_fails_the_aggregate_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    epic = _package_tree(tmp_path / "epic")
+    venv = _package_tree(tmp_path / "venv")
+    (venv / "gobby/utils/text.py").write_bytes(b"same bytez")
+    _patch_copies(monkeypatch, epic, venv)
+    root = tmp_path / "root"
+    (root / "receipts").mkdir(parents=True)
+
+    with pytest.raises(EvidenceError, match=r"^gobby/utils/text\.py: epic-tree and tools"):
+        launch_daemon.verify_gobby_modules(root, "attempt-1", {})
+    assert not (root / "receipts/gobby-module-identity-attempt-1.json").exists()
+
+
+def test_a_package_file_on_one_side_only_stops_and_names_the_first_such_path() -> None:
+    with pytest.raises(EvidenceError, match=r"^gobby/b\.py: only in the epic-tree"):
+        launch_daemon.compare_package_copies(
+            {"gobby/a.py": "1", "gobby/b.py": "2"}, {"gobby/a.py": "1", "gobby/c.py": "3"}
+        )
+
+
+def test_matching_package_copies_record_both_digests_and_the_file_count() -> None:
+    files = {"gobby/__init__.py": "aa", "gobby/utils/text.py": "bb"}
+
+    record = launch_daemon.compare_package_copies(files, dict(files))
+
+    assert record == {
+        "files": 2,
+        "epic_tree_digest": runtime_gobby.package_digest(files),
+        "runtime_venv_digest": runtime_gobby.package_digest(files),
+    }

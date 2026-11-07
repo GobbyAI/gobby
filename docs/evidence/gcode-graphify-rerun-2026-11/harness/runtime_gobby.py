@@ -8,10 +8,13 @@ and reads one JSON line from stdout. Only the standard library is imported at mo
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
 import sys
+import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +84,30 @@ def module_origins(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return {"origins": origins}
 
 
+def hash_package_files(package_dir: Path) -> dict[str, str]:
+    """Each .py file under the package, keyed by its path from the package's parent, with its sha256."""
+    files: dict[str, str] = {}
+    for path in sorted(package_dir.rglob("*.py")):
+        if "__pycache__" in path.relative_to(package_dir).parts:
+            continue
+        files[path.relative_to(package_dir.parent).as_posix()] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+    return files
+
+
+def package_digest(files: Mapping[str, str]) -> str:
+    """One digest over the sorted path and digest of every file."""
+    manifest = "".join(f"{path} {digest}\n" for path, digest in sorted(files.items()))
+    return hashlib.sha256(manifest.encode("utf-8")).hexdigest()
+
+
+def package_files(root: Path, _payload: dict[str, Any]) -> dict[str, Any]:
+    """Hash every .py file of the gobby package this interpreter imports."""
+    gobby_file = verify_gobby(root)["gobby"]
+    return {"files": hash_package_files(Path(gobby_file).parent)}
+
+
 def prepare_daemon(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     verify(root)
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
@@ -111,22 +138,27 @@ def prepare_daemon(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_account_once(path: Path, account: dict[str, Any]) -> None:
-    """Record the account before its user exists; an account file that is already there is kept.
+    """Record the account before its user exists, all or nothing; an account file already there is kept.
 
-    A crash after this write and before users.create leaves the recorded password in place, so
-    the next run creates the user from it.
+    The content is written and fsynced to a staging file in the same directory (mode 0600), then
+    hard-linked to the name. A crash before the link leaves no file under the name. A crash after
+    it leaves the recorded password in place, so the next run creates the user from it.
     """
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    staging_fd, staging_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    staging = Path(staging_name)
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return
-    try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(staging_fd, "w") as handle:
             handle.write(json.dumps(account, indent=2) + "\n")
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(staging, path)
+    except FileExistsError:
+        return  # an account file already there is kept
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 def prepare_identity(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -161,6 +193,7 @@ OPERATIONS = {
     "identity": identity,
     "binary-set-files": binary_set_files,
     "module-origins": module_origins,
+    "package-files": package_files,
     "prepare-daemon": prepare_daemon,
     "prepare-identity": prepare_identity,
 }
