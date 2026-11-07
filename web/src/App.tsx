@@ -68,7 +68,6 @@ export default function App() {
     conversationId,
     conversationSwitchKey,
     sessionRef,
-    sessionTitle,
     dbSessionId,
     currentBranch,
     worktreePath,
@@ -582,7 +581,6 @@ export default function App() {
             chat={{
               messages,
               sessionRef,
-              sessionTitle,
               currentBranch,
               worktreePath,
               isStreaming,
@@ -660,7 +658,6 @@ export default function App() {
               onNewChat: handleStartNewChat,
               onSelectSession: handleSelectConversation,
               onDeleteSession: handleDeleteConversation,
-              onRenameSession: sessionCatalog.renameSession,
               onKillAgent: handleKillAgent,
               onExpireSession: handleExpireSession,
               onAcpCloseSession: handleCloseSession,

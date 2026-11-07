@@ -1,10 +1,13 @@
 //! Split placement depends on the focused daemon pane. A split with no
 //! resolved focus is refused; it never becomes a new tab.
 
+use crate::app::live_loop::actions::live_layout_area;
 use crate::app::live_loop::daemon_ops::place_live_terminal;
 use crate::app::live_loop::projection::sync_live_chrome;
 use crate::app::live_loop::workspace_actions::placement_op;
 use crate::daemon::WorkspaceOp;
+use crate::ui::pane_layout::{lone_pane_inner_rect, split_terminal_rect};
+use ratatui::layout::Direction;
 
 use super::*;
 
@@ -173,6 +176,71 @@ async fn a_refused_split_placement_says_to_wait() {
         chrome.alert_log.last().map(|toast| toast.title.as_str()),
         Some("Wait for the focused pane before splitting"),
         "a refused placement says why, since the user sees no pane appear"
+    );
+    mock.shutdown().await;
+}
+
+/// A gclient-opened tab starts at the rect its pane is drawn in, so the daemon
+/// never holds the 80x24 default for a pane the user sees at another size.
+#[tokio::test]
+async fn a_new_tab_opens_at_the_viewport_of_its_layout() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, mut chrome, _) = fixture(&mock).await;
+    project_with_daemon_tab_active(&mut workspace, &mut chrome);
+
+    let inner = lone_pane_inner_rect(live_layout_area(&chrome), chrome.prefs.pane_scrollbars);
+    assert_ne!(
+        inner.height, inner.width,
+        "a square viewport would hide swapped rows and cols"
+    );
+    let op = placement_op(&workspace, &chrome, Placement::Tab, None, None, None, None);
+    let Some(WorkspaceOp::TabCreate { rows, cols, .. }) = op else {
+        panic!("a tab placement opens a tab");
+    };
+    assert_eq!(
+        (rows, cols),
+        (Some(inner.height), Some(inner.width)),
+        "the tab opens at the size its pane is drawn in"
+    );
+    mock.shutdown().await;
+}
+
+/// A split opens at the rect the new pane takes along the split axis.
+#[tokio::test]
+async fn a_split_opens_at_the_viewport_of_its_layout() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, mut chrome, _) = fixture(&mock).await;
+    project_with_daemon_tab_active(&mut workspace, &mut chrome);
+
+    let tab = chrome.active_tab().expect("the daemon tab is active");
+    let split_rect = split_terminal_rect(
+        &tab.layout,
+        chrome.tab_focus(tab),
+        Direction::Horizontal,
+        live_layout_area(&chrome),
+        &chrome.prefs,
+    )
+    .expect("the focused pane splits");
+    assert_ne!(
+        split_rect.height, split_rect.width,
+        "a square viewport would hide swapped rows and cols"
+    );
+    let op = placement_op(
+        &workspace,
+        &chrome,
+        Placement::SplitRight,
+        None,
+        None,
+        None,
+        None,
+    );
+    let Some(WorkspaceOp::PaneSplit { rows, cols, .. }) = op else {
+        panic!("a split of a resolved pane is a pane.split");
+    };
+    assert_eq!(
+        (rows, cols),
+        (Some(split_rect.height), Some(split_rect.width)),
+        "the split opens at the size its pane is drawn in"
     );
     mock.shutdown().await;
 }

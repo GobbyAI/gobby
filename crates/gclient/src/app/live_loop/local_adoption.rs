@@ -19,6 +19,7 @@ use super::super::Workspace;
 use super::daemon_ops::op_tag;
 use super::jobs::{spawn_job, AdoptedShell, JobOutcome, JobResult};
 use super::mouse::Placement;
+use super::workspace_actions::split_viewport;
 
 type LocalSplit = (layout::PaneId, layout::PaneId, LayoutAxis, f64);
 
@@ -155,13 +156,16 @@ pub(super) fn spawn_in_adopted_local_tab(
         Placement::SplitDown => LayoutAxis::Vertical,
         Placement::Tab => unreachable!("a local tab migration only serves splits"),
     };
+    let viewport = chrome
+        .active_tab()
+        .map_or((None, None), |tab| split_viewport(chrome, tab, axis));
     let project = Some(plan.project_id.clone());
     let old_tab = plan.old_tab.clone();
     let roster = workspace.issue_roster_fetch(plan.project_id.clone());
     let node = workspace.attach_target().node.clone();
     let daemon = workspace.daemon().clone();
     spawn_job(outcomes, op_tag(&daemon), async move {
-        let adopted = adopt_chain(&daemon, node, plan, axis, cwd, roster).await;
+        let adopted = adopt_chain(&daemon, node, plan, axis, viewport, cwd, roster).await;
         JobResult::Adopted {
             project,
             old_tab,
@@ -178,6 +182,7 @@ async fn adopt_chain(
     node: Option<String>,
     plan: LocalPlan,
     axis: LayoutAxis,
+    viewport: (Option<u16>, Option<u16>),
     cwd: Option<String>,
     roster: impl Future<Output = Result<Relist, DaemonError>>,
 ) -> AdoptedShell {
@@ -202,6 +207,8 @@ async fn adopt_chain(
             title,
             terminal_id: Some(first_terminal),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await
@@ -232,6 +239,8 @@ async fn adopt_chain(
                     axis,
                     terminal_id: Some(terminals[&added].clone()),
                     cwd: None,
+                    rows: None,
+                    cols: None,
                     node: None,
                 })
                 .await?;
@@ -270,6 +279,8 @@ async fn adopt_chain(
             axis,
             terminal_id: None,
             cwd,
+            rows: viewport.0,
+            cols: viewport.1,
             node: None,
         })
         .await

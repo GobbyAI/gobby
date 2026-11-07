@@ -69,7 +69,7 @@ export function useChatPageCommandPalette({
 
       const confirmed = await confirm({
         title: "Delete session?",
-        description: `This will permanently delete ${session.ref ?? session.title ?? "this session"}.`,
+        description: `This will permanently delete ${session.ref ?? "this session"}.`,
         confirmLabel: "Delete",
         destructive: true,
       });

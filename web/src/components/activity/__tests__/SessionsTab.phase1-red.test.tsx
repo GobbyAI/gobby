@@ -19,8 +19,6 @@ function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
     external_id: "external-1",
     source: "claude",
     project_id: "project-1",
-    title: "Terminal Session",
-    title_source: null,
     status: "active",
     model: "claude-sonnet-4-5",
     message_count: 0,
@@ -70,7 +68,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
     render(<SessionsTab sessions={[makeSession({ sandbox_enabled: true })]} />);
 
     await waitFor(() =>
-      expect(screen.getByText(/(?:^|: )Terminal Session$/)).toBeInTheDocument(),
+      expect(screen.getByText("#201")).toBeInTheDocument(),
     );
 
     expect(screen.getByText("tmux")).toHaveClass(
@@ -92,14 +90,12 @@ describe("SessionsTab Phase 1 chip contract", () => {
           makeSession({
             id: "local-session",
             ref: "#301",
-            title: "Local Session",
             seq_num: 301,
             is_local: true,
           }),
           makeSession({
             id: "legacy-local-session",
             ref: "#303",
-            title: "Legacy Local Session",
             seq_num: 303,
             source: "lmstudio",
             model: "qwen2.5-coder",
@@ -108,7 +104,6 @@ describe("SessionsTab Phase 1 chip contract", () => {
           makeSession({
             id: "cloud-session",
             ref: "#302",
-            title: "Cloud Session",
             seq_num: 302,
             is_local: false,
           }),
@@ -117,7 +112,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByText(/(?:^|: )Local Session$/)).toBeInTheDocument(),
+      expect(screen.getByText("#301")).toBeInTheDocument(),
     );
 
     const localBadges = screen.getAllByText("LOCAL");
@@ -125,13 +120,10 @@ describe("SessionsTab Phase 1 chip contract", () => {
     const localBadge = localBadges[0];
     expect(localBadge).toHaveClass("rounded-full", "uppercase", "font-mono");
     expect(
-      screen
-        .getByText(/(?:^|: )Legacy Local Session$/)
-        .closest(".session-entry")?.textContent,
+      screen.getByText("#303").closest(".session-entry")?.textContent,
     ).toContain("LOCAL");
     expect(
-      screen.getByText(/(?:^|: )Cloud Session$/).closest(".session-entry")
-        ?.textContent,
+      screen.getByText("#302").closest(".session-entry")?.textContent,
     ).not.toContain("LOCAL");
   });
 });

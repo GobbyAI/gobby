@@ -162,8 +162,7 @@ export function ChatPage({
             projectHasCheckout={projectHasCheckout}
             panelVisible={panelVisible}
             effectiveSessionRef={routing.effectiveSessionRef}
-            activeTitle={routing.activeTitle}
-            mainSessionSource={
+                        mainSessionSource={
               routing.mainSessionMeta?.source ?? chat.provider ?? null
             }
             messageListRef={messageListRef}
@@ -250,7 +249,6 @@ export function ChatPage({
         activeSessionId={commandPalette.activeCommandPaletteSessionId}
         onSelectSession={commandPalette.handleCommandPaletteSelectSession}
         onDeleteSession={commandPalette.handleCommandPaletteDeleteSession}
-        onRenameSession={conversations.onRenameSession}
         actions={paletteActions}
       />
     </div>

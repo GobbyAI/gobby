@@ -1,3 +1,7 @@
+import {
+  getSessionLabelLines,
+  type SessionRosterLabel,
+} from "../../lib/sessionLabel";
 import type { GobbySession } from "../../types/sessions";
 import type { SwappedSessionTarget } from "../../types/chat";
 import {
@@ -19,7 +23,11 @@ interface ActivitySessionVisibilityOptions {
   filters?: SessionsFilters;
   now?: Date;
   liveOnly?: boolean;
+  /** Roster labels by session id; search matches the fields a row displays. */
+  rosterBySession?: ReadonlyMap<string, SessionRosterLabel>;
 }
+
+const NO_ROSTER: ReadonlyMap<string, SessionRosterLabel> = new Map();
 
 export function getVisibleActivitySessions(
   sessions: GobbySession[],
@@ -30,6 +38,7 @@ export function getVisibleActivitySessions(
     filters,
     now = new Date(),
     liveOnly = false,
+    rosterBySession = NO_ROSTER,
   }: ActivitySessionVisibilityOptions = {},
 ): GobbySession[] {
   const query = search.trim().toLowerCase();
@@ -43,7 +52,11 @@ export function getVisibleActivitySessions(
           DEFAULT_LIVE_STATUSES.includes(
             session.status as (typeof DEFAULT_LIVE_STATUSES)[number],
           )) &&
-        matchesActivitySessionSearch(session, query) &&
+        matchesActivitySessionSearch(
+          session,
+          query,
+          rosterBySession.get(session.id),
+        ) &&
         (!filters || matchesSessionsFilters(session, filters, now)),
     )
     .sort(compareActivitySessions);
@@ -62,15 +75,19 @@ export function toSwappedSessionTarget(
 function matchesActivitySessionSearch(
   session: GobbySession,
   query: string,
+  roster: SessionRosterLabel | undefined,
 ): boolean {
   if (!query) {
     return true;
   }
-  return (
-    (session.title && session.title.toLowerCase().includes(query)) ||
-    session.ref.toLowerCase().includes(query) ||
-    (session.external_id?.toLowerCase().includes(query) ?? false)
-  );
+  const fields = [
+    getSessionLabelLines(session, roster).head,
+    roster?.task?.ref,
+    roster?.task?.title,
+    roster?.statusLine,
+    session.external_id,
+  ];
+  return fields.some((field) => field?.toLowerCase().includes(query) ?? false);
 }
 
 function compareActivitySessions(a: GobbySession, b: GobbySession): number {

@@ -10,7 +10,6 @@ function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
     external_id: "external-1",
     source: "codex",
     project_id: "project-1",
-    title: "Session",
     status: "active",
     model: "gpt-5.4",
     message_count: 0,

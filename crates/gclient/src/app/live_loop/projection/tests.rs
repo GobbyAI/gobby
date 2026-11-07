@@ -62,6 +62,8 @@ async fn a_placed_shell_takes_focus_once_its_terminal_resolves() {
             axis: LayoutAxis::Horizontal,
             terminal_id: Some(NEW.to_string()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await

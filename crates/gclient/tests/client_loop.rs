@@ -1377,6 +1377,8 @@ async fn closing_an_adopted_native_tab_releases_its_terminal() {
             title: None,
             terminal_id: Some("terminal-native".into()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await
@@ -10908,6 +10910,8 @@ async fn tab_sets_follow_the_focused_project() {
             title: None,
             terminal_id: Some("terminal-b1".into()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await
@@ -12439,6 +12443,8 @@ async fn other_window_creates_tab(daemon: &LiveDaemon, workspace_id: &str, termi
             title: None,
             terminal_id: Some(terminal.to_string()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await

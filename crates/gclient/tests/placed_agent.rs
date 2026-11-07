@@ -97,6 +97,8 @@ impl Session {
                 title: Some("agent".to_string()),
                 terminal_id: Some(AGENT.to_string()),
                 cwd: None,
+                rows: None,
+                cols: None,
                 node: None,
             })
             .await

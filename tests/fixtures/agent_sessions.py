@@ -52,14 +52,13 @@ class AgentSessions:
         self.next_seq += 1
         self.db.execute(
             "INSERT INTO sessions "
-            "(id, external_id, machine_id, source, project_id, title, status, agent_depth, seq_num) "
-            "VALUES (%s, %s, %s, 'test', %s, %s, 'active', 0, %s)",
+            "(id, external_id, machine_id, source, project_id, status, agent_depth, seq_num) "
+            "VALUES (%s, %s, %s, 'test', %s, 'active', 0, %s)",
             (
                 session_id,
                 f"ext-{session_id}",
                 require_machine_id(),
                 self.project_id,
-                definition,
                 self.next_seq,
             ),
         )

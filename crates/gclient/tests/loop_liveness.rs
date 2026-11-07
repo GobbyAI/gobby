@@ -2557,11 +2557,19 @@ async fn resize_burst_sends_at_most_one_resize_per_pane_in_flight() {
             "the latest geometry, zoomed, wins: {burst:?} after {unzoomed:?}"
         );
         let order = geometry_requests(&mock, "terminal-b").split_off(requests_before);
+        // A rect the PTY already has is not resized, so a viewport may go out alone.
+        // A size claim never goes out without its viewport before it.
         assert!(
             order
-                .chunks(2)
-                .all(|pair| pair == ["terminal_set_viewport", "terminal_resize"]),
-            "each viewport precedes its size claim: {order:?}"
+                .first()
+                .is_some_and(|first| first == "terminal_set_viewport"),
+            "the burst opens with a viewport: {order:?}"
+        );
+        assert!(
+            order
+                .windows(2)
+                .all(|pair| pair[1] != "terminal_resize" || pair[0] == "terminal_set_viewport"),
+            "each size claim follows its viewport: {order:?}"
         );
         drop(input_tx);
     };

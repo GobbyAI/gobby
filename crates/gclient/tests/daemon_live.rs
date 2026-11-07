@@ -2080,7 +2080,7 @@ async fn poll_until(limit: Duration, mut ready: impl FnMut() -> bool, on_timeout
         }
     })
     .await
-    .expect(on_timeout);
+    .unwrap_or_else(|_| panic!("timed out after {limit:?} waiting for: {on_timeout}"));
 }
 
 /// The deadline of a control request the test ends itself, by cancelling or
@@ -2276,14 +2276,18 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
+    // The waiter registers only after `request_with_deadline` encodes the 8 MiB
+    // padding frame. Under host contention that encode can outlast a 10s budget
+    // (a concurrent run at load average 41-46 timed out here), so both mid-send
+    // waits use the event-driven hang guard, not a timing claim.
     poll_until(
-        Duration::from_secs(10),
+        HANG,
         || daemon.pending_counts().2 == 1,
         "mid-send registered",
     )
     .await;
     poll_until(
-        Duration::from_secs(10),
+        HANG,
         || daemon.control_write_started("attachment-mid-send"),
         "mid-send write started",
     )
@@ -2536,6 +2540,8 @@ async fn workspace_attach_op_and_event_round_trip() {
         axis: LayoutAxis::Horizontal,
         terminal_id: None,
         cwd: None,
+        rows: None,
+        cols: None,
         node: None,
     };
     let reply = daemon

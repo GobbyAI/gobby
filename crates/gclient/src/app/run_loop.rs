@@ -466,23 +466,25 @@ impl<D: Daemon> Workspace<D> {
     /// geometry job sends what comes back, viewport first, so the pane's
     /// order holds. A direct pane's viewport is queued on its own socket;
     /// a full writer defers the resize and says so on the pane, and a
-    /// later pass sizes it again. Empty when the pane is not live.
+    /// later pass sizes it again. `None` when nothing can be sent yet: the pane is not
+    /// live, has no writer, or the size has no room. The viewport is always staged;
+    /// `terminal_resize` only when the PTY is not already at the rect.
     pub fn stage_geometry(
         &mut self,
         pane_id: PaneId,
         rows: u16,
         cols: u16,
-    ) -> Result<Vec<Value>, FrameError> {
+    ) -> Result<Option<Vec<Value>>, FrameError> {
         self.ensure_requests_allowed()
             .map_err(|error| FrameError::Other(error.to_string()))?;
         let Some(pane) = self.panes.get_mut(&pane_id) else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         if rows == 0 || cols == 0 || !pane.is_live() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
         let Some(source) = pane.frame_source_mut() else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         let mut messages = Vec::with_capacity(2);
         if matches!(source, PaneFrameSource::Proxy(_)) {
@@ -500,19 +502,24 @@ impl<D: Daemon> Workspace<D> {
             queued?;
         }
         pane.viewport = (rows, cols);
-        // Decision 14, as in `propagate_geometry`.
-        pane.sized_by = None;
-        messages.push(json!({
-            "type": "terminal_resize",
-            "request_id": uuid::Uuid::new_v4().to_string(),
-            "terminal_id": pane.terminal_id,
-            "attachment_id": pane.attachment_id(),
-            "lease_generation": pane.lease_generation(),
-            "rows": rows,
-            "cols": cols,
-            "viewer": "gclient",
-        }));
-        Ok(messages)
+        // A PTY already at the rect (attached at it, or resized to it) needs no
+        // resize, and the gclient claims nothing by not sending one.
+        if pane.pty_size != Some((rows, cols)) {
+            // Decision 14, as in `propagate_geometry`.
+            pane.sized_by = None;
+            pane.pty_size = Some((rows, cols));
+            messages.push(json!({
+                "type": "terminal_resize",
+                "request_id": uuid::Uuid::new_v4().to_string(),
+                "terminal_id": pane.terminal_id,
+                "attachment_id": pane.attachment_id(),
+                "lease_generation": pane.lease_generation(),
+                "rows": rows,
+                "cols": cols,
+                "viewer": "gclient",
+            }));
+        }
+        Ok(Some(messages))
     }
 
     /// Record who the daemon says sizes a pane's terminal: a refused
@@ -525,7 +532,13 @@ impl<D: Daemon> Workspace<D> {
         else {
             return;
         };
-        pane.sized_by = match message.get("applied").and_then(Value::as_bool) {
+        let applied = message.get("applied").and_then(Value::as_bool);
+        if applied == Some(false) {
+            // The PTY kept its own size, so the recorded one is wrong. Forget it,
+            // or the next pass for this rect takes it as already sized.
+            pane.pty_size = None;
+        }
+        pane.sized_by = match applied {
             Some(false) => Some(
                 message
                     .get("owner_viewer")

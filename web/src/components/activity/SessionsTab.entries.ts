@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getActivitySessionTitle } from "../../lib/sessionTitle";
+import {
+  getSessionLabelLines,
+  type SessionRosterLabel,
+} from "../../lib/sessionLabel";
 import type { GobbySession } from "../../types/sessions";
 import { getVisibleActivitySessions } from "./activitySessionVisibility";
 import {
@@ -87,7 +90,17 @@ interface UseWatchingSessionEntriesOptions {
   filters: SessionsFilters;
   search: string;
   sessions: GobbySession[];
+  rosterBySession: Map<string, SessionRosterLabel>;
   statusMode: SessionStatusMode;
+}
+
+/** The row's head is `ref: definition`; its detail is the task line, or the status line when no task is held. */
+function rowLabel(
+  session: GobbySession,
+  rosterBySession: Map<string, SessionRosterLabel>,
+): Pick<WatchingSessionEntry, "label" | "detailLine"> {
+  const lines = getSessionLabelLines(session, rosterBySession.get(session.id));
+  return { label: lines.head, detailLine: lines.taskLine ?? lines.statusLine };
 }
 
 export function useWatchingSessionEntries({
@@ -97,6 +110,7 @@ export function useWatchingSessionEntries({
   filters,
   search,
   sessions,
+  rosterBySession,
   statusMode,
 }: UseWatchingSessionEntriesOptions): WatchingSessionEntry[] {
   const visibleSessions = useMemo(
@@ -106,8 +120,9 @@ export function useWatchingSessionEntries({
         expiringIds,
         search,
         filters,
+        rosterBySession,
       }),
-    [chatSessionId, expiringIds, search, sessions, filters],
+    [chatSessionId, expiringIds, search, sessions, filters, rosterBySession],
   );
 
   return useMemo(() => {
@@ -135,7 +150,7 @@ export function useWatchingSessionEntries({
             nextEntries.push({
               id: matchedSession.id,
               type: "agent",
-              label: getActivitySessionTitle(matchedSession),
+              ...rowLabel(matchedSession, rosterBySession),
               provider: matchedSession.source ?? agent.provider,
               status: matchedSession.status,
               sessionType: matchedSession.session_type,
@@ -166,7 +181,7 @@ export function useWatchingSessionEntries({
       .map((session) => ({
         id: session.id,
         type: "session" as const,
-        label: getActivitySessionTitle(session),
+        ...rowLabel(session, rosterBySession),
         provider: session.source,
         status: session.status,
         sessionType: session.session_type,
@@ -198,5 +213,5 @@ export function useWatchingSessionEntries({
       if (bSeq !== aSeq) return bSeq - aSeq;
       return entryTimestamp(b) - entryTimestamp(a);
     });
-  }, [agents, statusMode, visibleSessions]);
+  }, [agents, rosterBySession, statusMode, visibleSessions]);
 }

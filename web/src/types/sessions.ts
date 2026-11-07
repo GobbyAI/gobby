@@ -21,8 +21,6 @@ export interface GobbySession {
   external_id: string;
   source: string;
   project_id: string;
-  title: string | null;
-  title_source?: string | null;
   status: string;
   model: string | null;
   reasoning_effort?: string | null;
