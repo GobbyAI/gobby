@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 
 import tests.fixtures.shared_hub as shared_hub
@@ -79,3 +80,55 @@ def test_maintenance_wait_on_a_hub_lock_names_the_holder(
 def test_free_hub_creates_and_drops_the_isolated_database(postgres_database_url: str) -> None:
     with isolated_test_database(postgres_database_url) as database_url:
         assert database_url != postgres_database_url
+
+
+# Each fake tool runs for this long on the virtual clock. A report that makes one call per
+# host process overruns the diagnostics budget long before it finishes.
+_SLOW_TOOL_SECONDS = 8
+_OWNER_COUNT = 12
+
+
+class _VirtualClock:
+    """A monotonic clock that moves only when a fake tool runs."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _fake_tool_output(argv: list[str], hub_port: int, owners: list[int]) -> str:
+    if argv[0] == "lsof" and any(arg.startswith("-iTCP:") for arg in argv):
+        return "".join(f"p{pid}\nn127.0.0.1:{pid + 1000}->127.0.0.1:{hub_port}\n" for pid in owners)
+    pids = argv[argv.index("-p") + 1].split(",")
+    if argv[0] == "lsof":
+        return "".join(f"p{pid}\nn/work/{pid}\n" for pid in pids)
+    return "".join(f"{pid} 00:05\n" for pid in pids)
+
+
+def test_holder_report_stays_inside_its_budget_when_tools_are_slow(
+    postgres_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _VirtualClock()
+    calls: list[list[str]] = []
+    owners = [40000 + index for index in range(_OWNER_COUNT)]
+
+    def fake_run(argv: list[str], *, timeout: float, **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        if _SLOW_TOOL_SECONDS > timeout:
+            clock.now += timeout
+            raise subprocess.TimeoutExpired(argv, timeout)
+        clock.now += _SLOW_TOOL_SECONDS
+        stdout = _fake_tool_output(argv, hub_port, owners)
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    with psycopg.connect(postgres_database_url, autocommit=True) as conn:
+        hub_port = int(conn.info.port or 0)
+        monkeypatch.setattr(shared_hub, "_monotonic", clock)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        message = shared_hub._describe_holders(conn)
+
+    assert clock.now <= shared_hub.HUB_DIAGNOSTICS_SECONDS
+    assert len(calls) <= 3
+    assert "diagnostics budget" in message
