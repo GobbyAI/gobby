@@ -46,7 +46,10 @@ fn spawn_pane(cwd: &Path, script: &str) -> PaneRuntime {
         cwd.to_path_buf(),
         &["sh".to_string(), "-c".to_string(), script.to_string()],
         &PaneLaunchEnv::default(),
-        1 << 20,
+        gobby_terminal::ghostty::ScrollbackLimits {
+            bytes: 1 << 20,
+            lines: 10_000,
+        },
         TerminalTheme::default(),
         None,
     )
@@ -2372,9 +2375,18 @@ fn many_full_panes_upgrade_within_deadline() {
     assert_eq!(accepted["accepted"], true, "{accepted}");
     let remaining = Duration::from_millis(accepted["remaining_ms"].as_u64().expect("remaining_ms"));
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "attempt-full", OUTCOME_WAIT);
+    let elapsed = accepted_at.elapsed();
+    let margin = remaining.saturating_sub(elapsed);
+    eprintln!(
+        "criterion6 elapsed_ms={} remaining_ms={} margin_ms={} last_outcome={}",
+        elapsed.as_millis(),
+        remaining.as_millis(),
+        margin.as_millis(),
+        after["upgrade"]["last_outcome"]
+    );
     assert!(
-        accepted_at.elapsed() < remaining,
-        "the upgrade committed inside the deadline"
+        elapsed < remaining,
+        "the upgrade committed inside the deadline: elapsed={elapsed:?} remaining={remaining:?}"
     );
     assert_outcome(&after, "attempt-full", "succeeded", None);
     assert_eq!(after["host_pid"], host.id(), "{after}");

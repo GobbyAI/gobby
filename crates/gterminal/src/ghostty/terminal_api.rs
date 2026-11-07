@@ -1,3 +1,12 @@
+/// Retention budget for a primary screen's scrollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollbackLimits {
+    /// Byte budget for retained history; zero disables scrollback.
+    pub bytes: usize,
+    /// Row budget for retained history.
+    pub lines: usize,
+}
+
 impl Terminal {
     pub fn new(cols: u16, rows: u16, max_scrollback: usize) -> Result<Self, Error> {
         let mut raw = ptr::null_mut();
@@ -329,6 +338,37 @@ impl Terminal {
             )
             .into_result()
         }
+    }
+
+    /// Caps retained primary-screen history in rows. The engine enforces it at
+    /// page granularity and keeps the active area's boundary page whole.
+    pub fn set_scrollback_max_lines(&mut self, max_lines: usize) -> Result<(), Error> {
+        // SAFETY: self.raw is valid and the option reads one size_t.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+                (&max_lines as *const usize).cast(),
+            )
+            .into_result()
+        }
+    }
+
+    /// Applies both retention limits. Whichever is reached first prunes history.
+    pub fn set_scrollback_limits(&mut self, limits: ScrollbackLimits) -> Result<(), Error> {
+        self.set_scrollback_max_bytes(limits.bytes)?;
+        self.set_scrollback_max_lines(limits.lines)
+    }
+
+    /// Creates a terminal that enforces both retention limits from its first row.
+    pub fn with_scrollback_limits(
+        cols: u16,
+        rows: u16,
+        limits: ScrollbackLimits,
+    ) -> Result<Self, Error> {
+        let mut terminal = Self::new(cols, rows, limits.bytes)?;
+        terminal.set_scrollback_max_lines(limits.lines)?;
+        Ok(terminal)
     }
 
     pub fn take_pwd_changes(&mut self) -> Vec<Vec<u8>> {

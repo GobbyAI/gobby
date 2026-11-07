@@ -333,7 +333,7 @@ impl PaneRuntime {
         rows: u16,
         cols: u16,
         cwd: std::path::PathBuf,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
         shell_config: PaneShellConfig<'_>,
@@ -342,7 +342,7 @@ impl PaneRuntime {
             rows,
             cols,
             cwd,
-            scrollback_limit_bytes,
+            scrollback_limits,
             host_terminal_theme,
             host_terminal_appearance,
             shell_config,
@@ -357,7 +357,7 @@ impl PaneRuntime {
         rows: u16,
         cols: u16,
         cwd: std::path::PathBuf,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
         shell_config: PaneShellConfig<'_>,
@@ -373,7 +373,7 @@ impl PaneRuntime {
         Self::spawn_command_builder(
             rows,
             cols,
-            scrollback_limit_bytes,
+            scrollback_limits,
             host_terminal_theme,
             host_terminal_appearance,
             cmd,
@@ -391,7 +391,7 @@ impl PaneRuntime {
         cwd: std::path::PathBuf,
         argv: &[String],
         launch_env: &PaneLaunchEnv,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
     ) -> std::io::Result<Self> {
@@ -411,7 +411,7 @@ impl PaneRuntime {
         Self::spawn_command_builder(
             rows,
             cols,
-            scrollback_limit_bytes,
+            scrollback_limits,
             host_terminal_theme,
             host_terminal_appearance,
             cmd,
@@ -426,7 +426,7 @@ impl PaneRuntime {
     fn spawn_command_builder(
         rows: u16,
         cols: u16,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
         cmd: CommandBuilder,
@@ -436,8 +436,9 @@ impl PaneRuntime {
     ) -> std::io::Result<Self> {
         let pane_id = PaneId::alloc();
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
-        let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let mut terminal =
+            crate::ghostty::Terminal::with_scrollback_limits(cols, rows, scrollback_limits)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
         crate::kitty_graphics::set_enabled(true);
         if crate::kitty_graphics::is_enabled() {
             terminal
@@ -588,7 +589,7 @@ impl PaneRuntime {
     pub fn from_master_fd(
         rows: u16,
         cols: u16,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
         master_fd: std::os::fd::OwnedFd,
@@ -596,8 +597,9 @@ impl PaneRuntime {
     ) -> std::io::Result<Self> {
         let pane_id = PaneId::alloc();
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
-        let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let mut terminal =
+            crate::ghostty::Terminal::with_scrollback_limits(cols, rows, scrollback_limits)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
         crate::kitty_graphics::set_enabled(true);
         if crate::kitty_graphics::is_enabled() {
             terminal
@@ -735,20 +737,27 @@ impl PaneRuntime {
 #[cfg(test)]
 impl PaneRuntime {
     pub(crate) fn test_with_channel(cols: u16, rows: u16) -> (Self, mpsc::Receiver<Bytes>) {
-        Self::test_with_channel_and_scrollback_bytes(cols, rows, 0, &[], 4)
+        Self::test_with_channel_and_scrollback_limits(
+            cols,
+            rows,
+            crate::ghostty::ScrollbackLimits { bytes: 0, lines: 0 },
+            &[],
+            4,
+        )
     }
 
-    pub(crate) fn test_with_channel_and_scrollback_bytes(
+    pub(crate) fn test_with_channel_and_scrollback_limits(
         cols: u16,
         rows: u16,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
         bytes: &[u8],
         channel_capacity: usize,
     ) -> (Self, mpsc::Receiver<Bytes>) {
         let (tx, rx) = mpsc::channel(channel_capacity);
         let (resize_tx, _resize_rx) = tokio::sync::watch::channel((rows, cols, 0, 0));
         let mut terminal =
-            crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes).unwrap();
+            crate::ghostty::Terminal::with_scrollback_limits(cols, rows, scrollback_limits)
+                .unwrap();
         terminal.write(bytes);
 
         (

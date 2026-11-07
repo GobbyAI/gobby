@@ -34,5 +34,9 @@ opt-level = "z"
 [profile.dev.package.sha2]
 opt-level = 3
 
+# #25733: the debug handover state serializer (16.9 MB, criterion 6 deadline) runs unoptimized otherwise.
+[profile.dev.package.gobby-terminal]
+opt-level = 3
+
 [patch.crates-io]
 portable-pty = { path = "crates/gterminal/vendor/portable-pty" }

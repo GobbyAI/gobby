@@ -140,7 +140,7 @@ pub async fn run() -> io::Result<()> {
                     carried,
                     &resume.state,
                     &args.pid_file,
-                    host_config.native_scrollback_max_bytes as usize,
+                    host_config.scrollback_limits(),
                     host_config.event_queue_bytes as usize,
                     fallback.resumed_from(),
                 )?;

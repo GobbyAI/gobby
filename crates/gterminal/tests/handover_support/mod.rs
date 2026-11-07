@@ -368,7 +368,10 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
             dir.clone(),
             &["sh".into(), "-c".into(), pane.script.clone()],
             &PaneLaunchEnv::default(),
-            1 << 20,
+            gobby_terminal::ghostty::ScrollbackLimits {
+                bytes: 1 << 20,
+                lines: 10_000,
+            },
             pane.theme
                 .as_ref()
                 .map_or_else(TerminalTheme::default, ThemeDeclaration::terminal_theme),

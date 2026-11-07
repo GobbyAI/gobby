@@ -46,7 +46,7 @@ pub(crate) fn stage(
     state: HandoverState,
     path: &Path,
     pid_file: &Path,
-    scrollback_limit_bytes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
     event_queue_bytes: usize,
     resumed_from: Option<RestoreFailure>,
 ) -> io::Result<Staged> {
@@ -67,7 +67,7 @@ pub(crate) fn stage(
             )));
         }
         originals.push(pane.master_fd);
-        let (slot, reservation, exit) = stage_pane(pane, scrollback_limit_bytes, fallback)?;
+        let (slot, reservation, exit) = stage_pane(pane, scrollback_limits, fallback)?;
         if let Some(reservation) = reservation {
             reservations.insert(reservation.id.clone(), reservation);
         }
@@ -133,7 +133,7 @@ fn verify(state: &HandoverState, pid_file: &Path) -> io::Result<()> {
 
 fn stage_pane(
     pane: CarriedPane,
-    scrollback_limit_bytes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
     fallback: bool,
 ) -> io::Result<(TerminalSlot, Option<Reservation>, Option<ChildExit>)> {
     let fault = |kind| injected_fault(fallback, kind, &pane.host_terminal_id);
@@ -151,8 +151,7 @@ fn stage_pane(
     } else {
         &pane.snapshot_b64
     })?;
-    let terminal =
-        GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limit_bytes)?;
+    let terminal = GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limits)?;
     if fault("actor") {
         return Err(io::Error::other("injected actor construction failure"));
     }

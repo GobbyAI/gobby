@@ -139,7 +139,10 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
         dir.path().to_path_buf(),
         &["sh".into(), "-c".into(), "sleep 30".into()],
         &PaneLaunchEnv::default(),
-        1 << 20,
+        crate::ghostty::ScrollbackLimits {
+            bytes: 1 << 20,
+            lines: 10_000,
+        },
         TerminalTheme::default(),
         None,
     )
@@ -208,7 +211,18 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
     .expect("write state");
 
     let carried = read_state(&path).expect("read state");
-    let staged = stage(carried, &path, &pid_file, 1 << 20, 1 << 20, None).expect("stage");
+    let staged = stage(
+        carried,
+        &path,
+        &pid_file,
+        crate::ghostty::ScrollbackLimits {
+            bytes: 1 << 20,
+            lines: 10_000,
+        },
+        1 << 20,
+        None,
+    )
+    .expect("stage");
 
     assert_eq!(staged.host.host_epoch, "epoch-1");
     assert_eq!(staged.host.generation, 3);

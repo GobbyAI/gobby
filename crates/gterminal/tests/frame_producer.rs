@@ -172,7 +172,10 @@ async fn end_to_end_without_ratatui_frame() {
         24,
         80,
         cwd,
-        64 * 1024,
+        gobby_terminal::ghostty::ScrollbackLimits {
+            bytes: 64 * 1024,
+            lines: 10_000,
+        },
         TerminalTheme::default(),
         None,
         PaneShellConfig::new("", ShellMode::NonLogin),

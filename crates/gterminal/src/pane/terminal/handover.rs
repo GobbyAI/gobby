@@ -75,13 +75,13 @@ impl GhosttyPaneTerminal {
     pub fn from_handover(
         snapshot: &[u8],
         core: PaneCoreHandover,
-        scrollback_limit_bytes: usize,
+        scrollback_limits: crate::ghostty::ScrollbackLimits,
     ) -> std::io::Result<Self> {
         let mut terminal =
             crate::ghostty::Terminal::decode_snapshot(snapshot, PANE_CONTINUATION_MAX_BYTES)
                 .map_err(io_error)?;
         terminal
-            .set_scrollback_max_bytes(scrollback_limit_bytes)
+            .set_scrollback_limits(scrollback_limits)
             .map_err(io_error)?;
         crate::kitty_graphics::set_enabled(true);
         if crate::kitty_graphics::is_enabled() {

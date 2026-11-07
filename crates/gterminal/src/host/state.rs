@@ -437,7 +437,7 @@ impl HostState {
                 &cwd,
                 &argv,
                 &env,
-                self.config.native_scrollback_max_bytes as usize,
+                self.config.scrollback_limits(),
                 spawn_theme.as_ref(),
             ) {
                 Ok(child) => child,

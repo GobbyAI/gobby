@@ -593,7 +593,8 @@ fn held_upgrade_report(fifo: &Path, stream: &UnixStream) -> String {
     let tail: Vec<&str> = log.lines().rev().take(20).collect();
     let tail: Vec<&str> = tail.into_iter().rev().collect();
     format!(
-        "host_state={state:?}; probe_started={started}; unread_reply={}; log_tail={tail:?}",
+        "spawned_pid={}; host_state={state:?}; probe_started={started}; unread_reply={}; log_tail={tail:?}",
+        spawned.trim(),
         replied(stream)
     )
 }

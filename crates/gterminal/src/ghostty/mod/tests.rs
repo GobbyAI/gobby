@@ -445,6 +445,60 @@ fn max_scrollback_limit_bytes_retains_more_history_for_larger_limits() {
 }
 
 #[test]
+fn full_pane_history_is_bounded_by_scrollback_line_limit() {
+    const LINE_LIMIT: usize = 10_000;
+    let mut terminal = Terminal::new(80, 24, 8 * 1024 * 1024).unwrap();
+    terminal.set_scrollback_max_lines(LINE_LIMIT).unwrap();
+    write_padded_lines(&mut terminal, 12_000, 79);
+
+    let live_history = terminal.scrollback_rows().unwrap();
+    let snapshot = terminal.encode_snapshot().unwrap();
+    let decoded = Terminal::decode_snapshot(&snapshot, 1024 * 1024).unwrap();
+    let encoded_history = decoded.scrollback_rows().unwrap();
+
+    assert!(
+        live_history <= LINE_LIMIT,
+        "expected live history within the line limit, got {live_history} rows"
+    );
+    assert!(
+        encoded_history <= LINE_LIMIT,
+        "expected encoded history within the line limit, got {encoded_history} rows"
+    );
+}
+
+#[test]
+fn scrollback_line_limit_holds_at_every_row_and_prunes_whole_pages() {
+    const LINE_LIMIT: usize = 10_000;
+    let mut terminal = Terminal::new(80, 24, 64 * 1024 * 1024).unwrap();
+    terminal.set_scrollback_max_lines(LINE_LIMIT).unwrap();
+
+    let mut previous = 0;
+    let mut pruned_steps = Vec::new();
+    for row in 0..12_000 {
+        write_padded_lines(&mut terminal, 1, 79);
+        let history = terminal.scrollback_rows().unwrap();
+        assert!(
+            history <= LINE_LIMIT,
+            "history {history} exceeded the line limit after row {row}"
+        );
+        if history < previous {
+            pruned_steps.push(previous - history);
+        }
+        previous = history;
+    }
+
+    let page_rows = *pruned_steps.first().expect("history was pruned");
+    assert!(
+        pruned_steps.iter().all(|&step| step == page_rows),
+        "expected whole-page prune steps, got {pruned_steps:?}"
+    );
+    assert!(
+        page_rows < LINE_LIMIT,
+        "a page must be smaller than the line limit, got {page_rows} rows"
+    );
+}
+
+#[test]
 fn large_negative_scroll_delta_reaches_top_of_scrollback() {
     let mut terminal = Terminal::new(80, 3, 1_000_000).unwrap();
     write_numbered_lines(&mut terminal, 1000);

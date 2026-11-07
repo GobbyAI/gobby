@@ -156,7 +156,7 @@ pub fn spawn_prepared(
     cwd: &Path,
     argv: &[String],
     env: &[(String, String)],
-    scrollback_limit_bytes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
     theme: Option<&ThemeDeclaration>,
 ) -> io::Result<PreparedChild> {
     if argv.is_empty() {
@@ -232,7 +232,7 @@ pub fn spawn_prepared(
     let runtime = match PaneRuntime::from_master_fd(
         rows,
         cols,
-        scrollback_limit_bytes,
+        scrollback_limits,
         theme
             .map(ThemeDeclaration::terminal_theme)
             .unwrap_or_default(),
