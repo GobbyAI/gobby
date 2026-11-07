@@ -100,10 +100,9 @@ def test_release_workflow_provisions_pre_push_tools_and_falkor(repo_root: Path) 
     assert job["env"]["GOBBY_TEST_FALKOR_PORT"] == "26379"
     cleanup = steps[names.index("Remove isolated test services")]
     assert cleanup["if"] == "always()"
-    assert (
-        "docker compose -f docker-compose.test.yml rm -sfv falkordb-test qdrant-test"
-        in cleanup["run"]
-    )
+    # compose rm leaves the project network behind; down -v removes it with the services.
+    assert "docker compose -f docker-compose.test.yml down -v --remove-orphans" in cleanup["run"]
+    assert "rm -sfv" not in cleanup["run"]
     assert "docker rm -f" in cleanup["run"]
     assert "${GOBBY_POSTGRES_TEST_CONTAINER}" in cleanup["run"]
 
@@ -152,6 +151,27 @@ def test_live_agy_probe_stays_local_and_is_named_in_ci_report(
     assert "Live AGY probe (tests/ai/test_agy_probe.py): not run in CI" in script
     assert 'record_skipped_command "live-agy-probe" "non-gating"' in script
     assert '[ "$PYTEST_AGY_PROBE" -eq 1 ] && ! command -v agy' in script
+
+
+_SHARED_TEST_CONTAINERS = (
+    "gobby-postgres-test-1",
+    "gobby-falkordb-test-1",
+    "gobby-qdrant-test-1",
+)
+
+
+def _docker_names(*args: str) -> list[str]:
+    result = subprocess.run(
+        ["docker", *args], capture_output=True, text=True, check=True, timeout=60
+    )
+    return [line for line in result.stdout.splitlines() if line]
+
+
+def _project_leftovers(project: str) -> list[str]:
+    label = f"label=com.docker.compose.project={project}"
+    containers = _docker_names("ps", "-a", "--filter", label, "--format", "{{.Names}}")
+    networks = _docker_names("network", "ls", "--filter", label, "--format", "{{.Name}}")
+    return [*containers, *networks]
 
 
 @pytest.mark.integration
@@ -224,22 +244,27 @@ def test_release_workflow_falkor_service_supports_authenticated_graphs(
         finally:
             unauthenticated.close()
     finally:
+        # down -v removes the project's network too; rm -sfv leaves it behind.
         cleanup = subprocess.run(
             [
                 "docker",
                 "compose",
                 "-f",
                 "docker-compose.test.yml",
-                "rm",
-                "-sfv",
-                "falkordb-test",
-                "qdrant-test",
+                "down",
+                "-v",
+                "--remove-orphans",
             ],
             cwd=repo_root,
             env=env,
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=120,
         )
         assert cleanup.returncode == 0, "isolated FalkorDB and Qdrant cleanup failed"
+        leftovers = _project_leftovers(project)
+        assert not leftovers, f"release smoke left resources behind: {leftovers}"
+        running = _docker_names("ps", "--format", "{{.Names}}")
+        for shared in _SHARED_TEST_CONTAINERS:
+            assert shared in running, f"shared test service no longer running: {shared}"

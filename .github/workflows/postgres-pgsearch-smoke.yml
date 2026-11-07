@@ -156,5 +156,5 @@ jobs:
       - name: Remove isolated test services
         if: always()
         run: |
-          docker compose -f docker-compose.test.yml rm -sfv falkordb-test qdrant-test
+          docker compose -f docker-compose.test.yml down -v --remove-orphans
           docker rm -f "${GOBBY_POSTGRES_TEST_CONTAINER}"
