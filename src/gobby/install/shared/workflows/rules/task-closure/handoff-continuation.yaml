@@ -1,0 +1,68 @@
+version: "1.0.0"
+tags: [task-closure-general]
+
+# Candidates that change the handoff continuation surface land and close only with
+# a passing handoff-continuation e2e run recorded for the exact candidate SHA. The
+# path list below is the declared surface; the seat that ran the e2e records it as an
+# attestation of kind handoff-continuation-e2e with a git reference to the candidate.
+rules:
+  landing-requires-handoff-continuation-e2e:
+    description: Handoff continuation changes need a passing real-provider e2e run on the exact candidate before landing.
+    event: task_land
+    priority: 37
+    protected: true
+    when: >-
+      paths_match(facts.get('candidate_paths', []), [
+        'src/gobby/hooks/compaction_ownership.py',
+        'src/gobby/hooks/terminal_handoff_delivery.py',
+        'src/gobby/hooks/handoff_dispatch_recovery.py',
+        'src/gobby/mcp_proxy/tools/sessions/_handoff.py',
+        'src/gobby/mcp_proxy/tools/sessions/_terminal_handoff_delivery.py',
+        'src/gobby/mcp_proxy/tools/sessions/_terminal_compaction.py',
+        'src/gobby/sessions/handoff.py',
+        'src/gobby/sessions/handoff_shutdown.py',
+        'src/gobby/sessions/compact_continuation*.py',
+        'src/gobby/sessions/compact_failure_attention.py',
+        'src/gobby/sessions/clear_continuation.py',
+        'src/gobby/sessions/continuation_retry.py',
+        'src/gobby/sessions/codex_compact_watch.py'
+      ]) and
+      not any(record.get('kind') == 'handoff-continuation-e2e' and
+        record.get('result') == 'approved' and
+        (record.get('reference') or {}).get('scheme') == 'git' and
+        (record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha')
+        for record in attestations)
+    effects:
+      - type: block
+        reason: Handoff continuation changes need a passing handoff-continuation e2e run recorded for this exact candidate SHA.
+
+  closure-requires-handoff-continuation-e2e:
+    description: Closing a handoff continuation candidate also needs the exact-SHA e2e pass.
+    event: task_close
+    priority: 37
+    protected: true
+    when: >-
+      reason == 'done' and
+      paths_match(facts.get('candidate_paths', []), [
+        'src/gobby/hooks/compaction_ownership.py',
+        'src/gobby/hooks/terminal_handoff_delivery.py',
+        'src/gobby/hooks/handoff_dispatch_recovery.py',
+        'src/gobby/mcp_proxy/tools/sessions/_handoff.py',
+        'src/gobby/mcp_proxy/tools/sessions/_terminal_handoff_delivery.py',
+        'src/gobby/mcp_proxy/tools/sessions/_terminal_compaction.py',
+        'src/gobby/sessions/handoff.py',
+        'src/gobby/sessions/handoff_shutdown.py',
+        'src/gobby/sessions/compact_continuation*.py',
+        'src/gobby/sessions/compact_failure_attention.py',
+        'src/gobby/sessions/clear_continuation.py',
+        'src/gobby/sessions/continuation_retry.py',
+        'src/gobby/sessions/codex_compact_watch.py'
+      ]) and
+      not any(record.get('kind') == 'handoff-continuation-e2e' and
+        record.get('result') == 'approved' and
+        (record.get('reference') or {}).get('scheme') == 'git' and
+        (record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha')
+        for record in attestations)
+    effects:
+      - type: block
+        reason: Handoff continuation changes need a passing handoff-continuation e2e run recorded for this exact candidate SHA.
