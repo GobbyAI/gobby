@@ -829,6 +829,71 @@ async def test_a_bind_held_past_the_deadline_is_retried_until_the_front_door_ans
     assert len(binds) == 3
 
 
+async def test_a_stalled_loop_is_reported_while_the_publisher_runs(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The sampler names a loop stall as it happens, with the lag it measured.
+
+    The stall is virtual, as in the stall test above: the loop clock jumps while the sampler
+    sleeps, so the sample overshoots by the jump.
+    """
+    monkeypatch.setattr(native_publish, "LOOP_LAG_INTERVAL", 0.05)
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    stalled = 0.0
+    monkeypatch.setattr(loop, "time", lambda: real_time() + stalled)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        await asyncio.sleep(0)  # The sampler registers its first sleep.
+        stalled += 2.0
+        await _until(lambda: any("event loop lag" in r.getMessage() for r in caplog.records))
+    finally:
+        await publisher.stop()
+    lag = next(r.getMessage() for r in caplog.records if "event loop lag" in r.getMessage())
+    measured = float(lag.split("lag ")[1].split("s ")[0])
+    assert measured >= 1.5  # The 2 s jump registers; the sample starts a few ms after it.
+
+
+@pytest.mark.parametrize(
+    ("bind_delay", "deadline", "outcome", "first_byte_seen"),
+    [
+        (1.0, 0.3, "bind failed after", False),
+        (0.6, 2.0, "bind answered after", True),
+    ],
+)
+async def test_a_slow_bind_names_the_phase_it_reached(
+    bind_delay: float,
+    deadline: float,
+    outcome: str,
+    first_byte_seen: bool,
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The bind log says how far the request got: a held answer shows no first byte."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", deadline)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[bind_delay])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1)
+        finally:
+            await publisher.stop()
+    line = next(r.getMessage() for r in caplog.records if outcome in r.getMessage())
+    assert "phases" in line
+    assert "connection.connect_tcp" in line
+    assert ("http11.receive_response_headers" in line) is first_byte_seen
+
+
 @pytest.mark.slow
 async def test_a_publish_slower_than_httpx_default_stays_bound_inside_the_deadline(
     supervisor_token: str, monkeypatch: pytest.MonkeyPatch

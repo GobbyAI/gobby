@@ -7,7 +7,7 @@ import ipaddress
 import logging
 import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -42,6 +42,11 @@ TOKEN_WAIT = 2.0
 TOKEN_POLL_INTERVAL = 0.05
 REBIND_INTERVAL = 5.0
 LEG_CLOSE_TIMEOUT = 1.0
+# Diagnostics for the front-door stall (#25822): the sampler measures how late a fixed sleep wakes
+# on this loop; a bind logs how far its request got. Lags at or above these thresholds are logged.
+LOOP_LAG_INTERVAL = 0.25
+LOOP_LAG_WARN = 0.5
+BIND_SLOW_WARN = 0.5
 
 BIND_PATH = "/_gobby/ws/bind"
 PUBLISH_PATH = "/_gobby/ws/publish"
@@ -127,6 +132,7 @@ class NativePublisher:
 
     async def start(self) -> None:
         """Bind once; a failure enters the rebind loop instead of raising."""
+        self._spawn(self._sample_loop_lag())
         try:
             await self.bind()
         except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
@@ -142,12 +148,40 @@ class NativePublisher:
                 "ping_timeout": self._config.ping_timeout,
             }
         ).encode()
-        response = await asyncio.wait_for(
-            self._client.post(
-                f"{self._base_url}{BIND_PATH}", content=body, headers=self._headers(token)
-            ),
-            REQUEST_TIMEOUT,
-        )
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        phases: dict[str, float] = {}
+
+        async def trace(event: str, _info: Mapping[str, Any]) -> None:
+            # httpcore reports "<layer>.<step>.complete" when each phase finishes on this loop.
+            if event.endswith(".complete"):
+                phases[event.removesuffix(".complete")] = loop.time() - started
+
+        try:
+            response = await asyncio.wait_for(
+                self._client.post(
+                    f"{self._base_url}{BIND_PATH}",
+                    content=body,
+                    headers=self._headers(token),
+                    extensions={"trace": trace},
+                ),
+                REQUEST_TIMEOUT,
+            )
+        except (TimeoutError, httpx.HTTPError) as exc:
+            logger.warning(
+                "Native WS bind failed after %.2fs; phases %s: %r",
+                loop.time() - started,
+                _format_phases(phases),
+                exc,
+            )
+            raise
+        elapsed = loop.time() - started
+        if elapsed >= BIND_SLOW_WARN:
+            logger.warning(
+                "Native WS bind answered after %.2fs; phases %s",
+                elapsed,
+                _format_phases(phases),
+            )
         if response.status_code != 200:
             raise _BindFailed(f"bind answered {response.status_code}")
         try:
@@ -383,6 +417,24 @@ class NativePublisher:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+
+    async def _sample_loop_lag(self) -> None:
+        # A fixed sleep wakes late by exactly the time this loop was busy or starved.
+        loop = asyncio.get_running_loop()
+        while True:
+            started = loop.time()
+            await asyncio.sleep(LOOP_LAG_INTERVAL)
+            lag = loop.time() - started - LOOP_LAG_INTERVAL
+            if lag >= LOOP_LAG_WARN:
+                logger.warning(
+                    "Native WS event loop lag %.2fs over a %.2fs sample",
+                    lag,
+                    LOOP_LAG_INTERVAL,
+                )
+
+
+def _format_phases(phases: dict[str, float]) -> str:
+    return " ".join(f"{name}={at:.2f}s" for name, at in phases.items()) or "none"
 
 
 def front_door_wait() -> float:
