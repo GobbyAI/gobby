@@ -17,6 +17,7 @@ from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.events import ContextPart, HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.hooks.receipt_effects import stage_append_set_variables
+from gobby.memory import stage_timing
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.delivery_formatting import (
@@ -55,6 +56,7 @@ class _CompletedMcpInjection:
 class _InflightMcpInjection:
     task: asyncio.Task[_CompletedMcpInjection | None]
     deadline: float
+    timings: stage_timing.StageTimings
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +149,7 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
         completed: _CompletedMcpInjection | None = None
         inflight: _InflightMcpInjection | None = None
         loop = asyncio.get_running_loop()
+        lookup_started = loop.time()
 
         with self._mcp_injection_lock:
             session_cache = self._mcp_injection_cache.get(platform_session_id)
@@ -163,6 +166,7 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
             if completed is None:
                 inflight = self._mcp_injection_inflight.get(call_key)
                 if inflight is None:
+                    timings = stage_timing.StageTimings()
                     wait_seconds = min(
                         effect.timeout_seconds or _INLINE_WAIT_CAP_SECONDS,
                         _INLINE_WAIT_CAP_SECONDS,
@@ -175,27 +179,43 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
                             event,
                             platform_session_id,
                             call_key,
+                            timings,
                         )
                     )
                     inflight = _InflightMcpInjection(
                         task=task,
                         deadline=loop.time() + wait_seconds,
+                        timings=timings,
                     )
                     self._mcp_injection_inflight[call_key] = inflight
 
+        lookup_seconds = loop.time() - lookup_started
+        if inflight is not None:
+            inflight.timings.add("injection_cache_lookup", lookup_seconds)
+        logger.debug(
+            "MCP injection %s/%s cache hit=%s lookup=%.0fms",
+            effect.server,
+            effect.tool,
+            completed is not None,
+            lookup_seconds * 1000,
+        )
         if completed is None:
             assert inflight is not None
             release_session_admission_for_external_wait()
             remaining_seconds = inflight.deadline - loop.time()
             if remaining_seconds > 0:
-                with contextlib.suppress(TimeoutError):
+                with (
+                    stage_timing.recording(inflight.timings),
+                    stage_timing.timed("injection_inline_wait"),
+                    contextlib.suppress(TimeoutError),
+                ):
                     completed = await asyncio.wait_for(
                         asyncio.shield(inflight.task),
                         timeout=remaining_seconds,
                     )
             if completed is None:
                 if not inflight.task.done():
-                    self._log_inline_timeout(effect, row)
+                    self._log_inline_timeout(effect, row, inflight.timings)
                 completed = self._defer_timed_out_injection(
                     platform_session_id,
                     call_key,
@@ -223,17 +243,20 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
         return True
 
     @staticmethod
-    def _log_inline_timeout(effect: Any, row: RuleDefinitionRow) -> None:
+    def _log_inline_timeout(
+        effect: Any, row: RuleDefinitionRow, timings: stage_timing.StageTimings
+    ) -> None:
         wait_seconds = min(
             effect.timeout_seconds or _INLINE_WAIT_CAP_SECONDS,
             _INLINE_WAIT_CAP_SECONDS,
         )
         logger.warning(
-            "Inline mcp_call %s/%s timed out after %ss (rule %s); dispatch continues",
+            "Inline mcp_call %s/%s timed out after %ss (rule %s); dispatch continues; stages: %s",
             effect.server,
             effect.tool,
             wait_seconds,
             row.name,
+            timings.render(),
         )
 
     def _defer_timed_out_injection(
@@ -312,10 +335,13 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
         event: HookEvent,
         platform_session_id: str,
         call_key: str,
+        timings: stage_timing.StageTimings | None = None,
     ) -> _CompletedMcpInjection | None:
+        timings = timings if timings is not None else stage_timing.StageTimings()
         try:
-            dispatch = self._mcp_dispatcher(effect.server, effect.tool, arguments, event)
-            result = await asyncio.wait_for(dispatch, timeout=_BACKGROUND_TIMEOUT_SECONDS)
+            result = await self._timed_mcp_dispatch(
+                effect, row, arguments, event, _BACKGROUND_TIMEOUT_SECONDS, timings
+            )
             if not mcp_call_succeeded(result):
                 call_result = result.get("result") if isinstance(result, dict) else None
                 error = (
@@ -369,6 +395,31 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
             with self._mcp_injection_lock:
                 self._mcp_injection_inflight.pop(call_key, None)
                 self._mcp_injection_abandoned.discard(call_key)
+
+    async def _timed_mcp_dispatch(
+        self,
+        effect: Any,
+        row: RuleDefinitionRow,
+        arguments: dict[str, Any],
+        event: Any,
+        timeout: float | None,
+        timings: stage_timing.StageTimings | None = None,
+    ) -> Any:
+        with stage_timing.recording(timings) as collected:
+            try:
+                with stage_timing.timed("injection_dispatch"):
+                    dispatch = self._mcp_dispatcher(effect.server, effect.tool, arguments, event)
+                    if timeout is None:
+                        return await dispatch
+                    return await asyncio.wait_for(dispatch, timeout=timeout)
+            finally:
+                logger.info(
+                    "MCP injection %s/%s (rule %s) stages: %s",
+                    effect.server,
+                    effect.tool,
+                    row.name,
+                    collected.render(),
+                )
 
     def _cache_mcp_injection_result(
         self,
