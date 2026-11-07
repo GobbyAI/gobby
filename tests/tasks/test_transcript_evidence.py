@@ -469,6 +469,9 @@ class _FakeWorker:
         self._alive = False
         self._events.append(f"kill:{self.pid}")
 
+    def join(self, timeout: float | None = None) -> None:
+        self._events.append(f"join:{self.pid}")
+
 
 @pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_kills_hung_worker_after_bounded_wait(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -492,6 +495,7 @@ def test_shutdown_kills_hung_worker_after_bounded_wait(monkeypatch: pytest.Monke
 
         assert elapsed < 1.0
         assert "kill:4242" in events
+        assert "join:4242" in events
         assert worker.is_alive() is False
         assert transcript_evidence_pool._pool is None
     finally:
@@ -530,6 +534,28 @@ pids.append(resource_tracker._resource_tracker._pid)
 print(" ".join(str(pid) for pid in pids), flush=True)
 time.sleep(600)
 """
+
+
+@pytest.mark.usefixtures("_no_pending_pool_exit")
+def test_shutdown_reaps_worker_killed_at_the_bounded_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A live worker killed at the bounded wait is reaped before shutdown returns."""
+    release = threading.Event()
+    tracker_stopped = threading.Event()
+    worker = multiprocessing.Process(target=time.sleep, args=(60,))
+    worker.start()
+    assert worker.pid is not None
+    fake = _RecordingExecutor([], block_on_wait=release, processes={worker.pid: worker})
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
+    monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", tracker_stopped.set)
+
+    try:
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
+
+        assert worker.is_alive() is False
+        assert worker not in multiprocessing.active_children()
+    finally:
+        release.set()
+        assert tracker_stopped.wait(5), "pool drain must finish before patches are restored"
 
 
 def test_pool_processes_exit_when_the_daemon_is_killed() -> None:

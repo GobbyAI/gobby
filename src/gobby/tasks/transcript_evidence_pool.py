@@ -149,6 +149,8 @@ async def run_in_transcript_evidence_pool[T](
 
 
 POOL_EXIT_TIMEOUT_SECONDS = 2.0
+# SIGKILL ends a worker within milliseconds; this bounds the reap that follows it.
+_POOL_KILL_REAP_SECONDS = 1.0
 
 
 def _stop_resource_tracker() -> None:
@@ -185,9 +187,10 @@ def _drain_pool_and_stop_tracker(pool: ProcessPoolExecutor, done: threading.Even
 def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECONDS) -> None:
     """Stop accepting derivations, wait for the worker to exit, then stop the tracker.
 
-    The wait is bounded by ``timeout``. A worker still alive after it is killed: it is
-    never an agent process, and interpreter finalization joins it without bound, so it
-    cannot wait for the shutdown reaper, which may not run on every path.
+    The wait is bounded by ``timeout``. A worker still alive after it is killed and
+    reaped within ``_POOL_KILL_REAP_SECONDS``: it is never an agent process, and
+    interpreter finalization joins it without bound, so it cannot wait for the shutdown
+    reaper, which may not run on every path.
     """
     global _pool
     with _pool_lock:
@@ -210,12 +213,21 @@ def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECO
         timeout,
         len(workers),
     )
+    killed: list[multiprocessing.Process] = []
     for worker in workers:
         try:
             if worker.is_alive():
                 worker.kill()
+                killed.append(worker)
         except (OSError, ValueError):
             logger.debug("Transcript evidence pool worker kill failed", exc_info=True)
+    # A killed worker stays listed until reaped; join them before returning.
+    reap_deadline = monotonic() + _POOL_KILL_REAP_SECONDS
+    for worker in killed:
+        try:
+            worker.join(max(0.0, reap_deadline - monotonic()))
+        except (OSError, ValueError):
+            logger.debug("Transcript evidence pool worker reap failed", exc_info=True)
 
 
 __all__ = [

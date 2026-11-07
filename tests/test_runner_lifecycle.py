@@ -1,10 +1,13 @@
 """Runner lifecycle, maintenance, and entrypoint tests."""
 
 import asyncio
+import concurrent.futures
 import logging
+import multiprocessing
 import os
 import signal
 import sys
+import threading
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from datetime import datetime
@@ -22,15 +25,18 @@ import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
+import gobby.tasks.transcript_evidence_pool as transcript_evidence_pool
 from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig, BootstrapConfigError, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
+from gobby.runner_init import embedding_lease
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.cron_models import CronRunStatus
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseRenewTransient
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals import composer_ledger
 from gobby.terminals.composer_ledger import ComposerLedger
@@ -1602,6 +1608,155 @@ class TestShutdownDaemonServices:
         grace_window.assert_not_awaited()
         assert server.should_exit is True
         assert marker.exists() is True
+
+    @pytest.mark.asyncio
+    async def test_restart_shutdown_leaves_no_transcript_pool_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A restart must reap the live transcript pool before interpreter exit joins it."""
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        await transcript_evidence_pool.prewarm_transcript_evidence_pool()
+        assert multiprocessing.active_children(), "precondition: the pool has live workers"
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            cast(GobbyRunner, runner),
+            cast(Server, server),
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert multiprocessing.active_children() == []
+
+    @pytest.mark.asyncio
+    async def test_shutdown_stops_embedding_lease_renewal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A live lease renewal must end with shutdown, not depend on config teardown."""
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
+        renew_attempted = threading.Event()
+
+        def renew_transiently() -> None:
+            renew_attempted.set()
+            raise EmbeddingGenerationLeaseRenewTransient("renewal store unavailable")
+
+        lease = SimpleNamespace(
+            generation=1,
+            revision=1,
+            renew=renew_transiently,
+            remaining_seconds=lambda: 1000.0,
+            fence=lambda: None,
+            activate=lambda: None,
+        )
+        handle = embedding_lease._ManagedEmbeddingLease(
+            cast(Any, lease),
+            asyncio.get_running_loop(),
+            read_completed_record=lambda: None,
+            request_rebuild=lambda record: None,
+        )
+        handle.activate()
+        try:
+            assert await asyncio.to_thread(renew_attempted.wait, 5.0), (
+                "precondition: the renewal thread is running"
+            )
+            runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+            server = SimpleNamespace(should_exit=False)
+
+            async def completed_server() -> None:
+                return None
+
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, server),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+            assert handle.renewal is not None
+            done, _ = concurrent.futures.wait([handle.renewal], timeout=5.0)
+            assert done, "the lease renewal task survived shutdown"
+        finally:
+            handle.dispose()
+
+    @pytest.mark.asyncio
+    async def test_restart_deadline_overrun_leaves_no_transcript_pool_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A restart whose cleanup overruns the overall deadline must still reap the pool."""
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_OVERALL_SHUTDOWN_DEADLINE_SECONDS", 1.0)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS", 0.5)
+
+        async def stalled_barrier() -> None:
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_settle_terminal_delivery_barrier",
+            stalled_barrier,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        await transcript_evidence_pool.prewarm_transcript_evidence_pool()
+        assert multiprocessing.active_children(), "precondition: the pool has live workers"
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            cast(GobbyRunner, runner),
+            cast(Server, server),
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert multiprocessing.active_children() == []
 
     @pytest.mark.asyncio
     async def test_shutdown_marker_is_removed_when_pid_cleanup_fails(
