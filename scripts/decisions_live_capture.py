@@ -17,29 +17,34 @@ from typing import Any
 import httpx
 
 from gobby.ai.decisions import (
-    _SUM_TOLERANCE,
     BoxImage,
     BoxQuestion,
     ChoiceQuestion,
     DecisionService,
     DecisionsUnavailable,
     ScoreQuestion,
-    _score_abs_tolerance,
 )
-from gobby.config.ai import DecisionsConfig
+from gobby.ai.decisions_wire import _SUM_TOLERANCE, _score_abs_tolerance
+from gobby.config.ai import (
+    DECISION_KINDS,
+    DecisionEndpointConfig,
+    DecisionKind,
+    DecisionOverrides,
+    DecisionsConfig,
+)
 from gobby.llm.base import VisionInputError
 from gobby.llm.image_payloads import prepare_image_data
 
 PRIVACY = {"zdr": True, "data_collection": "deny"}
 _STATE = {"description": "A red square is centered on a white background."}
 _PROPOSITION = "The described square is red."
+_WIRE_APIS = ("systemone", "openrouter-decisions", "workers-ai")
+_SERVICE_TIMEOUT_SECONDS = 30
 
 
 def add_decision_flags(parser: argparse.ArgumentParser) -> None:
     """Shared explicit configuration for capture and study; no live config reads."""
-    parser.add_argument(
-        "--wire-api", choices=("systemone", "openrouter-decisions", "workers-ai"), required=True
-    )
+    parser.add_argument("--wire-api", choices=_WIRE_APIS, required=True)
     parser.add_argument("--api-base", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument(
@@ -51,6 +56,16 @@ def add_decision_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--backend-max-question-tokens", type=int)
     parser.add_argument("--long-context", action="store_true")
     parser.add_argument("--api-key-secret")
+    # Any box flag gives Box its own endpoint; Choice, Noul and Score keep the shared flags.
+    box = parser.add_argument_group(
+        "Box endpoint",
+        "Optional. Any box flag routes Box to its own endpoint; unset box flags inherit "
+        "the shared flags.",
+    )
+    box.add_argument("--box-wire-api", choices=_WIRE_APIS)
+    box.add_argument("--box-api-base")
+    box.add_argument("--box-model")
+    box.add_argument("--box-api-key-secret")
 
 
 def resolve_operator_secret(name: str) -> str:
@@ -65,11 +80,42 @@ def resolve_operator_secret(name: str) -> str:
     return key
 
 
+def _box_endpoint(
+    args: argparse.Namespace, resolve_secret: Callable[[str], str]
+) -> DecisionEndpointConfig | None:
+    """The Box endpoint when any box flag is set.
+
+    Unset box wire, base and model flags inherit the shared flags. The key never does: a bearer
+    token goes only to the host its own --box-api-key-secret names.
+    """
+    flags = (args.box_wire_api, args.box_api_base, args.box_model, args.box_api_key_secret)
+    if all(flag is None for flag in flags):
+        return None
+    secret = args.box_api_key_secret
+    return DecisionEndpointConfig(
+        wire_api=args.box_wire_api or args.wire_api,
+        api_base=args.box_api_base or args.api_base,
+        model=args.box_model or args.model,
+        identity_contract=args.identity_contract,
+        backend_max_state_tokens=args.backend_max_state_tokens,
+        backend_max_question_tokens=args.backend_max_question_tokens,
+        long_context=args.long_context,
+        timeout_seconds=_SERVICE_TIMEOUT_SECONDS,
+        api_key=resolve_secret(secret) if secret else None,
+    )
+
+
 def build_decisions_config(
     args: argparse.Namespace, resolve_secret: Callable[[str], str] | None = None
 ) -> DecisionsConfig:
-    """Build a private config snapshot from flags and an optional secret resolver."""
-    config = DecisionsConfig(
+    """Build a private config snapshot from flags and an optional secret resolver.
+
+    Box flags add an ``overrides.box`` endpoint, validated by the config like any other:
+    a wire that cannot serve Box is refused here, before any request is sent.
+    """
+    resolver = resolve_secret or resolve_operator_secret
+    box = _box_endpoint(args, resolver)
+    return DecisionsConfig(
         wire_api=args.wire_api,
         api_base=args.api_base,
         model=args.model,
@@ -77,12 +123,21 @@ def build_decisions_config(
         backend_max_state_tokens=args.backend_max_state_tokens,
         backend_max_question_tokens=args.backend_max_question_tokens,
         long_context=args.long_context,
-        timeout_seconds=30,
+        timeout_seconds=_SERVICE_TIMEOUT_SECONDS,
+        api_key=resolver(args.api_key_secret) if args.api_key_secret else None,
+        overrides=DecisionOverrides(box=box),
     )
-    if args.api_key_secret:
-        key = (resolve_secret or resolve_operator_secret)(args.api_key_secret)
-        config = config.model_copy(update={"api_key": key})
-    return config
+
+
+def _shape_endpoint(config: DecisionsConfig, kind: DecisionKind) -> DecisionEndpointConfig:
+    """The endpoint that serves one decision type; the shared endpoint when not overridden."""
+    return config.endpoint_for(kind) or config
+
+
+def _api_keys(config: DecisionsConfig) -> list[str]:
+    """Every API key a request can carry, so captured output redacts each one."""
+    keys = {_shape_endpoint(config, kind).api_key for kind in DECISION_KINDS}
+    return sorted(key for key in keys if key)
 
 
 def _endpoint(config: DecisionsConfig, model: str) -> str:
@@ -167,7 +222,7 @@ def _response_error(response: httpx.Response, redactions: tuple[str, ...]) -> di
 
 
 def _observe_exchange(
-    config: DecisionsConfig,
+    config: DecisionEndpointConfig,
     record: dict[str, Any],
     response: httpx.Response,
     *,
@@ -281,19 +336,22 @@ async def _list_catalog(config: DecisionsConfig) -> list[dict[str, str | None]]:
 
 async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[str, Any]:
     shapes: list[dict[str, Any]] = []
-    redactions = [config.api_key] if config.api_key else []
+    redactions = _api_keys(config)
     # Services are intentionally independent: one shape's cooldown cannot hide another.
-    for shape in ("choice", "noul", "score", "box"):
+    for shape in DECISION_KINDS:
+        endpoint = _shape_endpoint(config, shape)
         record: dict[str, Any] = {
             "shape": shape,
-            "request_model": config.model,
+            "wire_api": endpoint.wire_api,
+            "api_base": endpoint.api_base,
+            "request_model": endpoint.model,
             "state": _STATE,
             "exchanges": [],
         }
 
         service = DecisionService(
             config,
-            exchange_observer=partial(_observe_exchange, config, record, redactions=redactions),
+            exchange_observer=partial(_observe_exchange, endpoint, record, redactions=redactions),
         )
         try:
             if shape == "choice":
@@ -481,7 +539,9 @@ def main(
         f"## Decision capture {date}\n\n"
         "Service round trips validate all four shapes. Raw probes record usage and cost, "
         "chars-per-token, both input-limit responses and the alias comparison. "
-        "A failed shape remains a finding; successful probes do not waive it.\n\n"
+        "A failed shape remains a finding; successful probes do not waive it. Each shape "
+        "records the endpoint it was sent to; raw probes and limit calibration use the shared "
+        "endpoint.\n\n"
         "The measured ratio uses the difference in state characters divided by the difference "
         "in reported input tokens across two probes, removing fixed question overhead. "
         "Limit-probe sizes account for the estimated overhead. If calibration is unavailable, "
@@ -496,8 +556,8 @@ def main(
         "recorded in the wire contracts; this run measures the backend independently.\n\n"
         f"```json\n{json.dumps(capture, indent=2, ensure_ascii=False)}\n```\n"
     )
-    if config.api_key:
-        section = section.replace(config.api_key, "[redacted]")
+    for key in _api_keys(config):
+        section = section.replace(key, "[redacted]")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("a", encoding="utf-8") as stream:
         stream.write(section)

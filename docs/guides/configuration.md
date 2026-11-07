@@ -520,24 +520,39 @@ catalog metadata, and secrets managed by the relevant provider integration.
 
 ### Decision classifier (`ai.decisions`)
 
-`ai.decisions` configures one decision endpoint, the `decide` capability.
+`ai.decisions` is the default decision endpoint. `ai.decisions.overrides` routes one
+decision type to its own endpoint. The keys are `choice`, `noul`, `score`, and `box`.
+Each override is a full endpoint with the fields below. A type with no entry uses the
+default. With no overrides, every type uses the default endpoint.
+
 The contract is a System One-style decision: a caller sends a state and typed
 questions, and the backend returns probabilities. Each wire adapts that
-contract to its server. Gobby calls the one configured endpoint. It never
+contract to its server. Gobby calls the configured endpoints. It never
 starts, loads, or stops a decision server.
 
 ```yaml
 ai:
   decisions:
-    api_base: http://127.0.0.1:8100
+    api_base: http://127.0.0.1:11434
     wire_api: systemone
-    model: jev-latest
-    identity_contract: model_card
+    model: clef:27b
+    identity_contract: response_version
+    max_input_tokens: 8192
+    max_request_bytes: 65536
+    overrides:
+      box:
+        api_base: https://openrouter.ai/api
+        wire_api: openrouter-decisions
+        model: typesafe/jev-1.14-20261014
+        api_key: $secret:OPENROUTER_API_KEY
 ```
+
+This routes Choice, Noul, and Score to the local Ollama Clef model and Box to
+OpenRouter's Jev model.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `api_base` | unset | Endpoint base URL. Unset leaves `decide` unavailable. |
+| `api_base` | unset | Endpoint base URL. Unset means this endpoint serves no decision type. |
 | `wire_api` | `systemone` | `systemone`, `openrouter-decisions`, or `workers-ai`. |
 | `model` | unset | Decision model. Required when `api_base` is set. |
 | `api_key` | unset | Bearer token, or a `$secret:` reference. |
@@ -548,7 +563,23 @@ ai:
 | `backend_max_state_tokens` | per wire | Whole-request token maximum: `65536` on `systemone` and `workers-ai`, `64000` on `openrouter-decisions`. |
 | `backend_max_question_tokens` | `32000` on `openrouter-decisions`, else unset | State plus one question maximum. |
 | `long_context` | `false` | Opt in to 262144-token limits and the long-context header. Not valid with `workers-ai`. |
-| `failure_cooldown_seconds` | `60` | Seconds `decide` stays unavailable after a failed request. |
+| `failure_cooldown_seconds` | `60` | Seconds the endpoint stays unavailable after a failed request. |
+
+Routing rules:
+
+- `overrides` accepts only the keys `choice`, `noul`, `score`, and `box`. Each
+  override needs `api_base` and `model`.
+- Box runs only on `openrouter-decisions`. A `box` override on `systemone` or
+  `workers-ai` fails at config load, naming the type, the `wire_api`, and
+  `openrouter-decisions`.
+- Without a `box` override, Box uses the default endpoint. If that endpoint is on
+  `systemone` or `workers-ai`, a Box request fails before any dial with reason
+  `unconfigured`.
+- Limits, identity, cooldown, usage, and logs are per endpoint. A cooldown on one
+  endpoint does not block another. A failure on one endpoint fails only the
+  questions routed to it.
+- Questions routed to the same endpoint share one request, whatever their types.
+  For example, Choice and Noul on the default endpoint go in one request.
 
 Each consumer has its own `mode`: `off` (the default), `shadow`, or `enforce`.
 `enforce` also requires `evaluated_model` and `evaluated_backend`, which name
@@ -562,7 +593,8 @@ returns `oversize` and does not open the cooldown. A backend HTTP 413 returns
 
 #### `systemone` wire
 
-The default wire, `POST {api_base}/v1/systemone`. Two local servers use it.
+The default wire, `POST {api_base}/v1/systemone`. It serves Choice, Noul, and Score.
+It refuses Box. Two local servers use it.
 
 Kev, run by you on a local port:
 
@@ -616,6 +648,9 @@ ai:
   unverified. Keep the named model loaded, or turn just-in-time loading off.
 
 #### `openrouter-decisions` wire
+
+The only wire that serves Box. Box needs Jev 1.14 and images of 280 to 1568 pixels
+per side.
 
 ```yaml
 ai:

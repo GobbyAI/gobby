@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.memory import stage_timing
 from gobby.memory.services._search_models import _Candidates
 from gobby.memory.services._search_rrf import rrf_scores
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
@@ -280,25 +281,34 @@ async def search_with_graph(
     graph_rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
 
     async def _collect(candidate_limit: int) -> _Candidates:
-        qdrant_coro = vector_store.search(
-            query_embedding,
-            limit=candidate_limit,
-            filters=filters or None,
-            timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
+        qdrant_coro = stage_timing.timed_await(
+            "leg_qdrant",
+            vector_store.search(
+                query_embedding,
+                limit=candidate_limit,
+                filters=filters or None,
+                timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
+            ),
         )
-        graph_coro = service._search_graph_scored(
-            query_embedding=query_embedding,
-            limit=candidate_limit,
-            min_score=graph_min_score,
-            project_id=project_id,
-            include_global=include_global,
-            rows_cache=graph_rows_cache,
+        graph_coro = stage_timing.timed_await(
+            "leg_graph",
+            service._search_graph_scored(
+                query_embedding=query_embedding,
+                limit=candidate_limit,
+                min_score=graph_min_score,
+                project_id=project_id,
+                include_global=include_global,
+                rows_cache=graph_rows_cache,
+            ),
         )
-        keyword_coro = service._keyword_ranked(
-            query,
-            candidate_limit,
-            project_id,
-            include_global=include_global,
+        keyword_coro = stage_timing.timed_await(
+            "leg_keyword",
+            service._keyword_ranked(
+                query,
+                candidate_limit,
+                project_id,
+                include_global=include_global,
+            ),
         )
         qdrant_result, graph_result, keyword_result = await asyncio.gather(
             qdrant_coro, graph_coro, keyword_coro, return_exceptions=True

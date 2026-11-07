@@ -60,8 +60,8 @@ decided all three on 2026-11-05 (Decision 12):
   HTTP 400 on a 64x64 image, under Box's 280 px minimum, and the Orchestrator's
   2026-11-05 rerun on a 512x512 image returned 200. The capture script's Box
   request bypasses the registered `gobby-decisions:evaluate` tool (2.4), and the
-  wire note names no consumer per decision shape (2.5). The capture waits on
-  #25789, which routes each decision type to its own backend, so Box runs on
+  wire note names no consumer per decision shape (2.5). The route and the
+  capture wait on #25789, which routes each decision type to its own backend, so Box runs on
   Jev through OpenRouter while Choice, Noul and Score run on local `clef:27b`
   (Decisions 12 and 19).
 
@@ -77,7 +77,8 @@ decided all three on 2026-11-05 (Decision 12):
 - A label-quality report records Josh's ratings of 30 sampled communities and
   the ship rule they select, with every decision consumer `off` (2.3).
 - The capture script sends its one Box request through the registered
-  `gobby-decisions:evaluate` tool and keeps the raw exchange (2.4).
+  `gobby-decisions:evaluate` tool to Box's own endpoint and keeps the raw
+  exchange (2.4).
 - One dated capture records Choice, Noul and Score on local `clef:27b` and Box's
   round trip on Jev through OpenRouter and that tool, or its finding, and the
   wire note names a consumer, live-path test and serving backend per shape (2.5).
@@ -321,21 +322,27 @@ and the Plan Writer gobby#19935's decisions from the sources cited.
     included". #22604 closed without the study, so the line no longer holds
     the order it names. By the Orchestrator's 2026-11-05 ruling, it edits #24701
     at expansion to be blocked by the 2.3 task. Seats do not edit it.
-19. **The Box capture waits on #25789 (Route each decision type to its own
-    configured backend, and name size and bounds when refusing a Box image).**
-    By the Orchestrator's 2026-11-05 ruling, #25788 is closed as superseded by
-    #25789, which carries its refusal-detail fix, and the plan's Box consumer
-    depends on #25789. #25789 sits under #25603, so this is a cross-epic edge,
-    and expansion gives the 2.5 leaf a `blocked-by` edge on it. The edge sits on
-    2.5 and not 2.4, which the Orchestrator confirmed on 2026-11-05. 2.4's
-    configuration and service-cache seam are written against today's
-    single-endpoint service, and #25789's item 3 names "the #22948 Box consumer"
-    among the consumers it keeps working, so #25789 carries 2.4's route and its
-    `tests/scripts` tests forward. By the same ruling, the capture script's
-    per-type endpoint flags are #25789's consumer upkeep (its criterion 8), and
-    2.4 does not change. 2.5 uses those flags to send Choice, Noul and Score to
-    local `clef:27b` and Box to Jev through OpenRouter (Decision 12). Seats do
-    not edit either task.
+19. **The Box route and the Box capture wait on #25789 (Route each decision
+    type to its own configured backend, and name size and bounds when refusing
+    a Box image).** By the Orchestrator's 2026-11-05 rulings:
+    - #25788 is closed as superseded by #25789, which carries its
+      refusal-detail fix. #25789 sits under #25603, so its edges are cross-epic.
+    - The capture script's per-type endpoint flags are #25789's consumer upkeep
+      (its criterion 8). #25789's item 3 names "the #22948 Box consumer" among
+      the consumers it keeps working.
+    - GP-20261105-05, option (b): 2.4 depends on #25789 and is written against
+      its per-type configuration, and #25789 proceeds without waiting on this
+      plan. The Orchestrator's reason: "blocking #25789 on an unexpanded,
+      unapproved plan would hold Josh-directed work indefinitely". #25789 is
+      staffed (dev-team execution `1fd356cc`). Expansion gives both the 2.4 and
+      2.5 leaves a `blocked-by` edge on #25789, and 2.5 also depends on 2.4.
+    - GP-20261105-06, option (a): only Box crosses `gobby-decisions:evaluate`.
+      Choice, Noul and Score keep their direct `DecisionService` calls under
+      #25789's per-type routing, as in Run 8. The Orchestrator: "My earlier
+      'both via evaluate' meant the Box path only."
+    2.5 uses #25789's flags to send Choice, Noul and Score to local `clef:27b`
+    and Box to Jev through OpenRouter (Decision 12). Seats do not edit either
+    task.
 
 ## Constraints
 `kind: framing`
@@ -711,8 +718,9 @@ the other two, so it has no edge to them. The Box route (2.4) and the Box
 capture (2.5) share no target with any of them, so they have no edge to them.
 The route is a script change with its own tests and closes on them. The capture
 waits on operator steps, and it depends on 2.4 because it runs the script from
-the main checkout after 2.4 lands. The two share no target. The capture also
-depends on #25789, which is outside this plan (Decision 19).
+the main checkout after 2.4 lands. The two share no target. Both depend on
+#25789, which is outside this plan: the route is written against its per-type
+configuration, and the capture uses its per-type flags (Decision 19).
 
 ### 2.1 Provision the rerun harness and pass C0 [category: test]
 `kind: deliverable`
@@ -1223,12 +1231,12 @@ Targets:
 `DATABASE_URL` at the isolated test hub, and every number in `label-quality.md` traces to the committed
 `label-quality-results.md` or `run.json`.
 
-### 2.4 Route the capture's Box request through the registered evaluate tool [category: code]
+### 2.4 Route the capture's Box request through the registered evaluate tool (depends: #25789) [category: code]
 `kind: deliverable`
 
 Targets:
 - `scripts/decisions_live_capture.py::_capture`
-- `tests/scripts/test_decisions_live_capture.py::*` — scope-reason: two new tests pin the registered-tool route, and four existing tests pin the Box finding, redaction, exchange and shape records the route must keep
+- `tests/scripts/test_decisions_live_capture.py::*` — scope-reason: two new tests pin the registered-tool route to the per-type Box endpoint and its image refusal, and four existing tests pin the Box finding, redaction, exchange and shape records the route must keep
 
 Consumers unchanged:
 - `scripts/community_label_study.py` — no-edit-reason: `_cost` reads only `wire_api`, `measured_chars_per_token` and `probes` from a capture, never a shape record
@@ -1239,7 +1247,17 @@ Consumers unchanged:
   consumer, but `_capture` calls `service.box("live_capture", ...)` on its own `DecisionService`,
   so a live run never crosses that consumer's boundary. The repair replaces that request with the
   registered tool's path. It adds no second Box request, no product consumer, no daemon and no
-  live configuration.
+  live configuration. Only Box crosses the tool: Choice, Noul and Score keep their direct
+  `DecisionService` calls (the Orchestrator's 2026-11-05 GP-20261105-06 ruling, Decision 19).
+- Order (the Orchestrator's 2026-11-05 GP-20261105-05 ruling, Decision 19): this leaf depends on
+  #25789 and is written against its per-type configuration. #25789 lands first with the
+  script's per-type endpoint flags and their split tests (its criterion 8), and leaves the Box
+  branch calling `service.box` directly; this leaf then changes that branch. What it relies on is
+  what #25789 is required to deliver: `ai.decisions` stays the default endpoint with an optional
+  per-type override map (its item 1), so the in-memory configuration precedent below still holds
+  with the script's per-type `DecisionsConfig`; `gobby-decisions:evaluate` keeps working (its
+  item 3); and the capture's per-shape `exchange_observer` records survive (its criterion 8). The
+  leaf re-resolves every symbol named here on #25789's landed code with gcode before editing.
 - The tool: `src/gobby/mcp_proxy/tools/decisions.py::create_decisions_registry(config_resolver)`
   registers `evaluate(state, questions, timeout_seconds=None)`. `_parse` validates the request, and
   `_box` requires an absolute `image_path`, reads the file, and accepts PNG or JPEG by signature,
@@ -1256,12 +1274,17 @@ Consumers unchanged:
   `registry.call("evaluate", {...})`. Neither module is in the capture test's
   `LIVE_CONFIG_MODULES`, which `::test_capture_output_omits_key_and_image` checks against the
   script's imports.
-- Raw exchange: `get_decision_service` caches one `DecisionService(config)` per
+- Raw exchange: today `get_decision_service` caches one `DecisionService(config)` per
   `_fingerprint(config)` in the module global `gobby.ai.decisions._service_cache`, built with no
   `exchange_observer`. `_capture` already builds an observed service for each shape
   (`exchange_observer=partial(_observe_exchange, config, record, redactions=redactions)`).
   Setting the cache to `(decisions._fingerprint(config), service)` before the call makes the tool
-  use that observed service, so the Box record keeps its `exchanges` and parse diagnostics.
+  use that observed service, so the Box record keeps its `exchanges` and parse diagnostics. After
+  #25789, `config` is the full per-type configuration, so the fingerprint covers the Box override,
+  and the one service resolves the Box endpoint (its item 2). The invariant the seam keeps is: the
+  tool's service lookup returns the capture's observed service for this configuration, and the
+  lookup's prior state is restored in `finally`. The cache is the one piece #25789 does not
+  explicitly promise, so the leaf confirms it on #25789's landed code before editing.
   Rejected: a service-factory parameter on `create_decisions_registry`, a product change whose
   only caller would be this script.
 - Redaction: the tool sends `base64.b64encode(data)` of the file's raw bytes, so the capture
@@ -1270,18 +1293,20 @@ Consumers unchanged:
   `tests/scripts/conftest.py::openrouter_wire`, which answers Box and also resets
   `decisions._service_cache`:
   `::test_capture_box_failure_does_not_block_raw_probes` expects `box["finding"] ==
-  {"reason": "http_status", "detail": "HTTP 400"}` on both wires;
+  {"reason": "http_status", "detail": "HTTP 400"}`;
   `::test_capture_output_omits_key_and_image` expects the image's base64 absent;
+  `::test_capture_box_failure_does_not_block_raw_probes` and
+  `::test_capture_records_bounded_redacted_http_errors` are parametrized over `wire_api`
+  `systemone` and `openrouter-decisions`. After #25789, Box routed to `systemone` is refused at
+  configuration load, so in both tests `wire_api` selects only the default endpoint, which
+  serves Choice, Noul, Score and the raw probes. Box is always overridden to the supported
+  `openrouter-decisions` fake endpoint, whose HTTP 400 the Box record captures;
   `::test_capture_records_bounded_redacted_http_errors` reads the Box record's `exchanges`;
-  `::test_capture_records_every_shape_and_probe` expects all four kinds sent.
+  `::test_capture_records_every_shape_and_probe` expects all four kinds sent. These four run on
+  the test file as #25789 leaves it.
 - `main` calls `_capture(config, args)` and writes its dict as JSON, so it needs no edit.
   `_parse_diagnostics` treats only Score questions specially, so the Box `questions` shape below
   is safe. 2.5 runs this script from the main checkout, so this leaf lands first.
-- #25789 (per-type decision backends) will change the configuration shape and make services
-  per endpoint. This leaf lands on the current single-endpoint code and has no edge to it.
-  #25789's item 3 names "the #22948 Box consumer" among the consumers it keeps working, and its
-  criterion 8 adds per-type endpoint flags to this same script and its tests, so it carries this
-  route and these tests forward (Decision 19).
 
 **Implementation:**
 1. **Tests first,** in `tests/scripts/test_decisions_live_capture.py`:
@@ -1290,8 +1315,12 @@ Consumers unchanged:
      `{"square": {"type": "box", "instructions": "Locate the red square.", "image_path": <the
      resolved image path>}}`; `image_sha256` equals the file's SHA-256; `tool_output` has
      `success` true, `type` `box`, the fake wire's Box answer and `response_model`; `exchanges`
-     holds one 200 exchange; exactly one Box request reached the wire; and
-     `gobby.ai.decisions._service_cache` equals its value before the run.
+     holds one 200 exchange; and
+     `gobby.ai.decisions._service_cache` equals its value before the run. It runs on the split
+     fixture #25789's criterion 8 tests use, with the default endpoint on one fake wire and the
+     Box override on another: the one Box request reaches the Box endpoint's wire and none reaches
+     the default's, `tool_output` carries that endpoint's `response_model` and `backend_identity`,
+     and Choice, Noul and Score still reach the default's wire.
    - `test_capture_box_rejects_unsupported_image_through_the_tool`: a GIF file as `--box-image`
      gives `finding` `{"reason": "invalid_request", "detail": "image must be a PNG or JPEG
      file"}`, sends no Box request, and the six probes still run.
@@ -1301,8 +1330,8 @@ Consumers unchanged:
      to `redactions`, and set `record["image_sha256"]`.
    - Set `record["consumer"] = "gobby-decisions:evaluate"` and `record["questions"]` to the tool's
      `questions` argument above.
-   - Save `decisions._service_cache`, set it to `(decisions._fingerprint(config), service)`, and
-     await `create_decisions_registry(lambda: DaemonConfig(ai=AIConfig(decisions=config))).call(
+   - With `config` the script's per-type `DecisionsConfig`, save `decisions._service_cache`, set it
+     to `(decisions._fingerprint(config), service)`, and await `create_decisions_registry(lambda: DaemonConfig(ai=AIConfig(decisions=config))).call(
      "evaluate", {"state": _STATE, "questions": record["questions"]})` once. Restore the saved
      value in `finally`.
    - Store the result as `record["tool_output"]`. When `success` is false, set
@@ -1312,11 +1341,11 @@ Consumers unchanged:
 
 **Acceptance:**
 
-- 2.4.1 - The Box record names `consumer` `gobby-decisions:evaluate`, carries the tool's `questions` argument with the absolute `image_path`, the image's `image_sha256`, the tool's typed output and one recorded exchange; one Box request reaches the wire; and the service cache is restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
+- 2.4.1 - With Box routed to its own endpoint, the Box record names `consumer` `gobby-decisions:evaluate`, carries the tool's `questions` argument with the absolute `image_path`, the image's `image_sha256`, the tool's typed output with the Box endpoint's `response_model` and `backend_identity`, and one recorded exchange; one Box request reaches the Box endpoint and none the default endpoint, which still receives Choice, Noul and Score; and the service cache is restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
 - 2.4.2 - A GIF `--box-image` yields the tool's `invalid_request` finding with detail "image must be a PNG or JPEG file", sends no Box request, and the six probes still run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool`.
-- 2.4.3 - The tool's HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status", "detail": "HTTP 400"}` on both wires and does not block the probes. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
+- 2.4.3 - With the default endpoint on each of `systemone` and `openrouter-decisions` and Box always overridden to the `openrouter-decisions` fake endpoint, the tool's HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status", "detail": "HTTP 400"}` and the default endpoint's probes still run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
 - 2.4.4 - The capture section omits the key and the base64 of the image file's bytes, and the script imports none of `LIVE_CONFIG_MODULES`. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.
-- 2.4.5 - The Box record's failed exchanges stay bounded and redacted through the tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
+- 2.4.5 - With the default endpoint on each of `systemone` and `openrouter-decisions` and Box always overridden to the `openrouter-decisions` fake endpoint, the Box record's failed exchanges stay bounded and redacted through the tool route. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
 - 2.4.6 - All four kinds still reach the wire, and the probe and cost records are unchanged. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.
 
 **Verification:** `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
@@ -1598,6 +1627,44 @@ changes no configuration file.
   steps and acceptance, and V2 item 6 now say so. Section 9's acceptance (2.5.3)
   now names the dated capture after the fixture sentence, because no Ollama Box
   result will exist to replace "remains unverified".
+- 2026-11-05: The Adversary's review of `5942a307faf590933ff3364a97544baa8dd26ab1`
+  raised two blocking findings, and the Orchestrator gobby#19309 ruled on both,
+  relayed by the lead gobby#19945.
+  - GP-20261105-05 (2.4 and #25789's criterion 8 both edit the capture script
+    and its tests, with nothing ordering them): option (b). 2.4 now depends on
+    #25789 and is written against its per-type configuration, replacing the
+    previous entry's "2.4 keeps today's single-endpoint seam". #25789 does not
+    wait on this plan. 2.4's heading, research, steps, first test and 2.4.1
+    now route Box to its own endpoint through the tool, on #25789's split
+    fixture.
+  - GP-20261105-06 (whether every shape crosses `gobby-decisions:evaluate`):
+    option (a). Only Box crosses it, and Choice, Noul and Score keep their
+    direct `DecisionService` calls.
+  - Decision 19, the Overview, the P2 granularity note and V2 item 7 now say so.
+- 2026-11-05: The Adversary's review of `b28c448ebcc97271b718be7e018fe64c007ad17a`
+  resolved GP-20261105-05 and -06 and raised GP-20261105-07: after #25789, Box
+  routed to `systemone` is refused at configuration load, so 2.4.3's HTTP 400
+  "on both wires" named an impossible route. 2.4's research, 2.4.3 and, by the
+  same sweep, 2.4.5 now say that the two `wire_api` parameters select the
+  default endpoint only and Box is always overridden to the `openrouter-decisions`
+  fake endpoint. No test, leaf or mechanism is added.
+- 2026-11-05: Consensus, replacing the consensus on
+  `9f725f1e614ee6dbc2953c97924717b90862348d` and the M1 stamp at
+  `109243edc9cdb1896e9236e481426fd1d6559b83`, both superseded by the #25789
+  ruling. The Plan Writer gobby#19935 and the resumed Adversary gobby#20142
+  reached technical consensus on plan commit
+  `d9820605d47cf133407e7e4a9def1a5436cf672c` (plan SHA-256
+  `9d35ca6f426919f4084fad6eb7d93bb1725f410542cb8dba866dccadb2c08fb3`), with
+  project-aware base validation passing for both. GP-20261105-05 through
+  GP-20261105-07 are resolved, and GP-20261105-01 through GP-20261105-04 stay
+  resolved. The Adversary found every routing decision fixed: 2.4 waits on
+  #25789, only Box crosses `gobby-decisions:evaluate`, 2.5 waits on 2.4 and
+  #25789, and the wire-parametrized failure tests name a supported Box
+  endpoint. The sole TBD text is the historical account of #24222's undelivered
+  report, whose decision Decision 2 resolves. The Plan Advocate gobby#19939
+  converged with no suggestions on `5942a307faf590933ff3364a97544baa8dd26ab1`
+  and was sent the later revisions. No open decision or blocking finding
+  remains.
 
 ## V2: Verification
 `kind: verification`
@@ -1620,4 +1687,266 @@ After the leaves pass:
    capture with Choice, Noul and Score on `clef:27b` and Box on `typesafe/jev-1.14`,
    whose Box record names `consumer` `gobby-decisions:evaluate`.
 7. Confirm #25788 is closed as superseded by #25789, and that #25789 closed before
-   the 2.5 capture ran.
+   the 2.4 route was written and before the 2.5 capture ran.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Rerun the Graphify comparison on current gcode
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The report records the fresh runtime root and its ownership
+    receipt, the dated script copies'' SHA-256 values, both tools'' identities (gcode
+    version, contract, and SHA-256 of the copied installed binary; Graphify''s PyPI
+    version and executable and lock SHA-256), the corpus commits, and at least five
+    interleaved, order-balanced pairs for each timed comparison (an even number, six
+    minimum, with equal AB/BA orders), with the load recorded at each run, raw samples,
+    both tools'' p50 timings and the p50 paired difference. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.2: The report gives C1 to C6 for both tools in the 09 table shape (seconds,
+    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
+    Graphify) beside the 09 numbers, and states that gcode''s C2 to C6 include the
+    community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.3: The report gives C7 for both tools: the marker each used, the one planned
+    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
+    recovered state equals a fresh clean C1 state, by the 09 signature for Graphify
+    and by step 4''s fact, projection and vector checks for gcode, with the gcode
+    row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.4: The report scores C8''s 14 frozen questions for both tools as in 09, and
+    states whether the gcode hybrid lane was included or excluded by the embedding
+    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.5: The report records Graphify''s deterministic community names, whether current
+    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
+    the reason), and gcode''s count of communities by `label_source`, each from its
+    own untimed state, without comparing community counts, and a section that states
+    the evidence for Josh''s #22604 decision without making it. behavior: "Decision
+    input for #22604" in `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.6: The report gives a verdict for each of the four parity+ properties by step
+    7''s producers and conditions, says whether each was measured in this run, records
+    every remap or retirement behavior no case exercised as `not-exercised`, and records
+    the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:1.1:1.1.1
+  - covers:gcode-graphify-parity-delta:1.1:1.1.2
+  - covers:gcode-graphify-parity-delta:1.1:1.1.3
+  - covers:gcode-graphify-parity-delta:1.1:1.1.4
+  - covers:gcode-graphify-parity-delta:1.1:1.1.5
+  - covers:gcode-graphify-parity-delta:1.1:1.1.6
+  tdd: false
+  source_section: '1.1'
+- title: Order size ties by community id in the graph views
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: `build_view_payload` lists two communities of equal
+    size with ids 10 and 2 as `community:2` then `community:10`, after any larger
+    community. test: `crates/gcode/src/commands/graph/view/render_tests.rs::view_orders_size_ties_by_numeric_community_id`.
+
+    1.2.2: The communities list view returns `["community:2", "community:10", "community:1"]`
+    for the existing three-community fixture. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id`.
+
+    1.2.3: An MCG view over stored communities 10 and 2 of equal size lists `community:2`
+    first, in the payload and in the Mermaid subgraph order. test: `crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:1.2:1.2.1
+  - covers:gcode-graphify-parity-delta:1.2:1.2.2
+  - covers:gcode-graphify-parity-delta:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Provision the rerun harness and pass C0
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: The record gives the runtime root and its ownership
+    receipt with owner task `#22948`, the commit and SHA-256 of every dated copy,
+    and each edit against its September copy, with no check removed beyond the Docker
+    probes replaced by the `observe` receipt and the `opendeepwiki` assertions. file:
+    `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.2: The record states the deviation: the Orchestrator ran `provision` and `observe`
+    from the main checkout, with each exact invocation, the `launch_services.py` SHA-256
+    and the service receipts, and no seat called Docker. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.3: The record shows the corpus commits and the verification of cases C0 to
+    C7, C8-baseline and C8-change against the September manifests with 0 mismatches,
+    and all 54 manifest projects registered with zero `code_indexed_file_states` rows
+    before the daemon started. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.4: The record shows the isolated binary set''s SHA-256 values and stamp, `binary_set_apply_refusal`
+    returning `None`, the daemon launch receipt under SRT with no worktree override,
+    and a passing `validate_environment.py --live` covering the signed grant, its
+    rejected tampered copy and all three services. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.5: The record gives C0 for both tools: gcode version, contract and schema
+    identity; Graphify''s PyPI version and executable and lock SHA-256; the embedding
+    preflight''s outcome; both C7 markers as observed before completion; the probe
+    set; and the SHA-256 of the frozen `command-manifest.json`. file: `docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md`.
+
+    2.1.6: A source-manifest symlink record passes only when its stored target equals
+    `os.readlink`, and `contained_file` still refuses that path for a content read.
+    test: `docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py::test_symlink_record_verifies_target_without_following`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.1:2.1.1
+  - covers:gcode-graphify-parity-delta:2.1:2.1.2
+  - covers:gcode-graphify-parity-delta:2.1:2.1.3
+  - covers:gcode-graphify-parity-delta:2.1:2.1.4
+  - covers:gcode-graphify-parity-delta:2.1:2.1.5
+  - covers:gcode-graphify-parity-delta:2.1:2.1.6
+  tdd: false
+  source_section: '2.1'
+- title: Measure C1 to C8 and report the verdicts
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The report gives both tools'' identities from `provisioning.md`,
+    the corpus commits, and six interleaved pairs for each timed comparison with equal
+    AB and BA orders, with the load recorded at each run, raw samples, both tools''
+    p50 timings, the p50 paired difference, and each voided pair with its reason.
+    file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.2: The report gives C1 to C6 for both tools in the September table shape (seconds,
+    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
+    Graphify) beside the September numbers, and states that gcode''s C2 to C6 include
+    the community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.3: The report gives C7 for both tools: the marker each used, the one planned
+    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
+    recovered state equals a fresh clean C1 state, by the September signature for
+    Graphify and by step 4''s fact, projection and vector checks for gcode, with the
+    gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.4: The report scores C8''s 14 frozen questions for both tools as in September,
+    and states whether the gcode hybrid lane was included or excluded by the embedding
+    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.5: The report records Graphify''s deterministic community names, whether current
+    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
+    the reason), and gcode''s count of communities by `label_source`, each from its
+    own untimed state, without comparing community counts. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.
+
+    2.2.6: The report gives a verdict for each of the four parity+ properties by step
+    7''s producers and conditions, says whether each was measured in this run, records
+    every remap or retirement behavior no case exercised as `not-exercised`, and records
+    the label-admission property as missing in live configuration. file: `docs/evidence/gcode-graphify-rerun-2026-11/report.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.2:2.2.1
+  - covers:gcode-graphify-parity-delta:2.2:2.2.2
+  - covers:gcode-graphify-parity-delta:2.2:2.2.3
+  - covers:gcode-graphify-parity-delta:2.2:2.2.4
+  - covers:gcode-graphify-parity-delta:2.2:2.2.5
+  - covers:gcode-graphify-parity-delta:2.2:2.2.6
+  tdd: false
+  source_section: '2.2'
+- title: Run the no-decisions label study and record the ship rule
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.3.1: The report records the `--no-decisions` branch and
+    Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness counts,
+    the 30 sampled communities (15 per corpus), the exact row count, and the generation-failure
+    count. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
+
+    2.3.2: The report gives the regression count for G against D over the 30 communities
+    and the ship rule it selects, 1 or 3, with the proposed `code_index.community_label.enabled`
+    value and every decision consumer `off`, and states that this branch has no J,
+    carry or sufficiency data, so rule 2 is unreachable. file: `docs/evidence/community-labels-2026-09/label-quality.md`.
+
+    2.3.3: The committed rated sheet holds Josh''s ratings for every row of the delivered
+    sheet, its item ids, paths and names unchanged, and `score` accepted it. file:
+    `docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv`.
+
+    2.3.4: The guide no longer says the study and ship decision are pending, and states
+    the outcome with a link to the report. file: `docs/guides/llm-features.md`.
+
+    2.3.5: The instructions name the 2026-11-05 selection and the new outputs, and
+    keep their earlier text as history. file: `docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.3:2.3.1
+  - covers:gcode-graphify-parity-delta:2.3:2.3.2
+  - covers:gcode-graphify-parity-delta:2.3:2.3.3
+  - covers:gcode-graphify-parity-delta:2.3:2.3.4
+  - covers:gcode-graphify-parity-delta:2.3:2.3.5
+  tdd: false
+  source_section: '2.3'
+- title: Route the capture's Box request through the registered evaluate tool
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.4.1: With Box routed to its own endpoint, the Box record
+    names `consumer` `gobby-decisions:evaluate`, carries the tool''s `questions` argument
+    with the absolute `image_path`, the image''s `image_sha256`, the tool''s typed
+    output with the Box endpoint''s `response_model` and `backend_identity`, and one
+    recorded exchange; one Box request reaches the Box endpoint and none the default
+    endpoint, which still receives Choice, Noul and Score; and the service cache is
+    restored. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool`.
+
+    2.4.2: A GIF `--box-image` yields the tool''s `invalid_request` finding with detail
+    "image must be a PNG or JPEG file", sends no Box request, and the six probes still
+    run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool`.
+
+    2.4.3: With the default endpoint on each of `systemone` and `openrouter-decisions`
+    and Box always overridden to the `openrouter-decisions` fake endpoint, the tool''s
+    HTTP 400 Box failure is recorded as `finding` `{"reason": "http_status", "detail":
+    "HTTP 400"}` and the default endpoint''s probes still run. test: `tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes`.
+
+    2.4.4: The capture section omits the key and the base64 of the image file''s bytes,
+    and the script imports none of `LIVE_CONFIG_MODULES`. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.
+
+    2.4.5: With the default endpoint on each of `systemone` and `openrouter-decisions`
+    and Box always overridden to the `openrouter-decisions` fake endpoint, the Box
+    record''s failed exchanges stay bounded and redacted through the tool route. test:
+    `tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors`.
+
+    2.4.6: All four kinds still reach the wire, and the probe and cost records are
+    unchanged. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.4:2.4.1
+  - covers:gcode-graphify-parity-delta:2.4:2.4.2
+  - covers:gcode-graphify-parity-delta:2.4:2.4.3
+  - covers:gcode-graphify-parity-delta:2.4:2.4.4
+  - covers:gcode-graphify-parity-delta:2.4:2.4.5
+  - covers:gcode-graphify-parity-delta:2.4:2.4.6
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Capture Choice, Noul and Score on local Clef and Box on Jev through OpenRouter,
+    and record the consumer evidence
+  category: docs
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: The dated capture section records Choice, Noul and
+    Score sent to `clef:27b` at `http://127.0.0.1:11434` on `systemone`, and a Box
+    record sent to `typesafe/jev-1.14` at `https://openrouter.ai/api` on `openrouter-decisions`
+    with `consumer` `gobby-decisions:evaluate`, its `image_sha256`, and the tool''s
+    parsed answer or its finding. file: `docs/evidence/decisions/systemone-live.md`.
+
+    2.5.2: The wire note''s "Decision shape consumers" section names a product consumer,
+    live-path test and serving backend for each of Choice, Noul, Score and Box, with
+    #24248''s closing commit and the Jev Box result, and when Box parsed it sets the
+    expected edges (top and left 0.25, bottom and right 0.75) beside the captured
+    ones. file: `docs/evidence/decisions/wire-contracts.md`.
+
+    2.5.3: Section 9 of the wire note names the dated capture and its Box result after
+    the sentence saying its fixtures are not a live Box consumer or backend capture.
+    file: `docs/evidence/decisions/wire-contracts.md`.
+
+    2.5.4: The committed image is 512 by 512 and white except for red pixels covering
+    exactly [128, 384) on both axes, and its SHA-256 equals both the one sent with
+    the Orchestrator''s command and the Box record''s `image_sha256`. file: `docs/evidence/decisions/box-red-square-2026-11.png`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:2.5:2.5.1
+  - covers:gcode-graphify-parity-delta:2.5:2.5.2
+  - covers:gcode-graphify-parity-delta:2.5:2.5.3
+  - covers:gcode-graphify-parity-delta:2.5:2.5.4
+  tdd: false
+  source_section: '2.5'
+```

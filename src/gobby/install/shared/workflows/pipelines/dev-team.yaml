@@ -1,6 +1,6 @@
 name: dev-team
 type: pipeline
-version: 5.0.0
+version: 7.0.0
 description: 'One DevTeam for a task or epic: developer, independent reviewer and dev-team-lead. A leaf
   run under a parent team launches no lead; the epic''s Dev Team Lead leads the leaf.'
 tags:
@@ -263,7 +263,10 @@ claim_flow:
     - test-after
     - self-review
     - validation
-    next: review
+    # Docs-category tasks take the docs reviewer; every other task takes the code reviewer.
+    next:
+    - review-docs
+    - review
   review:
     seat: reviewer
     done_when:
@@ -276,3 +279,23 @@ claim_flow:
     done_when:
     - validation
     - closing
+  implement-docs:
+    agent: docs-writer
+    done_when:
+    - test-before
+    - implementation
+    - test-after
+    - self-review
+    - validation
+    next: review-docs
+  review-docs:
+    agent: docs-reviewer
+    categories:
+    - docs
+    done_when:
+    - independent-review
+    next: validate
+    # The lane that produced the candidate takes a rejection back.
+    on_rejected:
+    - implement-docs
+    - implement
