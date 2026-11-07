@@ -434,3 +434,62 @@ fn a_native_launch_write_grants_follow_the_configured_build_root() -> Result<()>
     );
     Ok(())
 }
+
+#[test]
+fn a_seat_grant_cannot_reach_the_unsandboxed_cargo_target_root() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    // The unsandboxed trust domain's target root; a sandboxed seat must never be granted into it.
+    let unsandboxed = inputs.build_root.join("cargo-target-v2");
+
+    let policy = compile_policy(&inputs, &[], &[])?;
+
+    let reaching: Vec<&String> = policy
+        .sandbox
+        .extra_write_paths
+        .iter()
+        .filter(|path| Path::new(path).starts_with(&unsandboxed))
+        .collect();
+    assert!(
+        reaching.is_empty(),
+        "a seat grant reaches the unsandboxed cargo target root: {reaching:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_seat_grant_never_covers_the_spawn_env_cargo_home() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let gobby_home = gobby_home.canonicalize()?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    // The spawn env's CARGO_HOME is the unsandboxed trust domain's shared cargo home.
+    let unsandboxed = shared_cargo_home(&gobby_home);
+
+    let policy = compile_policy(&inputs, &[], &[])?;
+
+    let reaching: Vec<&String> = policy
+        .sandbox
+        .extra_write_paths
+        .iter()
+        .filter(|path| Path::new(path).starts_with(&unsandboxed))
+        .collect();
+    assert!(
+        reaching.is_empty(),
+        "a seat grant reaches the unsandboxed cargo home: {reaching:?}"
+    );
+    Ok(())
+}

@@ -173,14 +173,15 @@ fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) {
     }
 }
 
-/// `sandbox_write_paths`: the cache, Cargo target, and hook inbox paths a sandboxed run writes.
+/// `sandbox_write_paths`: the cache and hook inbox paths a sandboxed run writes. The spawn env's
+/// `CARGO_HOME` and `CARGO_TARGET_DIR` belong to the unsandboxed trust domain, so neither is granted
+/// here; the run's own cargo home and target are granted by `run_grants`.
 fn sandbox_write_paths(env: &BTreeMap<String, String>, inputs: &PolicyInputs) -> Vec<String> {
-    let mut paths: Vec<String> = [UV_CACHE_DIR, CARGO_HOME]
+    let mut paths: Vec<String> = [UV_CACHE_DIR]
         .into_iter()
         .chain(SANDBOX_CACHE_POLICY.iter().map(|(name, _)| *name))
         .map(|name| env.get(name).cloned().unwrap_or_default())
         .collect();
-    paths.push(env.get(CARGO_TARGET_DIR).cloned().unwrap_or_default());
     paths.push(text(
         &inputs.home.join(".gobby").join("hooks").join("inbox"),
     ));

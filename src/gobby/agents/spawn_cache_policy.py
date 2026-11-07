@@ -10,7 +10,6 @@ from pathlib import Path
 from gobby.agents.cargo_environment import cargo_environment
 from gobby.agents.constants import (
     CARGO_HOME,
-    CARGO_TARGET_DIR,
     GOBBY_SESSION_ID,
     UV_CACHE_DIR,
     ensure_agent_cargo_home_dir,
@@ -165,11 +164,13 @@ def _apply_sandbox_cache_policy(env_vars: dict[str, str]) -> None:
 
 
 def sandbox_write_paths(env_vars: dict[str, str]) -> list[str]:
-    """Return concrete paths that a sandboxed spawned agent must be able to use."""
-    paths = [
-        env_vars.get(env_var, "") for env_var in (*SPAWN_CACHE_ENV_VARS, *SANDBOX_CACHE_ENV_VARS)
-    ]
-    paths.append(env_vars.get(CARGO_TARGET_DIR, ""))
+    """Return concrete paths that a sandboxed spawned agent must be able to use.
+
+    The spawn env's CARGO_HOME and CARGO_TARGET_DIR belong to the unsandboxed trust domain,
+    so they are never granted: the run's own cargo home and target replace them, as
+    ``previous_run_write_paths`` supersedes them at launch.
+    """
+    paths = [env_vars.get(env_var, "") for env_var in (UV_CACHE_DIR, *SANDBOX_CACHE_ENV_VARS)]
     paths.append(hook_inbox_dir())
     return _dedupe(paths)
 

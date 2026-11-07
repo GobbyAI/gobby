@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from gobby.agents import srt_runtime
+from gobby.agents.cargo_target import ensure_agent_cargo_target_dir
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.agents.spawn_cache_policy import build_spawn_cache_env, sandbox_config_for_spawn
@@ -201,3 +202,35 @@ async def test_sandbox_cache_grants_keep_the_trust_split(
             assert exposed == []
         finally:
             shutil.rmtree(run_tmp, ignore_errors=True)
+
+
+def test_spawn_cargo_caches_are_never_granted_for_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    # A live spawn env carries the unsandboxed CARGO_TARGET_DIR beside the shared cache env.
+    spawn_env = {
+        **build_spawn_cache_env("session"),
+        "CARGO_TARGET_DIR": ensure_agent_cargo_target_dir(checkout, "project-id"),
+    }
+    config = sandbox_config_for_spawn(
+        SandboxConfig(enabled=True, backend="srt", allow_network=False), spawn_env
+    )
+    assert config is not None
+    # The spawn env's CARGO_HOME and CARGO_TARGET_DIR belong to the unsandboxed trust domain.
+    # The run's own cargo home and target are granted by the launch, so no grant may overlap
+    # either unsandboxed root, nor the cargo-target-v2 root that holds every seat's target.
+    target_root = gobby_home / "cache" / "cargo-target-v2"
+    unsandboxed_roots = (Path(spawn_env["CARGO_HOME"]), target_root)
+    assert Path(spawn_env["CARGO_TARGET_DIR"]).is_relative_to(target_root)
+    exposed = [
+        granted
+        for granted in config.extra_write_paths
+        for root in unsandboxed_roots
+        if Path(granted).resolve().is_relative_to(root.resolve())
+        or root.resolve().is_relative_to(Path(granted).resolve())
+    ]
+    assert exposed == []

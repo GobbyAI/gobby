@@ -1812,8 +1812,9 @@ class TestExecuteSpawnSandbox:
         assert Path(env_vars[CARGO_HOME]) == tmp_path / ".gobby" / "cache" / "cargo-home"
         assert "/already-allowed" in resolved.extra_write_paths
         assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
-        assert env_vars[CARGO_HOME] in resolved.extra_write_paths
-        assert "/shared/cargo-target/proj" in resolved.extra_write_paths
+        # The spawn env's cargo home and target are unsandboxed; the run replaces them.
+        assert env_vars[CARGO_HOME] not in resolved.extra_write_paths
+        assert "/shared/cargo-target/proj" not in resolved.extra_write_paths
         assert hook_inbox_dir() in resolved.extra_write_paths
         assert managed_tool_bin_dir() not in resolved.extra_write_paths
         assert config.extra_write_paths == ["/already-allowed"]
