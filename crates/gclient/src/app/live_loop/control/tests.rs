@@ -8,7 +8,7 @@ use super::super::jobs::LoopJobs;
 use super::super::outage_grant::GrantOutcome;
 use super::{apply_control_outcome, apply_outage_grant};
 use crate::app::live_control::ControlOutcome;
-use crate::app::{Backend, Pane, PaneId, Workspace};
+use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
 use crate::daemon::LiveDaemon;
 use crate::frame_source::{AttachLocator, PaneFrameSource, UnixSocketFrameSource};
 use crate::ui::Chrome;
@@ -82,8 +82,8 @@ async fn a_failed_grant_flush_reports_every_key_it_could_not_write() {
         &jobs,
         PaneId(1),
         &attachment,
+        0,
         Ok(GrantOutcome::Granted),
-        Vec::new(),
     );
 
     assert_eq!(
@@ -120,4 +120,75 @@ async fn a_failed_control_flush_reports_every_key_it_could_not_write() {
         3,
         "each key whose write failed is reported, not only the first"
     );
+}
+
+/// A host grant asked at lease 0 is refused after the daemon's take granted
+/// the pane at lease 1. That refusal describes the host before the take, so it
+/// must not revoke the grant the take gave (#25790).
+#[tokio::test]
+async fn a_refused_host_grant_from_before_the_daemon_grant_leaves_it_standing() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let mut pane = cut_pane_with_keys().await;
+    let attachment = pane.attachment_id().to_owned();
+    pane.set_lease_generation(1);
+    pane.control = ControlState::Held;
+    assert!(pane.apply_host_grant(Some(true)));
+    workspace.panes.insert(PaneId(1), pane);
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        PaneId(1),
+        &attachment,
+        0,
+        Ok(GrantOutcome::Refused("input_not_granted".into())),
+    );
+
+    let pane = workspace.pane(PaneId(1));
+    assert_eq!(
+        pane.control,
+        ControlState::Held,
+        "the daemon's grant stands"
+    );
+    assert!(
+        pane.direct_input(),
+        "the pane keeps typing on its host socket"
+    );
+}
+
+/// A refusal to a grant asked under the pane's current lease is the host's
+/// answer to that lease, so the pane gives the grant back (#25790).
+#[tokio::test]
+async fn a_refused_host_grant_under_the_current_lease_gives_the_pane_back() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let mut pane = cut_pane_with_keys().await;
+    let attachment = pane.attachment_id().to_owned();
+    pane.set_lease_generation(1);
+    pane.control = ControlState::Held;
+    assert!(pane.apply_host_grant(Some(true)));
+    workspace.panes.insert(PaneId(1), pane);
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        PaneId(1),
+        &attachment,
+        1,
+        Ok(GrantOutcome::Refused("input_not_granted".into())),
+    );
+
+    let pane = workspace.pane(PaneId(1));
+    assert_eq!(pane.control, ControlState::Observe);
+    assert!(pane.take_back, "the pane offers take-back");
+    assert!(!pane.direct_input());
 }
