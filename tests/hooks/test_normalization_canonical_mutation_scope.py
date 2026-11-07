@@ -50,6 +50,16 @@ def test_package_runner_preserves_mutation_scope(tmp_path: Path, command: str, t
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
+def _write_uv_project(directory: Path, workspace_members: list[str] | None = None) -> None:
+    """Write the pyproject.toml that makes uv discover this directory as its own project."""
+    directory.mkdir(parents=True, exist_ok=True)
+    text = '[project]\nname = "fixture"\nversion = "0.1.0"\ndependencies = []\n'
+    if workspace_members is not None:
+        members = ", ".join(f'"{member}"' for member in workspace_members)
+        text += f"\n[tool.uv.workspace]\nmembers = [{members}]\n"
+    (directory / "pyproject.toml").write_text(text, encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("command", "targets"),
     [
@@ -67,6 +77,8 @@ def test_package_runner_preserves_mutation_scope(tmp_path: Path, command: str, t
 def test_uv_lockfile_writes_resolve_project_targets(
     tmp_path: Path, command: str, targets: list[str]
 ) -> None:
+    for target in targets:
+        _write_uv_project((tmp_path / target).parent)
     data = _invocation_metadata(
         command.format(root=tmp_path), tool_cwd=tmp_path, project_path=tmp_path
     )
@@ -113,6 +125,65 @@ def test_uv_lock_check_is_not_a_repository_write(tmp_path: Path) -> None:
     )
 
     assert not data.get("canonical_repo_mutation")
+
+
+def test_uv_lock_project_without_pyproject_fails_closed(tmp_path: Path) -> None:
+    _write_uv_project(tmp_path)
+    child = tmp_path / "child"
+    child.mkdir()
+
+    data = _invocation_metadata(
+        f"uv lock --project {child}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_uv_lock_cwd_without_pyproject_fails_closed(tmp_path: Path) -> None:
+    _write_uv_project(tmp_path)
+    child = tmp_path / "child"
+    child.mkdir()
+
+    data = _invocation_metadata("uv lock", tool_cwd=child, project_path=tmp_path)
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_uv_lock_under_ancestor_workspace_fails_closed(tmp_path: Path) -> None:
+    outer = tmp_path / "outer"
+    _write_uv_project(outer, workspace_members=["inner"])
+    _write_uv_project(outer / "inner")
+
+    data = _invocation_metadata(
+        f"uv lock --project {outer / 'inner'}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_uv_lock_workspace_root_is_contained(tmp_path: Path) -> None:
+    outer = tmp_path / "outer"
+    _write_uv_project(outer, workspace_members=["inner"])
+    _write_uv_project(outer / "inner")
+
+    data = _invocation_metadata(
+        f"uv lock --project {outer}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert [tmp_path / path for path in data["canonical_file_paths"]] == [outer / "uv.lock"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+def test_uv_lock_unparseable_ancestor_pyproject_fails_closed(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.uv\n", encoding="utf-8")
+    child = tmp_path / "child"
+    _write_uv_project(child)
+
+    data = _invocation_metadata(
+        f"uv lock --project {child}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 @pytest.mark.parametrize(

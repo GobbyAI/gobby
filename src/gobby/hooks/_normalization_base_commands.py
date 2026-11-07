@@ -1,6 +1,7 @@
 """Classify plain shell commands independently of recursive shell execution."""
 
 import re
+import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,34 @@ _UV_LOCKFILE_OPERATIONS: dict[str, tuple[str, ...]] = {
 _UV_UNRESOLVED_TARGET_FLAGS = frozenset({"--script", "-s", "--package"})
 
 
+def _uv_workspace_declared(path: Path) -> bool:
+    """Whether a pyproject.toml declares [tool.uv.workspace]; unreadable or invalid counts as declared."""
+    if not path.is_file():
+        return False
+    try:
+        table = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return True
+    tool = table.get("tool")
+    uv = tool.get("uv") if isinstance(tool, dict) else None
+    return isinstance(uv, dict) and "workspace" in uv
+
+
+def _uv_project_is_proven(directory: str) -> bool:
+    """Whether uv resolves this directory to itself: its own pyproject, and no ancestor workspace.
+
+    uv walks upward from a directory for its project, and a workspace member's lockfile
+    belongs to the workspace root. Without both proofs the lockfile target is unproven.
+    """
+    try:
+        project = Path(directory).resolve()
+        if not (project / "pyproject.toml").is_file():
+            return False
+        return not any(_uv_workspace_declared(a / "pyproject.toml") for a in project.parents)
+    except (OSError, RuntimeError):
+        return False
+
+
 def _uv_lockfile_targets(parts: list[str], cwd: str | None) -> tuple[str, ...] | None:
     """Literal files a uv lock, add or remove writes, or None when its project is not literal."""
     values: dict[str, str] = {}
@@ -167,6 +196,8 @@ def _uv_lockfile_targets(parts: list[str], cwd: str | None) -> tuple[str, ...] |
     project = values.get("--project")
     directory = root if project is None else _rebase_shell_path(project, root)
     if directory is None or not directory.startswith("/"):
+        return None
+    if not _uv_project_is_proven(directory):
         return None
     return tuple(f"{directory.rstrip('/')}/{name}" for name in _UV_LOCKFILE_OPERATIONS[operation])
 
