@@ -379,7 +379,7 @@ async def test_ambiguous_publish_retires_generation_without_retry(
         native_publish.REQUEST_TIMEOUT,
         native_publish.REBIND_INTERVAL,
         native_publish.LEG_CLOSE_TIMEOUT,
-    ) == (2.0, 5.0, 1.0)
+    ) == (15.0, 5.0, 1.0)
     monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.2)
     monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.3)
     monkeypatch.setattr(native_publish, "LEG_CLOSE_TIMEOUT", 0.2)
@@ -849,3 +849,83 @@ async def test_publisher_admission_budgets_fail_generation_on_overflow(
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
     finally:
         await publisher.stop()
+
+
+async def test_loop_stall_under_host_load_keeps_the_front_door_bound(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A publish answered after a host-load loop stall completes; the door stays bound.
+
+    The stall is virtual: the loop clock jumps 3 s past the publish deadline while the request
+    is parked, as if the loop had been starved. The overdue deadline fires before the response
+    is released, the order the production stall produced. Production constants apply.
+    """
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    stalled = 0.0
+    monkeypatch.setattr(loop, "time", lambda: real_time() + stalled)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        assert publisher.generation == GEN1
+        daemon.gate = asyncio.Event()
+        pending = publisher.publish({"type": "agent_event", "n": 1})
+        await _until(daemon.received.is_set)
+        stalled += 3.0  # The loop was parked this long; the response is not yet read.
+        await asyncio.sleep(0)  # The loop resumes and runs the overdue publish deadline first.
+        daemon.gate.set()
+        await asyncio.wait_for(pending, 5.0)
+        assert publisher.generation == GEN1
+        assert daemon.ops() == [_publish_op({"type": "agent_event", "n": 1})]
+    finally:
+        await publisher.stop()
+
+
+async def test_wait_bound_returns_once_a_rebind_lands(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _Daemon()
+    daemon.bind_status = [503]
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        assert publisher.generation is None
+        assert await publisher.wait_bound(1.0) is True
+        assert publisher.generation == GEN1
+    finally:
+        await publisher.stop()
+
+
+async def test_wait_bound_gives_up_at_its_deadline(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _Daemon()
+    daemon.bind_status = [503] * 1000
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        assert await publisher.wait_bound(0.2) is False
+        assert publisher.generation is None
+    finally:
+        await publisher.stop()
+
+
+async def test_wait_bound_refuses_at_once_on_a_stopped_publisher(supervisor_token: str) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    await publisher.stop()
+    # A stopped publisher never binds again, so spawn must not wait out the full deadline.
+    async with asyncio.timeout(1.0):
+        assert await publisher.wait_bound() is False
+
+
+def test_front_door_wait_covers_two_bind_attempts_and_their_rebind_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 15.0)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 5.0)
+    assert native_publish.front_door_wait() == 40.0

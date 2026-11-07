@@ -33,7 +33,11 @@ MAX_WAITING_FUTURES = 65_536
 # still goes alone.
 MAX_BATCH_BYTES = 1024 * 1024
 
-REQUEST_TIMEOUT = 2.0
+# A publish or bind that outlives this deadline is ambiguous, so its generation retires and the
+# door unbinds. Overruns came from host-load loop stalls, not slow bodies or peers: 666 timed-out
+# publishes on 2026-11-06 and 2026-11-07 took a median 2.8 s, p99 11.2 s and max 19.2 s against
+# the old 2.0 s deadline. 15 s keeps 665 of those 666 bound.
+REQUEST_TIMEOUT = 15.0
 TOKEN_WAIT = 2.0
 TOKEN_POLL_INTERVAL = 0.05
 REBIND_INTERVAL = 5.0
@@ -85,6 +89,7 @@ class NativePublisher:
         self._retained_ops = 0
         self._in_flight: tuple[list[_Op], asyncio.Task[bool]] | None = None
         self._wake = asyncio.Event()
+        self._bound = asyncio.Event()
         self._sender: asyncio.Task[None] | None = None
         self._rebind: asyncio.Task[None] | None = None
         self._background: set[asyncio.Task[None]] = set()
@@ -153,6 +158,7 @@ class NativePublisher:
         if self._generation is not None:
             self._retire(self._generation)
         self._generation = generation
+        self._bound.set()
         return generation
 
     def publish(
@@ -172,9 +178,24 @@ class NativePublisher:
         self._retire(generation)
         self._schedule_rebind(immediate=True)
 
+    async def wait_bound(self, timeout: float | None = None) -> bool:
+        """Return whether the door is bound within ``timeout``, default ``front_door_wait()``."""
+        if self._bound.is_set():
+            return True
+        if self._stopped:
+            return False
+        try:
+            await asyncio.wait_for(
+                self._bound.wait(), front_door_wait() if timeout is None else timeout
+            )
+        except TimeoutError:
+            return False
+        return True
+
     async def stop(self) -> None:
         self._stopped = True
         self._generation = None
+        self._bound.clear()
         self._drop_queued(lambda op: True)
         tasks: list[asyncio.Task[Any]] = [*self._background]
         if self._in_flight is not None:
@@ -318,6 +339,7 @@ class NativePublisher:
     def _retire(self, generation: str) -> None:
         if self._generation == generation:
             self._generation = None
+            self._bound.clear()
         self._drop_queued(lambda op: op.generation == generation)
         if self._in_flight is not None:
             batch, request = self._in_flight
@@ -358,6 +380,11 @@ class NativePublisher:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+
+
+def front_door_wait() -> float:
+    """Longest wait for a bind: two bind attempts, each followed by one rebind interval."""
+    return 2 * (REQUEST_TIMEOUT + REBIND_INTERVAL)
 
 
 def _request_body(generation: str, ops: list[bytes]) -> bytes:
