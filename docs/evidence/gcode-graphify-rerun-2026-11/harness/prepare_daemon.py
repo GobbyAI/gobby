@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import yaml
@@ -65,22 +66,6 @@ def preserve_image_probe(dsn: str) -> None:
         )
 
 
-def known_config_values(values: dict[str, object]) -> tuple[dict[str, object], list[str]]:
-    # Keys the current registry no longer defines are dropped; the receipt lists each one.
-    from gobby.config.registry import CONFIG_REGISTRY, UnknownConfigKeyError
-
-    kept: dict[str, object] = {}
-    dropped: list[str] = []
-    for key, value in values.items():
-        try:
-            CONFIG_REGISTRY.resolve(key)
-        except UnknownConfigKeyError:
-            dropped.append(key)
-        else:
-            kept[key] = value
-    return kept, dropped
-
-
 def record_preparation(root: Path, revision: int, dropped_keys: list[str]) -> None:
     _write_json(
         root / f"receipts/daemon-preparation-rev-{revision}.json",
@@ -98,51 +83,39 @@ def record_preparation(root: Path, revision: int, dropped_keys: list[str]) -> No
     )
 
 
-RUNTIME_GOBBY_PROBE = (
-    "import json\n"
-    "import gobby\n"
-    "from gobby.utils.native_bin import resolve_native_bin\n"
-    "print(json.dumps({'gobby': gobby.__file__, 'gdaemon': resolve_native_bin('gdaemon')}))\n"
-)
-
-
 def runtime_python(root: Path) -> Path:
     # uv sync --frozen --project sources/gobby builds this gobby-sync environment.
     return root / "tools/gobby/venv/bin/python"
 
 
-def require_runtime_gobby(root: Path, env: dict[str, str]) -> None:
-    """Resolve gobby under the runtime interpreter; this process imports the epic tree instead."""
+def run_runtime_gobby(
+    root: Path, env: dict[str, str], operation: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Run one gobby step under the runtime interpreter, which verifies its own gobby first."""
+    worker = Path(__file__).with_name("runtime_gobby.py")
     try:
         completed = subprocess.run(
-            [str(runtime_python(root)), "-I", "-c", RUNTIME_GOBBY_PROBE],
+            [str(runtime_python(root)), "-I", str(worker), operation, str(root)],
+            input=json.dumps(payload),
             cwd=root / "sources/gobby",
             env=env,
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=600,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise EvidenceError(f"runtime interpreter probe failed: {error}") from error
+        raise EvidenceError(f"runtime gobby {operation} could not run: {error}") from error
     require(
         completed.returncode == 0,
-        f"runtime gobby probe exited {completed.returncode}: {completed.stderr.strip()}",
+        f"runtime gobby {operation} exited {completed.returncode}: {completed.stderr.strip()}",
     )
     try:
-        identity = json.loads(completed.stdout.splitlines()[-1])
+        return json.loads(completed.stdout.splitlines()[-1])
     except (IndexError, ValueError) as error:
         raise EvidenceError(
-            f"runtime gobby probe printed no identity: {completed.stdout!r}"
+            f"runtime gobby {operation} printed no result: {completed.stdout!r}"
         ) from error
-    require(
-        Path(identity["gobby"]).resolve().is_relative_to((root / "sources/gobby").resolve()),
-        f"runtime gobby resolves outside sources/gobby: {identity['gobby']}",
-    )
-    require(
-        identity["gdaemon"] == str(root / "gobby-home/bin/gdaemon"),
-        f"runtime gdaemon resolves to {identity['gdaemon']}",
-    )
 
 
 def prepare(root: Path) -> None:
@@ -152,11 +125,7 @@ def prepare(root: Path) -> None:
         if name not in clean:
             os.environ.pop(name)
     os.environ.update(clean)
-    require_runtime_gobby(root, clean)
-
-    from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
-    from gobby.storage.hub.postgres import PostgresHubDatabase
-    from gobby.storage.schema_contract import apply_schema
+    run_runtime_gobby(root, clean, "identity", {})
 
     credentials = _load_env_file(contained_file(root, "config/services.env"))
     dsn = (
@@ -184,12 +153,13 @@ def prepare(root: Path) -> None:
     _write_text(root / "gobby-home/bootstrap.yaml", yaml.safe_dump(bootstrap), mode=0o600)
     print("private bootstrap ready; applying pinned schema to owned PostgreSQL", flush=True)
     preserve_image_probe(dsn)
-    apply_schema(dsn, schema="public")
-    db = PostgresHubDatabase(dsn)
-    try:
-        mutations = ConfigMutations(db)
-        values, dropped_keys = known_config_values(
-            {
+    result = run_runtime_gobby(
+        root,
+        clean,
+        "prepare-daemon",
+        {
+            "dsn": dsn,
+            "values": {
                 "test_mode": True,
                 "tmux.enabled": False,
                 "terminal_host.enabled": False,
@@ -207,23 +177,11 @@ def prepare(root: Path) -> None:
                 "ai.embeddings.api_base": "http://127.0.0.1:1234/v1",
                 "ai.embeddings.dim": 768,
                 "ai.embeddings.query_prefix": "search_query: ",
-            }
-        )
-        revision = mutations.patch_internal(
-            expected_revision=mutations.repository.current_revision(),
-            source="wiki-bakeoff-22948",
-            patch=ConfigPatch(
-                values=values,
-                secrets={
-                    "databases.falkordb.password": SecretUpdate(
-                        plaintext=credentials["BAKEOFF_FALKORDB_PASSWORD"]
-                    ),
-                },
-            ),
-        )
-        record_preparation(root, revision.revision, dropped_keys)
-    finally:
-        db.close()
+            },
+            "falkordb_password": credentials["BAKEOFF_FALKORDB_PASSWORD"],
+        },
+    )
+    record_preparation(root, result["revision"], result["dropped_keys"])
     print("isolated schema and config prepared; no daemon or model generation started")
 
 

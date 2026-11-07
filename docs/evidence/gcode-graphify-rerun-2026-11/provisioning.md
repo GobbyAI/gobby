@@ -43,7 +43,7 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
      existing services receipt and skips the start;
    - builds `tools/graphify/venv` (`graphifyy==0.9.103`) and `tools/gobby/venv` (`uv sync --frozen`
      from `sources/gobby`), each through a probe receipt;
-   - runs `prepare_daemon.py` and `prepare_identity.py`. Each checks the runtime's `gobby` in a subprocess under `tools/gobby/venv/bin/python` (the gobby-sync environment), because the harness interpreter imports the epic tree;
+   - runs `prepare_daemon.py` and `prepare_identity.py`. Every step that touches `gobby` runs in `runtime_gobby.py` under `tools/gobby/venv/bin/python` (the gobby-sync environment) with `-I`, one subprocess per operation (`identity`, `prepare-daemon`, `prepare-identity`). Each operation first checks that its `gobby` resolves under `sources/gobby` and that `gdaemon` resolves to `gobby-home/bin/gdaemon`, and refuses otherwise. `prepare()` and `prepare_identity()` run no `gobby` import in the harness process; the tests check this;
    - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by
      nothing, through probe receipts;
    - asserts zero `code_indexed_file_states` rows for every workspace project.

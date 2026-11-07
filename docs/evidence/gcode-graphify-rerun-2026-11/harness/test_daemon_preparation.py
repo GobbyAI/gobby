@@ -1,16 +1,18 @@
 """Check child environment isolation without importing or starting the daemon."""
 
+import io
 import json
 import os
+import sys
+from importlib.abc import MetaPathFinder
 from pathlib import Path
-from typing import NoReturn
 
 import prepare_daemon
 import prepare_identity
 import pytest
-from prepare_daemon import isolated_environment, known_config_values, record_preparation
-
-import gobby
+import runtime_gobby
+from prepare_daemon import isolated_environment, record_preparation
+from runtime_gobby import known_config_values
 
 
 def test_child_clears_managed_identity_and_shared_datastores(tmp_path: Path) -> None:
@@ -62,34 +64,61 @@ def test_known_config_values_drops_unregistered_keys() -> None:
     assert dropped == ["zz_retired_bakeoff_key"]
 
 
-class _ReachedDatabase(Exception):
-    """Stops preparation at its first database call, after the identity check has passed."""
+class _NoGobbyImports(MetaPathFinder):
+    """Fails any gobby import in this process, so step 3 can reach gobby only through the runtime."""
+
+    def find_spec(self, fullname: str, path: object, target: object = None) -> None:
+        if fullname == "gobby" or fullname.startswith("gobby."):
+            raise AssertionError(f"in-process import of {fullname} during step 3")
+        return None
 
 
-def _stop_at_database(*_args: object) -> NoReturn:
-    raise _ReachedDatabase
+def _forbid_in_process_gobby(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Cached gobby modules would satisfy an import without consulting the finder, so drop them.
+    for name in [name for name in sys.modules if name == "gobby" or name.startswith("gobby.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [_NoGobbyImports(), *sys.meta_path])
 
 
 def _runtime_root(tmp_path: Path) -> Path:
-    """A runtime root whose interpreter stands in for the gobby-sync environment."""
+    """A runtime root whose interpreter stands in for the gobby-sync environment.
+
+    The stand-in logs the interpreter path and operation of each call, then answers with the
+    output the real worker prints.
+    """
     root = tmp_path / "root"
     (root / "sources/gobby").mkdir(parents=True)
     interpreter = root / "tools/gobby/venv/bin/python"
     interpreter.parent.mkdir(parents=True)
-    report = json.dumps(
+    identity = json.dumps(
         {
             "gobby": str(root / "sources/gobby/src/gobby/__init__.py"),
             "gdaemon": str(root / "gobby-home/bin/gdaemon"),
         }
     )
-    # The stand-in records the path it was executed by, then prints its own gobby identity.
+    answers = {
+        "prepare-daemon": json.dumps({"revision": 1, "dropped_keys": []}),
+        "prepare-identity": json.dumps(
+            {"user_id": "user-1", "email": "bakeoff-22948@example.invalid", "created": True}
+        ),
+    }
+    cases = "".join(
+        f"  {operation}) printf '%s\\n' '{answer}' ;;\n" for operation, answer in answers.items()
+    )
     interpreter.write_text(
         "#!/bin/sh\n"
-        f"printf '%s' \"$0\" > '{root / 'interpreter-used.txt'}'\n"
-        f"printf '%s\\n' '{report}'\n"
+        f"printf '%s %s\\n' \"$0\" \"$3\" >> '{root / 'invocations.txt'}'\n"
+        'case "$3" in\n'
+        f"{cases}"
+        f"  *) printf '%s\\n' '{identity}' ;;\n"
+        "esac\n"
     )
     interpreter.chmod(0o755)
     return root
+
+
+def _invocations(root: Path) -> list[str]:
+    return (root / "invocations.txt").read_text().splitlines()
 
 
 def _services_env(root: Path) -> None:
@@ -109,32 +138,43 @@ def _bootstrap(root: Path) -> None:
     )
 
 
-def test_runtime_identity_is_probed_by_the_runtime_interpreter(
+def test_prepare_runs_every_gobby_step_under_the_runtime_interpreter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _runtime_root(tmp_path)
-    # The condition under test: this process's own gobby resolves outside the runtime root.
-    assert not Path(gobby.__file__).resolve().is_relative_to(root.resolve())
     _services_env(root)
+    _forbid_in_process_gobby(monkeypatch)
     monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
-    monkeypatch.setattr(prepare_daemon, "preserve_image_probe", _stop_at_database)
+    monkeypatch.setattr(prepare_daemon, "preserve_image_probe", lambda _dsn: None)
+    runtime = str(root / "tools/gobby/venv/bin/python")
 
-    with pytest.raises(_ReachedDatabase):
-        prepare_daemon.prepare(root)
+    prepare_daemon.prepare(root)
 
-    assert (root / "interpreter-used.txt").read_text() == str(root / "tools/gobby/venv/bin/python")
+    assert _invocations(root) == [f"{runtime} identity", f"{runtime} prepare-daemon"]
+    assert (root / "receipts/daemon-preparation-rev-1.json").is_file()
 
 
-def test_account_identity_is_probed_by_the_runtime_interpreter(
+def test_worker_refuses_a_gobby_outside_the_runtime_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # This process's gobby is the epic tree, so the worker's own check must refuse it.
+    (tmp_path / "sources/gobby").mkdir(parents=True)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+
+    assert runtime_gobby.main(["runtime_gobby.py", "identity", str(tmp_path)]) == 2
+    assert "resolves outside sources/gobby" in capsys.readouterr().err
+
+
+def test_identity_runs_every_gobby_step_under_the_runtime_interpreter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _runtime_root(tmp_path)
-    assert not Path(gobby.__file__).resolve().is_relative_to(root.resolve())
     _bootstrap(root)
+    _forbid_in_process_gobby(monkeypatch)
     monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
-    monkeypatch.setattr("gobby.storage.hub.postgres.PostgresHubDatabase", _stop_at_database)
+    runtime = str(root / "tools/gobby/venv/bin/python")
 
-    with pytest.raises(_ReachedDatabase):
-        prepare_identity.prepare_identity(root)
+    prepare_identity.prepare_identity(root)
 
-    assert (root / "interpreter-used.txt").read_text() == str(root / "tools/gobby/venv/bin/python")
+    assert _invocations(root) == [f"{runtime} prepare-identity"]
+    assert json.loads((root / "receipts/daemon-identity.json").read_text()) == {"user_id": "user-1"}

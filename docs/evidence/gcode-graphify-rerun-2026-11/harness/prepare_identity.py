@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import secrets
 from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
-from prepare_daemon import isolated_environment, require_runtime_gobby
+from prepare_daemon import isolated_environment, run_runtime_gobby
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
 from runtime_boundary import assert_owned_runtime, contained_file, require
 
@@ -18,12 +19,6 @@ def prepare_identity(root: Path) -> None:
     clean = isolated_environment(root, dict(os.environ))
     os.environ.clear()
     os.environ.update(clean)
-    require_runtime_gobby(root, clean)
-
-    from gobby.cli.install_identity import ensure_install_identity
-    from gobby.identity import hash_password
-    from gobby.storage.hub.postgres import PostgresHubDatabase
-    from gobby.storage.users import LocalUserManager
 
     bootstrap = yaml.safe_load(contained_file(root, "gobby-home/bootstrap.yaml").read_text())
     parsed = urlparse(bootstrap["database_url"])
@@ -34,40 +29,30 @@ def prepare_identity(root: Path) -> None:
     require(
         parsed.path == "/gobby_bakeoff_22948", "check failed: parsed.path == '/gobby_bakeoff_22948'"
     )
-    db = PostgresHubDatabase(bootstrap["database_url"])
-    try:
-        users = LocalUserManager(db)
-        existing = users.list()
-        require(len(existing) <= 1, "ambiguous isolated installation identity")
-        if not existing:
-            account_path = root / "config/daemon-account.json"
-            if account_path.exists():
-                import json
-
-                account = json.loads(contained_file(root, account_path).read_text())
-            else:
-                account = {
-                    "email": "bakeoff-22948@example.invalid",
-                    "password": secrets.token_urlsafe(32),
-                }
-                _write_json(account_path, account, mode=0o600)
-            require(
-                account["email"] == "bakeoff-22948@example.invalid",
-                "check failed: account['email'] == 'bakeoff-22948@example.invalid'",
-            )
-            users.create(
-                name="Wiki bakeoff 22948",
-                email=account["email"],
-                password_hash=hash_password(account["password"]),
-            )
-        user = ensure_install_identity(db, no_interactive=True)
-        require(
-            user.email == "bakeoff-22948@example.invalid",
-            "check failed: user.email == 'bakeoff-22948@example.invalid'",
-        )
-        _write_json(root / "receipts/daemon-identity.json", {"user_id": user.id})
-    finally:
-        db.close()
+    account_path = root / "config/daemon-account.json"
+    account_is_new = not account_path.exists()
+    if account_is_new:
+        account = {"email": "bakeoff-22948@example.invalid", "password": secrets.token_urlsafe(32)}
+    else:
+        account = json.loads(contained_file(root, account_path).read_text())
+    require(
+        account["email"] == "bakeoff-22948@example.invalid",
+        "check failed: account['email'] == 'bakeoff-22948@example.invalid'",
+    )
+    # The runtime creates the account only when no user exists; the file is written only then.
+    result = run_runtime_gobby(
+        root,
+        clean,
+        "prepare-identity",
+        {"database_url": bootstrap["database_url"], "account": account},
+    )
+    if result["created"] and account_is_new:
+        _write_json(account_path, account, mode=0o600)
+    require(
+        result["email"] == "bakeoff-22948@example.invalid",
+        "check failed: user.email == 'bakeoff-22948@example.invalid'",
+    )
+    _write_json(root / "receipts/daemon-identity.json", {"user_id": result["user_id"]})
     print("isolated account and machine identity prepared")
 
 
