@@ -344,7 +344,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
     }
     // Bound both cardinality and sample size; large unique events retain the
     // existing durable backlog limit. Repeats flush every second and on close.
-    if (message.length <= 8192) {
+    if (message.length <= repeatableMessageLength) {
       if (state.repeats.size === 64) {
         const oldest = state.repeats.keys().next().value
         const pending = state.repeats.get(oldest)
@@ -724,8 +724,10 @@ function appendViolations(path, store, recorded) {
   return total
 }
 
-// The monitor repeats a message's summary only while it is among its last 64
-// distinct messages, so the verdicts of the last 256 first events always cover it.
+// The monitor repeats only messages up to repeatableMessageLength characters, and
+// only while they are among its last 64 such messages. Verdicts kept for exactly
+// those messages, the last 256 of them, therefore cover every summary it can write.
+const repeatableMessageLength = 8192
 const verdictLimit = 256
 function rememberVerdict(verdicts, message, accepted) {
   verdicts.delete(message)
@@ -801,7 +803,7 @@ async function main() {
           const store = SandboxManager.getSandboxViolationStore()
           const before = store.getTotalCount()
           deliver(message)
-          rememberVerdict(firstEventVerdicts, message, store.getTotalCount() > before)
+          if (message.length <= repeatableMessageLength) rememberVerdict(firstEventVerdicts, message, store.getTotalCount() > before)
         }
         transport.on('summary', record => {
           // No verdict means the first event was never judged here, so keep the record.

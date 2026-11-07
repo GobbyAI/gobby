@@ -86,3 +86,36 @@ def test_summary_follows_canonical_verdict_of_its_message(
     finally:
         harness.finish()
         child.communicate(timeout=15)
+
+
+def test_long_unique_events_do_not_evict_a_noise_verdict(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    child = harness.launch(_SUFFIX)
+    journal = harness.root / f"{_SUFFIX}.jsonl"
+    try:
+        assert child.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=15)
+            assert json.loads(child.stdout.readline()) is None
+        # Distinct events longer than the monitor's 8192-character repeat bound are
+        # never repeated, so they must not push the noise's verdict out of the cache.
+        padding = "x" * 8200
+        harness.events.write(json.dumps({"eventMessage": _FILTERED}) + "\n")
+        for index in range(257):
+            long_message = (
+                f"Sandbox: node(9) deny(1) file-write-create /tmp/long-{index} {padding} {_SUFFIX}"
+            )
+            harness.events.write(json.dumps({"eventMessage": long_message}) + "\n")
+        harness.events.write((json.dumps({"eventMessage": _FILTERED}) + "\n") * 9)
+        harness.events.write((json.dumps({"eventMessage": _FILE_WRITE}) + "\n") * 5)
+        harness.events.flush()
+
+        records = _wait_for_journal(journal, lambda found: _count(found, _FILE_WRITE) == 5)
+
+        assert _count(records, _FILTERED) == 0
+    finally:
+        harness.finish()
+        child.communicate(timeout=15)
