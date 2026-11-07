@@ -62,20 +62,27 @@ def watch_pytest_parent() -> Iterator[None]:
         watcher.join(timeout=1)
 
 
+_MODULE_PROGRESS_INTERVAL_SECONDS = 1.0
+
+
 @contextmanager
 def stage_timings(stream: TextIO) -> Iterator[Callable[[str], AbstractContextManager[None]]]:
     started_at = time.monotonic()
     lock = threading.Lock()
 
-    def record(stage: str, state: str, duration: float | None = None) -> None:
-        # Function names, elapsed time and PID only; never arguments or errors.
-        payload = {
+    def record(
+        stage: str, state: str, duration: float | None = None, modules: int | None = None
+    ) -> None:
+        # Function names, elapsed time, PID and module counts only; never arguments or errors.
+        payload: dict[str, Any] = {
             "pid": os.getpid(),
             "stage": stage,
             "state": state,
             "at_seconds": round(time.monotonic() - started_at, 6),
             "duration_seconds": duration,
         }
+        if modules is not None:
+            payload["modules"] = modules
         with lock:
             stream.write(json.dumps(payload) + "\n")
             stream.flush()
@@ -92,7 +99,24 @@ def stage_timings(stream: TextIO) -> Iterator[Callable[[str], AbstractContextMan
         else:
             record(name, "completed", time.monotonic() - start)
 
-    yield stage
+    stop = threading.Event()
+
+    def watch_module_growth() -> None:
+        # Import growth is observable progress before the runner completes its first stage.
+        seen = len(sys.modules)
+        while not stop.wait(_MODULE_PROGRESS_INTERVAL_SECONDS):
+            count = len(sys.modules)
+            if count != seen:
+                seen = count
+                record("module imports", "progress", modules=count)
+
+    watcher = threading.Thread(target=watch_module_growth, name="startup-module-watch", daemon=True)
+    watcher.start()
+    try:
+        yield stage
+    finally:
+        stop.set()
+        watcher.join(timeout=1)
 
 
 @contextmanager
