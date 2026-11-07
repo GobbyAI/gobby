@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from gobby.memory import stage_timing
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorTimeoutError
 from gobby.memory.scoring import temporal_decay
 
@@ -623,20 +624,22 @@ class KnowledgeGraphReader:
                     related_entity_keys,
                     components_by_entity,
                     admission_score_by_entity,
-                ) = await self._find_related_entity_keys(
-                    seed_keys,
-                    max_hops,
-                    limit,
-                    project_id,
-                    include_global,
-                    rows_cache=rows_cache,
+                ) = await stage_timing.timed_await(
+                    "graph_neighbors",
+                    self._find_related_entity_keys(
+                        seed_keys,
+                        max_hops,
+                        limit,
+                        project_id,
+                        include_global,
+                        rows_cache=rows_cache,
+                    ),
                 )
-                cluster_entity_keys = await self._find_cluster_entity_keys(
-                    seed_keys,
-                    seed_keys,
-                    related_entity_keys,
-                    project_id,
-                    include_global,
+                cluster_entity_keys = await stage_timing.timed_await(
+                    "graph_cluster",
+                    self._find_cluster_entity_keys(
+                        seed_keys, seed_keys, related_entity_keys, project_id, include_global
+                    ),
                 )
                 memory_entity_keys = list(
                     dict.fromkeys([*related_entity_keys, *cluster_entity_keys])
@@ -645,30 +648,36 @@ class KnowledgeGraphReader:
                     self._record_traversal_success()
                     return RelatedMemoryTraversal()
 
-                rows = await self._falkor.query(
-                    "UNWIND $entity_keys AS entity_key WITH entity_key "
-                    "MATCH (e:_Entity {entity_key: entity_key})"
-                    "-[:MENTIONED_IN]->(m:Memory) "
-                    "WHERE ((e.project_id = $project_id AND e.is_global = false) "
-                    "OR ($include_global AND e.is_global = true)) "
-                    "AND ((m.project_id = $project_id AND m.is_global = false) "
-                    "OR ($include_global AND m.is_global = true)) "
-                    "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
-                    "ORDER BY updated_at DESC LIMIT $limit",
-                    {
-                        "entity_keys": memory_entity_keys,
-                        "limit": limit,
-                        "project_id": project_id,
-                        "include_global": include_global,
-                    },
+                rows = await stage_timing.timed_await(
+                    "graph_memory_links",
+                    self._falkor.query(
+                        "UNWIND $entity_keys AS entity_key WITH entity_key "
+                        "MATCH (e:_Entity {entity_key: entity_key})"
+                        "-[:MENTIONED_IN]->(m:Memory) "
+                        "WHERE ((e.project_id = $project_id AND e.is_global = false) "
+                        "OR ($include_global AND e.is_global = true)) "
+                        "AND ((m.project_id = $project_id AND m.is_global = false) "
+                        "OR ($include_global AND m.is_global = true)) "
+                        "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
+                        "ORDER BY updated_at DESC LIMIT $limit",
+                        {
+                            "entity_keys": memory_entity_keys,
+                            "limit": limit,
+                            "project_id": project_id,
+                            "include_global": include_global,
+                        },
+                    ),
                 )
                 memory_ids = [r["memory_id"] for r in rows if r.get("memory_id")]
-                component_map = await self._attribute_edge_components(
-                    memory_ids=memory_ids,
-                    components_by_entity=components_by_entity,
-                    admission_score_by_entity=admission_score_by_entity,
-                    project_id=project_id,
-                    include_global=include_global,
+                component_map = await stage_timing.timed_await(
+                    "graph_attributes",
+                    self._attribute_edge_components(
+                        memory_ids=memory_ids,
+                        components_by_entity=components_by_entity,
+                        admission_score_by_entity=admission_score_by_entity,
+                        project_id=project_id,
+                        include_global=include_global,
+                    ),
                 )
                 self._record_traversal_success()
                 return RelatedMemoryTraversal(memory_ids=memory_ids, component_map=component_map)

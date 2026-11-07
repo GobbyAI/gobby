@@ -16,6 +16,7 @@ Run against the isolated test service:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
@@ -64,6 +65,21 @@ async def test_live_fixture_installs_schema_and_always_closes(
 PROJECT_ID = "traversal-live-project"
 HUB_KEY = "traversal-live:hub"
 NEIGHBOR_COUNT = 2000
+
+
+async def test_cancelled_response_reconnects_before_next_query(live_client: FalkorClient) -> None:
+    from gobby.memory import stage_timing
+
+    with stage_timing.recording() as timings:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                live_client._execute_command("BLPOP", live_client._graph_name + ":absent", 0),
+                timeout=0.1,
+            )
+        assert await asyncio.wait_for(live_client.ping(), timeout=2.0)
+    assert timings.calls["falkor_response_cancelled"] == 1
+    assert timings.calls["falkor_connection_opened"] == 1
+
 
 _SEED_CYPHER = (
     "CREATE (h:_Entity {entity_key: $hub, project_id: $pid, is_global: false, name: 'hub'}) "
