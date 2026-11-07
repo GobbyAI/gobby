@@ -30,10 +30,9 @@ struct InFlight {
     reply: JoinHandle<Result<Value, DaemonError>>,
 }
 
-/// The outcome of the oldest in-flight write, and whether it went unconfirmed.
+/// The outcome and byte count of the oldest in-flight write.
 struct Settled {
     outcome: JobOutcome,
-    unconfirmed: bool,
     bytes: usize,
 }
 
@@ -47,22 +46,16 @@ async fn settle_front(inflight: &mut VecDeque<InFlight>, pane: PaneId) -> Settle
     let front = inflight
         .pop_front()
         .expect("the front write stays queued until it settles");
-    let (result, unconfirmed) = match joined {
-        Ok(Ok(reply)) => (
-            JobResult::Write {
-                pane,
-                bytes: front.bytes,
-                reply,
-            },
-            false,
-        ),
-        Ok(Err(_)) | Err(_) => (
-            JobResult::WriteUnconfirmed {
-                pane,
-                attachment: front.attachment,
-            },
-            true,
-        ),
+    let result = match joined {
+        Ok(Ok(reply)) => JobResult::Write {
+            pane,
+            bytes: front.bytes,
+            reply,
+        },
+        Ok(Err(_)) | Err(_) => JobResult::WriteUnconfirmed {
+            pane,
+            attachment: front.attachment,
+        },
     };
     Settled {
         outcome: JobOutcome {
@@ -73,7 +66,6 @@ async fn settle_front(inflight: &mut VecDeque<InFlight>, pane: PaneId) -> Settle
             },
             result,
         },
-        unconfirmed,
         bytes: front.bytes,
     }
 }
@@ -83,9 +75,9 @@ async fn settle_front(inflight: &mut VecDeque<InFlight>, pane: PaneId) -> Settle
 fn deliver(settled: Settled, backlog: &Backlog, outcomes: &UnboundedSender<JobOutcome>) -> bool {
     backlog.messages.fetch_sub(1, Ordering::AcqRel);
     backlog.bytes.fetch_sub(settled.bytes, Ordering::AcqRel);
-    if settled.unconfirmed {
-        backlog.stopped.store(true, Ordering::Release);
-    }
+    // Typing invariant: a lost reply for an already-written frame must not
+    // retire this writer or discard keys queued behind it. Socket write failure,
+    // explicit retirement and connection generations fence unsafe writes.
     outcomes.send(settled.outcome).is_ok()
 }
 
@@ -348,10 +340,8 @@ impl PaneWriter {
                             .as_str()
                             .unwrap_or_default()
                             .to_owned();
-                        // An unconfirmed write stops this writer, so nothing
-                        // queued behind it may go out under that uncertainty;
-                        // nor may a write typed for a connection
-                        // that has since been replaced.
+                        // Retired writers and failed socket writes cannot send
+                        // queued keys, nor can a replaced connection generation.
                         if drained.stopped.load(Ordering::Acquire)
                             || generation != daemon.generation()
                         {
@@ -508,3 +498,7 @@ impl PaneWriter {
         Ok(false)
     }
 }
+
+#[cfg(test)]
+#[path = "writer/tests.rs"]
+mod tests;

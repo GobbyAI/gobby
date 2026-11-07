@@ -773,53 +773,35 @@ impl LiveShutdownStall {
     }
 }
 
-async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
-    timeout(Duration::from_secs(1), async {
-        loop {
-            if mock.requests().iter().any(|request| {
-                request
-                    .body
-                    .as_ref()
-                    .and_then(|body| body.get("type"))
-                    .and_then(Value::as_str)
-                    == Some(kind)
-            }) {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
+async fn wait_for_ws_request(mock: &MockDaemon, kind: &str, context: &str) {
+    timeout(
+        Duration::from_secs(1),
+        mock.wait_for_request(|request| {
+            request
+                .body
+                .as_ref()
+                .and_then(|body| body.get("type"))
+                .and_then(Value::as_str)
+                == Some(kind)
+        }),
+    )
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {kind}"));
+    .unwrap_or_else(|_| panic!("{context} timed out waiting for {kind}"));
 }
 
-/// Attachment id of the terminal's latest `terminal_focus` report, when it reported focus.
-fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
-    let last = mock
-        .requests()
-        .into_iter()
-        .filter_map(|request| request.body)
-        .rfind(|body| {
-            body.get("type") == Some(&json!("terminal_focus"))
-                && body.get("terminal_id") == Some(&json!(terminal_id))
-        })?;
-    if last.get("focused") != Some(&json!(true)) {
-        return None;
+async fn wait_for_live_readiness(mock: &MockDaemon, terminal_id: &str) {
+    // Startup is an event precondition, distinct from the timed input and
+    // shutdown assertions. The caller bounds the whole setup/exit operation.
+    for kind in ["terminal_set_viewport", "terminal_focus"] {
+        let matches_body = |body: &Value| {
+            body["type"] == kind
+                && body["terminal_id"] == terminal_id
+                && (kind != "terminal_focus"
+                    || (body["focused"] == true && body["attachment_id"].as_str().is_some()))
+        };
+        mock.wait_for_request(|request| request.body.as_ref().is_some_and(&matches_body))
+            .await;
     }
-    last.get("attachment_id")?.as_str().map(str::to_owned)
-}
-
-async fn wait_for_focused_attachment(mock: &MockDaemon) {
-    timeout(Duration::from_secs(1), async {
-        while ["terminal-shutdown", "terminal-exit"]
-            .iter()
-            .all(|id| focused_attachment(mock, id).is_none())
-        {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed out waiting for a focused attachment report");
 }
 
 async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
@@ -912,16 +894,10 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         // Startup performs several daemon requests, each with its own 5 s
         // production budget. Its readiness precondition must not consume the
         // shutdown budget or fail at the old one-second viewport probe.
-        timeout(Duration::from_secs(30), async {
-            while !mock
-                .activity()
-                .iter()
-                .any(|entry| entry == "WS terminal_set_viewport")
-                || focused_attachment(&mock, "terminal-shutdown").is_none()
-            {
-                tokio::task::yield_now().await;
-            }
-        })
+        timeout(
+            Duration::from_secs(30),
+            wait_for_live_readiness(&mock, "terminal-shutdown"),
+        )
         .await
         .unwrap_or_else(|_| {
             panic!(
@@ -930,7 +906,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
             )
         });
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_ws_request(&mock, "terminal_input").await;
+        wait_for_ws_request(&mock, "terminal_input", &format!("{trigger:?}/{stall:?}")).await;
         let reconnect = if matches!(stall, LiveShutdownStall::ReconnectJoin) {
             let gate = mock.pause_next_websocket();
             let reconnect = {
@@ -1097,10 +1073,9 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     guard.arm(false).expect("arm recording terminal");
 
     let driver = async {
-        wait_for_ws_request(&mock, "terminal_set_viewport").await;
-        wait_for_focused_attachment(&mock).await;
+        wait_for_live_readiness(&mock, "terminal-exit").await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_ws_request(&mock, "terminal_input").await;
+        wait_for_ws_request(&mock, "terminal_input", &format!("{cause:?}")).await;
         match cause {
             LiveExitCause::Quit => {
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -1161,9 +1136,8 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     };
 
     let mut switch = TerminalGuard::recording().0;
-    let (loop_result, ()) = tokio::join!(
-        timeout(
-            Duration::from_secs(30),
+    let (loop_result, ()) = timeout(Duration::from_secs(30), async {
+        tokio::join!(
             run_live_loop(
                 &mut workspace,
                 &mut terminal,
@@ -1171,12 +1145,12 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
                 input_rx,
                 &mut switch
             ),
-        ),
-        driver,
-    );
-    loop_result
-        .unwrap_or_else(|_| panic!("{cause:?} exceeded the outer exit bound"))
-        .unwrap_or_else(|error| panic!("{cause:?} live-loop exit failed: {error}"));
+            driver,
+        )
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{cause:?} exceeded the outer exit bound"));
+    loop_result.unwrap_or_else(|error| panic!("{cause:?} live-loop exit failed: {error}"));
     drop(guard);
     assert_eq!(workspace.exit_reason(), Some(cause.reason()));
     mock.shutdown().await;

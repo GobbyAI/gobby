@@ -71,6 +71,7 @@ struct MockState {
     token: String,
     responses: VecDeque<QueuedResponse>,
     requests: Vec<RequestRecord>,
+    request_recorded: Arc<Notify>,
     spawn_refusal: Option<String>,
     spawn_events_before_reply: VecDeque<Vec<Value>>,
     suppressed_ws: HashSet<String>,
@@ -135,6 +136,7 @@ impl MockDaemon {
             token: token.to_string(),
             responses: VecDeque::new(),
             requests: Vec::new(),
+            request_recorded: Arc::new(Notify::new()),
             spawn_refusal: None,
             spawn_events_before_reply: VecDeque::new(),
             suppressed_ws: HashSet::new(),
@@ -374,6 +376,28 @@ impl MockDaemon {
 
     pub fn requests(&self) -> Vec<RequestRecord> {
         self.state.lock().expect("mock state").requests.clone()
+    }
+
+    pub async fn wait_for_request(&self, matches: impl Fn(&RequestRecord) -> bool) {
+        let recorded = Arc::clone(&self.state.lock().expect("mock state").request_recorded);
+        loop {
+            let notified = recorded.notified();
+            tokio::pin!(notified);
+            // Register before checking stored requests so a receipt between
+            // the check and await cannot be lost, including with other waiters.
+            notified.as_mut().enable();
+            if self
+                .state
+                .lock()
+                .expect("mock state")
+                .requests
+                .iter()
+                .any(&matches)
+            {
+                return;
+            }
+            notified.await;
+        }
     }
 
     pub fn websocket_handshakes(&self) -> usize {
@@ -748,6 +772,7 @@ async fn serve_connection(
             authorization,
             body,
         });
+        state.request_recorded.notify_waiters();
         state.activity.push(format!("{method} {target}"));
         let position = state.responses.iter().position(|response| {
             response.method == method && target.starts_with(&response.path_prefix)
@@ -875,6 +900,7 @@ async fn serve_websocket(
                         authorization: authorization.clone(),
                         body: Some(value.clone()),
                     });
+                    state.request_recorded.notify_waiters();
                     if let Some(kind) = value.get("type").and_then(Value::as_str) {
                         state.activity.push(format!("WS {kind}"));
                     }
