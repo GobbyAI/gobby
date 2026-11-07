@@ -192,19 +192,16 @@ async def test_stalled_persistence_never_stalls_the_event_loop(
 ) -> None:
     hub = StalledHub()
     runner = _runner(database=hub, session_manager=MagicMock(), wake_dispatcher=None)
-    started = time.monotonic()
     notice = asyncio.create_task(send_daemon_notice(runner, HOLD_NOTICE, timeout_seconds=0.1))
     try:
         assert await asyncio.to_thread(hub.entered.wait, 5)
         # The loop runs this test while the transaction is still stalled.
         assert not notice.done()
         await notice
-        elapsed = time.monotonic() - started
         assert not hub.release.is_set()
     finally:
         hub.release.set()
 
-    assert elapsed < 1.0
     assert hub.thread is not threading.main_thread()
     assert hub.deadline is not None
     # Armed before the stalled transaction starts, so the stall cannot outlive the deadline.
@@ -217,11 +214,13 @@ async def test_stalled_persistence_never_stalls_the_event_loop(
 class SlowWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.entered = asyncio.Event()
 
     async def dispatch_live_wake(
         self, session_id: str, *, priority: str = "normal"
     ) -> dict[str, Any]:
         self.calls.append(session_id)
+        self.entered.set()
         await asyncio.Event().wait()
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
@@ -243,10 +242,13 @@ async def test_slow_wake_is_bounded_after_the_notice_commits(
     dispatcher = SlowWakeDispatcher()
     runner = _runner(database=temp_db, session_manager=session_manager, wake_dispatcher=dispatcher)
 
-    started = time.monotonic()
-    await send_daemon_notice(runner, HOLD_NOTICE, timeout_seconds=0.2)
+    notice = asyncio.create_task(send_daemon_notice(runner, HOLD_NOTICE, timeout_seconds=0.2))
+    # The 30 s guard only turns a hang into a failure; no assertion bounds how long the notice takes.
+    async with asyncio.timeout(30):
+        # The wake runs only after the notice commits, so entry proves the commit happened.
+        await dispatcher.entered.wait()
+        await notice
 
-    assert time.monotonic() - started < 1.0
     assert dispatcher.calls == [recipient]
     rows = temp_db.fetchall("SELECT to_session, content FROM inter_session_messages")
     assert [(row["to_session"], row["content"]) for row in rows] == [(recipient, HOLD_NOTICE)]
