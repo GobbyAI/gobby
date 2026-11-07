@@ -136,6 +136,9 @@ def test_slow_atexit_cleanup_after_threads_join_is_not_a_hang(
 def test_atexit_callback_that_never_returns_dumps_and_exits(
     pytestconfig: pytest.Config, tmp_path: Path
 ) -> None:
+    # The teardown bound also covers pytest's cleanup stack, which runs before atexit and
+    # can take over a second under load. The bound must clear it, so the dump is the
+    # atexit hang: the _blocked_atexit assertion fails if the dump landed in cleanup.
     result = _run_inner(
         pytestconfig,
         tmp_path,
@@ -143,13 +146,13 @@ def test_atexit_callback_that_never_returns_dumps_and_exits(
         "-o",
         "exit_watchdog_timeout=5",
         "-o",
-        "teardown_watchdog_timeout=1",
+        "teardown_watchdog_timeout=10",
     )
 
     output = result.stdout + result.stderr
     assert "1 passed" in output
     assert result.returncode != 0
-    assert "Timeout (0:00:01)!" in output
+    assert "Timeout (0:00:10)!" in output
     assert "_blocked_atexit" in output
 
 
