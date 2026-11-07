@@ -51,6 +51,71 @@ def test_package_runner_preserves_mutation_scope(tmp_path: Path, command: str, t
 
 
 @pytest.mark.parametrize(
+    ("command", "targets"),
+    [
+        ("uv lock --project {root} --upgrade-package pytest==9.1.1", ["uv.lock"]),
+        ("uv --project {root} lock", ["uv.lock"]),
+        ("uv lock --project=child", ["child/uv.lock"]),
+        ("uv lock", ["uv.lock"]),
+        ("uv lock --directory child", ["child/uv.lock"]),
+        ("uv --directory child lock --project nested", ["child/nested/uv.lock"]),
+        ("uv add requests", ["uv.lock", "pyproject.toml"]),
+        ("uv add --dev pytest --project child", ["child/uv.lock", "child/pyproject.toml"]),
+        ("uv remove requests --project child", ["child/uv.lock", "child/pyproject.toml"]),
+    ],
+)
+def test_uv_lockfile_writes_resolve_project_targets(
+    tmp_path: Path, command: str, targets: list[str]
+) -> None:
+    data = _invocation_metadata(
+        command.format(root=tmp_path), tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert data["canonical_repo_mutation"] is True
+    assert [tmp_path / path for path in data["canonical_file_paths"]] == [
+        tmp_path / target for target in targets
+    ]
+    assert [tmp_path / path for path in data["canonical_write_file_paths"]] == [
+        tmp_path / target for target in targets
+    ]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv lock --project $DIR",
+        'uv lock --project "$(pwd)"',
+        "uv lock --project {root}/$NAME",
+        "uv lock --project",
+        "uv lock --project ~/x",
+        "uv lock --script foo.py",
+        "uv add --script foo.py requests",
+        "uv add --package app requests",
+        "uv lock --bogus-flag",
+        "UV_PROJECT=/elsewhere uv lock",
+        "env UV_PROJECT=/elsewhere uv lock",
+        "UV_WORKING_DIR=/elsewhere uv add requests",
+        "export UV_PROJECT=/elsewhere; uv lock --project {root}",
+    ],
+)
+def test_uv_lockfile_writes_with_unresolved_scope_fail_closed(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(
+        command.format(root=tmp_path), tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_uv_lock_check_is_not_a_repository_write(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        f"uv lock --check --project {tmp_path}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert not data.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
     ("command", "operands", "edits"),
     [
         (
