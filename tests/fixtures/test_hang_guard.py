@@ -59,6 +59,11 @@ _ATEXIT_HANG = """
         atexit.register(_blocked_atexit)
 """
 
+_PASSING = """
+    def test_passes() -> None:
+        pass
+"""
+
 
 def _run_inner(
     pytestconfig: pytest.Config, tmp_path: Path, body: str, *overrides: str
@@ -138,7 +143,7 @@ def test_atexit_callback_that_never_returns_dumps_and_exits(
         "-o",
         "exit_watchdog_timeout=5",
         "-o",
-        "atexit_watchdog_timeout=1",
+        "teardown_watchdog_timeout=1",
     )
 
     output = result.stdout + result.stderr
@@ -176,3 +181,31 @@ def test_stdio_is_flushed_before_the_watchdog_arms(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "written before the watchdog arms" in result.stdout
+
+
+def test_slow_cleanup_stack_after_the_pass_summary_is_not_a_hang(
+    pytestconfig: pytest.Config, tmp_path: Path
+) -> None:
+    # pytest's cleanup stack runs after the pass summary and before the thread join. Slow
+    # cleanup there is bounded work, so it must not trip the 1 s thread-join bound.
+    (tmp_path / "slow_cleanup.py").write_text(
+        "import time\n\n"
+        "def pytest_configure(config):\n"
+        "    config.add_cleanup(_slow_cleanup)\n\n"
+        "def _slow_cleanup():\n"
+        "    time.sleep(3)\n"
+    )
+    result = _run_inner(
+        pytestconfig,
+        tmp_path,
+        _PASSING,
+        "-o",
+        "exit_watchdog_timeout=1",
+        "-p",
+        "slow_cleanup",
+    )
+
+    output = result.stdout + result.stderr
+    assert "1 passed" in output
+    assert result.returncode == 0
+    assert "Timeout" not in output
