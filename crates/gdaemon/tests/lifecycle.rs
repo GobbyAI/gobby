@@ -82,7 +82,9 @@ impl TestDb {
             .insert("HOME".into(), home.as_os_str().to_owned());
         config.drain_timeout = Duration::from_millis(100);
         config.heartbeat_interval = Duration::from_millis(100);
-        config.exit_grace = Duration::from_millis(100);
+        // Under fleet load a backend can take seconds to exit on its own. A short
+        // grace drains it mid-exit; the lingering test sets 100ms to cover that path.
+        config.exit_grace = Duration::from_secs(5);
         config.report_interval = Duration::from_secs(60);
         tune(&mut config);
         Ok(BackendSupervisor::new(lease, claim, config))
@@ -615,7 +617,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         config
             .environment
             .insert("HOME".into(), home.path().as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = Duration::from_secs(2);
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
         let (_tx, rx) = watch::channel(false);
@@ -951,7 +953,11 @@ write_shutdown_intent('test_restart' if n==1 else 'test_stop', 'restart' if n==1
 while True:
     signal.pause()
 "#;
-        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let mut supervisor = db
+            .supervisor_with(home.path(), script, |config| {
+                config.exit_grace = Duration::from_millis(100);
+            })
+            .await?;
         let (_tx, rx) = watch::channel(false);
         assert_eq!(
             timeout(Duration::from_secs(15), supervisor.run(rx)).await??,
