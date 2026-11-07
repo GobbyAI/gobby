@@ -304,6 +304,24 @@ class AttentionStateManager:
         """Load every machine's runs, sessions, tasks, and terminals in one round trip."""
         rows = self.db.fetchall(
             """
+            WITH eligible_runs AS MATERIALIZED (
+                SELECT id FROM agent_runs WHERE status IN ('queued', 'running', 'pending')
+                UNION
+                SELECT run.id
+                FROM tasks owned
+                JOIN agent_runs run ON run.task_id = owned.id
+                WHERE owned.closed_at IS NULL
+                UNION
+                SELECT run.id
+                FROM tasks owned
+                JOIN agent_runs run ON run.child_session_id = owned.claimed_by_session_id
+                WHERE owned.closed_at IS NULL AND owned.claimed_by_session_id IS NOT NULL
+            ), eligible_sessions AS MATERIALIZED (
+                SELECT id FROM sessions WHERE status = ANY(%s)
+                UNION
+                SELECT claimed_by_session_id FROM tasks
+                WHERE closed_at IS NULL AND claimed_by_session_id IS NOT NULL
+            )
             SELECT
                 'run' AS roster_kind,
                 run.id::text AS source_id,
@@ -350,7 +368,8 @@ class AttentionStateManager:
                 ) AS definition_name,
                 run.machine_id::text AS machine_id,
                 COALESCE(child.project_id, parent.project_id)::text AS project_id
-            FROM agent_runs run
+            FROM eligible_runs eligible
+            JOIN agent_runs run ON run.id = eligible.id
             LEFT JOIN sessions child ON child.id = run.child_session_id
             LEFT JOIN sessions parent ON parent.id = run.parent_session_id
             LEFT JOIN session_variables seat ON seat.session_id = child.id
@@ -412,7 +431,8 @@ class AttentionStateManager:
                      THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition_name,
                 session.machine_id::text AS machine_id,
                 session.project_id::text AS project_id
-            FROM sessions session
+            FROM eligible_sessions eligible
+            JOIN sessions session ON session.id = eligible.id
             LEFT JOIN session_variables seat ON seat.session_id = session.id
             LEFT JOIN LATERAL (
                 SELECT candidate.*
@@ -442,7 +462,7 @@ class AttentionStateManager:
             LEFT JOIN LATERAL (
                 SELECT owned.id, owned.seq_num, owned.title
                 FROM tasks owned
-                WHERE owned.claimed_by_session_id = session.id
+                WHERE owned.claimed_by_session_id = eligible.id
                   AND owned.closed_at IS NULL
                 ORDER BY (owned.id::text = seat.variables->>'active_task_id') DESC NULLS LAST,
                          owned.updated_at DESC, owned.id
@@ -452,9 +472,8 @@ class AttentionStateManager:
 
             ORDER BY roster_kind, source_id
             """,
-            # One placeholder per live-status test, in statement order: run lifecycle,
-            # run retention, session lifecycle, session retention.
-            (list(live_session_statuses),) * 4,
+            # Candidate sessions, run lifecycle/retention, session lifecycle/retention.
+            (list(live_session_statuses),) * 5,
         )
         return [AttentionRosterRow.from_row(row) for row in rows]
 
