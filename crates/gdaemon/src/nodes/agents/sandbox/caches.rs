@@ -73,10 +73,14 @@ fn temp_root(env: &BTreeMap<String, String>) -> PathBuf {
     PathBuf::from(non_empty(env, "TMPDIR").unwrap_or("/tmp"))
 }
 
-fn session_of(env: &BTreeMap<String, String>) -> String {
+/// The spawn's session id. A spawn without one is refused: a fallback directory would be
+/// shared by every such session.
+fn session_of(env: &BTreeMap<String, String>) -> Result<String> {
     non_empty(env, SESSION_ENV)
-        .unwrap_or("unknown-session")
-        .to_string()
+        .map(str::to_string)
+        .ok_or_else(|| {
+            anyhow!("sandboxed spawn has no {SESSION_ENV}; refusing a shared cache directory")
+        })
 }
 
 /// `_safe_component`: replace unsafe characters, trim dashes, and cap the length.
@@ -99,12 +103,17 @@ pub(super) fn safe_component(value: &str, limit: usize, fallback: &str) -> Strin
     }
 }
 
-/// `get_agent_session_cache_dir`: `<tmp>/gobby/<dir>/<safe session>-<digest>`.
-fn session_cache_dir(tmp: &Path, dir: &str, session: &str) -> PathBuf {
-    let prefix = safe_component(session, 80, "unknown-session");
-    tmp.join("gobby")
+/// `get_agent_session_cache_dir`: `<tmp>/gobby/<dir>/<safe session>-<digest>`. A session id with
+/// no safe characters is refused rather than mapped to a name every such session shares.
+fn session_cache_dir(tmp: &Path, dir: &str, session: &str) -> Result<PathBuf> {
+    let prefix = safe_component(session, 80, "");
+    if prefix.is_empty() {
+        bail!("Agent cache needs a session id with safe characters");
+    }
+    Ok(tmp
+        .join("gobby")
         .join(dir)
-        .join(format!("{prefix}-{}", super::hash16(session.as_bytes())))
+        .join(format!("{prefix}-{}", super::hash16(session.as_bytes()))))
 }
 
 fn shared_cargo_home(gobby: &Path) -> PathBuf {
@@ -146,13 +155,13 @@ fn merge_spawn_path(preferred: Option<&str>, inputs: &PolicyInputs) -> String {
 }
 
 /// `apply_spawn_cache_policy` and `_apply_sandbox_cache_policy`: fill each missing cache and PATH entry.
-fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) {
-    let session = session_of(env);
+fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) -> Result<()> {
+    let session = session_of(env)?;
     let tmp = temp_root(env);
     let defaults = [
         (
             UV_CACHE_DIR,
-            text(&session_cache_dir(&tmp, "uv-cache", &session)),
+            text(&session_cache_dir(&tmp, "uv-cache", &session)?),
         ),
         (CARGO_HOME, text(&shared_cargo_home(&inputs.gobby_home))),
     ];
@@ -167,20 +176,22 @@ fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) {
         if env.get(*name).is_none_or(String::is_empty) {
             env.insert(
                 name.to_string(),
-                text(&session_cache_dir(&tmp, dir, &session)),
+                text(&session_cache_dir(&tmp, dir, &session)?),
             );
         }
     }
+    Ok(())
 }
 
-/// `sandbox_write_paths`: the cache and hook inbox paths a sandboxed run writes. The spawn env's
-/// `CARGO_HOME` and `CARGO_TARGET_DIR` belong to the unsandboxed trust domain, so neither is granted
-/// here; the run's own cargo home and target are granted by `run_grants`.
+/// `sandbox_write_paths`: the per-toolchain cache and hook inbox paths a sandboxed run writes. The
+/// session uv cache is never granted, because unsandboxed agents install into it; the run's own uv
+/// cache is granted with its writable directories. The spawn env's `CARGO_HOME` and
+/// `CARGO_TARGET_DIR` belong to the unsandboxed trust domain, so neither is granted here; the run's
+/// own cargo home and target are granted by `run_grants`.
 fn sandbox_write_paths(env: &BTreeMap<String, String>, inputs: &PolicyInputs) -> Vec<String> {
-    let mut paths: Vec<String> = [UV_CACHE_DIR]
-        .into_iter()
-        .chain(SANDBOX_CACHE_POLICY.iter().map(|(name, _)| *name))
-        .map(|name| env.get(name).cloned().unwrap_or_default())
+    let mut paths: Vec<String> = SANDBOX_CACHE_POLICY
+        .iter()
+        .map(|(name, _)| env.get(*name).cloned().unwrap_or_default())
         .collect();
     paths.push(text(
         &inputs.home.join(".gobby").join("hooks").join("inbox"),
@@ -354,8 +365,8 @@ pub(super) fn spawn_grants(
     project: &[String],
     env: &mut BTreeMap<String, String>,
     inputs: &PolicyInputs,
-) -> Sandbox {
-    fill_spawn_env(env, inputs);
+) -> Result<Sandbox> {
+    fill_spawn_env(env, inputs)?;
     let mut extra = config.extra_write_paths.clone();
     for path in project
         .iter()
@@ -368,7 +379,7 @@ pub(super) fn spawn_grants(
     }
     config.extra_write_paths = extra;
     config.allow_package_registries = true;
-    config
+    Ok(config)
 }
 
 /// `sandbox_policy.py::secure_policy_directory`: the per-run policy directory.

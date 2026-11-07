@@ -209,6 +209,9 @@ fn native_inputs(gobby_home: &Path, workspace: &Path) -> PolicyInputs {
     inputs.allow_run_unix_sockets = true;
     inputs.sccache_executable = Some(PathBuf::from("/opt/homebrew/bin/sccache"));
     inputs
+        .env
+        .insert(SESSION_ENV.to_string(), "session-one".to_string());
+    inputs
 }
 
 /// The run layout of native run `r1` under `gobby_home`, built without touching the disk.
@@ -491,5 +494,95 @@ fn a_seat_grant_never_covers_the_spawn_env_cargo_home() -> Result<()> {
         reaching.is_empty(),
         "a seat grant reaches the unsandboxed cargo home: {reaching:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_seat_grant_never_includes_the_unsandboxed_session_uv_cache() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    let temp = dir.path().join("tmp");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    inputs.env.insert("TMPDIR".to_string(), text(&temp));
+    // Unsandboxed agents install into each session's uv cache under this root, so no sandbox may
+    // write any of them.
+    let unsandboxed = temp.join("gobby").join("uv-cache");
+    // The sandboxed uv cache is the run's own, which the run layout already grants.
+    let run_cache = gobby_home
+        .join("run")
+        .join("sandbox")
+        .join("r1")
+        .join("cache");
+
+    let policy = compile_policy(&inputs, &[], &[])?;
+
+    let reaching: Vec<&String> = policy
+        .sandbox
+        .extra_write_paths
+        .iter()
+        .filter(|path| Path::new(path).starts_with(&unsandboxed))
+        .collect();
+    assert!(
+        reaching.is_empty(),
+        "a seat grant reaches the unsandboxed session uv cache: {reaching:?}"
+    );
+    assert_eq!(
+        policy.env[UV_CACHE_DIR],
+        text(&run_cache.join("uv-cache-dir"))
+    );
+    assert!(
+        policy.sandbox.extra_write_paths.contains(&text(&run_cache)),
+        "the run cache holding the sandboxed uv cache is not granted"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_spawn_without_a_session_id_is_refused_before_any_grant() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    inputs.env.remove(SESSION_ENV);
+
+    let error = compile_policy(&inputs, &[], &[])
+        .err()
+        .context("a spawn without a session id must be refused")?;
+
+    assert!(error.to_string().contains(SESSION_ENV), "{error}");
+    Ok(())
+}
+
+#[test]
+fn a_session_id_with_no_safe_characters_is_refused() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    inputs
+        .env
+        .insert(SESSION_ENV.to_string(), "///".to_string());
+
+    let error = compile_policy(&inputs, &[], &[])
+        .err()
+        .context("a session id with no safe characters must be refused")?;
+
+    assert!(error.to_string().contains("safe characters"), "{error}");
     Ok(())
 }

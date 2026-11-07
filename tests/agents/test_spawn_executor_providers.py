@@ -355,7 +355,9 @@ async def test_sandbox_policy_grants_only_declared_main_nextest_store(
         return SandboxLaunch(backend="srt", enforced=True)
 
     monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", launch)
-    result = await _prepare_provider_sandbox(request, spawn_context, "codex", {})
+    result = await _prepare_provider_sandbox(
+        request, spawn_context, "codex", {"GOBBY_SESSION_ID": spawn_context.session_id}
+    )
 
     assert isinstance(result, SandboxLaunch)
     lookup.assert_called_once_with(manager._storage.db, "project", "machine")
@@ -442,7 +444,9 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
         return SandboxLaunch(backend="srt", enforced=True)
 
     monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", launch)
-    result = await _prepare_provider_sandbox(request, spawn_context, "codex", {})
+    result = await _prepare_provider_sandbox(
+        request, spawn_context, "codex", {"GOBBY_SESSION_ID": spawn_context.session_id}
+    )
 
     assert isinstance(result, SandboxLaunch)
     # Control denies under the grants stay; the grant directories must exist instead.
@@ -654,7 +658,9 @@ async def test_sandbox_failure_names_exception_class(
         fail_sandbox_launch,
     )
 
-    result = await _prepare_provider_sandbox(request, spawn_context, "codex", {})
+    result = await _prepare_provider_sandbox(
+        request, spawn_context, "codex", {"GOBBY_SESSION_ID": spawn_context.session_id}
+    )
 
     assert isinstance(result, SpawnResult)
     expected_error = f"Sandbox startup failed closed for codex: {expected_detail}"
@@ -679,7 +685,9 @@ async def test_sandbox_failure_logs_traceback(
     )
     caplog.set_level(logging.WARNING, logger="gobby.agents.spawn_executor_providers")
 
-    result = await _prepare_provider_sandbox(request, spawn_context, "codex", {})
+    result = await _prepare_provider_sandbox(
+        request, spawn_context, "codex", {"GOBBY_SESSION_ID": spawn_context.session_id}
+    )
 
     assert isinstance(result, SpawnResult)
     records = [

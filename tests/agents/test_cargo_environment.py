@@ -15,6 +15,7 @@ import pytest
 
 from gobby.agents import srt_runtime
 from gobby.agents.cargo_target import ensure_agent_cargo_target_dir
+from gobby.agents.constants import GOBBY_SESSION_ID, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.agents.spawn_cache_policy import build_spawn_cache_env, sandbox_config_for_spawn
@@ -147,7 +148,7 @@ async def test_sandbox_cache_grants_keep_the_trust_split(
         # Session caches stay in tmp_path. The run's short tmp goes under the
         # system temp root, as on a live launch.
         monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-        spawn_env = build_spawn_cache_env("session")
+        spawn_env = {GOBBY_SESSION_ID: "session", **build_spawn_cache_env("session")}
         # The spawn path derives the sandbox's extra write grants from its env.
         config = sandbox_config_for_spawn(
             SandboxConfig(enabled=True, backend="srt", allow_network=False), spawn_env
@@ -213,6 +214,7 @@ def test_spawn_cargo_caches_are_never_granted_for_write(
     checkout.mkdir()
     # A live spawn env carries the unsandboxed CARGO_TARGET_DIR beside the shared cache env.
     spawn_env = {
+        GOBBY_SESSION_ID: "session",
         **build_spawn_cache_env("session"),
         "CARGO_TARGET_DIR": ensure_agent_cargo_target_dir(checkout, "project-id"),
     }
@@ -234,3 +236,37 @@ def test_spawn_cargo_caches_are_never_granted_for_write(
         or root.resolve().is_relative_to(Path(granted).resolve())
     ]
     assert exposed == []
+
+
+def test_sandbox_never_grants_the_unsandboxed_session_uv_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    # Unsandboxed agents install into the session uv cache, so no sandbox may be granted it.
+    spawn_env = {GOBBY_SESSION_ID: "session", **build_spawn_cache_env("session")}
+    unsandboxed = Path(spawn_env[UV_CACHE_DIR])
+    config = sandbox_config_for_spawn(
+        SandboxConfig(enabled=True, backend="srt", allow_network=False), spawn_env
+    )
+    assert config is not None
+    exposed = [
+        granted
+        for granted in config.extra_write_paths
+        if Path(granted).resolve().is_relative_to(unsandboxed.resolve())
+        or unsandboxed.resolve().is_relative_to(Path(granted).resolve())
+    ]
+    assert exposed == []
+
+
+def test_sandbox_refuses_a_spawn_without_a_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    # Without an id, every such spawn would share one fallback cache directory.
+    with pytest.raises(ValueError, match=GOBBY_SESSION_ID):
+        sandbox_config_for_spawn(
+            SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            build_spawn_cache_env("session"),
+        )

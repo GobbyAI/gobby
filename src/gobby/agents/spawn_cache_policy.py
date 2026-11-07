@@ -98,9 +98,23 @@ def build_spawn_cache_env(session_id: str) -> dict[str, str]:
     return env
 
 
+def _sandbox_session_id(env_vars: dict[str, str]) -> str:
+    """Return the spawn's session id, refusing a sandboxed spawn that has none.
+
+    Every session-scoped cache derives from this id, so a missing one refuses the spawn
+    instead of sharing a fallback directory across sessions.
+    """
+    session_id = env_vars.get(GOBBY_SESSION_ID, "")
+    if not session_id:
+        raise ValueError(
+            f"Sandboxed spawn has no {GOBBY_SESSION_ID}; refusing a shared cache directory"
+        )
+    return session_id
+
+
 def apply_spawn_cache_policy(env_vars: dict[str, str]) -> None:
     """Materialize missing cache/tool env vars in an existing spawn env."""
-    session_id = env_vars.get(GOBBY_SESSION_ID) or "unknown-session"
+    session_id = _sandbox_session_id(env_vars)
     for entry in SPAWN_CACHE_POLICY:
         if not env_vars.get(entry.env_var):
             env_vars[entry.env_var] = entry.ensure_path(session_id)
@@ -157,7 +171,7 @@ def sandbox_config_for_spawn(
 
 def _apply_sandbox_cache_policy(env_vars: dict[str, str]) -> None:
     """Materialize per-run toolchain cache redirects for sandboxed spawns."""
-    session_id = env_vars.get(GOBBY_SESSION_ID) or "unknown-session"
+    session_id = _sandbox_session_id(env_vars)
     for entry in SANDBOX_CACHE_POLICY:
         if not env_vars.get(entry.env_var):
             env_vars[entry.env_var] = entry.ensure_path(session_id)
@@ -166,11 +180,13 @@ def _apply_sandbox_cache_policy(env_vars: dict[str, str]) -> None:
 def sandbox_write_paths(env_vars: dict[str, str]) -> list[str]:
     """Return concrete paths that a sandboxed spawned agent must be able to use.
 
-    The spawn env's CARGO_HOME and CARGO_TARGET_DIR belong to the unsandboxed trust domain,
-    so they are never granted: the run's own cargo home and target replace them, as
+    The session uv cache is never granted: unsandboxed agents install into it. The sandboxed
+    uv cache is the run's own, granted with the run's writable directories. The spawn env's
+    CARGO_HOME and CARGO_TARGET_DIR belong to the unsandboxed trust domain, so they are never
+    granted either: the run's own cargo home and target replace them, as
     ``previous_run_write_paths`` supersedes them at launch.
     """
-    paths = [env_vars.get(env_var, "") for env_var in (UV_CACHE_DIR, *SANDBOX_CACHE_ENV_VARS)]
+    paths = [env_vars.get(env_var, "") for env_var in SANDBOX_CACHE_ENV_VARS]
     paths.append(hook_inbox_dir())
     return _dedupe(paths)
 

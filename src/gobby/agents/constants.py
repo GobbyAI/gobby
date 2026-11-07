@@ -130,13 +130,17 @@ CLAUDE_MANAGED_AGENT_SETTINGS = {"idleCompaction": False}
 
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
-    """Return a safe per-session cache directory path for spawned agents."""
+    """Return a safe per-session cache directory path for spawned agents.
+
+    A session id with no safe characters is refused rather than mapped to a name that
+    every such session would share.
+    """
     root = Path(tempfile.gettempdir())
     if not root.is_absolute():
         raise ValueError("Agent temporary cache root must be absolute")
     safe_prefix = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")[:80]
     if not safe_prefix:
-        safe_prefix = "unknown-session"
+        raise ValueError("Agent cache needs a session id with safe characters")
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
     return root.joinpath(*path_components, f"{safe_prefix}-{digest}")
 

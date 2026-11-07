@@ -132,7 +132,7 @@ pub(super) fn compile_policy(
         "CARGO_TARGET_DIR".to_string(),
         caches::agent_cargo_target_dir(inputs),
     );
-    let spawned = caches::spawn_grants(config, &project, &mut env, inputs);
+    let spawned = caches::spawn_grants(config, &project, &mut env, inputs)?;
     let layout = caches::run_layout(inputs, &env)?;
     if inputs.prewarm_pre_commit_store {
         prewarm::prewarm(

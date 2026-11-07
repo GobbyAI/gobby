@@ -1811,7 +1811,9 @@ class TestExecuteSpawnSandbox:
         assert env_vars[CARGO_HOME]
         assert Path(env_vars[CARGO_HOME]) == tmp_path / ".gobby" / "cache" / "cargo-home"
         assert "/already-allowed" in resolved.extra_write_paths
-        assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
+        # The unsandboxed session uv cache is installed into by unsandboxed agents, so no sandbox
+        # may write it; the sandboxed uv cache is the run's own cache, granted by the launch.
+        assert "/tmp/gobby/uv-cache/child-session-one" not in resolved.extra_write_paths
         # The spawn env's cargo home and target are unsandboxed; the run replaces them.
         assert env_vars[CARGO_HOME] not in resolved.extra_write_paths
         assert "/shared/cargo-target/proj" not in resolved.extra_write_paths
