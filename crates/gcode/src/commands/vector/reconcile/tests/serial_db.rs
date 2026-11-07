@@ -805,7 +805,7 @@ fn index_repair_resets_synced_missing_versions_without_deleting() -> anyhow::Res
     let (points, reset_version) = seed_reset_and_orphan(&mut fixture)?;
 
     let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
-    let reset = reset_synced_missing_versions(&fixture.context(url))?;
+    let reset = reset_synced_missing_versions(&fixture.context(url), None)?;
     let requests = handle.join().expect("qdrant test server");
 
     assert_eq!(reset, vec![reset_version.clone()]);
@@ -814,6 +814,52 @@ fn index_repair_resets_synced_missing_versions_without_deleting() -> anyhow::Res
         requests.len(),
         1,
         "the automatic repair scrolls once and never deletes"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn explicit_file_repair_scopes_scroll_and_reset_to_its_files() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (points, reset_version) = seed_reset_and_orphan(&mut fixture)?;
+    // A second synced version outside the explicit file, also missing its point.
+    let other_hash = "f".repeat(64);
+    let other_version = fixture.version("src/other.rs", &other_hash, true)?;
+    fixture.reference("src/other.rs", &other_hash)?;
+    fixture.symbol("src/other.rs", &other_hash, "other1", "function", 0)?;
+
+    let scope = vec!["src/reset.rs".to_string()];
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    let reset = reset_synced_missing_versions(&fixture.context(url), Some(&scope))?;
+    let requests = handle.join().expect("qdrant test server");
+
+    assert_eq!(reset, vec![reset_version.clone()]);
+    assert!(!fixture.vectors_synced(&reset_version)?);
+    assert!(
+        fixture.vectors_synced(&other_version)?,
+        "a version outside the explicit files keeps its synced flag"
+    );
+    let scroll = requests
+        .iter()
+        .find(|request| request.contains("/points/scroll"))
+        .expect("the repair scrolls Qdrant");
+    let body = scroll.split("\r\n\r\n").nth(1).expect("scroll has a body");
+    let body: Value = serde_json::from_str(body).expect("scroll body is JSON");
+    let file_condition = body["filter"]["must"]
+        .as_array()
+        .expect("scoped scroll filters its conditions")
+        .iter()
+        .find(|condition| condition["key"] == "file_path")
+        .expect("scoped scroll filters by file_path");
+    assert_eq!(file_condition["match"]["any"], serde_json::json!(["src/reset.rs"]));
+    assert!(
+        delete_requests(&requests).is_empty(),
+        "an explicit-file repair never deletes"
     );
     Ok(())
 }

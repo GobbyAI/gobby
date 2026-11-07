@@ -106,6 +106,15 @@ struct VersionRow {
 }
 
 pub(crate) fn inventory(ctx: &Context) -> anyhow::Result<Inventory> {
+    inventory_in_scope(ctx, None)
+}
+
+/// Classifies the project's vectors. `scope` limits the Qdrant scroll and every
+/// PostgreSQL read to those file paths; `None` covers the whole project.
+pub(crate) fn inventory_in_scope(
+    ctx: &Context,
+    scope: Option<&[String]>,
+) -> anyhow::Result<Inventory> {
     let qdrant = ctx
         .qdrant
         .as_ref()
@@ -113,24 +122,28 @@ pub(crate) fn inventory(ctx: &Context) -> anyhow::Result<Inventory> {
     // Scroll Qdrant before reading PostgreSQL. A point present at scroll time was
     // projected from rows written earlier, so the later read still sees its symbol
     // unless that symbol was removed.
-    let points = code_symbols::scroll_point_identities(qdrant, &ctx.project_id)?;
+    let points = code_symbols::scroll_point_identities(qdrant, &ctx.project_id, scope)?;
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let project = db::id_param(&ctx.project_id)?;
+    // NULL scope reads every file; a list reads only those file paths.
+    let scope_paths: Option<Vec<String>> = scope.map(<[String]>::to_vec);
 
     let symbol_rows = conn.query(
-        "SELECT id::text, file_path, file_content_hash FROM code_symbols WHERE project_id = $1",
-        &[&project],
+        "SELECT id::text, file_path, file_content_hash FROM code_symbols \
+         WHERE project_id = $1 AND ($2::text[] IS NULL OR file_path = ANY($2))",
+        &[&project, &scope_paths],
     )?;
     let version_rows = conn.query(
         "SELECT id::text, file_path, content_hash, vectors_synced \
-         FROM code_indexed_files WHERE project_id = $1",
-        &[&project],
+         FROM code_indexed_files WHERE project_id = $1 \
+         AND ($2::text[] IS NULL OR file_path = ANY($2))",
+        &[&project, &scope_paths],
     )?;
     // Any machine's reference keeps a version; the dry run does not filter by machine.
     let reference_rows = conn.query(
         "SELECT DISTINCT file_path, content_hash FROM code_indexed_file_states \
-         WHERE project_id = $1",
-        &[&project],
+         WHERE project_id = $1 AND ($2::text[] IS NULL OR file_path = ANY($2))",
+        &[&project, &scope_paths],
     )?;
 
     let mut pg_ids: HashSet<String> = HashSet::new();
@@ -557,8 +570,11 @@ fn text_report(collection: &str, report: &Inventory) -> String {
 
 /// Resets the flag on each synced version that lost a symbol point, so the pending-sync
 /// worker re-embeds it. Orphan points are left alone; deletion stays with `apply`.
-pub(crate) fn reset_synced_missing_versions(ctx: &Context) -> anyhow::Result<Vec<String>> {
-    let report = inventory(ctx)?;
+pub(crate) fn reset_synced_missing_versions(
+    ctx: &Context,
+    scope: Option<&[String]>,
+) -> anyhow::Result<Vec<String>> {
+    let report = inventory_in_scope(ctx, scope)?;
     let versions = db::id_params(&synced_missing_ids(&report.missing))?;
     let mut writer = db::connect_readwrite(&ctx.database_url)?;
     reset_synced_versions(&mut writer, versions)
@@ -580,9 +596,12 @@ fn reset_synced_versions(
 
 /// Runs the automatic repair after a whole-project index pass. A version whose symbol
 /// points are missing is reset here; the pending-sync worker then re-embeds it.
-pub(crate) fn repair_after_index(ctx: &Context) -> Option<IndexDegradation> {
+pub(crate) fn repair_after_index(
+    ctx: &Context,
+    scope: Option<&[String]>,
+) -> Option<IndexDegradation> {
     ctx.qdrant.as_ref()?;
-    match reset_synced_missing_versions(ctx) {
+    match reset_synced_missing_versions(ctx, scope) {
         Ok(_) => None,
         Err(error) => Some(IndexDegradation::VectorRepairFailed {
             message: format!("{error:#}"),

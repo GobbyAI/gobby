@@ -208,7 +208,14 @@ pub(crate) fn run_index_locked(
     request: IndexRequest,
 ) -> anyhow::Result<RunIndexLockedOutput> {
     let sync_projections = request.sync_projections;
-    let whole_project = request.explicit_files.is_empty() && request.path_filter.is_none();
+    // An explicit-file run repairs only its own files; any other run repairs the whole
+    // collection. Both reset versions that lost symbol points for the pending-sync worker.
+    let repair_scope = (!request.explicit_files.is_empty()).then(|| {
+        crate::index::indexer::explicit_file_storage_paths(
+            &request.project_root,
+            &request.explicit_files,
+        )
+    });
     let mut index_progress = StderrIndexProgress::new(ctx.quiet);
     let mut outcome = api::index_files(
         request,
@@ -229,13 +236,10 @@ pub(crate) fn run_index_locked(
         sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
         &mut projection_progress,
     );
-    // A whole-project pass resets versions that lost symbol points, so the pending-sync
-    // worker re-embeds them. Per-file runs skip it: the repair scrolls the whole collection.
-    if whole_project {
-        outcome
-            .degraded
-            .extend(vector_reconcile::repair_after_index(ctx));
-    }
+    outcome.degraded.extend(vector_reconcile::repair_after_index(
+        ctx,
+        repair_scope.as_deref(),
+    ));
     // Refresh the stored hotspot snapshot once the graph is in sync. A failed refresh
     // is a visible degradation; the index itself still succeeds.
     outcome
