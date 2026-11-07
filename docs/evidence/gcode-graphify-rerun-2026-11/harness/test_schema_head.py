@@ -133,3 +133,23 @@ def test_schema_head_proof_stops_on_a_drifted_installed_gdaemon(tmp_path: Path) 
 
     with pytest.raises(EvidenceError, match="schema head mismatch"):
         schema_head_proof(tmp_path)
+
+
+def test_a_gdaemon_payload_that_is_not_json_is_refused_with_bounded_output(tmp_path: Path) -> None:
+    _stage_archive(tmp_path)
+    _stage_binary(tmp_path, "gdaemon", "x" * 500)
+    _stage_binary(tmp_path, "gcode", "gcode 1.9.104\n")
+
+    with pytest.raises(EvidenceError, match="malformed JSON") as error:
+        schema_head_proof(tmp_path)
+
+    assert "x" * 201 not in str(error.value)
+
+
+def test_a_gdaemon_payload_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
+    _stage_archive(tmp_path)
+    _stage_binary(tmp_path, "gdaemon", json.dumps([ARCHIVED["latest_version"]]))
+    _stage_binary(tmp_path, "gcode", "gcode 1.9.104\n")
+
+    with pytest.raises(EvidenceError, match="non-object payload"):
+        schema_head_proof(tmp_path)

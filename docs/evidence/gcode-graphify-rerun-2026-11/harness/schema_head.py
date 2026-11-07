@@ -26,6 +26,7 @@ ARCHIVED_IDENTITY_RELATIVE = "sources/gobby/src/gobby/storage/schema_expected_id
 ARCHIVED_GCODE_CRATE_RELATIVE = "sources/gobby/crates/gcode/Cargo.toml"
 BINARY_DIR_RELATIVE = "gobby-home/bin"
 VERSION_TIMEOUT_SECONDS = 60
+STDOUT_EXCERPT_CHARS = 200
 
 
 def read_archived_identity(root: Path) -> dict[str, Any]:
@@ -87,9 +88,25 @@ def _run_binary(root: Path, name: str, arguments: list[str]) -> str:
     return completed.stdout
 
 
+def _gdaemon_identity(root: Path) -> dict[str, Any]:
+    output = _run_binary(root, "gdaemon", ["schema", "version", "--json"])
+    excerpt = output[:STDOUT_EXCERPT_CHARS]
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise EvidenceError(
+            f"gdaemon schema version --json printed malformed JSON: {excerpt!r}"
+        ) from error
+    require(
+        isinstance(payload, dict),
+        f"gdaemon schema version --json printed a non-object payload: {excerpt!r}",
+    )
+    return payload
+
+
 def schema_head_proof(root: Path) -> dict[str, Any]:
     """Read the installed set's own identity and version, then check them against the archive."""
-    gdaemon_identity = json.loads(_run_binary(root, "gdaemon", ["schema", "version", "--json"]))
+    gdaemon_identity = _gdaemon_identity(root)
     gcode_version = _run_binary(root, "gcode", ["--version"])
     archived = check_schema_head(
         root, gdaemon_identity=gdaemon_identity, gcode_version=gcode_version

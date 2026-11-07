@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from c0_poller import IndexPoller
 from prepare_daemon import isolated_environment
 from runtime_boundary import require, write_once
 
@@ -23,10 +24,21 @@ COMMAND_TIMEOUT_SECONDS = 1800
 PROBE_SYMBOLS = (
     "load_policy",
     "repository_root",
-    "load_runtime_settings",
-    "load_database_settings",
-    "load_slack_settings",
+    "plan_product",
+    "MCPError",
+    "SettingsError",
 )
+PROBE_MIN_FILES = 3
+COLD_INDEX_NAME = "gcode-index-cold"
+GRAPHIFY_CONCURRENCY_FLAG = "--max-workers"
+MAX_WORKERS_LINE = re.compile(r"(?<![\w-])--max-workers(?![\w-])")
+# September's C0 extract record: its redacted environment carries GRAPHIFY_NATIVE_CONCURRENCY.
+SEPTEMBER_RUN_RECORDS = "results/index-comparison/run-records.jsonl"
+SEPTEMBER_C0_EXTRACT_LINE = 3
+GRAPHIFY_BINARY = "tools/graphify/venv/bin/graphify"
+GCODE_BINARY = "tools/gcode/bin/gcode"
+GRAPHIFY_CORPUS = "corpora/graphify/C0"
+GCODE_CORPUS = "corpora/gcode/C0"
 GRAPHIFY_INVENTORY = (
     "extract",
     "update",
@@ -55,61 +67,136 @@ class CommandResult:
 Runner = Callable[[list[str], Path, dict[str, str]], CommandResult]
 
 
-def select_native_concurrency(observed_limits: Sequence[int]) -> int:
-    """Choose the conservative native fan-out: the lowest positive limit the probe recorded."""
-    require(len(observed_limits) > 0, "native concurrency probe recorded no limit")
-    for limit in observed_limits:
-        require(
-            isinstance(limit, int) and not isinstance(limit, bool) and limit > 0,
-            f"native concurrency limit is not a positive integer: {limit!r}",
-        )
-    return min(observed_limits)
+def september_max_workers(september_root: Path) -> tuple[int, str]:
+    """September's C0 extract record carries the concurrency value; that record is the source."""
+    record_path = september_root / SEPTEMBER_RUN_RECORDS
+    lines = record_path.read_text(encoding="utf-8").splitlines()
+    require(len(lines) >= SEPTEMBER_C0_EXTRACT_LINE, f"{record_path} has no C0 extract record")
+    record = json.loads(lines[SEPTEMBER_C0_EXTRACT_LINE - 1])
+    recorded = record.get("redacted_environment_diff", {}).get("GRAPHIFY_NATIVE_CONCURRENCY")
+    require(
+        isinstance(recorded, str) and recorded.isdigit() and int(recorded) > 0,
+        f"{record_path}:{SEPTEMBER_C0_EXTRACT_LINE} records no positive GRAPHIFY_NATIVE_CONCURRENCY",
+    )
+    argv: list[str] = record.get("command_argv", [])
+    flag_at = argv.index(GRAPHIFY_CONCURRENCY_FLAG) if GRAPHIFY_CONCURRENCY_FLAG in argv else -1
+    require(
+        0 <= flag_at < len(argv) - 1 and argv[flag_at + 1] == recorded,
+        f"{record_path}:{SEPTEMBER_C0_EXTRACT_LINE} argv disagrees with its recorded concurrency",
+    )
+    return int(recorded), f"{record_path}:{SEPTEMBER_C0_EXTRACT_LINE}"
+
+
+def decide_graphify_concurrency(
+    extract_help: CommandResult,
+    help_path: Path,
+    september_value: int,
+    september_evidence: str,
+) -> dict[str, Any]:
+    """Freeze September's --max-workers only when this release's extract help lists the flag."""
+    require(extract_help.returncode == 0, "graphify extract --help probe failed")
+    for number, line in enumerate(extract_help.stdout.splitlines(), start=1):
+        if MAX_WORKERS_LINE.search(line):
+            return {
+                "value": september_value,
+                "source": "september",
+                "flag": GRAPHIFY_CONCURRENCY_FLAG,
+                "evidence": [f"{help_path}:{number}", september_evidence],
+            }
+    return {"value": None, "source": "unsupported", "flag": None, "evidence": [str(help_path)]}
+
+
+def probe_graphify_concurrency(
+    root: Path,
+    attempt: str,
+    runner: Runner,
+    *,
+    september_root: Path,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Capture this release's graphify help first, then decide the concurrency receipt from it."""
+    graphify = str(root / GRAPHIFY_BINARY)
+    corpus = root / GRAPHIFY_CORPUS
+    probe_dir = root / "logs/c0" / attempt / "probe"
+    probe_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    top_help = runner([graphify, "--help"], corpus, env)
+    extract_help = runner([graphify, "extract", "--help"], corpus, env)
+    write_once(probe_dir / "graphify-help.stdout", top_help.stdout, mode=0o600)
+    extract_path = probe_dir / "graphify-extract-help.stdout"
+    write_once(extract_path, extract_help.stdout, mode=0o600)
+    value, evidence = september_max_workers(september_root)
+    return decide_graphify_concurrency(extract_help, extract_path, value, evidence)
+
+
+def concurrency_receipt_ok(receipt: object) -> bool:
+    if not isinstance(receipt, dict):
+        return False
+    value = receipt.get("value")
+    if value is None:
+        return receipt.get("source") == "unsupported" and receipt.get("flag") is None
+    evidence = receipt.get("evidence")
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value > 0
+        and receipt.get("source") == "september"
+        and receipt.get("flag") == GRAPHIFY_CONCURRENCY_FLAG
+        and isinstance(evidence, list)
+        and len(evidence) == 2
+    )
 
 
 def build_command_manifest(
-    root: Path, *, probe_symbols: tuple[str, ...], graphify_concurrency: int
+    root: Path, *, probe_symbols: tuple[str, ...], graphify_concurrency: Mapping[str, Any]
 ) -> dict[str, Any]:
     require(
-        isinstance(graphify_concurrency, int)
-        and not isinstance(graphify_concurrency, bool)
-        and graphify_concurrency > 0,
-        "GRAPHIFY_NATIVE_CONCURRENCY must be a positive integer",
+        concurrency_receipt_ok(graphify_concurrency),
+        "graphify concurrency receipt is not the recorded shape",
     )
-    graphify = str(root / "tools/graphify/venv/bin/graphify")
-    gcode = str(root / "tools/gcode/bin/gcode")
-    graphify_corpus = root / "corpora/graphify/C0"
-    gcode_corpus = root / "corpora/gcode/C0"
-    graphify_env = {"GRAPHIFY_NATIVE_CONCURRENCY": str(graphify_concurrency)}
+    graphify = str(root / GRAPHIFY_BINARY)
+    gcode = str(root / GCODE_BINARY)
+    graphify_corpus = root / GRAPHIFY_CORPUS
+    gcode_corpus = root / GCODE_CORPUS
+    extract = [
+        graphify,
+        "extract",
+        str(graphify_corpus),
+        "--code-only",
+        "--no-cluster",
+        "--out",
+        str(root / "c0/graphify-state"),
+    ]
+    if graphify_concurrency["value"] is not None:
+        extract += [GRAPHIFY_CONCURRENCY_FLAG, str(graphify_concurrency["value"])]
     commands: list[dict[str, Any]] = [
-        _command("graphify-version", [graphify, "--version"], graphify_corpus, graphify_env),
-        _command("graphify-help", [graphify, "--help"], graphify_corpus, graphify_env),
+        _command("graphify-version", [graphify, "--version"], graphify_corpus),
+        _command("graphify-help", [graphify, "--help"], graphify_corpus),
+        _command("graphify-export-help", [graphify, "export", "--help"], graphify_corpus),
+        _command("graphify-extract", extract, graphify_corpus),
         _command(
-            "graphify-export-help", [graphify, "export", "--help"], graphify_corpus, graphify_env
-        ),
-        _command(
-            "graphify-extract",
+            COLD_INDEX_NAME,
             [
-                graphify,
-                "extract",
-                str(graphify_corpus),
-                "--code-only",
-                "--no-cluster",
-                "--out",
-                str(root / "c0/graphify-state"),
+                gcode,
+                "--project",
+                str(gcode_corpus),
+                "--format",
+                "json",
+                "index",
+                str(gcode_corpus),
+                "--full",
+                "--sync-projections",
             ],
-            graphify_corpus,
-            graphify_env,
+            gcode_corpus,
         ),
-        _command("gcode-version", [gcode, "--version"], gcode_corpus, {}),
-        _command("gcode-contract", [gcode, "--format", "json", "contract"], gcode_corpus, {}),
-        _command("gcode-schema-identity", [gcode, "schema-identity", "--json"], gcode_corpus, {}),
+        _command("gcode-version", [gcode, "--version"], gcode_corpus),
+        _command("gcode-contract", [gcode, "--format", "json", "contract"], gcode_corpus),
+        _command("gcode-schema-identity", [gcode, "schema-identity", "--json"], gcode_corpus),
         _command(
             "gcode-embeddings-doctor",
             [gcode, "--format", "json", "embeddings", "doctor"],
             gcode_corpus,
-            {},
         ),
-        _command("gcode-status", [gcode, "--format", "json", "status"], gcode_corpus, {}),
+        _command("gcode-status", [gcode, "--format", "json", "status"], gcode_corpus),
     ]
     for index, symbol in enumerate(probe_symbols, start=1):
         commands.append(
@@ -125,7 +212,6 @@ def build_command_manifest(
                     str(CALLERS_LIMIT),
                 ],
                 gcode_corpus,
-                {},
             )
         )
     return {
@@ -136,17 +222,17 @@ def build_command_manifest(
         },
         "probe_symbols": list(probe_symbols),
         "callers_limit": CALLERS_LIMIT,
-        "graphify_concurrency": graphify_concurrency,
+        "graphify_concurrency": dict(graphify_concurrency),
         "commands": commands,
     }
 
 
-def _command(name: str, argv: list[str], cwd: Path, env: dict[str, str]) -> dict[str, Any]:
-    return {"name": name, "argv": argv, "cwd": str(cwd), "env": env}
+def _command(name: str, argv: list[str], cwd: Path) -> dict[str, Any]:
+    return {"name": name, "argv": argv, "cwd": str(cwd)}
 
 
 def freeze_command_manifest(
-    root: Path, *, probe_symbols: tuple[str, ...], graphify_concurrency: int
+    root: Path, *, probe_symbols: tuple[str, ...], graphify_concurrency: Mapping[str, Any]
 ) -> str:
     text = (
         json.dumps(
@@ -170,19 +256,34 @@ def freeze_command_manifest(
     return text
 
 
-def require_probe_symbols(corpus: Path, symbols: Sequence[str]) -> None:
-    """Fail closed before any state query when a ruled symbol is absent from the pinned corpus."""
-    require(len(symbols) > 0, "probe symbols are empty")
-    sources = [path.read_text(encoding="utf-8") for path in sorted(corpus.rglob("*.py"))]
-    missing = [
-        symbol
+def _definition_files(corpus: Path, symbols: Sequence[str]) -> dict[str, set[str]]:
+    sources = {path: path.read_text(encoding="utf-8") for path in sorted(corpus.rglob("*.py"))}
+    return {
+        symbol: {
+            str(path.relative_to(corpus))
+            for path, text in sources.items()
+            if re.search(rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(symbol)}\b", text, re.M)
+        }
         for symbol in symbols
-        if not any(
-            re.search(rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(symbol)}\b", text, re.M)
-            for text in sources
-        )
-    ]
+    }
+
+
+def require_probe_symbols(corpus: Path, symbols: Sequence[str]) -> None:
+    """Fail closed before any state query when a ruled symbol has no definition in the corpus."""
+    require(len(symbols) > 0, "probe symbols are empty")
+    definitions = _definition_files(corpus, symbols)
+    missing = [symbol for symbol in symbols if not definitions[symbol]]
     require(not missing, f"probe symbols missing from pinned corpus {corpus}: {missing}")
+
+
+def require_probe_spread(corpus: Path, symbols: Sequence[str]) -> set[str]:
+    """The probe reaches at least PROBE_MIN_FILES files, so one module cannot stand for the tree."""
+    files: set[str] = set().union(*_definition_files(corpus, symbols).values())
+    require(
+        len(files) >= PROBE_MIN_FILES,
+        f"probe symbols span {len(files)} files; need at least {PROBE_MIN_FILES}",
+    )
+    return files
 
 
 def run_process(argv: list[str], cwd: Path, env: dict[str, str]) -> CommandResult:
@@ -222,15 +323,15 @@ def run_c0(
     *,
     ambient: dict[str, str],
     expected_schema_identity: Any,
-    c7_poller_rows: int | None,
-    c7_clean_count: int | None,
+    observer: IndexPoller | None,
     graphify_marker_pattern: str | None,
 ) -> dict[str, Any]:
     require(ATTEMPT_PATTERN.fullmatch(attempt) is not None, f"invalid attempt: {attempt!r}")
     manifest_path = root / MANIFEST_RELATIVE
     require(manifest_path.is_file(), "command manifest is not frozen")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    require_probe_symbols(root / "corpora/graphify/C0", manifest["probe_symbols"])
+    require_probe_symbols(root / GRAPHIFY_CORPUS, manifest["probe_symbols"])
+    require_probe_spread(root / GRAPHIFY_CORPUS, manifest["probe_symbols"])
     write_once(
         root / f"receipts/c0-symbols-{attempt}.json",
         json.dumps({"probe_symbols": manifest["probe_symbols"]}, indent=2, sort_keys=True) + "\n",
@@ -238,12 +339,18 @@ def run_c0(
     )
     log_dir = root / "logs/c0" / attempt
     log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    base_env = isolated_environment(root, ambient)
+    child = isolated_environment(root, ambient)
     outputs: dict[str, CommandResult] = {}
     results: list[dict[str, Any]] = []
     for command in manifest["commands"]:
-        child = {**base_env, **command["env"]}
-        result = runner(command["argv"], Path(command["cwd"]), child)
+        watch = observer if command["name"] == COLD_INDEX_NAME else None
+        if watch is not None:
+            watch.start()
+        try:
+            result = runner(command["argv"], Path(command["cwd"]), child)
+        finally:
+            if watch is not None:
+                watch.stop()
         outputs[command["name"]] = result
         write_once(log_dir / f"{command['name']}.stdout", result.stdout, mode=0o600)
         write_once(log_dir / f"{command['name']}.stderr", result.stderr, mode=0o600)
@@ -255,12 +362,14 @@ def run_c0(
                 "env_diff": _env_diff(ambient, child),
             }
         )
+    first_qualifying = observer.first_qualifying if observer is not None else None
+    clean = observer.clean if observer is not None else None
     checks = evaluate_c0(
         outputs,
         manifest,
         expected_schema_identity=expected_schema_identity,
-        c7_poller_rows=c7_poller_rows,
-        c7_clean_count=c7_clean_count,
+        c7_poller_rows=first_qualifying,
+        c7_clean_count=clean,
         graphify_marker_pattern=graphify_marker_pattern,
     )
     receipt = {
@@ -268,6 +377,7 @@ def run_c0(
         "pins": manifest["pins"],
         "probe_symbols": manifest["probe_symbols"],
         "graphify_concurrency": manifest["graphify_concurrency"],
+        "c7": {"first_qualifying": first_qualifying, "clean": clean},
         "results": results,
         "checks": checks,
         "passed": all(check["passed"] for check in checks),
@@ -329,7 +439,6 @@ def evaluate_c0(
         and extract is not None
         and re.search(graphify_marker_pattern, extract.stdout + extract.stderr) is not None
     )
-    concurrency = manifest.get("graphify_concurrency")
     checks = {
         "graphify-pin": _pin_line(outputs.get("graphify-version"), f"graphify {GRAPHIFY_PIN}"),
         "gcode-pin": _pin_line(outputs.get("gcode-version"), f"gcode {GCODE_PIN}"),
@@ -356,9 +465,7 @@ def evaluate_c0(
         and all(isinstance(item, dict) and item.get("total", 0) >= 1 for item in callers),
         "graphify-marker": marker_seen,
         "c7-poller-marker": c7_poller_marker_ok(c7_poller_rows, c7_clean_count),
-        "graphify-concurrency": isinstance(concurrency, int)
-        and not isinstance(concurrency, bool)
-        and concurrency > 0,
+        "graphify-concurrency": concurrency_receipt_ok(manifest.get("graphify_concurrency")),
     }
     return [{"check": name, "passed": bool(passed)} for name, passed in checks.items()]
 

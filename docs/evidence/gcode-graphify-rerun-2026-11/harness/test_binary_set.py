@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,31 @@ def test_leaves_no_staging_file_behind(tmp_path: Path) -> None:
     install_binary_set(source, dest)
 
     assert sorted(path.name for path in dest.iterdir()) == sorted(MEMBERS)
+
+
+def test_a_copy_that_fails_midway_leaves_no_staging_file_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "bin"
+    dest = tmp_path / "gobby-home/bin"
+    _stage_source(source)
+    real_copymode = shutil.copymode
+    calls: list[Path] = []
+
+    def copymode_interrupted_on_the_second_member(
+        src: Path, dst: Path, *, follow_symlinks: bool = True
+    ) -> None:
+        calls.append(dst)
+        if len(calls) == 2:
+            raise OSError("copy interrupted")
+        real_copymode(src, dst, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(shutil, "copymode", copymode_interrupted_on_the_second_member)
+
+    with pytest.raises(OSError, match="copy interrupted"):
+        install_binary_set(source, dest)
+
+    assert list(dest.glob(".*.staging")) == []
 
 
 @pytest.mark.parametrize("missing", MEMBERS)

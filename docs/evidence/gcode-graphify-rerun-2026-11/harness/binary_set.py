@@ -26,8 +26,11 @@ def install_binary_set(source_dir: Path, dest_dir: Path) -> dict[str, Path]:
     for name in SET_FILES:
         source = source_dir / name
         staging = dest_dir / f".{name}.staging"
-        shutil.copyfile(source, staging)
-        shutil.copymode(source, staging)
-        os.replace(staging, dest_dir / name)
+        try:
+            shutil.copyfile(source, staging)
+            shutil.copymode(source, staging)
+            os.replace(staging, dest_dir / name)
+        finally:
+            staging.unlink(missing_ok=True)
         installed[name] = dest_dir / name
     return installed

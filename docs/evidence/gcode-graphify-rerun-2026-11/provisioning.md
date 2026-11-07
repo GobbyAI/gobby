@@ -13,6 +13,8 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | --- | --- |
 | Runtime root | `DEFAULT_RUNTIME_ROOT` in `harness/provision_environment.py` |
 | Owner task | `#22948` (`TASK_REF`) |
+| Attempt | `rerun2611a` |
+| Owner session | `7674aa11-70a3-40d5-91dd-1fe46140732b` (orchestrator root pane) |
 | Compose project | `gcode-graphify-rerun-2026-11` |
 | Source commit (gobby, gcode) | `30d2a5956241c208e670133efbc9d9452721118f`, the 0.5.0 tip at candidate time |
 | gcode pins | version `1.9.104`, contract `12`; read from `crates/gcode` at the source commit and matching the installed binary |
@@ -38,18 +40,74 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
    - asserts zero `code_indexed_file_states` rows for every workspace project.
 4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox.
 5. `record_installations.py --owner-session <session> --attempt <id>`.
-6. `validate_environment.py --live`, then the C0 run.
-7. `launch_services.py observe --owner-session <session>` writes the after-snapshot if absent.
-8. `launch_services.py teardown --owner-session <session>` (leaf 2.2): writes the final snapshot,
-   then removes the containers, network and volumes listed in `receipts/ownership-live.json`,
-   after checking each one's identity and compose label. It writes `receipts/teardown.json`.
+6. `launch_services.py observe --owner-session <session> --attempt <id>` writes the after-snapshot
+   if absent.
+7. `c0.py <attempt> --owner-session <session>`: the C0 run, described below.
+8. `validate_environment.py --live`.
+
+This is the order ruled by the orchestrator (7d30ebfd). Validation runs last, after C0.
+
+Teardown is leaf 2.2, not one of these eight steps. `launch_services.py teardown --owner-session
+<session>` writes the final snapshot, then removes the containers, network and volumes listed in
+`receipts/ownership-live.json`, after checking each one's identity and compose label. It writes
+`receipts/teardown.json`.
 
 Every step writes a receipt under `receipts/` or `logs/install/`. A probe whose receipt exists and
 verifies is skipped on rerun. A failed probe is preserved, and a new attempt ID is required.
 
+## Command lines for attempt `rerun2611a`
+
+Run from the worktree root, as the orchestrator. Every line uses the same owner session.
+
+```bash
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py init --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py write-compose --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --postgres-image gobby-postgres-local@sha256:443364cb8e901fcbf902ee0435e9fc2333cb000d7351e22bd78485365e4d3d02 --qdrant-image qdrant/qdrant@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc --falkordb-image falkordb/falkordb@sha256:e93fcd753fe612fb0a222166a0620a1ae31b826a12f223c3b6d06038d9d7a364
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py provision --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_daemon.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/record_installations.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py observe --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611a
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/c0.py rerun2611a --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
+uv run python docs/evidence/gcode-graphify-rerun-2026-11/harness/validate_environment.py --live
+```
+
+The write-compose images are the September digests from `receipts/image-references.json`
+(recorded 2026-09-07). `gobby-postgres-local` is a locally built image name, so it must exist on
+this machine before step 2. Otherwise the orchestrator picks new digests.
+
+## C0 (step 7)
+
+`c0.py` checks ownership of the runtime, then runs every command under the SRT wrapper. Its policy is
+`srt/c0-settings-<attempt>.json`, and violations go to `logs/c0/<attempt>/violations.jsonl`.
+
+1. **Graphify concurrency probe.** `graphify --help` and `graphify extract --help` are captured under
+   `logs/c0/<attempt>/probe/`. If the extract help lists `--max-workers`, the extract command gets
+   `--max-workers 1`. The value and its evidence come from September's `run-records.jsonl`
+   line 3, where `GRAPHIFY_NATIVE_CONCURRENCY` is `"1"` and `command_argv` contains
+   `--max-workers 1`. If the flag is absent, the receipt records `source: unsupported` and the
+   extract runs with default workers. This run sets the flag only. `GRAPHIFY_NATIVE_CONCURRENCY`
+   is not set (orchestrator ruling 4b, via gobby#19309).
+2. **Frozen manifest.** `command-manifest.json` lists each exact argv. The first gcode command is the
+   cold index, `gcode --project <C0> --format json index <C0> --full --sync-projections`.
+3. **C7 poller.** The cold index runs under `IndexPoller`. It samples
+   `SELECT count(*) FROM code_indexed_file_states WHERE project_id = %s` every 0.2 s over a
+   read-only connection, and logs to `receipts/c7-poller-<attempt>.jsonl`. The project id is read
+   from `corpora/gcode/C0/.gobby/project.json`, as `launch_services` reads it. The clean count is
+   `file_count` in `manifests/corpora/gcode/C1.json` (149), checked against its file entries. C7
+   passes only if a sample with `0 < count < 149` is observed.
+4. **Probe symbols.** `load_policy`, `repository_root`, `plan_product`, `MCPError`, and `SettingsError`
+   are verified in the September C0 corpus copy. They span three files, which meets the minimum of
+   three: `src/game_goblins/platform/settings.py` (`SettingsError`, `repository_root`,
+   `load_policy`), `src/game_goblins/replenishment/planner.py` (`plan_product`), and
+   `src/game_goblins/platform/mcp.py` (`MCPError`).
+
+The receipt is `receipts/c0-<attempt>.json`. `c0.py` exits 0 only if every check passes. The gcode
+schema-identity expected value is not ruled yet (`GCODE_SCHEMA_IDENTITY_PENDING` in `c0.py`), so
+that check fails and C0 cannot pass until the orchestrator rules it.
+
 ## Receipts
 
 - `isolation/external-state.before.json`, `.after.json`, `.final.json`
+- `receipts/c0-<attempt>.json`, `receipts/c7-poller-<attempt>.jsonl`, `logs/c0/<attempt>/`
 - `receipts/services.json`, `receipts/ownership-live.json`, `receipts/compose.rendered.json`
 - `receipts/gcode.json`, `receipts/installations.json` (graphify only)
 - `receipts/probe-*-<attempt>.json` and `logs/install/*.log`
@@ -83,3 +141,15 @@ verifies is skipped on rerun. A failed probe is preserved, and a new attempt ID 
   fails validation the way a hash change does. `test_external_snapshot_never_opens_operator_files`
   guards the read path. Every other stable path keeps its SHA-256. The isolated runtime's own
   `gobby-home/bootstrap.yaml` and `local_cli_token` are unchanged; they sit inside the runtime root.
+- Graphify concurrency is set by the probe, not by an environment variable. Only `--max-workers 1`
+  is passed, and only when this run's `extract --help` lists the flag. `GRAPHIFY_NATIVE_CONCURRENCY`
+  is not set.
+- gcode schema identity: `schema-identity --json` has a different shape from the archived six-key
+  identity, and no expected value is ruled. C0 fails that check until one is.
+- The C7 poller's project id comes from `project.json`. Its match with the `id` that `gcode status`
+  reports has not been checked. If the two differ, C7 counts no rows and fails closed.
+- `MCPError` callers (total of at least one) are not checked live. Nothing in this attempt runs
+  that check.
+- The `uv run python <script>` form on each command line is unconfirmed. No live step has run yet.
+- Known live risk: September saw `malformed grant: grant project does not match local project`
+  under the isolated grant. It is the likely first live failure, at step 3 or step 8.
