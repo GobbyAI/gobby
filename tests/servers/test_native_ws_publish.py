@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,6 +30,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
+from tests.e2e.native_ws_probe_bootstrap import RECORDS_FILE, recording_bind
 
 pytestmark = pytest.mark.unit
 
@@ -958,6 +960,30 @@ async def test_a_held_rebind_is_logged_as_a_rebind(
         "rebind failed after" in r.getMessage() and "phases" in r.getMessage()
         for r in caplog.records
     )
+
+
+async def test_the_probe_wrapper_serves_a_rebind_and_records_its_generation(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The e2e probe wraps bind; a rebind through that wrapper must bind and be recorded."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.3)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    monkeypatch.setattr(NativePublisher, "bind", recording_bind(NativePublisher.bind, tmp_path))
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[1.0])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1, 5.0)
+        finally:
+            await publisher.stop()
+    records = (tmp_path / RECORDS_FILE).read_text().splitlines()
+    assert [json.loads(line)["generation"] for line in records] == [GEN1]
 
 
 @pytest.mark.slow

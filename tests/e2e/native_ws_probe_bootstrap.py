@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import runpy
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,14 +28,13 @@ def _append_record(home: Path, record: dict[str, object]) -> None:
         handle.write(json.dumps(record) + "\n")
 
 
-def main() -> None:
-    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
-        raise RuntimeError("The native WS probe requires an isolated test process")
-    home = Path(os.environ["GOBBY_HOME"])
-    original = NativePublisher.bind
+def recording_bind(
+    original: Callable[..., Awaitable[str]], home: Path
+) -> Callable[[NativePublisher], Awaitable[str]]:
+    """Wraps a publisher bind so each successful bind is recorded in `home`."""
 
-    async def bind(self: NativePublisher) -> str:
-        generation = await original(self)
+    async def bind(self: NativePublisher, label: str = "bind") -> str:
+        generation = await original(self, label)
         _append_record(
             home,
             {
@@ -46,7 +46,14 @@ def main() -> None:
         )
         return generation
 
-    with patch.object(NativePublisher, "bind", bind):
+    return bind
+
+
+def main() -> None:
+    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
+        raise RuntimeError("The native WS probe requires an isolated test process")
+    home = Path(os.environ["GOBBY_HOME"])
+    with patch.object(NativePublisher, "bind", recording_bind(NativePublisher.bind, home)):
         runpy.run_module("gobby.runner", run_name="__main__")
 
 
