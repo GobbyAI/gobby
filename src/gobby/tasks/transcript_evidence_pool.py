@@ -172,14 +172,17 @@ def _drain_pool_and_stop_tracker(pool: ProcessPoolExecutor, done: threading.Even
 def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECONDS) -> None:
     """Stop accepting derivations, wait for the worker to exit, then stop the tracker.
 
-    The wait is bounded by ``timeout``; when the worker does not exit in time the
-    survivors are left to the shutdown reaper.
+    The wait is bounded by ``timeout``. A worker still alive after it is killed: it is
+    never an agent process, and interpreter finalization joins it without bound, so it
+    cannot wait for the shutdown reaper, which may not run on every path.
     """
     global _pool
     with _pool_lock:
         pool, _pool = _pool, None
     if pool is None:
         return
+    # Snapshot first: shutdown clears the executor's worker map.
+    workers = list((getattr(pool, "_processes", None) or {}).values())
     done = threading.Event()
     threading.Thread(
         target=_drain_pool_and_stop_tracker,
@@ -187,12 +190,19 @@ def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECO
         name="transcript-evidence-pool-exit",
         daemon=True,
     ).start()
-    if not done.wait(timeout):
-        logger.info(
-            "Transcript evidence pool worker did not exit within %.1fs; "
-            "leaving it to the shutdown reaper",
-            timeout,
-        )
+    if done.wait(timeout):
+        return
+    logger.info(
+        "Transcript evidence pool worker did not exit within %.1fs; killing %d worker(s)",
+        timeout,
+        len(workers),
+    )
+    for worker in workers:
+        try:
+            if worker.is_alive():
+                worker.kill()
+        except (OSError, ValueError):
+            logger.debug("Transcript evidence pool worker kill failed", exc_info=True)
 
 
 __all__ = [

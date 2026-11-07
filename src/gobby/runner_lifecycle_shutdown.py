@@ -47,6 +47,9 @@ _OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
 _HEALTH_CHECK_SETTLE_SECONDS = 2.0
 _TERMINAL_DELIVERY_SETTLE_SECONDS = 6.0
 _FINALIZER_SETTLE_SECONDS = 10.0
+# Budget for the child-process tail when the overall deadline cut the cleanup before its
+# reap. Each step is bounded: pool drain 2s, CLI calls 5s, agent listing 3s, reap ~2s.
+_DEADLINE_CHILD_REAP_BUDGET_SECONDS = 15.0
 
 # Set on the finalizer-deadline expiry branch: an abandoned settlement scope
 # can leave a wedged non-daemon executor worker that blocks interpreter exit
@@ -122,6 +125,11 @@ async def _best_effort[T](
             logger.warning("%s timed out", name)
     except Exception as e:
         logger.warning("%s failed: %s", name, e, exc_info=True)
+    except asyncio.CancelledError:
+        # The overall deadline (or a caller) cancelled this step. Name it so the log
+        # shows which step was still running when the shutdown budget ran out.
+        logger.warning("%s was cancelled while in flight", name)
+        raise
     return None
 
 
@@ -708,6 +716,45 @@ async def _run_graceful_shutdown_sequence(
     )
 
 
+async def _shutdown_child_processes(
+    runner: GobbyRunner,
+    *,
+    shutdown_intent: ShutdownIntent,
+    reap_remaining_child_processes: ReapChildProcesses,
+) -> None:
+    """Stop the transcript pool and CLI calls, then reap non-preserved children.
+
+    Order is part of the contract: the pool stops before the reaper runs, CLI calls
+    clean up before the reaper force-kills them, and the agent listing gates the reap.
+    """
+    from gobby.runner_background_services import shutdown_background_services
+
+    _best_effort_sync(
+        shutdown_background_services,
+        "Transcript evidence process pool shutdown",
+    )
+    await _best_effort(
+        shutdown_cli_text_generation_calls,
+        "Internal CLI text generation shutdown",
+    )
+    drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
+    preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
+    if preserved_agent_pids is None:
+        logger.warning(
+            "Skipping child process reap: managed agent runs could not be "
+            "enumerated, so reaping could kill live agents"
+        )
+    else:
+        await _best_effort(
+            lambda: reap_remaining_child_processes(
+                preserve_agents=True,
+                preserved_agent_pids=preserved_agent_pids,
+                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART or not drain_host,
+            ),
+            "Child process reap",
+        )
+
+
 async def _run_async_shutdown_cleanup(
     runner: GobbyRunner,
     server: uvicorn.Server | None = None,
@@ -718,7 +765,6 @@ async def _run_async_shutdown_cleanup(
     shutdown_telemetry: Callable[[], None],
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
-    from gobby.runner_background_services import shutdown_background_services
     from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
 
     if server is not None and server_task is not None:
@@ -752,29 +798,11 @@ async def _run_async_shutdown_cleanup(
             )
     # Nothing feeds the composer ledger once the host stops; cancelling flushes it.
     await _cancel_runner_task(runner, "_composer_ledger_task")
-    _best_effort_sync(
-        shutdown_background_services,
-        "Transcript evidence process pool shutdown",
+    await _shutdown_child_processes(
+        runner,
+        shutdown_intent=shutdown_intent,
+        reap_remaining_child_processes=reap_remaining_child_processes,
     )
-    await _best_effort(
-        shutdown_cli_text_generation_calls,
-        "Internal CLI text generation shutdown",
-    )
-    preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
-    if preserved_agent_pids is None:
-        logger.warning(
-            "Skipping child process reap: managed agent runs could not be "
-            "enumerated, so reaping could kill live agents"
-        )
-    else:
-        await _best_effort(
-            lambda: reap_remaining_child_processes(
-                preserve_agents=True,
-                preserved_agent_pids=preserved_agent_pids,
-                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART or not drain_host,
-            ),
-            "Child process reap",
-        )
     _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
     await _best_effort(
         lambda: _shutdown_database_concurrency(runner),
@@ -863,6 +891,17 @@ async def shutdown_daemon_services(
             logger.warning(
                 "Async shutdown cleanup exceeded %.1fs overall deadline",
                 _OVERALL_SHUTDOWN_DEADLINE_SECONDS,
+            )
+            # The deadline cut the cleanup before its reap. Reap on its own budget so
+            # no child, including a pool worker, outlives the interpreter.
+            await _best_effort(
+                lambda: _shutdown_child_processes(
+                    runner,
+                    shutdown_intent=shutdown_intent,
+                    reap_remaining_child_processes=reap_remaining_child_processes,
+                ),
+                "Deadline child process reap",
+                timeout=_DEADLINE_CHILD_REAP_BUDGET_SECONDS,
             )
     finally:
         _close_http_admission(runner)

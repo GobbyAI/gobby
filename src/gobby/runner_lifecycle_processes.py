@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.runner_lifecycle")
 
+# Bounds the managed-run listing that gates the child reap, so a stalled hub cannot
+# consume the deadline-path reap budget. A timeout skips the reap, as a failed listing does.
+_AGENT_RUN_LISTING_SECONDS = 3.0
+
 
 def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
     """Identity-checked gterm host PID to keep out of the child reap.
@@ -46,11 +50,11 @@ async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None
     try:
         db_executor = getattr(runner, "db_executor", None)
         if db_executor is not None:
-            runs = await db_executor.run(_list_active_agent_runs_once, runner, include_fenced=True)
+            listing = db_executor.run(_list_active_agent_runs_once, runner, include_fenced=True)
         else:
-            runs = await asyncio.to_thread(
-                _list_active_agent_runs_once, runner, include_fenced=True
-            )
+            listing = asyncio.to_thread(_list_active_agent_runs_once, runner, include_fenced=True)
+        # Bounded: a stalled hub must not hold the deadline-path reap hostage.
+        runs = await asyncio.wait_for(listing, timeout=_AGENT_RUN_LISTING_SECONDS)
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return None
@@ -143,8 +147,11 @@ async def _reap_remaining_child_processes(
                 return
 
         logger.info(
-            "Reaping %d remaining child process(es) after graceful shutdown",
+            "Reaping %d remaining child process(es) after graceful shutdown: %s",
             len(children),
+            "; ".join(
+                _describe_child_process(child, root_pid=current_process.pid) for child in children
+            ),
         )
         for child in children:
             try:

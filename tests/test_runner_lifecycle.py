@@ -1714,6 +1714,74 @@ class TestShutdownDaemonServices:
         assert marker.exists() is False
 
     @pytest.mark.asyncio
+    async def test_deadline_overrun_still_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(runner_lifecycle_shutdown, "get_shutdown_marker_path", lambda: marker)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_OVERALL_SHUTDOWN_DEADLINE_SECONDS", 0.2)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()
+        )
+
+        async def stalled_cleanup(*_args: object, **_kwargs: object) -> None:
+            # A cleanup step that never settles: the overall deadline cuts it short.
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_async_shutdown_cleanup", stalled_cleanup
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        reap_remaining_child_processes = AsyncMock()
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        await asyncio.wait_for(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, server),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap_remaining_child_processes,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            ),
+            timeout=10.0,
+        )
+
+        reap_remaining_child_processes.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        assert "Async shutdown cleanup exceeded 0.2s overall deadline" in caplog.text
+        assert "Shutdown complete" in caplog.text, "the finalizer tail runs after the reap"
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_cancelled_step_is_named_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+
+        async def stalled_step() -> None:
+            await asyncio.Event().wait()
+
+        # The overall deadline cancels the step in flight; its name must reach the log.
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.05):
+                await runner_lifecycle_shutdown._best_effort(stalled_step, "Stalled shutdown step")
+
+        assert "Stalled shutdown step was cancelled while in flight" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_mid_sequence_exception_preserves_full_cleanup_tail(
         self,
         tmp_path: Path,

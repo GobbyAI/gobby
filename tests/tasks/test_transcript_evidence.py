@@ -377,9 +377,16 @@ def _no_pending_pool_exit() -> None:
 
 
 class _RecordingExecutor:
-    def __init__(self, events: list[str], *, block_on_wait: threading.Event | None = None) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        block_on_wait: threading.Event | None = None,
+        processes: dict[int, object] | None = None,
+    ) -> None:
         self._events = events
         self._block_on_wait = block_on_wait
+        self._processes = processes
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         self._events.append(f"shutdown:wait={wait}:cancel={cancel_futures}")
@@ -404,8 +411,22 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     assert transcript_evidence_pool._pool is None
 
 
+class _FakeWorker:
+    def __init__(self, pid: int, events: list[str]) -> None:
+        self.pid = pid
+        self._events = events
+        self._alive = True
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def kill(self) -> None:
+        self._alive = False
+        self._events.append(f"kill:{self.pid}")
+
+
 @pytest.mark.usefixtures("_no_pending_pool_exit")
-def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shutdown_kills_hung_worker_after_bounded_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
     tracker_stopped = threading.Event()
@@ -414,7 +435,8 @@ def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) 
         events.append("tracker")
         tracker_stopped.set()
 
-    fake = _RecordingExecutor(events, block_on_wait=release)
+    worker = _FakeWorker(4242, events)
+    fake = _RecordingExecutor(events, block_on_wait=release, processes={worker.pid: worker})
     monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
     monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", stop_tracker)
 
@@ -424,12 +446,13 @@ def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) 
         elapsed = time.monotonic() - started
 
         assert elapsed < 1.0
-        assert events == ["shutdown:wait=True:cancel=True"]
+        assert "kill:4242" in events
+        assert worker.is_alive() is False
         assert transcript_evidence_pool._pool is None
     finally:
         release.set()
         assert tracker_stopped.wait(5), "pool drain must finish before patches are restored"
-    assert events == ["shutdown:wait=True:cancel=True", "tracker"]
+    assert events[-1] == "tracker"
 
 
 def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:

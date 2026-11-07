@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -34,6 +35,18 @@ async def test_restart_preservation_checks_monitor_creation_identity(
         preserve_srt_monitor=True,
     )
     assert processes[WORKER_PID].terminated is (started != float(WORKER_PID))
+
+
+@pytest.mark.asyncio
+async def test_reap_logs_every_terminated_child_by_identity(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    processes = _install_fake_psutil(monkeypatch)
+    caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
+    await runner_lifecycle_processes._reap_remaining_child_processes()
+    for pid in (HOST_PID, SHELL_PID, WORKER_PID):
+        assert processes[pid].terminated
+        assert f"pid={pid} " in caplog.text
 
 
 HOST_PID = 500
