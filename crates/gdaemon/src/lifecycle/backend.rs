@@ -510,13 +510,13 @@ impl BackendChild {
             return Ok(false);
         };
         match signal_group(group, signal) {
-            // Darwin reports EPERM for an all-zombie group. Only accept that
-            // completion after verifying our leader has exited; never suppress
-            // a permission error while the owned leader is still running.
+            // Darwin reports EPERM when every group member is a zombie. Accept
+            // that completion only when the leader is reaped or has exited;
+            // a live leader keeps its permission error.
             Err(error)
                 if cfg!(target_os = "macos")
                     && error.raw_os_error() == Some(libc::EPERM)
-                    && self.child.try_wait()?.is_some() =>
+                    && (self.child.try_wait()?.is_some() || leader_has_exited(group)) =>
             {
                 Ok(false)
             }
@@ -538,6 +538,25 @@ impl Drop for BackendChild {
             eprintln!("backend group cleanup: {error}");
         }
     }
+}
+
+/// Whether the kernel no longer shows `pid` as a live process while `waitpid` has not reaped it.
+/// Darwin hides an exited leader from `proc_pidinfo` (ESRCH) before `waitpid` reports it, and a
+/// live leader is always visible to it, so this identifies a leader that has finished exiting.
+#[cfg(target_os = "macos")]
+fn leader_has_exited(pid: i32) -> bool {
+    // SAFETY: proc_bsdinfo is a C POD struct; proc_pidinfo receives its exact size
+    // and a writable pointer that lives through the call.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let read =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    read <= 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn leader_has_exited(_pid: i32) -> bool {
+    false
 }
 
 fn signal_group(group: i32, signal: i32) -> io::Result<bool> {

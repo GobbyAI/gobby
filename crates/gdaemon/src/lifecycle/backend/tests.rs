@@ -1,4 +1,4 @@
-use super::lock_reporting;
+use super::{BackendChild, BackendConfig, lock_reporting};
 use std::{sync::Mutex as StdMutex, time::Duration};
 use tokio::{sync::Mutex, time::timeout};
 
@@ -33,4 +33,34 @@ async fn lock_reporting_reports_each_interval_until_the_lock_is_released() {
     drop(held);
     let guard = lock_reporting(&lock, Duration::from_millis(20), &reporter).await;
     assert_eq!(*guard, 7);
+}
+
+/// Darwin reports EPERM for a group whose members have all exited, and `waitpid` reports an
+/// exited leader only after that. Signalling a group that has just finished must report it as
+/// done, not as a permission error.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn group_signal_after_leader_exit_is_not_a_permission_error() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let config =
+        BackendConfig::from_command_json(home.path(), Some(r#"["/bin/sh","-c","exit 0"]"#))?;
+    for trial in 0..200 {
+        let mut backend = BackendChild::spawn(&config)?;
+        let mut reaped = false;
+        for _ in 0..10_000 {
+            // drain and kill_group signal the group until the leader is reaped.
+            let signalled = backend.signal_owned_group(libc::SIGKILL);
+            assert!(
+                signalled.is_ok(),
+                "trial {trial}: signalling a group whose leader exited: {signalled:?}"
+            );
+            if backend.child.try_wait()?.is_some() {
+                reaped = true;
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(reaped, "trial {trial}: the leader was never reaped");
+    }
+    Ok(())
 }
