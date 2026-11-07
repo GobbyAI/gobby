@@ -15,7 +15,6 @@ pytestmark = pytest.mark.unit
 
 _BINARY = Path("/fixture/bin/provider")
 _GOBBY_PROXY_TOOLS = ["mcp__gobby__call_tool", "mcp__gobby__get_tool_schema"]
-_HOLD_SLEEP_RULE = "Bash(sleep:*)"
 _CODEX_FLAGS = [
     "-c",
     "mcp_servers.gobby.enabled=true",
@@ -28,15 +27,13 @@ _CODEX_FLAGS = [
 
 @pytest.mark.parametrize(
     ("scenario", "builtin_tools"),
-    [("compact", ""), ("clear", ""), ("restart_hold", "Bash")],
+    [("compact", ""), ("clear", ""), ("restart_hold", "")],
 )
 def test_claude_seat_disables_builtins_and_allows_only_the_gobby_proxy_tools(
     scenario: str, builtin_tools: str
 ) -> None:
     command = _seat_command("claude", _BINARY, scenario)
     allowed = [*_GOBBY_PROXY_TOOLS]
-    if scenario == "restart_hold":
-        allowed.append(_HOLD_SLEEP_RULE)
     assert command[0] == str(_BINARY)
     assert command[2:] == ["--tools", builtin_tools, "--allowedTools", *allowed]
 

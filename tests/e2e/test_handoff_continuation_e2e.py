@@ -9,14 +9,11 @@ handoff, and the daemon delivers it. The test types nothing into the pane. It as
 that the daemon delivers the get_handoff continuation and that the seat finishes that
 turn within a bound.
 
-The restart_hold scenario keeps the launch turn running after set_handoff stages the handoff,
-with a shell sleep longer than the daemon's settle budget. The daemon then interrupts the
-turn and types the compact, and the staged handoff stays live until the continuation's
-get_handoff consumes it. The test sends the restart as soon as the daemon's own marker shows
-the staged handoff. It expects 409 handoff_pending and then confirms the marker is still
-live. This window is bounded, not absolute: the restart is judged after the start probe,
-and consumption needs the compact and a continuation turn first. A restart admitted after
-consumption returns 200 and stops the isolated daemon, which fails the case.
+The restart_hold scenario uses a separate test-only runner to hold compact submission.
+The provider's launch turn ends normally. While compact is held, the test requests restart,
+asserts 409 handoff_pending and the live marker, then releases compact. The barrier prevents
+continuation consumption throughout the restart judgment, including its start probe.
+No production seam, provider sleep or typed input is used.
 """
 
 from __future__ import annotations
@@ -29,15 +26,17 @@ from typing import Any, Literal
 import httpx
 import pytest
 
+from tests.e2e import handoff_continuation_fixture as _handoff
 from tests.e2e import test_composer_live_proof as _composer
 from tests.e2e.composer_proof import ProofRefused
 from tests.e2e.composer_proof_admission import Admission, verify_binary_set
 from tests.e2e.composer_proof_live import LiveProof, Seat
 from tests.e2e.conftest import daemon_auth_headers
+from tests.e2e.handoff_continuation_barrier import HandoffBarrier
 
-# The admitted isolated-daemon fixture chain is shared with the composer proof.
+# Reuse admission and temporary HOME; the handoff fixture has its own isolated runner.
 composer_admission = _composer.composer_admission
-composer_fixture = _composer.composer_fixture
+handoff_fixture = _handoff.handoff_fixture
 e2e_home_dir = _composer.e2e_home_dir
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
@@ -56,29 +55,20 @@ pytestmark = [
 ]
 
 
-_HOLD_SECONDS = 90
 _REPLY_TAIL = "Reply READY after the call, then stop."
-# The shell hold keeps the launch turn running past the daemon's settle budget, so the daemon
-# interrupts the turn to submit the compact. The restart is judged inside that budget.
-_HOLD_TAIL = (
-    f"Then run `sleep {_HOLD_SECONDS}` in the shell with a timeout of "
-    f"{(_HOLD_SECONDS + 30) * 1000} milliseconds. "
-    "Reply READY after the sleep returns, then stop."
-)
 
 
 def _seat_prompt(scenario: str) -> str:
     # The launch turn stages the seat's own handoff. The prompt must not name the
     # continuation tool, or the launch turn itself would match the continuation filter.
     clear = str(scenario == "clear").lower()
-    tail = _HOLD_TAIL if scenario == "restart_hold" else _REPLY_TAIL
     return (
         "Disposable handoff continuation seat. Load the gobby:references/sessions/handoffs.md "
         "skill reference with gobby-skills get_skill. Fetch the gobby-sessions set_handoff "
         "schema with get_tool_schema. Then call set_handoff with "
         f"clear_session={clear}, current_state "
         "'Disposable continuation seat idle after bind.', and next_steps ['Reply READY.']. "
-        f"{tail}"
+        f"{_REPLY_TAIL}"
     )
 
 
@@ -88,17 +78,11 @@ _GOBBY_PROXY_TOOLS = ("mcp__gobby__call_tool", "mcp__gobby__get_tool_schema")
 
 
 def _seat_command(provider: Provider, binary: Path, scenario: str) -> list[str]:
-    # Fixture-only exception to the composer's disabled tools: the seat may call the gobby proxy
-    # tools above, and built-in tools stay off except Bash in the restart hold.
+    # Fixture-only exception to the composer's disabled tools: the seat may call the gobby proxy.
     prompt = _seat_prompt(scenario)
     if provider == "claude":
         allowed = list(_GOBBY_PROXY_TOOLS)
-        builtin_tools = ""
-        if scenario == "restart_hold":
-            # The hold's shell sleep is the only built-in the seat may use.
-            builtin_tools = "Bash"
-            allowed.append("Bash(sleep:*)")
-        return [str(binary), prompt, "--tools", builtin_tools, "--allowedTools", *allowed]
+        return [str(binary), prompt, "--tools", "", "--allowedTools", *allowed]
     return [
         str(binary),
         "-c",
@@ -162,21 +146,24 @@ def _handoff_staged(db: Any) -> bool:
     return row is not None
 
 
-async def _await_staged_handoff(db: Any) -> None:
-    """Block until set_handoff stages a marker, failing closed at the bound."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + _BOUND_SECONDS
-    while not await asyncio.to_thread(_handoff_staged, db):
-        if loop.time() >= deadline:
-            raise AssertionError("set_handoff staged no handoff marker within the bound")
-        await asyncio.sleep(0.25)
-
-
 async def _request_restart(proof: LiveProof) -> httpx.Response:
     """Request a graceful restart without force, so the handoff shutdown hold applies."""
     headers = daemon_auth_headers(proof.daemon.gobby_home)
     url = f"{proof.daemon.http_url}/api/admin/restart"
     return await asyncio.to_thread(httpx.post, url, headers=headers, timeout=_BOUND_SECONDS)
+
+
+async def _assert_restart_held(
+    proof: LiveProof, seat: Seat, barrier: HandoffBarrier, db: Any
+) -> None:
+    await barrier.wait_for(seat.surface.session_id)
+    held = await _request_restart(proof)
+    assert held.status_code == 409, held.text
+    assert held.json().get("status") == "handoff_pending", held.text
+    assert await asyncio.to_thread(_handoff_staged, db), (
+        "the staged handoff was consumed while compact submission was held"
+    )
+    barrier.release()
 
 
 async def _assert_continuation(
@@ -219,25 +206,18 @@ async def _assert_continuation(
 async def test_seat_continues_after_its_own_handoff(
     provider: Provider,
     scenario: str,
-    composer_fixture: LiveProof,
+    handoff_fixture: tuple[LiveProof, HandoffBarrier],
     composer_admission: Admission,
     postgres_db: Any,
 ) -> None:
+    composer_fixture, barrier = handoff_fixture
     verify_binary_set(composer_admission)
     binary = composer_admission.providers[provider].path
     clear = scenario == "clear"
     seat = await composer_fixture.adopt(provider, _seat_command(provider, binary, scenario))
     writes_before = len(composer_fixture.trace.events)
     if scenario == "restart_hold":
-        # The shell hold keeps the launch turn running through the restart judgment. The daemon's
-        # own marker is the sync point, and the wait fails closed before any restart is sent.
-        await _await_staged_handoff(postgres_db)
-        held = await _request_restart(composer_fixture)
-        assert held.status_code == 409, held.text
-        assert held.json().get("status") == "handoff_pending", held.text
-        assert await asyncio.to_thread(_handoff_staged, postgres_db), (
-            "the staged handoff was consumed while the restart was held"
-        )
+        await _assert_restart_held(composer_fixture, seat, barrier, postgres_db)
     # The launch turn ends only after set_handoff returns, so the handoff is staged by then.
     await seat.ws.wait_for(
         lambda event: _is_turn_end(event, seat),
