@@ -83,7 +83,7 @@ def test_create_plan_persists_row_without_partial_manifest_when_evaluation_fails
     manager = LocalPlanManager(temp_db)
     plan_path = _write_plan(tmp_path)
 
-    def fail_manifest(_record: object) -> None:
+    def fail_manifest(_record: object, *, checkout_root: Path | None = None) -> None:
         raise OSError("manifest write failed")
 
     monkeypatch.setattr(manager, "generate_coverage_manifest", fail_manifest)

@@ -49,9 +49,10 @@ def _declared_windows() -> list[dict[str, Any]]:
     ("local", "inside"),
     [
         pytest.param(datetime(2026, 11, 4, 4, 30, tzinfo=CHICAGO), True, id="daily-window"),
-        pytest.param(datetime(2026, 11, 4, 5, 30, tzinfo=CHICAGO), False, id="after-daily"),
-        pytest.param(datetime(2026, 11, 2, 5, 30, tzinfo=CHICAGO), True, id="monday-extension"),
-        pytest.param(datetime(2026, 11, 2, 6, 0, tzinfo=CHICAGO), False, id="after-monday"),
+        pytest.param(datetime(2026, 11, 4, 6, 29, tzinfo=CHICAGO), True, id="daily-late"),
+        pytest.param(datetime(2026, 11, 4, 6, 30, tzinfo=CHICAGO), False, id="after-daily"),
+        pytest.param(datetime(2026, 11, 2, 6, 0, tzinfo=CHICAGO), True, id="monday-same-window"),
+        pytest.param(datetime(2026, 11, 2, 6, 30, tzinfo=CHICAGO), False, id="after-monday"),
         pytest.param(datetime(2026, 11, 4, 3, 59, tzinfo=CHICAGO), False, id="before-window"),
     ],
 )

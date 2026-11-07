@@ -509,9 +509,9 @@ fn frame_colour_follows_focus_attention_and_exit() {
     assert_eq!(at(attention, edge).style().fg, Some(palette().yellow));
     assert_eq!(at(attention, glyph).symbol(), "⍾");
     assert_eq!(at(attention, glyph).style().fg, Some(palette().yellow));
-    assert_ne!(at(exited, corner).symbol(), "◌");
+    assert_ne!(at(exited, corner).symbol(), "✕");
     assert_eq!(at(exited, edge).style().fg, Some(palette().red));
-    assert_eq!(at(exited, glyph).symbol(), "◌");
+    assert_eq!(at(exited, glyph).symbol(), "✕");
 }
 
 // gclient-only mouse coverage for the pane surface: herdr drives its split

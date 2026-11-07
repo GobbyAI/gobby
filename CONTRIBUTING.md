@@ -197,6 +197,36 @@ the `postgres-test` service, and exports both `DATABASE_URL` and
 from `GOBBY_POSTGRES_TEST_DB`, `GOBBY_POSTGRES_TEST_USER`, and
 `GOBBY_POSTGRES_TEST_PASSWORD`.
 
+### Isolated Test Services
+
+`docker-compose.test.yml` runs the isolated test stack. It mirrors the managed
+PostgreSQL, FalkorDB, and Qdrant services: the same images and FalkorDB module
+arguments as `src/gobby/data/docker-compose.services.yml` (a test fails on drift),
+loopback-only ports that never collide with the managed services, tmpfs storage, and
+test-only credentials. Tests never connect to the daemon's managed services.
+
+| Service | Host port | Settings |
+| --- | --- | --- |
+| `postgres-test` | 60892 | `GOBBY_POSTGRES_TEST_PORT` |
+| `falkordb-test` | 26379 | `GOBBY_FALKORDB_TEST_PORT`, `GOBBY_FALKORDB_TEST_PASSWORD` |
+| `qdrant-test` | 26333 (HTTP), 26334 (gRPC) | `GOBBY_QDRANT_TEST_HTTP_PORT`, `GOBBY_QDRANT_TEST_GRPC_PORT` |
+
+Bring the stack up and export the test environment for a focused pytest run
+(Docker Compose v2):
+
+```bash
+docker compose -f docker-compose.test.yml up -d --wait
+export DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
+export GOBBY_TEST_FALKOR_HOST=127.0.0.1
+export GOBBY_TEST_FALKOR_PORT=26379
+export GOBBY_TEST_FALKOR_PASSWORD=gobby_test
+export GOBBY_TEST_QDRANT_URL=http://127.0.0.1:26333
+GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/test_qdrant_live.py -v
+```
+
+`pre-push-test.sh` starts `falkordb-test` and `qdrant-test` when they do not answer,
+and it fails rather than skipping when FalkorDB or Qdrant tests lack their settings.
+
 ### Test Coverage
 
 We maintain a minimum of 80% test coverage (enforced in CI).

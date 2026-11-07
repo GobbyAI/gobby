@@ -70,22 +70,20 @@ fn waiting_seat_is_non_held_idle_in_agents_projects_and_task_worktrees() {
     });
 
     assert_eq!(model.agents.len(), 1);
-    assert_eq!(model.agents[0].state, RowState::Idle);
+    assert_eq!(model.agents[0].state, RowState::Blank);
     let project = model
         .projects
         .iter()
         .find(|p| p.project_id == "project-1")
         .unwrap();
-    assert_eq!(project.state, RowState::Idle);
+    assert_eq!(project.state, RowState::Blank);
     assert_eq!(project.worktrees[0].task_ref.as_deref(), Some("#25240"));
-    assert_eq!(project.worktrees[0].state, Some(RowState::Idle));
+    assert_eq!(project.worktrees[0].state, RowState::Blank);
 }
 
 #[test]
-fn help_includes_pending_work_in_the_waiting_seats_idle_state() {
+fn help_names_a_child_run_wait_under_active_and_blank_as_nothing_worked() {
     let chrome = Chrome::dark();
-    let state = agent_state(&seat(ROUTINE_TURN_END), None);
-    let glyph = state_dot(state, &chrome.palette).0;
     let legend: Vec<String> = legend_groups(&chrome, u16::MAX)
         .iter()
         .flatten()
@@ -97,21 +95,29 @@ fn help_includes_pending_work_in_the_waiting_seats_idle_state() {
         })
         .collect();
 
+    let active = legend
+        .iter()
+        .find(|row| row.contains("▶ active"))
+        .expect("the legend has an active row");
     assert!(
-        legend.iter().any(|row| {
-            row.trim_start().starts_with(glyph)
-                && row.to_lowercase().contains("wait")
-                && !row.contains("nothing pending")
-        }),
-        "idle help must account for a seat with an armed wait or background work: {legend:?}"
+        active.contains("waiting on a child run"),
+        "active help must cover a seat waiting on the child run it started: {active:?}"
+    );
+    let blank = legend
+        .iter()
+        .find(|row| row.contains("blank"))
+        .expect("the legend has a blank row");
+    assert!(
+        blank.contains("nothing is assigned or being worked"),
+        "blank help must say nothing is being worked: {blank:?}"
     );
 }
 
 #[test]
 fn explicit_pause_keeps_a_distinct_state_and_glyph() {
     let palette = Chrome::dark().palette;
-    let paused = agent_state(&seat("paused"), None);
-    let idle = agent_state(&seat("completed"), None);
+    let paused = agent_state(&seat("paused"));
+    let idle = agent_state(&seat("completed"));
 
     assert_eq!(paused, RowState::Paused);
     assert_ne!(paused, idle);
@@ -121,8 +127,8 @@ fn explicit_pause_keeps_a_distinct_state_and_glyph() {
 #[test]
 fn user_interrupt_has_a_distinct_state_and_glyph_from_normal_idle() {
     let palette = Chrome::dark().palette;
-    let interrupted = agent_state(&seat("interrupted"), None);
-    let idle = agent_state(&seat("completed"), None);
+    let interrupted = agent_state(&seat("interrupted"));
+    let idle = agent_state(&seat("completed"));
 
     assert_ne!(interrupted, idle, "a user interrupt must remain visible");
     assert_ne!(
@@ -135,7 +141,7 @@ fn user_interrupt_has_a_distinct_state_and_glyph_from_normal_idle() {
 #[test]
 fn help_explains_the_state_drawn_for_a_user_interrupt() {
     let chrome = Chrome::dark();
-    let interrupted = agent_state(&seat("interrupted"), None);
+    let interrupted = agent_state(&seat("interrupted"));
     let glyph = state_dot(interrupted, &chrome.palette).0;
     let legend: Vec<String> = legend_groups(&chrome, u16::MAX)
         .iter()
