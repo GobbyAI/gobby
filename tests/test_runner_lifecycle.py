@@ -1768,6 +1768,116 @@ class TestShutdownDaemonServices:
         assert marker.exists() is False
 
     @pytest.mark.asyncio
+    async def test_caller_cancellation_still_stops_pool_and_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: tmp_path / "shutdown_intent_active.json",
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "gobby.runner_background_services.shutdown_background_services",
+            lambda: calls.append("pool"),
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        entered = asyncio.Event()
+
+        async def stalled_stop() -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+        runner.lifecycle_manager.stop = stalled_stop
+        reap = AsyncMock(side_effect=lambda **_kwargs: calls.append("reap"))
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, SimpleNamespace(should_exit=False)),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=cleanup_pid_file,
+            )
+        )
+        async with asyncio.timeout(10):
+            await entered.wait()
+        shutdown.cancel()
+        outcome = await asyncio.gather(shutdown, return_exceptions=True)
+
+        # The caller's cancellation is re-raised only after the pool stops and the reap runs.
+        assert isinstance(outcome[0], asyncio.CancelledError)
+        assert calls == ["pool", "reap"]
+        reap.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_error_before_cleanup_still_stops_pool_and_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: tmp_path / "shutdown_intent_active.json",
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "gobby.runner_background_services.shutdown_background_services",
+            lambda: calls.append("pool"),
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_stop_code_index_workers",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        reap = AsyncMock(side_effect=lambda **_kwargs: calls.append("reap"))
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, SimpleNamespace(should_exit=False)),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=cleanup_pid_file,
+            )
+
+        # The pool stops before the reap, and the finalizer tail still runs.
+        assert calls == ["pool", "reap"]
+        reap.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_cancelled_step_is_named_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
 
@@ -1897,7 +2007,13 @@ class TestShutdownDaemonServices:
                 cleanup_pid_file=cleanup_pid_file,
             )
 
-        reap_remaining_child_processes.assert_not_awaited()
+        # A caller cancel still stops the pool and reaps children. Telemetry sits in the
+        # cleanup that the cancel skips, so it stays uncalled.
+        reap_remaining_child_processes.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
         shutdown_telemetry.assert_not_called()
         runner.database.close.assert_called_once_with()
         cleanup_pid_file.assert_called_once_with()

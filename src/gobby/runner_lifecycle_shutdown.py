@@ -759,6 +759,34 @@ async def _shutdown_child_processes(
         )
 
 
+async def _shutdown_child_processes_under_cancellation(
+    runner: GobbyRunner,
+    cancellation: asyncio.CancelledError | None,
+    *,
+    shutdown_intent: ShutdownIntent,
+    reap_remaining_child_processes: ReapChildProcesses,
+) -> asyncio.CancelledError | None:
+    """Stop the pool and reap children on their own budget, deferring caller cancellation."""
+    owned = asyncio.create_task(
+        _best_effort(
+            lambda: _shutdown_child_processes(
+                runner,
+                shutdown_intent=shutdown_intent,
+                reap_remaining_child_processes=reap_remaining_child_processes,
+            ),
+            "Fallback child process reap",
+            timeout=_DEADLINE_CHILD_REAP_BUDGET_SECONDS,
+        ),
+        name="fallback-child-reap",
+    )
+    while not owned.done():
+        try:
+            await asyncio.shield(owned)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+    return cancellation
+
+
 async def _run_async_shutdown_cleanup(
     runner: GobbyRunner,
     server: uvicorn.Server | None = None,
@@ -852,6 +880,7 @@ async def shutdown_daemon_services(
         loop.time() + _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
     )
     overall_timeout = asyncio.timeout_at(overall_deadline)
+    cleanup_completed = False
     try:
         try:
             async with overall_timeout:
@@ -895,23 +924,13 @@ async def shutdown_daemon_services(
                     reap_remaining_child_processes=reap_remaining_child_processes,
                     shutdown_telemetry=shutdown_telemetry,
                 )
+                cleanup_completed = True
         except TimeoutError:
             if not overall_timeout.expired():
                 raise
             logger.warning(
                 "Async shutdown cleanup exceeded %.1fs overall deadline",
                 _OVERALL_SHUTDOWN_DEADLINE_SECONDS,
-            )
-            # The deadline cut the cleanup before its reap. Reap on its own budget so
-            # no child, including a pool worker, outlives the interpreter.
-            await _best_effort(
-                lambda: _shutdown_child_processes(
-                    runner,
-                    shutdown_intent=shutdown_intent,
-                    reap_remaining_child_processes=reap_remaining_child_processes,
-                ),
-                "Deadline child process reap",
-                timeout=_DEADLINE_CHILD_REAP_BUDGET_SECONDS,
             )
     finally:
         _close_http_admission(runner)
@@ -920,6 +939,14 @@ async def shutdown_daemon_services(
             server_task,
             request_cancel_timeout_seconds=_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS,
         )
+        if not cleanup_completed:
+            # Any exit before cleanup finished (deadline, cancel, or error) reaps here.
+            deferred_cancellation = await _shutdown_child_processes_under_cancellation(
+                runner,
+                deferred_cancellation,
+                shutdown_intent=shutdown_intent,
+                reap_remaining_child_processes=reap_remaining_child_processes,
+            )
         deferred_cancellation = await _settle_finalizers_under_cancellation(
             runner,
             deferred_cancellation,

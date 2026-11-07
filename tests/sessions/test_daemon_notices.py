@@ -175,10 +175,12 @@ class StalledHub:
         self.entered = threading.Event()
         self.thread: threading.Thread | None = None
         self.deadline: DatabaseOperationDeadline | None = None
+        self.entered_at: float | None = None
 
     def transaction(self) -> NoReturn:
         self.thread = threading.current_thread()
         self.deadline = current_database_operation_deadline()
+        self.entered_at = time.monotonic()
         self.entered.set()
         self.release.wait(timeout=5)
         raise RuntimeError("stalled transaction released")
@@ -205,7 +207,10 @@ async def test_stalled_persistence_never_stalls_the_event_loop(
     assert elapsed < 1.0
     assert hub.thread is not threading.main_thread()
     assert hub.deadline is not None
-    assert hub.deadline.expires_at <= started + 0.1 + 0.05
+    # Armed before the stalled transaction starts, so the stall cannot outlive the deadline.
+    # The arm-to-entry gap is scheduling under load, so it is not bounded here.
+    assert hub.entered_at is not None
+    assert hub.deadline.expires_at - 0.1 <= hub.entered_at
     assert "Daemon notice exceeded" in caplog.text
 
 
