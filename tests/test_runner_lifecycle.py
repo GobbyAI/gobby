@@ -1719,6 +1719,9 @@ class TestShutdownDaemonServices:
         """A restart whose cleanup overruns the overall deadline must still reap the pool."""
         marker = tmp_path / "shutdown_intent_active.json"
         marker.write_text("{}", encoding="utf-8")
+        # An expired finalizer arms a process-wide exit backstop that outlives this test;
+        # restoring the flag here keeps later tests from taking the forced-exit path.
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_expiry_exit_backstop_required", False)
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "get_shutdown_marker_path",
