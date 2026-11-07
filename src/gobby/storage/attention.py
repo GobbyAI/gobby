@@ -310,7 +310,10 @@ class AttentionStateManager:
                 run.child_session_id::text AS session_id,
                 CASE
                     WHEN task.id IS NOT NULL AND task.closed_at IS NULL
-                         AND NOT (child.status = ANY(%s))
+                         AND NOT COALESCE(
+                             child.status = ANY(%s),
+                             run.status IN ('queued', 'running', 'pending')
+                         )
                         THEN 'dead'::text
                     ELSE COALESCE(child.status, run.status)::text
                 END AS lifecycle_status,
@@ -364,7 +367,10 @@ class AttentionStateManager:
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
             WHERE run.status IN ('queued', 'running', 'pending')
                OR (task.id IS NOT NULL AND task.closed_at IS NULL
-                   AND NOT (child.status = ANY(%s)))
+                   AND NOT COALESCE(
+                       child.status = ANY(%s),
+                       run.status IN ('queued', 'running', 'pending')
+                   ))
 
             UNION ALL
 

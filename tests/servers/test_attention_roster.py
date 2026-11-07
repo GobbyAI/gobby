@@ -1288,6 +1288,42 @@ def test_ended_run_whose_child_still_holds_a_claim_is_a_dead_entry(
     assert entry["task"]["id"] == task.id
 
 
+@pytest.mark.parametrize("ended", [False, True], ids=["running", "ended"])
+def test_task_linked_run_without_child_uses_its_own_lifecycle(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    ended: bool,
+) -> None:
+    parent = session_manager.register(
+        external_id="roster-run-without-child",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Assigned run without a child session",
+        validation_criteria="The run stays visible while its assigned task is open.",
+    )
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="test",
+        task_id=task.id,
+    )
+    manager.start(run.id)
+    if ended:
+        manager.complete(run.id)
+
+    entry = _roster_by_id(temp_db)[f"run:{run.id}"]
+
+    assert entry["session_id"] is None
+    assert entry["task"]["id"] == task.id
+    assert entry["lifecycle_status"] == ("dead" if ended else "running")
+
+
 def test_ended_run_with_released_claim_stays_until_its_linked_task_closes(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
