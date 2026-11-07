@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Iterator
+import time
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -703,9 +704,18 @@ async def test_native_mode_from_environment_and_bind_waits_for_token(
 class _LoopbackHTTP:
     """A bare HTTP/1.1 listener on loopback that records each request and answers it."""
 
-    def __init__(self, answer: Callable[[str], bytes]) -> None:
+    def __init__(
+        self,
+        answer: Callable[[str], bytes],
+        *,
+        publish_delay: float = 0.0,
+        bind_delays: Sequence[float] = (),
+    ) -> None:
         self.requests: list[tuple[str, dict[str, str]]] = []
         self._answer = answer
+        self._publish_delay = publish_delay
+        # Delay for each successive bind attempt; attempts past the list answer at once.
+        self._bind_delays = list(bind_delays)
         self._server: asyncio.Server | None = None
 
     async def __aenter__(self) -> int:
@@ -729,9 +739,14 @@ class _LoopbackHTTP:
                 await reader.readexactly(int(headers.get("content-length", "0")))
                 target = request_line.split(" ")[1]
                 self.requests.append((target, headers))
+                if target == native_publish.PUBLISH_PATH:
+                    await asyncio.sleep(self._publish_delay)
+                if target == native_publish.BIND_PATH and self._bind_delays:
+                    await asyncio.sleep(self._bind_delays.pop(0))
                 writer.write(self._answer(target))
                 await writer.drain()
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, ConnectionError):
+            # A client that cut a held request has closed its socket; there is no answer to give.
             pass
         finally:
             writer.close()
@@ -780,6 +795,65 @@ async def test_production_client_ignores_proxy_environment(
     for _target, headers in daemon.requests:
         assert headers["x-gobby-front-door"] == SECRET
         assert headers["x-gobby-backend-token"] == supervisor_token
+
+
+async def test_a_bind_held_past_the_deadline_is_retried_until_the_front_door_answers(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Binds held past the deadline cost retries, and the first timely answer rebinds the door.
+
+    Each held attempt is cut at the deadline; the rebind loop then waits its interval and
+    tries again. A front door that answers late is therefore recovered within a bounded
+    number of attempts, over real sockets and real timers.
+    """
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.3)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[1.0, 1.0])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            started = time.monotonic()
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1)
+            assert time.monotonic() - started < 3.0
+            assert await publisher.wait_bound(timeout=0.0) is True
+        finally:
+            await publisher.stop()
+
+    binds = [target for target, _headers in daemon.requests if target == native_publish.BIND_PATH]
+    assert len(binds) == 3
+
+
+@pytest.mark.slow
+async def test_a_publish_slower_than_httpx_default_stays_bound_inside_the_deadline(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 6 s answer over a real socket is inside the 15 s deadline, so the door stays bound.
+
+    Socket phases used to keep httpx's 5 s default, which fired first as ReadTimeout and
+    retired the generation, so the deadline raised in _post never governed them.
+    """
+    daemon = _LoopbackHTTP(_daemon_answer, publish_delay=6.0)
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 15.0)
+            assert publisher.generation == GEN1
+        finally:
+            await publisher.stop()
+
+    assert [target for target, _headers in daemon.requests][-1] == "/_gobby/ws/publish"
 
 
 @pytest.mark.parametrize("budget", ["bytes", "ops", "futures"])

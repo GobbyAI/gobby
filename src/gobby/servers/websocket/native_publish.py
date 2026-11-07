@@ -81,7 +81,10 @@ class NativePublisher:
         self._base_url = base_url.rstrip("/")
         self._config = config
         # The secret and token go only to loopback: no proxy or .netrc from the environment.
-        self._client = httpx.AsyncClient(transport=transport, trust_env=False)
+        # Every socket phase shares the publish deadline; httpx's 5 s default would fire first.
+        self._client = httpx.AsyncClient(
+            transport=transport, trust_env=False, timeout=REQUEST_TIMEOUT
+        )
         self._generation: str | None = None
         self._legs: dict[str, set[NativeLeg]] = {}
         self._queue: deque[_Op] = deque()
