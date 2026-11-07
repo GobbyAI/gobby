@@ -321,12 +321,11 @@ def isolated_test_database(url: str) -> Iterator[str]:
     database_name = f"gobby_test_{os.getpid()}_{uuid.uuid4().hex[:12]}"
     maintenance_url = make_conninfo(url, dbname="postgres")
     isolated_url = urlunsplit(urlsplit(url)._replace(path=f"/{database_name}"))
-    with (
-        psycopg.connect(maintenance_url, autocommit=True) as connection,
-        shared_hub_lock_waits(connection, "CREATE DATABASE"),
-    ):
-        _reap_dead_process_databases(connection, url)
-        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+    with psycopg.connect(maintenance_url, autocommit=True) as connection:
+        with shared_hub_lock_waits(connection, "DROP DATABASE of a dead run"):
+            _reap_dead_process_databases(connection, url)
+        with shared_hub_lock_waits(connection, "CREATE DATABASE"):
+            connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
     try:
         with psycopg.connect(isolated_url, autocommit=True) as connection:
             connection.execute("CREATE EXTENSION pg_search")
