@@ -170,6 +170,9 @@ async def _wait_for_compact_boundary(
             refusal = compaction_refusal(fresh_output, command) if command else None
             if refusal is not None:
                 return refusal
+        # A boundary observed in this pass wins over the deadline that elapsed meanwhile.
+        if waiter.event.is_set():
+            return None
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             return _COMPACT_BOUNDARY_TIMEOUT_REASON

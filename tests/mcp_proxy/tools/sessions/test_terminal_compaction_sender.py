@@ -292,6 +292,41 @@ async def test_codex_rollout_compact_completes_wait_without_postcompact_hook(
 
 
 @pytest.mark.asyncio
+async def test_codex_rollout_boundary_observed_at_deadline_completes_wait(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text('{"type":"session_meta","payload":{"id":"codex-session"}}\n')
+    cursor = CodexRolloutCursor.at_eof(rollout)
+    with rollout.open("a") as stream:
+        stream.write('{"type":"compacted","timestamp":"2026-09-27T16:00:20Z"}\n')
+    waiter = CompactBoundaryWaiter(
+        "attempt", "handoff", None, asyncio.Event(), asyncio.get_running_loop()
+    )
+
+    def receive_boundary() -> bool:
+        waiter.loop.call_soon_threadsafe(waiter.event.set)
+        return True
+
+    # A zero budget puts the deadline at the moment the boundary is read: the observed
+    # boundary must still complete the wait rather than report a timeout.
+    result = await _wait_for_compact_boundary(
+        waiter,
+        _ComposerPane(),
+        None,
+        None,
+        timeout_seconds=0.0,
+        codex_cursor=cursor,
+        on_codex_boundary=receive_boundary,
+    )
+
+    assert result is None
+    assert waiter.event.is_set()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("command", "enters"), [("/compress", 1), ("/clear", 0)])
 async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
     command: str, enters: int
