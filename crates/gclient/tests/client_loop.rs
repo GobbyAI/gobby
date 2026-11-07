@@ -3389,7 +3389,13 @@ async fn select_spawn_attach_terminate_loop() {
             .expect("connect live daemon");
         let mut workspace = Workspace::live(daemon);
         workspace.select_project("project-selected");
-        let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+        let (frames_tx, mut frames_rx) = watch::channel(String::new());
+        let mut terminal = Terminal::new(CountingBackend {
+            inner: TestBackend::new(96, 30),
+            draws: Arc::new(AtomicUsize::new(0)),
+            frames: Some(frames_tx),
+        })
+        .expect("test terminal");
         let mut chrome = Chrome::dark();
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
@@ -3415,6 +3421,11 @@ async fn select_spawn_attach_terminate_loop() {
                 "event-before-reply must attach the spawned terminal once"
             );
 
+            let retired_attachment = websocket_requests(&mock, "terminal_set_viewport")[0]
+                ["attachment_id"]
+                .as_str()
+                .expect("initial attachment")
+                .to_string();
             mock.drop_websockets();
             timeout(Duration::from_secs(1), async {
                 while mock.websocket_handshakes() < 2 {
@@ -3423,17 +3434,25 @@ async fn select_spawn_attach_terminate_loop() {
             })
             .await
             .expect("spawned panes reconnect");
-            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
-
-            let viewports = websocket_requests(&mock, "terminal_set_viewport");
             let terminal_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-            let attachment_id = viewports
-                .iter()
-                .rev()
-                .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
-                .and_then(|request| request.get("attachment_id"))
-                .and_then(Value::as_str)
-                .expect("fresh attachment after reconnect");
+            // Geometry can publish multiple viewports for the old attachment.
+            // Only a different attachment proves the reconnect made progress.
+            let attachment_id = timeout(WAIT_BUDGET, async {
+                loop {
+                    let fresh = websocket_requests(&mock, "terminal_set_viewport")
+                        .into_iter()
+                        .rev()
+                        .filter(|request| request["terminal_id"] == terminal_id)
+                        .filter_map(|request| request["attachment_id"].as_str().map(str::to_owned))
+                        .find(|attachment| attachment != &retired_attachment);
+                    if let Some(attachment) = fresh {
+                        break attachment;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("fresh attachment after reconnect");
             mock.send_event_and_wait(json!({
                 "type": "terminal_frame",
                 "terminal_id": terminal_id,
@@ -3442,7 +3461,9 @@ async fn select_spawn_attach_terminate_loop() {
                 "payload": encoded_frame("spawned-reconnected"),
             }))
             .await;
-            settle_live_event().await;
+            // Transport setup precedes pane installation; observe the applied
+            // frame before closing input, which can stop pending loop jobs.
+            wait_for_drawn_text(&mut frames_rx, "spawned-reconnected").await;
             drop(input_tx);
         };
 
