@@ -328,3 +328,16 @@ def test_package_files_are_hashed_by_the_runtime_interpreter(
             "gobby/utils/text.py": hashlib.sha256(b"text").hexdigest(),
         }
     }
+
+
+def test_a_stale_staging_file_from_a_killed_run_is_removed(tmp_path: Path) -> None:
+    account_path = tmp_path / "config/daemon-account.json"
+    account_path.parent.mkdir(parents=True)
+    stale = account_path.parent / ".daemon-account.json.x1y2z3.tmp"
+    stale.write_text(json.dumps(ACCOUNT))
+    fresh = {"email": "bakeoff-22948@example.invalid", "password": "fresh-secret"}
+
+    runtime_gobby.write_account_once(account_path, fresh)
+
+    assert not stale.exists()
+    assert json.loads(account_path.read_text()) == fresh

@@ -142,9 +142,12 @@ def write_account_once(path: Path, account: dict[str, Any]) -> None:
 
     The content is written and fsynced to a staging file in the same directory (mode 0600), then
     hard-linked to the name. A crash before the link leaves no file under the name. A crash after
-    it leaves the recorded password in place, so the next run creates the user from it.
+    it leaves the recorded password in place, so the next run creates the user from it. Staging
+    files that a killed run left behind are removed first, so no plaintext copy outlives it.
     """
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for stale in path.parent.glob(f".{path.name}.*.tmp"):
+        stale.unlink(missing_ok=True)
     staging_fd, staging_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
