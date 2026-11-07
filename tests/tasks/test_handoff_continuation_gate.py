@@ -121,15 +121,14 @@ def _decide(
 
 
 def _declared_paths() -> list[str]:
-    """Every surface path the bundled handoff gate names, read from its YAML conditions."""
-    document = yaml.safe_load(
-        (get_bundled_rules_path() / "task-closure" / "handoff-continuation.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    """Every surface path the bundled e2e gate names, read from the closure YAML conditions."""
     paths: set[str] = set()
-    for rule in (document.get("rules") or {}).values():
-        paths.update(re.findall(r"'(src/[^']+)'", str(rule.get("when", ""))))
+    for path in sorted((get_bundled_rules_path() / "task-closure").glob("*.yaml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for rule in (document.get("rules") or {}).values():
+            when = str(rule.get("when", ""))
+            if _E2E_KIND in when:
+                paths.update(re.findall(r"'(src/[^']+)'", when))
     return sorted(paths)
 
 
