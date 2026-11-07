@@ -40,6 +40,25 @@ _EXIT_HANG = """
         threading.Thread(target=_leaked_worker).start()
 """
 
+_SLOW_ATEXIT = """
+    import atexit
+    import time
+
+    def test_passes() -> None:
+        atexit.register(time.sleep, 3)
+"""
+
+_ATEXIT_HANG = """
+    import atexit
+    import threading
+
+    def _blocked_atexit() -> None:
+        threading.Event().wait()
+
+    def test_passes() -> None:
+        atexit.register(_blocked_atexit)
+"""
+
 
 def _run_inner(
     pytestconfig: pytest.Config, tmp_path: Path, body: str, *overrides: str
@@ -96,3 +115,64 @@ def test_run_that_never_exits_dumps_its_threads(
     assert "1 passed" in output
     assert result.returncode != 0
     assert "_leaked_worker" in output
+
+
+def test_slow_atexit_cleanup_after_threads_join_is_not_a_hang(
+    pytestconfig: pytest.Config, tmp_path: Path
+) -> None:
+    result = _run_inner(pytestconfig, tmp_path, _SLOW_ATEXIT, "-o", "exit_watchdog_timeout=1")
+
+    output = result.stdout + result.stderr
+    assert "1 passed" in output
+    assert result.returncode == 0
+    assert "Timeout" not in output
+
+
+def test_atexit_callback_that_never_returns_dumps_and_exits(
+    pytestconfig: pytest.Config, tmp_path: Path
+) -> None:
+    result = _run_inner(
+        pytestconfig,
+        tmp_path,
+        _ATEXIT_HANG,
+        "-o",
+        "exit_watchdog_timeout=5",
+        "-o",
+        "atexit_watchdog_timeout=1",
+    )
+
+    output = result.stdout + result.stderr
+    assert "1 passed" in output
+    assert result.returncode != 0
+    assert "Timeout (0:00:01)!" in output
+    assert "_blocked_atexit" in output
+
+
+def test_stdio_is_flushed_before_the_watchdog_arms(tmp_path: Path) -> None:
+    # faulthandler's exit skips stdio flushing. A write still buffered when the watchdog
+    # fires would be lost, so arming flushes first. The probe's stdout is a block-buffered
+    # pipe, as it is under pytest's runners.
+    probe = textwrap.dedent(
+        """
+        import sys
+        import time
+
+        from tests.fixtures.hang_guard import _arm_exit_watchdog
+
+        sys.stdout.write("written before the watchdog arms\\n")
+        _arm_exit_watchdog(1)
+        time.sleep(30)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "written before the watchdog arms" in result.stdout

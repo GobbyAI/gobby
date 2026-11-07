@@ -23,9 +23,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _arm_exit_watchdog(seconds: float) -> None:
+    # The process's own stderr descriptor: pytest's capture has ended by now.
+    faulthandler.dump_traceback_later(seconds, exit=True, file=_STDERR_FD)
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config: pytest.Config) -> None:
-    # The process's own stderr descriptor: pytest's capture has ended by now.
-    faulthandler.dump_traceback_later(
-        float(config.getini("exit_watchdog_timeout")), exit=True, file=_STDERR_FD
-    )
+    _arm_exit_watchdog(float(config.getini("exit_watchdog_timeout")))
