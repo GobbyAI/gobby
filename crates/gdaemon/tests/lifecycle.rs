@@ -986,9 +986,26 @@ async fn lease_lock_held_by_another_task_fails_the_supervisor_at_its_bound() -> 
         config.report_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::with_lease(Some(lease.clone()), claim, config);
         let (_stop, rx) = watch::channel(false);
-        let error = timeout(Duration::from_secs(10), supervisor.run(rx))
-            .await?
-            .expect_err("a lock held past the bound must fail the supervisor");
+        // The wait reason the front door reports, observed while the supervisor waits.
+        let mut wait = supervisor.subscribe_wait();
+        let observe = async {
+            while wait.changed().await.is_ok() {
+                if let Some(reason) = wait.borrow().clone() {
+                    return Some(reason);
+                }
+            }
+            None
+        };
+        let (outcome, observed) = tokio::join!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)),
+            timeout(Duration::from_secs(5), observe),
+        );
+        let reason = observed?.expect("the supervisor publishes its wait reason");
+        assert!(
+            reason.contains("test lease holder"),
+            "the wait reason must name the holder: {reason}"
+        );
+        let error = outcome?.expect_err("a lock held past the bound must fail the supervisor");
         assert!(
             format!("{error:#}").contains("test lease holder"),
             "the error must name the holder: {error:#}"

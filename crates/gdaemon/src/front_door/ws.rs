@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 use super::FrontDoorState;
-use super::health::{bad_gateway, unavailable};
+use super::health::{bad_gateway, unavailable_waiting};
 use super::proxy::filter_response;
 
 /// True when the request asks to switch protocols (`Connection: upgrade` plus `Upgrade`).
@@ -30,7 +30,10 @@ pub async fn splice(state: &FrontDoorState, request: Request<Body>) -> Response<
     let target = state.target;
     let stream = match TcpStream::connect(target).await {
         Ok(stream) => stream,
-        Err(_) => return unavailable(target, state.backend_state),
+        Err(_) => {
+            let wait = state.backend_wait();
+            return unavailable_waiting(target, state.backend_state, wait.as_deref());
+        }
     };
     splice_over(stream, request, &target.to_string()).await
 }

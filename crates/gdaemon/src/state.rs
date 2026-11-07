@@ -125,6 +125,8 @@ pub struct RuntimeState {
     pub lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
     pub lease_state: Option<watch::Receiver<LeaseState>>,
     pub backend: watch::Receiver<BackendStatus>,
+    /// The supervisor's current wait reason (a lease-lock holder or the backend's exit).
+    pub backend_wait: watch::Receiver<Option<String>>,
     /// The supervisor's write token slot, which native WebSocket binds present.
     pub write_token: TokenSlot,
     /// The terminal write route's services, published while the native runtime runs.
@@ -174,6 +176,7 @@ impl RuntimeState {
             lease,
             lease_state,
             backend: supervisor.subscribe(),
+            backend_wait: supervisor.subscribe_wait(),
             write_token,
             terminal_route: Default::default(),
         });

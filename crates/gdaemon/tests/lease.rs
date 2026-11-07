@@ -74,6 +74,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
             lease: Some(standby),
             lease_state,
             backend: rx,
+            backend_wait: watch::channel(None).1,
             write_token: Default::default(),
             terminal_route: Default::default(),
         });

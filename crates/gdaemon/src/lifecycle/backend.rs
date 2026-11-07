@@ -114,6 +114,9 @@ pub struct BackendSupervisor {
     pid_claim: Option<PidFileClaim>,
     config: BackendConfig,
     state: watch::Sender<BackendStatus>,
+    /// The reason the supervisor is waiting now (a lease-lock holder or the backend's exit),
+    /// or None when it is not waiting. The front door reports it beside the backend state.
+    wait: watch::Sender<Option<String>>,
 }
 
 impl BackendSupervisor {
@@ -127,16 +130,46 @@ impl BackendSupervisor {
         config: BackendConfig,
     ) -> Self {
         let (state, _) = watch::channel(BackendStatus::Standby);
+        let (wait, _) = watch::channel(None);
         Self {
             lease,
             pid_claim: Some(pid_claim),
             config,
             state,
+            wait,
         }
     }
 
     pub fn subscribe(&self) -> watch::Receiver<BackendStatus> {
         self.state.subscribe()
+    }
+
+    /// The supervisor's current wait reason, or None when it is not waiting.
+    pub fn subscribe_wait(&self) -> watch::Receiver<Option<String>> {
+        self.wait.subscribe()
+    }
+
+    /// Publishes a wait reason for the front door and echoes it to the configured reporter.
+    fn report(&self, line: &str) {
+        self.wait.send_replace(Some(line.to_owned()));
+        (self.config.reporter)(line);
+    }
+
+    /// Waits for the lease lock, publishing each wait reason and clearing it once the wait ends.
+    async fn lock_lease<'a>(
+        &'a self,
+        lease: &'a NamedLock<ActiveDaemonLease>,
+    ) -> Result<NamedGuard<'a, ActiveDaemonLease>> {
+        let reporter = |line: &str| self.report(line);
+        let outcome = lock_reporting(
+            lease,
+            self.config.report_interval,
+            self.config.lease_lock_limit,
+            &reporter,
+        )
+        .await;
+        self.wait.send_replace(None);
+        outcome
     }
 
     /// Run one ownership lifetime. Refused instances never acquire or spawn again.
@@ -149,15 +182,7 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Stopped);
         }
         if let Some(lease) = &self.lease
-            && lock_reporting(
-                lease,
-                self.config.report_interval,
-                self.config.lease_lock_limit,
-                &*self.config.reporter,
-            )
-            .await?
-            .fence()
-            .is_none()
+            && self.lock_lease(lease).await?.fence().is_none()
         {
             return Ok(SupervisorExit::Standby);
         }
@@ -176,14 +201,7 @@ impl BackendSupervisor {
         }
         let release = match &self.lease {
             _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
-            Some(lease) => match lock_reporting(
-                lease,
-                self.config.report_interval,
-                self.config.lease_lock_limit,
-                &*self.config.reporter,
-            )
-            .await
-            {
+            Some(lease) => match self.lock_lease(lease).await {
                 Ok(mut guard) => guard.release().await,
                 Err(error) => Err(error),
             },
@@ -280,6 +298,8 @@ impl BackendSupervisor {
                     }
                 }
             };
+            // The child is reaped, so it no longer holds the supervisor's wait.
+            self.wait.send_replace(None);
             if !reaped {
                 // The leader may exit while descendants retain sockets or stderr.
                 // Retain process-group ownership through reaping, including exit 78.
@@ -347,15 +367,7 @@ impl BackendSupervisor {
 
     async fn heartbeat(&self) -> Result<()> {
         if let Some(lease) = &self.lease {
-            lock_reporting(
-                lease,
-                self.config.report_interval,
-                self.config.lease_lock_limit,
-                &*self.config.reporter,
-            )
-            .await?
-            .heartbeat()
-            .await?;
+            self.lock_lease(lease).await?.heartbeat().await?;
         }
         Ok(())
     }
@@ -370,7 +382,7 @@ impl BackendSupervisor {
                 self.config.exit_grace.saturating_sub(seen).as_secs()
             ),
         };
-        (self.config.reporter)(&line);
+        self.report(&line);
     }
 }
 
@@ -623,7 +635,10 @@ async fn lock_reporting<'a, T>(
                 lock.holder()
             );
         }
-        reporter("backend supervisor waiting on the lease lock held by another daemon task");
+        reporter(&format!(
+            "backend supervisor waiting on the lease lock held by {}",
+            lock.holder()
+        ));
     }
 }
 

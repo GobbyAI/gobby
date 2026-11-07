@@ -66,6 +66,21 @@ impl FrontDoorState {
             ws_listener: false,
         }
     }
+
+    /// The supervisor's current wait reason for the backend, reported beside its state when
+    /// the supervisor is waiting. Read from the runtime so the listener state stays small.
+    pub fn backend_wait(&self) -> Option<String> {
+        #[cfg(unix)]
+        {
+            self.runtime
+                .as_ref()
+                .and_then(|runtime| runtime.backend_wait.borrow().clone())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
 }
 
 /// A listener's request handler: upgrades are spliced, everything else is routed.
@@ -190,11 +205,17 @@ impl FrontDoor {
                         "state": "refused", "refusal": reason, "target": state.target.to_string()
                     }}),
                 ),
-                _ if runtime.standby() => Some(serde_json::json!({
-                    "error": "standby", "status": "unavailable", "state": "standby", "backend": {
-                        "state": "standby", "target": state.target.to_string()
+                _ if runtime.standby() => {
+                    let mut body = serde_json::json!({
+                        "error": "standby", "status": "unavailable", "state": "standby", "backend": {
+                            "state": "standby", "target": state.target.to_string()
+                        }
+                    });
+                    if let Some(wait) = runtime.backend_wait.borrow().clone() {
+                        body["backend"]["wait"] = serde_json::json!(wait);
                     }
-                })),
+                    Some(body)
+                }
                 _ => None,
             };
             if let Some(body) = refusal {

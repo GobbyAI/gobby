@@ -32,8 +32,10 @@ async fn lock_reporting_reports_each_interval_until_the_lock_is_released() {
         "expected a report each interval: {reports:?}"
     );
     assert!(
-        reports.iter().all(|line| line.contains("lease lock")),
-        "{reports:?}"
+        reports
+            .iter()
+            .all(|line| line.contains("lease lock") && line.contains("test holder")),
+        "every report must name the lock holder: {reports:?}"
     );
 
     drop(held);

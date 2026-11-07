@@ -127,6 +127,11 @@ def _note_backend_state(resp: httpx.Response, noted: set[str]) -> str | None:
     if not isinstance(state, str) or not isinstance(target, str):
         return None
     blocker = f"backend state '{state}' at {target}"
+    # The supervisor's wait reason (for example a lease-lock holder) says what the backend
+    # is blocked on; it is named only when the front door reports one.
+    wait = backend.get("wait")
+    if isinstance(wait, str) and wait:
+        blocker = f"{blocker}, waiting: {wait}"
     if blocker not in noted:
         noted.add(blocker)
         _step(f"waiting for startup readiness: {blocker}")
