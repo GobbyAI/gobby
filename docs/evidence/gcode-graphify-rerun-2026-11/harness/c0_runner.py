@@ -323,6 +323,17 @@ def _env_diff(ambient: Mapping[str, str], child: Mapping[str, str]) -> dict[str,
     }
 
 
+def _stop_watch(watch: IndexPoller | None) -> EvidenceError | None:
+    """Stops the poller and returns its failure, so the caller writes the command's logs first."""
+    if watch is None:
+        return None
+    try:
+        watch.stop()
+    except EvidenceError as error:
+        return error
+    return None
+
+
 def run_c0(
     root: Path,
     attempt: str,
@@ -355,12 +366,17 @@ def run_c0(
             watch.start()
         try:
             result = runner(command["argv"], Path(command["cwd"]), child)
-        finally:
+        except BaseException:
             if watch is not None:
                 watch.stop()
+            raise
+        poller_failure = _stop_watch(watch)
         outputs[command["name"]] = result
         write_once(log_dir / f"{command['name']}.stdout", result.stdout, mode=0o600)
         write_once(log_dir / f"{command['name']}.stderr", result.stderr, mode=0o600)
+        if poller_failure is not None:
+            # The command's logs are on disk first, so a failed poller still leaves the evidence.
+            raise poller_failure
         if command["name"] == COLD_INDEX_NAME and result.returncode != 0:
             # The cold index is required: its failure stops C0 here, with its stderr kept above.
             raise EvidenceError(f"required cold index exited {result.returncode}: {result.stderr}")

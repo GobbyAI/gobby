@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 from c0_poller import IndexPoller
 from c0_runner import (
@@ -553,6 +554,41 @@ def test_a_failed_cold_index_stops_c0_with_its_exact_stderr_and_no_passing_recei
     assert len(calls) == names.index(COLD_INDEX_NAME) + 1
     assert (tmp_path / "logs/c0/attempt-6/gcode-index-cold.stderr").read_text() == stderr
     assert not (tmp_path / "receipts/c0-attempt-6.json").exists()
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_a_cold_index_whose_poller_also_fails_keeps_its_logs_and_raises_the_poller_failure(
+    tmp_path: Path, returncode: int
+) -> None:
+    _stage_corpus(tmp_path)
+    freeze_command_manifest(tmp_path, probe_symbols=SYMBOLS, graphify_concurrency=SEPTEMBER)
+    outputs = _passing_outputs(_manifest())
+    cold = CommandResult(
+        stdout="cold index stdout\n", stderr="cold index stderr\n", returncode=returncode
+    )
+    outputs[COLD_INDEX_NAME] = cold
+
+    def failing_count() -> int:
+        raise psycopg.OperationalError("owned database unreachable")
+
+    kwargs = _run_kwargs(tmp_path)
+    kwargs["observer"] = IndexPoller(
+        count=failing_count,
+        clock=time.monotonic,
+        clean=9,
+        log=tmp_path / "poller.jsonl",
+        interval=0.001,
+    )
+
+    with pytest.raises(
+        EvidenceError, match="index poller failed: OperationalError: owned database unreachable"
+    ):
+        run_c0(tmp_path, "attempt-7", _runner_for(tmp_path, outputs), ambient={}, **kwargs)
+
+    log_dir = tmp_path / "logs/c0/attempt-7"
+    assert (log_dir / "gcode-index-cold.stdout").read_text() == cold.stdout
+    assert (log_dir / "gcode-index-cold.stderr").read_text() == cold.stderr
+    assert not (tmp_path / "receipts/c0-attempt-7.json").exists()
 
 
 def test_run_process_returns_the_stdout_and_exit_code_of_the_frozen_argv(tmp_path: Path) -> None:
