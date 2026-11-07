@@ -153,6 +153,12 @@ the binary name, for example
 The `schema_contract`, `catalog_manifest_freshness` and `projection_stale` programs stay
 separate because CI filters name them.
 
+Run these tests with `cargo nextest`, never bare `cargo test`. Nextest runs each test in
+its own process, so tests merged into one program do not share process state. Bare
+`cargo test` runs a program's tests as threads of one process, which is why the merge is
+only safe under nextest. `.config/nextest.toml` also routes database-backed tests into a
+serial group, and bare `cargo test` bypasses that group.
+
 ## Testing
 
 The full test suite runs pre-push. During development, run specific tests rather than the full suite:
