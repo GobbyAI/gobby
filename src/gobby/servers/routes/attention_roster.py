@@ -48,6 +48,7 @@ def _load_roster_entries(
                 "project_id": run.project_id,
                 "lifecycle_status": run.lifecycle_status,
                 "definition_title": run.definition_title,
+                "definition_name": run.definition_name,
                 "attention": _serialize_attention(attention.get(entry_id))
                 or _serialize_attention(session_attention),
                 "provider_error": _provider_error(session_attention),
@@ -69,7 +70,8 @@ def _load_roster_entries(
         terminal_context = session.terminal_context
         terminal = _terminal_block(server, session.terminal)
         pane = terminal_context.get("tmux_pane")
-        if terminal is None and (not isinstance(pane, str) or not pane):
+        # A session with no terminal or pane is still assigned work when it holds a claim.
+        if terminal is None and session.task_id is None and (not isinstance(pane, str) or not pane):
             continue
         entry_id = f"session:{session.source_id}"
         entries.append(
@@ -81,6 +83,7 @@ def _load_roster_entries(
                 "project_id": session.project_id,
                 "lifecycle_status": session.lifecycle_status,
                 "definition_title": session.definition_title,
+                "definition_name": session.definition_name,
                 "attention": _serialize_attention(attention.get(entry_id)),
                 "provider_error": _provider_error(attention.get(entry_id)),
                 "task": _task_payload(session),

@@ -187,45 +187,30 @@ pub fn help_rows(chrome: &Chrome, width: u16) -> Vec<Line<'static>> {
 }
 
 /// The attention legend Help opens with, in the Attention board's order:
-/// each state's glyph and word, what the status counts file it under, and
-/// what it means.
-const LEGEND: [(RowState, &str, &str); 7] = [
+/// each state's glyph and label, which is the word the status bar counts it
+/// under, and what it means.
+const LEGEND: [(RowState, &str); 5] = [
     (
         RowState::Attention,
-        "need you",
-        "waiting on you: an approval, a question, an error it cannot pass",
-    ),
-    (RowState::Working, "active", "running a turn"),
-    (
-        RowState::Idle,
-        "idle",
-        "at its prompt, or ended its turn on an armed wait or background work",
+        "waiting on you: a question, a plan approval or a permission prompt",
     ),
     (
-        RowState::Unseen,
-        "idle",
-        "finished since you last looked; clears when its pane is focused",
+        RowState::Working,
+        "mid-turn, or between turns while waiting on a child run it started",
     ),
     (
         RowState::Paused,
-        "idle",
-        "paused on purpose or interrupted by you",
+        "alive but stopped: paused on purpose or interrupted by you",
     ),
     (
-        RowState::Orphaned,
-        "n gone",
-        "process or relay missing; its own count, shown only when not zero",
+        RowState::NoLive,
+        "agents are assigned but all are dead, or the machine's daemon is unreachable",
     ),
-    (
-        RowState::Unknown,
-        "idle",
-        "the first seconds after a spawn, before the daemon has a state",
-    ),
+    (RowState::Blank, "nothing is assigned or being worked"),
 ];
-const LEGEND_STATE_WIDTH: usize = 15;
-const LEGEND_COUNT_WIDTH: usize = 11;
-/// Cells before a legend row's meaning: the glyph cell, the state, the count.
-const LEGEND_LEAD: usize = 3 + LEGEND_STATE_WIDTH + LEGEND_COUNT_WIDTH;
+const LEGEND_STATE_WIDTH: usize = 17;
+/// Cells before a legend row's meaning: the glyph cell and the state.
+const LEGEND_LEAD: usize = 3 + LEGEND_STATE_WIDTH;
 
 /// The legend card `render_body` draws above the bindings while no search
 /// narrows them: a heading group, then one group per state, each meaning
@@ -243,17 +228,11 @@ pub fn legend_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            format!(
-                "   {:state$}{:count$}means",
-                "state",
-                "counts as",
-                state = LEGEND_STATE_WIDTH,
-                count = LEGEND_COUNT_WIDTH
-            ),
+            format!("   {:state$}means", "state", state = LEGEND_STATE_WIDTH),
             Style::default().fg(p.overlay1),
         )),
     ]];
-    groups.extend(LEGEND.iter().map(|&(state, counts_as, means)| {
+    groups.extend(LEGEND.iter().map(|&(state, means)| {
         let (glyph, color) = state_dot(state, p);
         let lead = vec![
             Span::raw(" "),
@@ -261,10 +240,6 @@ pub fn legend_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
             Span::styled(
                 format!("{:width$}", state_label(state), width = LEGEND_STATE_WIDTH),
                 Style::default().fg(p.text),
-            ),
-            Span::styled(
-                format!("{counts_as:width$}", width = LEGEND_COUNT_WIDTH),
-                dim,
             ),
         ];
         let inline = if LEGEND_LEAD < width {
