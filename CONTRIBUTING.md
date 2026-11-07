@@ -109,14 +109,16 @@ directory.
 
 ### sccache and incremental builds
 
-When `sccache` is on `PATH` (`brew install sccache`), agent launches set
-`RUSTC_WRAPPER=sccache` and `CARGO_INCREMENTAL=0`. sccache cannot cache incremental
+When `sccache` is on `PATH` (`brew install sccache`) and its server socket path fits the
+103-byte Unix socket limit, agent launches set `RUSTC_WRAPPER=sccache` and
+`CARGO_INCREMENTAL=0`. sccache cannot cache incremental
 output, so a wrapped build turns incremental compilation off. Without sccache, agent
 launches set `CARGO_INCREMENTAL` blank, which also turns it off. An unset variable
 keeps Cargo's default, incremental on, so an operator shell that sets nothing keeps it.
 
-sccache keys each compile on the target directory path. Hits come only from builds
-that share a target directory. A new worktree or a new target folder starts cold.
+sccache keys each Rust compile on its source and target folder paths, so Rust hits come
+only from rebuilds in the same checkout and target folder. A new checkout or a new target
+folder compiles its Rust crates again. C and assembler compiles still hit across folders.
 
 ### Debug info
 
