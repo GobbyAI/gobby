@@ -856,7 +856,10 @@ fn explicit_file_repair_scopes_scroll_and_reset_to_its_files() -> anyhow::Result
         .iter()
         .find(|condition| condition["key"] == "file_path")
         .expect("scoped scroll filters by file_path");
-    assert_eq!(file_condition["match"]["any"], serde_json::json!(["src/reset.rs"]));
+    assert_eq!(
+        file_condition["match"]["any"],
+        serde_json::json!(["src/reset.rs"])
+    );
     assert!(
         delete_requests(&requests).is_empty(),
         "an explicit-file repair never deletes"

@@ -430,8 +430,11 @@ pub(crate) mod serial_db {
         .with_project_root(ctx.project_root.clone())
     }
 
+    /// Serves the pinned overlay's Qdrant and embedding requests. `scroll_points` is the
+    /// overlay collection every scroll returns.
     fn pinned_vector_service(
         ctx: &mut Context,
+        scroll_points: Value,
         on_upsert: impl FnOnce() + Send + 'static,
     ) -> thread::JoinHandle<Vec<String>> {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind pinned vector service");
@@ -451,11 +454,16 @@ pub(crate) mod serial_db {
         ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
         thread::spawn(move || {
             let mut hook = Some(on_upsert);
-            let mut requests = Vec::new();
+            let mut requests: Vec<String> = Vec::new();
             let mut pruned = false;
             while !pruned {
-                let mut stream = accept_with_timeout(&listener, Duration::from_secs(5))
-                    .expect("pinned projection request");
+                // Silence after the upsert ends the exchange: a superseded attempt sends no count.
+                let upserted = requests.iter().any(|request| request.starts_with("PUT "));
+                let timeout = Duration::from_secs(if upserted { 2 } else { 5 });
+                let Ok(mut stream) = accept_with_timeout(&listener, timeout) else {
+                    assert!(upserted, "pinned projection request before the upsert");
+                    break;
+                };
                 let request = read_http_request(&mut stream);
                 let line = request.lines().next().unwrap_or_default();
                 let response = if line.starts_with("GET ") {
@@ -469,6 +477,9 @@ pub(crate) mod serial_db {
                     // The sync prunes stale points after its upsert; this count ends the exchange.
                     pruned = true;
                     json!({"result": {"count": 0}})
+                } else if line.starts_with("POST ") && line.contains("/points/scroll") {
+                    // The overlay repair scrolls its collection for the points it holds.
+                    json!({"result": {"points": scroll_points, "next_page_offset": null}})
                 } else if line.starts_with("POST ") && !line.contains("/collections") {
                     json!({"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]})
                 } else {
@@ -487,6 +498,240 @@ pub(crate) mod serial_db {
         not(gcode_postgres_tests),
         ignore = "requires PostgreSQL test database URL"
     )]
+    fn repair_reembeds_projected_pin_whose_overlay_points_are_missing() {
+        let database_url = crate::test_env::postgres_test_database_url("pinned vector repair");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, _source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        // The overlay recorded the pin as projected, but its collection holds no point for it.
+        conn.execute(
+            "UPDATE code_overlay_pins SET vector_projected = true WHERE overlay_project_id = $1",
+            &[&db::id_param(&ctx.project_id).expect("overlay UUID")],
+        )
+        .expect("mark the pin projected");
+        let server = pinned_vector_service(&mut ctx, json!([]), || {});
+
+        let repaired = crate::commands::vector::reconcile::repair_missing_pins(&ctx, None, || {
+            Ok(direct_vector_lifecycle(&ctx))
+        });
+        let requests = server.join().expect("pinned projection service");
+
+        assert!(repaired.is_ok(), "the repair completes: {repaired:?}");
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.starts_with("POST ") && request.contains("/points/scroll")),
+            "the repair scrolls the overlay collection for its points"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.starts_with("PUT ") && request.contains("/points")),
+            "the missing pin vector is re-embedded without manual action"
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.contains("/points/delete")),
+            "a pin repair never deletes"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn repair_reprojects_projected_pin_holding_a_stale_overlay_point() {
+        let database_url = crate::test_env::postgres_test_database_url("pinned vector repair");
+        let hash_h = version_hash("h");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        conn.execute(
+            "UPDATE code_overlay_pins SET vector_projected = true WHERE overlay_project_id = $1",
+            &[&db::id_param(&ctx.project_id).expect("overlay UUID")],
+        )
+        .expect("mark the pin projected");
+        // The overlay holds the pinned symbol's point and a point the pinned version does
+        // not name, as a prune that failed after the fence leaves behind.
+        let pinned_symbol = Symbol::make_id(&source, FILE, hash_h.as_str(), "run", "function", 0);
+        let server = pinned_vector_service(
+            &mut ctx,
+            json!([
+                {"id": pinned_symbol, "payload": {"file_path": FILE}},
+                {"id": "stale-point", "payload": {"file_path": FILE}},
+            ]),
+            || {},
+        );
+
+        let repaired = crate::commands::vector::reconcile::repair_missing_pins(&ctx, None, || {
+            Ok(direct_vector_lifecycle(&ctx))
+        });
+        let requests = server.join().expect("pinned projection service");
+
+        assert!(repaired.is_ok(), "the repair completes: {repaired:?}");
+        assert!(
+            requests.iter().any(|request| request.starts_with("PUT ")),
+            "the stale pin is re-projected"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.contains("/points/count")),
+            "the re-projection prunes the stale point"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn inventory_keeps_points_of_projected_pins_out_of_the_orphans() {
+        use crate::vector::code_symbols::tests::spawn_http_responses;
+
+        let database_url = crate::test_env::postgres_test_database_url("pinned vector inventory");
+        let hash_h = version_hash("h");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        // The overlay's point for the pinned source symbol belongs to the pin, not the overlay.
+        let pinned_symbol = Symbol::make_id(&source, FILE, hash_h.as_str(), "run", "function", 0);
+        let (qdrant_url, qdrant) = spawn_http_responses(vec![(
+            200,
+            json!({"result": {"points": [{
+                "id": pinned_symbol,
+                "payload": {
+                    "project_id": ctx.project_id,
+                    "file_path": FILE,
+                    "name": "run",
+                    "kind": "function",
+                    "byte_start": 0,
+                },
+            }], "next_page_offset": null}}),
+        )]);
+        ctx.qdrant = Some(QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        });
+
+        let inventory = crate::commands::vector::reconcile::inventory(&ctx).expect("inventory");
+        qdrant.join().expect("qdrant requests");
+
+        assert!(
+            inventory
+                .orphans
+                .values()
+                .all(|ids| !ids.contains(&pinned_symbol)),
+            "a projected pin's point is not an orphan of the overlay"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn sync_deletes_points_of_symbols_a_reindex_removed() {
+        let database_url = crate::test_env::postgres_test_database_url("projection sync tests");
+        let hash_h = version_hash("h");
+        let root = version_root("h");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let project_id = unique_project_id();
+        let _cleanup = ProjectCleanup::new(&mut conn, &database_url, &project_id);
+        seed_version(&mut conn, &project_id, hash_h.as_str(), true);
+        let current = Symbol::make_id(&project_id, FILE, hash_h.as_str(), "run", "function", 0);
+
+        // The collection still holds a point for a symbol the re-index removed. Its count
+        // is one, so the sync must delete everything in the file outside the current keep set.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        listener
+            .set_nonblocking(true)
+            .expect("set test server nonblocking");
+        let url = format!("http://{}", listener.local_addr().expect("local addr"));
+        let server = thread::spawn(move || {
+            let mut requests = Vec::new();
+            while let Ok(mut stream) = accept_with_timeout(&listener, Duration::from_secs(5)) {
+                let request = read_http_request(&mut stream);
+                let line = request.lines().next().unwrap_or_default().to_string();
+                let response = if line.starts_with("GET ") {
+                    json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}})
+                } else if line.contains("/points/count") {
+                    json!({"result": {"count": 1}})
+                } else if line.contains("/points/delete") {
+                    json!({"result": {"operation_id": 2, "status": "completed"}, "status": "ok"})
+                } else if line.starts_with("PUT ") {
+                    json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok"})
+                } else {
+                    json!({"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]})
+                };
+                let finished = line.contains("/points/delete");
+                requests.push(request);
+                respond(&mut stream, response);
+                if finished {
+                    break;
+                }
+            }
+            requests
+        });
+
+        let ctx = Context {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+            project_root: root.path().to_path_buf(),
+            ..test_context()
+        };
+        let lifecycle = CodeSymbolVectorLifecycle::new(
+            project_id.clone(),
+            QdrantConfig {
+                url: Some(url.clone()),
+                api_key: None,
+            },
+            EmbeddingConfig {
+                api_base: format!("{url}/v1"),
+                model: "embed-small".to_string(),
+                api_key: None,
+                query_prefix: None,
+                timeout_seconds: 10,
+            },
+            CodeVectorSettings::with_vector_dim(Some(3)),
+        )
+        .expect("lifecycle")
+        .with_project_root(ctx.project_root.clone());
+        let mut state = VectorProjectionState {
+            ctx: &ctx,
+            conn,
+            lifecycle,
+        };
+
+        let outcome = state.sync_file(FILE).expect("sync removed symbol");
+        let requests = server.join().expect("qdrant requests");
+
+        assert_eq!(outcome, ProjectionFileSyncOutcome::Synced { symbols: 1 });
+        let delete = requests
+            .iter()
+            .find(|request| request.contains("/points/delete"))
+            .expect("the sync deletes the vanished points");
+        assert!(
+            delete.contains(&format!(r#""must_not":[{{"has_id":["{current}"]}}]"#)),
+            "the delete keeps only the current symbol's point"
+        );
+        assert!(
+            delete.contains(&format!(r#""value":"{FILE}""#)),
+            "the delete is scoped to the synced file"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
     fn reproject_only_moved_pinned_paths() {
         let database_url = crate::test_env::postgres_test_database_url("pinned vector recovery");
         let hash_h = version_hash("h");
@@ -494,7 +739,7 @@ pub(crate) mod serial_db {
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
         let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let server = pinned_vector_service(&mut ctx, || {});
+        let server = pinned_vector_service(&mut ctx, json!([]), || {});
         let lifecycle = direct_vector_lifecycle(&ctx);
         let mut state = VectorProjectionState {
             ctx: &ctx,
@@ -585,7 +830,7 @@ pub(crate) mod serial_db {
                     let database_url = database_url.clone();
                     let overlay = ctx.project_id.clone();
                     let hash_k = hash_k.clone();
-                    pinned_vector_service(&mut ctx, move || {
+                    pinned_vector_service(&mut ctx, json!([]), move || {
                         reached.store(true, Ordering::SeqCst);
                         let mut writer = db::connect_readwrite(&database_url).expect("writer");
                         let overlay_uuid = db::id_param(&overlay).expect("overlay UUID");
@@ -641,7 +886,13 @@ pub(crate) mod serial_db {
                 reached.load(Ordering::SeqCst),
                 "{change}: upsert must precede the fence"
             );
-            server.join().expect("pinned service");
+            let requests = server.join().expect("pinned service");
+            assert!(
+                requests.iter().all(|request| {
+                    !request.contains("/points/count") && !request.contains("/points/delete")
+                }),
+                "{change}: a superseded attempt issues no count or delete"
+            );
             assert_eq!(
                 outcome,
                 ProjectionFileSyncOutcome::SkippedMissingIndexedFile,

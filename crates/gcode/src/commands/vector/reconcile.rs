@@ -20,7 +20,11 @@ use crate::index::api::IndexDegradation;
 use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::models::{CODE_INDEX_UUID_NAMESPACE, Symbol};
 use crate::output::{self, Format};
-use crate::vector::code_symbols::{self, PointIdentity, VectorLifecycleError};
+use crate::vector::code_symbols::{
+    self, CodeSymbolVectorLifecycle, PointIdentity, VectorLifecycleError,
+};
+
+mod pins;
 
 #[cfg(test)]
 #[path = "reconcile/tests.rs"]
@@ -182,12 +186,13 @@ pub(crate) fn inventory_in_scope(
     }
 
     let point_ids: HashSet<&str> = points.iter().map(|point| point.id.as_str()).collect();
+    let pinned_ids = pins::pinned_keep_ids(&mut conn, ctx, scope)?;
     let mut orphans: BTreeMap<OrphanClass, Vec<String>> = ORPHAN_CLASSES
         .into_iter()
         .map(|class| (class, Vec::new()))
         .collect();
     for point in &points {
-        if !pg_ids.contains(point.id.as_str()) {
+        if !pg_ids.contains(point.id.as_str()) && !pinned_ids.contains(point.id.as_str()) {
             let class = classify_orphan(&ctx.project_id, point, &hashes_by_path);
             orphans.entry(class).or_default().push(point.id.clone());
         }
@@ -594,17 +599,52 @@ fn reset_synced_versions(
     Ok(rows.iter().map(|row| row.get(0)).collect())
 }
 
-/// Runs the automatic repair after a whole-project index pass. A version whose symbol
-/// points are missing is reset here; the pending-sync worker then re-embeds it.
+/// Runs the automatic repair after an index pass. A version whose symbol points are
+/// missing is reset here; the pending-sync worker then re-embeds it. A projected pin
+/// whose overlay points are missing is re-projected here, because the pending selector
+/// would not revisit it until its source moves.
 pub(crate) fn repair_after_index(
     ctx: &Context,
     scope: Option<&[String]>,
 ) -> Option<IndexDegradation> {
     ctx.qdrant.as_ref()?;
-    match reset_synced_missing_versions(ctx, scope) {
-        Ok(_) => None,
+    let repaired = reset_synced_missing_versions(ctx, scope)
+        .map(drop)
+        .and_then(|()| {
+            repair_missing_pins(ctx, scope, || {
+                crate::projection::sync::vector_lifecycle_from_context(ctx)
+            })
+        });
+    match repaired {
+        Ok(()) => None,
         Err(error) => Some(IndexDegradation::VectorRepairFailed {
             message: format!("{error:#}"),
         }),
     }
+}
+
+/// Re-projects the projected pins whose overlay points are missing or stale, with the
+/// lifecycle the caller supplies. A degraded report fails the repair so the index pass
+/// records it.
+pub(crate) fn repair_missing_pins(
+    ctx: &Context,
+    scope: Option<&[String]>,
+    lifecycle: impl FnOnce() -> Result<CodeSymbolVectorLifecycle, VectorLifecycleError>,
+) -> anyhow::Result<()> {
+    let paths = pins::drifted_pin_paths(ctx, scope)?;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let report =
+        crate::projection::sync::sync_vector_files_with_lifecycle(ctx, lifecycle()?, &paths, None)?;
+    if let Some(error) = report.error {
+        anyhow::bail!("pinned vector repair: {}: {}", error.kind, error.message);
+    }
+    if report.failed_files > 0 {
+        anyhow::bail!(
+            "pinned vector repair: {} file(s) failed to re-project",
+            report.failed_files
+        );
+    }
+    Ok(())
 }

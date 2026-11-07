@@ -236,10 +236,12 @@ pub(crate) fn run_index_locked(
         sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
         &mut projection_progress,
     );
-    outcome.degraded.extend(vector_reconcile::repair_after_index(
-        ctx,
-        repair_scope.as_deref(),
-    ));
+    outcome
+        .degraded
+        .extend(vector_reconcile::repair_after_index(
+            ctx,
+            repair_scope.as_deref(),
+        ));
     // Refresh the stored hotspot snapshot once the graph is in sync. A failed refresh
     // is a visible degradation; the index itself still succeeds.
     outcome
