@@ -856,6 +856,14 @@ def _clear_worker_staging() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def reset_code_index_enabled_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Daemon startup installs a process-wide code-index resolver; each test starts unset (pins)."""
+    from gobby.code_index import gcode_gateway
+
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", None)
+
+
+@pytest.fixture(autouse=True)
 def protect_production_resources(
     request: pytest.FixtureRequest,
     temp_dir: Path,
