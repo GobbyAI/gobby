@@ -3,8 +3,7 @@
 
 use super::agents::{machine_admits, TERMINAL_ROW};
 use super::{render_band, render_section_rows, SidebarHits};
-use crate::app::sidebar_model::pane_state;
-use crate::ui::chrome::{Chrome, WorkspaceView};
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::pane_chrome::pane_address;
 use crate::ui::sidebar_rows::{RowKind, SidebarRow};
@@ -36,7 +35,8 @@ pub fn terminal_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRo
                 id: format!("{TERMINAL_ROW}{terminal_id}"),
                 label: pane.display_name().to_string(),
                 kind: RowKind::Terminal,
-                state: pane_state(pane),
+                // Bare terminals have nothing assigned, and pane output never makes one active.
+                state: RowState::Blank,
                 detail: pane
                     .cwd
                     .as_deref()

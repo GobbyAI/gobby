@@ -13,6 +13,7 @@ from __future__ import annotations
 import atexit
 import faulthandler
 import functools
+import gc
 import sys
 
 import pytest
@@ -50,6 +51,15 @@ def pytest_configure(config: pytest.Config) -> None:
     config.add_cleanup(
         functools.partial(_arm_exit_watchdog, float(config.getini("exit_watchdog_timeout")))
     )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # Pytest's unconfigure forces five full collections, and interpreter shutdown adds
+    # more. Each scans every tracked object, and the import graph alone is ~370k of them,
+    # so under load the exit overran the watchdog below (#25804). Freezing the
+    # import-time heap leaves those passes scanning only what the tests create.
+    gc.freeze()
 
 
 @pytest.hookimpl(trylast=True)

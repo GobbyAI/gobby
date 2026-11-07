@@ -6,6 +6,7 @@ process, and the inner run must not load this suite's conftest or database.
 
 from __future__ import annotations
 
+import gc
 import os
 import subprocess
 import sys
@@ -212,3 +213,9 @@ def test_slow_cleanup_stack_after_the_pass_summary_is_not_a_hang(
     assert "1 passed" in output
     assert result.returncode == 0
     assert "Timeout" not in output
+
+
+def test_import_heap_is_frozen_before_tests_run() -> None:
+    # Exit forces full GC passes over every tracked object. The import-time heap is
+    # ~370k objects, so under load five such passes overran the exit watchdog (#25804).
+    assert gc.get_freeze_count() > 0

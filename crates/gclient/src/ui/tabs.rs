@@ -5,7 +5,6 @@ use crate::app::sidebar_model::rollup;
 use crate::app::MouseGesture;
 use crate::ui::chrome::{Chrome, RowState, Tab, WorkspaceView};
 use crate::ui::settings::SidebarSide;
-use crate::ui::sidebar::agents::agent_state;
 use crate::ui::status::state_dot;
 use crate::ui::text::display_width_u16;
 use ratatui::layout::Rect;
@@ -355,7 +354,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         .map(|tab| {
             rollup(ws.sidebar().agents.iter().filter_map(|agent| {
                 let pane = ws.pane_for_terminal(&agent.terminal_id)?;
-                tab.slot_for(pane).is_some().then(|| agent_state(ws, agent))
+                tab.slot_for(pane).is_some().then_some(agent.state)
             }))
         })
         .collect();
