@@ -47,6 +47,8 @@ export const SandboxManager = {
   initialize: async () => {
     transport = globalThis.gobbySrtLogTransport(process.env.TEST_SUFFIX)
     transport.stdout.on('data', data => {
+      // Stands in for SRT's canonical filter: this noise is never recorded.
+      if (data.toString().includes('mDNSResponder')) return
       violations.push({ line: data.toString(), command: process.env.TEST_SUFFIX })
       listeners.forEach(listener => listener())
       console.log('recorded')
