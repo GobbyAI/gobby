@@ -44,7 +44,7 @@ def grant(tmp_path: Path) -> dict[str, Any]:
                 "mode": "direct",
                 "valid_until": 200,
                 "role_name": "gobby_ix_test",
-                "dsn": "host=127.0.0.1 port=61234 dbname=gobby_bakeoff_21942 "
+                "dsn": "host=127.0.0.1 port=61234 dbname=gobby_bakeoff_22948 "
                 "user=gobby_ix_test password='a quoted test password'",
             },
             "qdrant": {"mode": "direct", "url": "http://127.0.0.1:61235"},
@@ -238,7 +238,9 @@ def test_source_manifest_accepts_symlink_contained_in_source(tmp_path: Path) -> 
             _symlink_item("crates/vendor/CLAUDE.md", "AGENTS.md"),
         ],
     )
+    before = copy.deepcopy(record)
     _validate_source_manifest(tmp_path, "gobby", SOURCE_PIN, record)
+    assert record == before
 
 
 def test_source_manifest_rejects_symlink_escaping_source(tmp_path: Path) -> None:
@@ -258,9 +260,7 @@ def test_source_manifest_rejects_retargeted_symlink(tmp_path: Path) -> None:
     (source / "AGENTS.md").write_text("rules\n")
     (source / "OTHER.md").write_text("other\n")
     (source / "CLAUDE.md").symlink_to("AGENTS.md")
-    record = _write_source_manifest(
-        tmp_path, [_symlink_item("CLAUDE.md", "AGENTS.md")]
-    )
+    record = _write_source_manifest(tmp_path, [_symlink_item("CLAUDE.md", "AGENTS.md")])
     (source / "CLAUDE.md").unlink()
     (source / "CLAUDE.md").symlink_to("OTHER.md")
     with pytest.raises(AssertionError, match="symlink target changed"):
@@ -268,7 +268,7 @@ def test_source_manifest_rejects_retargeted_symlink(tmp_path: Path) -> None:
 
 
 GRAPHIFY_VERSION = "0.10.0"
-GCODE_CONTRACT = 8
+GCODE_CONTRACT = 12
 
 
 def _install_log(root: Path, name: str, text: str) -> dict[str, Any]:
@@ -313,7 +313,9 @@ def graphify_receipt(tmp_path: Path) -> dict[str, Any]:
 def test_graphify_receipt_accepts_installed_pypi_version(
     tmp_path: Path, graphify_receipt: dict[str, Any]
 ) -> None:
+    before = copy.deepcopy(graphify_receipt)
     validate_graphify_receipt(tmp_path, graphify_receipt)
+    assert graphify_receipt == before
 
 
 def test_graphify_receipt_rejects_version_absent_from_dependency_lock(
@@ -352,7 +354,7 @@ def gcode_receipt(tmp_path: Path) -> dict[str, Any]:
         tmp_path, [_file_item(tmp_path, "Cargo.lock")], commit=GOBBY_SHA
     )
     version = _passed_check(
-        tmp_path, [str(binary), "--version"], "probe-gcode-version", "gcode 1.7.0\n"
+        tmp_path, [str(binary), "--version"], "probe-gcode-version", "gcode 1.9.104\n"
     )
     contract = _passed_check(
         tmp_path,
@@ -362,7 +364,7 @@ def gcode_receipt(tmp_path: Path) -> dict[str, Any]:
     )
     return {
         "source_commit": GOBBY_SHA,
-        "version": "1.7.0",
+        "version": "1.9.104",
         "contract_version": GCODE_CONTRACT,
         "executable": file_record(tmp_path, binary),
         "gdaemon": file_record(tmp_path, "gobby-home/bin/gdaemon"),
@@ -375,7 +377,9 @@ def gcode_receipt(tmp_path: Path) -> dict[str, Any]:
 
 
 def test_gcode_receipt_accepts_pinned_build(tmp_path: Path, gcode_receipt: dict[str, Any]) -> None:
+    before = copy.deepcopy(gcode_receipt)
     validate_gcode_receipt(tmp_path, gcode_receipt)
+    assert gcode_receipt == before
 
 
 def test_gcode_receipt_rejects_contract_version_drift(

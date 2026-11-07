@@ -37,16 +37,10 @@ from provision_environment import (
 from runtime_boundary import contained_file, verify_file_record, verify_symlink_record, write_once
 from service_safety import validate_rendered
 
-GRAPHIFY_COMMIT = "c9f99018774e2e0380e9f65b3959944559a0d5f6"
-GROK_DMG_SHA256 = "bbcccef258102a1f32e36947b1a6da059a828bf1cea552dfdb58ca35ab562e09"
-PINS = {
-    "graphify": GRAPHIFY_COMMIT,
-    "understand-anything": "07edf82a04371b6f69779b067bdc8a1a8753a9db",
-    "archify": "c6519401f7b91b9d43011657880893b0a8955548",
-    "codewiki": "2584854d7538dc3e3e8e6839cf8590b0cd12a431",
-    "opendeepwiki": "75840e5e86213ca40ace9d5036b1f52603f8d038",
-    "grok-wiki": "release-0.0.38",
-}
+GRAPHIFY_ENTRYPOINT = "tools/graphify/venv/bin/graphify"
+GCODE_BINARY = "tools/gcode/bin/gcode"
+GCODE_VERSION = "1.9.104"
+GCODE_CONTRACT_VERSION = 12
 ALLOWED_EXAMPLE_ENV = {".env.example", "Buylist/.env.example", "Restocks/.env.example"}
 SECRET_PATTERNS = {
     "private-key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -300,61 +294,50 @@ def _validate_installation_checks(root: Path, checks: list[dict[str, Any]]) -> N
 
 
 def validate_graphify_receipt(root: Path, graphify: dict[str, Any]) -> None:
-    raise NotImplementedError
+    # Graphify is unpinned: the PyPI version is recorded, not required to match a commit.
+    assert graphify["status"] == "installed", "graphify is not installed"
+    assert graphify["pypi_package"] == "graphifyy", "unexpected graphify PyPI package"
+    version = graphify["pypi_version"]
+    assert version, "missing graphify PyPI version"
+    executables = [verify_file_record(root, record) for record in graphify["entrypoints"]]
+    assert executables == [root / GRAPHIFY_ENTRYPOINT], "unexpected graphify entrypoint"
+    _validate_installation_checks(root, graphify["checks"])
+    for artifact in graphify["evidence"]:
+        verify_file_record(root, artifact)
+    locks = [
+        verify_file_record(root, record).read_text() for record in graphify["dependency_locks"]
+    ]
+    pins = {line.strip() for lock in locks for line in lock.splitlines()}
+    assert f"graphifyy=={version}" in pins, f"{version} absent from dependency lock"
+    version_log = verify_file_record(root, graphify["version_log"]).read_text()
+    assert version in version_log, f"{version} absent from version log"
 
 
 def validate_gcode_receipt(root: Path, gcode: dict[str, Any]) -> None:
-    raise NotImplementedError
+    assert gcode["source_commit"] == GOBBY_SHA, "gcode source_commit is not the gobby pin"
+    assert gcode["version"] == GCODE_VERSION, "gcode version is not pinned"
+    assert gcode["contract_version"] == GCODE_CONTRACT_VERSION, (
+        "gcode contract_version is not pinned"
+    )
+    executable = verify_file_record(root, gcode["executable"])
+    assert executable == root / GCODE_BINARY, "unexpected gcode executable"
+    verify_file_record(root, gcode["gdaemon"])
+    verify_file_record(root, gcode["cargo_lock"])
+    _validate_source_manifest(root, "gobby", GOBBY_SHA, gcode["source_manifest"])
+    _validate_installation_checks(root, gcode["checks"])
+    version_log = verify_file_record(root, gcode["version_log"]).read_text()
+    assert version_log.strip() == f"gcode {GCODE_VERSION}", "gcode version log mismatch"
+    contract = _load_json(verify_file_record(root, gcode["contract_log"]))
+    assert contract["tool"] == "gcode", "contract log is not from gcode"
+    assert contract["contract_version"] == GCODE_CONTRACT_VERSION, "contract log version mismatch"
 
 
 def validate_installations(root: Path) -> None:
     receipt = _load_json(contained_file(root, "receipts/installations.json"))
     comparators = receipt["comparators"]
-    assert set(comparators) == set(PINS)
-    for name, pin in PINS.items():
-        item = comparators[name]
-        assert item["required_pin"] == pin
-        assert item["status"] in {"installed", "blocked"}
-        if item["status"] == "blocked":
-            assert item["exit_code"] != 0
-            assert item["error"]
-            verify_file_record(root, item["log"])
-            assert item.get("substitution") is None
-            continue
-        assert item["entrypoints"], f"missing entrypoints for {name}"
-        for artifact in [*item["entrypoints"], *item["dependency_locks"], *item["evidence"]]:
-            verify_file_record(root, artifact)
-        _validate_installation_checks(root, item["checks"])
-        if name == "grok-wiki":
-            verify_file_record(root, item["release_artifact"])
-            assert item["release_artifact"]["sha256"] == GROK_DMG_SHA256
-            assert item["dependency_lock_status"] == "dependencies embedded in signed release"
-        else:
-            assert item["dependency_locks"], f"missing dependency lock for {name}"
-            _validate_source_manifest(root, name, pin, item["source_manifest"])
-            source = _load_json(verify_file_record(root, item["source_receipt"]))
-            assert source["required_pin"] == pin
-            assert source["archive_sha256"] == item["source_archive"]["sha256"]
-            assert source["archive"] == str(verify_file_record(root, item["source_archive"]))
-
-    graphify = comparators["graphify"]
-    if graphify["status"] == "installed":
-        version_log = verify_file_record(root, graphify["version_log"])
-        assert "0.9.55" in version_log.read_text()
-
-    gcode = _load_json(contained_file(root, "receipts/gcode.json"))
-    assert gcode["source_commit"] == GOBBY_SHA
-    assert gcode["version"] == "1.7.0"
-    assert gcode["contract_version"] == 8
-    executable = verify_file_record(root, gcode["executable"])
-    assert executable == root / "tools/gcode/bin/gcode"
-    verify_file_record(root, gcode["gdaemon"])
-    verify_file_record(root, gcode["cargo_lock"])
-    _validate_source_manifest(root, "gobby", GOBBY_SHA, gcode["source_manifest"])
-    _validate_installation_checks(root, gcode["checks"])
-    assert verify_file_record(root, gcode["version_log"]).read_text().strip() == "gcode 1.7.0"
-    contract = _load_json(verify_file_record(root, gcode["contract_log"]))
-    assert contract["tool"] == "gcode" and contract["contract_version"] == 8
+    assert set(comparators) == {"graphify"}, "comparators are not graphify only"
+    validate_graphify_receipt(root, comparators["graphify"])
+    validate_gcode_receipt(root, _load_json(contained_file(root, "receipts/gcode.json")))
 
 
 def validate_receipts(root: Path) -> None:
@@ -478,7 +461,6 @@ def validate_live_processes(root: Path, launches: dict[str, Any]) -> None:
             if connection.status == psutil.CONN_LISTEN
         }
         assert listeners == {("127.0.0.1", port) for port in ports}, name
-
 
 
 def probe_live_environment(root: Path) -> dict[str, Any]:
