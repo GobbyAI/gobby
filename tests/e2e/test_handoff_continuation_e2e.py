@@ -95,6 +95,21 @@ def _is_continuation(event: dict[str, Any], seat: Seat, *, clear: bool) -> bool:
     return event.get("session_id") == seat.external_id
 
 
+def _compact_boundary_recorded(db: Any, seat: Seat) -> bool:
+    """Whether the daemon recorded this seat's compact boundary.
+
+    The row is inserted by notify_compact_boundary, which runs before the continuation
+    prompt is scheduled, so the continuation prompt alone cannot satisfy this check.
+    """
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM session_handoff_deliveries"
+            " WHERE continuation_session_id = %s AND boundary_kind = 'compact'",
+            (seat.surface.session_id,),
+        ).fetchone()
+    return row is not None
+
+
 async def _request_restart(proof: LiveProof) -> httpx.Response:
     """Request a graceful restart without force, so the handoff shutdown hold applies."""
     headers = daemon_auth_headers(proof.daemon.gobby_home)
@@ -144,6 +159,7 @@ async def test_seat_continues_after_its_own_handoff(
     scenario: str,
     composer_fixture: LiveProof,
     composer_admission: Admission,
+    postgres_db: Any,
 ) -> None:
     verify_binary_set(composer_admission)
     binary = composer_admission.providers[provider].path
@@ -161,3 +177,8 @@ async def test_seat_continues_after_its_own_handoff(
         assert held.status_code == 409, held.text
         assert held.json().get("status") == "handoff_pending", held.text
     await _assert_continuation(composer_fixture, seat, writes_before=writes_before, clear=clear)
+    # A clear is not a compaction, so its boundary kind is not asserted here.
+    if scenario != "clear":
+        assert await asyncio.to_thread(_compact_boundary_recorded, postgres_db, seat), (
+            "the daemon recorded no compact boundary for this seat"
+        )
