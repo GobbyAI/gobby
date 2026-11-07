@@ -28,17 +28,12 @@ baseline, with at least one newly included relevant id carrying ``graph`` in
 ``search_via`` and no MRR regression on the returned order.
 
 Run:
-GOBBY_TEST_FALKOR_PASSWORD="$(
-uv run python -c 'from pathlib import Path
-from gobby.cli.installers.compose_env import resolve_compose_runtime
-runtime = resolve_compose_runtime(Path.home() / ".gobby", profiles=("falkordb",))
-print(runtime.environment["GOBBY_FALKORDB_PASSWORD"])'
-)" \\
+GOBBY_TEST_FALKOR_PASSWORD=... \\
 GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/test_recall_benchmark_e2e.py \\
 -m integration -v -s
 
 Connection is read from GOBBY_TEST_FALKOR_HOST (default 127.0.0.1),
-GOBBY_TEST_FALKOR_PORT (default 16379), GOBBY_TEST_FALKOR_PASSWORD. The test runs in a
+GOBBY_TEST_FALKOR_PORT (default 26379), GOBBY_TEST_FALKOR_PASSWORD. The test runs in a
 uniquely-named graph and clears it per arm, so it never touches gobby_kg.
 """
 
@@ -53,6 +48,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, cast
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -60,9 +56,11 @@ from gobby.config.persistence import MemoryConfig, MemoryKnowledgeGraphConfig
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
 from gobby.memory.services.search import SearchService
 from gobby.memory.vectorstore import VectorStore
+from gobby.prompts.loader import PromptLoader
 from gobby.storage.memories import Memory
+from gobby.storage.memories_models import MemoryType
 from gobby.storage.projects import PERSONAL_PROJECT_ID
-from tests.memory._recall_corpus import _Stub, _StubExtractor
+from tests.memory._recall_corpus import MemoryDef, _StubExtractor
 from tests.memory.recall_benchmark_cleanup import drop_recall_benchmark_graph
 
 pytestmark = [pytest.mark.integration]
@@ -235,12 +233,12 @@ class _MemoryStorage:
         mem = self._by_stable_id.get(memory_id)
         if mem is None:
             raise ValueError(memory_id)
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
         # Fresh object every call: _build_results mutates search_via/similarity/ranking_*
         # on the returned objects, so sharing instances would bleed evidence across arms.
         return Memory(
             id=memory_id,
-            memory_type="fact",
+            memory_type=MemoryType.FACT,
             content=mem.memory_id,
             created_at=now,
             updated_at=now,
@@ -302,8 +300,8 @@ async def _build_service(
     service = KnowledgeGraphService(
         falkor_client=client,
         embed_fn=embed_fn,
-        prompt_loader=_Stub(),
-        llm_service=_Stub(),
+        prompt_loader=create_autospec(PromptLoader, instance=True),
+        llm_service=None,
         feature_config=MemoryKnowledgeGraphConfig(),
         vector_store=None,
         embedding_dim=DIM,
@@ -313,7 +311,16 @@ async def _build_service(
         cluster_recall_expansion=arm.cluster_recall_expansion,
         cluster_expansion_per_entity=arm.cluster_expansion_per_entity,
     )
-    service._extractor = _StubExtractor({mem.memory_id: mem for mem in corpus})  # type: ignore[assignment]
+    by_content = {
+        mem.memory_id: MemoryDef(
+            memory_id=mem.memory_id,
+            cluster=mem.cluster,
+            entities=mem.entities,
+            typed_pairs=mem.typed_pairs,
+        )
+        for mem in corpus
+    }
+    service._extractor = _StubExtractor(by_content)
 
     for mem in corpus:
         result = await service.add_to_graph(
@@ -449,7 +456,7 @@ def _lifted_relevant_graph_ids(
 
 async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
     host = os.environ.get("GOBBY_TEST_FALKOR_HOST", "127.0.0.1")
-    port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "16379"))
+    port = int(os.environ.get("GOBBY_TEST_FALKOR_PORT", "26379"))
     password = os.environ.get("GOBBY_TEST_FALKOR_PASSWORD")
     if not password:
         pytest.skip("GOBBY_TEST_FALKOR_PASSWORD is unset")
@@ -549,17 +556,17 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
         # relevant graph-sourced id into top-K, and never regresses MRR (semantic-first
         # keeps the higher-similarity anchors on top).
         for arm_name in ("flags_off", "flags_on"):
-            arm = results[arm_name]
-            assert arm.production_recall > graph_off.production_recall, (
+            candidate = results[arm_name]
+            assert candidate.production_recall > graph_off.production_recall, (
                 f"{arm_name} did not improve recall over graph_off "
-                f"({arm.production_recall:.3f} vs {graph_off.production_recall:.3f})"
+                f"({candidate.production_recall:.3f} vs {graph_off.production_recall:.3f})"
             )
-            assert arm.lifted_relevant_graph_ids, (
+            assert candidate.lifted_relevant_graph_ids, (
                 f"{arm_name} improved recall without a relevant graph-sourced lift"
             )
-            assert arm.production_mrr >= graph_off.production_mrr - 1e-9, (
+            assert candidate.production_mrr >= graph_off.production_mrr - 1e-9, (
                 f"{arm_name} regressed MRR vs graph_off "
-                f"({arm.production_mrr:.3f} vs {graph_off.production_mrr:.3f})"
+                f"({candidate.production_mrr:.3f} vs {graph_off.production_mrr:.3f})"
             )
     finally:
         try:
