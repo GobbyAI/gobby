@@ -75,3 +75,11 @@ verifies is skipped on rerun. A failed probe is preserved, and a new attempt ID 
 - The provision, teardown, observe-after-snapshot, service-verification and row-count paths have
   not been run against Docker or Postgres. Their pure helpers are tested: owner binding,
   step skipping and the zero-row gate.
+- Amendment (orchestrator ruling, before any live step): the external-state snapshot records five
+  operator-owned paths by stat only: `~/.gobby/bootstrap.yaml`, `~/.gobby/.secret_kek`,
+  `~/.gobby/.secret_salt`, `~/.gobby/local_cli_token` and `~/.codex/auth.json`. Each record carries
+  `exists`, `type`, `mode`, `size`, `mtime_ns` and `inode`, and no SHA-256, because the operator's
+  standing rule forbids reading their bytes. A stat change between the before and after snapshots
+  fails validation the way a hash change does. `test_external_snapshot_never_opens_operator_files`
+  guards the read path. Every other stable path keeps its SHA-256. The isolated runtime's own
+  `gobby-home/bootstrap.yaml` and `local_cli_token` are unchanged; they sit inside the runtime root.

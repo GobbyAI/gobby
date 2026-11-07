@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import builtins
 import copy
 import hashlib
+import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-from provision_environment import GOBBY_SHA
+from provision_environment import GOBBY_SHA, external_state_snapshot
 from runtime_boundary import EvidenceError, file_record, write_once
 from validate_environment import (
     _validate_grant_binding,
@@ -192,6 +195,67 @@ def test_isolation_rejects_unrelated_config_edit_despite_matching_capture_hash(
     proof_path.write_text(json.dumps(proof))
     after["stable_global_files"][0]["sha256"] = hashlib.sha256(capture.read_bytes()).hexdigest()
     with pytest.raises(EvidenceError, match="exceeds the attributed"):
+        validate_external_changes(tmp_path, before, after)
+
+
+OPERATOR_PATHS = (
+    ".gobby/bootstrap.yaml",
+    ".gobby/.secret_kek",
+    ".gobby/.secret_salt",
+    ".gobby/local_cli_token",
+    ".codex/auth.json",
+)
+
+
+def test_external_snapshot_never_opens_operator_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    for rel in (*OPERATOR_PATHS, ".gobby/machine_id"):
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text("fixture\n")
+    operator = {str(home / rel) for rel in OPERATOR_PATHS}
+    monkeypatch.setattr("provision_environment._git_status", lambda repo: {})
+    monkeypatch.setattr("provision_environment._command_observation", lambda argv: {})
+
+    def refuse_operator_files(real: Any) -> Any:
+        def guarded(file: Any, *args: Any, **kwargs: Any) -> Any:
+            if isinstance(file, (str, os.PathLike)) and os.fsdecode(file) in operator:
+                raise AssertionError(f"operator file opened: {file}")
+            return real(file, *args, **kwargs)
+
+        return guarded
+
+    monkeypatch.setattr(builtins, "open", refuse_operator_files(builtins.open))
+    monkeypatch.setattr(io, "open", refuse_operator_files(io.open))
+    snapshot = external_state_snapshot(tmp_path)
+
+    records = {item["path"]: item for item in snapshot["stable_global_files"]}
+    for rel in OPERATOR_PATHS:
+        record = records[str(home / rel)]
+        assert record["exists"] is True
+        assert {"type", "mode", "size", "mtime_ns", "inode"} <= record.keys()
+        assert "sha256" not in record
+    assert "sha256" in records[str(home / ".gobby/machine_id")]
+
+
+def test_isolation_rejects_operator_stat_change(
+    tmp_path: Path, external_snapshots: tuple[dict[str, Any], dict[str, Any]]
+) -> None:
+    before, after = external_snapshots
+    operator = {
+        "path": "/home/.gobby/bootstrap.yaml",
+        "exists": True,
+        "type": "file",
+        "mode": "0600",
+        "size": 10,
+        "mtime_ns": 1,
+        "inode": 7,
+    }
+    before["stable_global_files"].append(operator)
+    after["stable_global_files"].append({**operator, "mtime_ns": 2})
+    with pytest.raises(EvidenceError, match="unattributed global file change"):
         validate_external_changes(tmp_path, before, after)
 
 

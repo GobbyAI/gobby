@@ -225,19 +225,46 @@ def _command_observation(argv: list[str]) -> dict[str, Any]:
     }
 
 
+def _operator_stat_record(path: Path) -> dict[str, Any]:
+    """Record an operator file by stat only. Its bytes are never opened or hashed."""
+    if not path.exists() and not path.is_symlink():
+        return {"path": str(path), "exists": False}
+    metadata = path.lstat()
+    if path.is_symlink():
+        kind = "symlink"
+    elif path.is_file():
+        kind = "file"
+    elif path.is_dir():
+        kind = "directory"
+    else:
+        kind = "other"
+    return {
+        "path": str(path),
+        "exists": True,
+        "type": kind,
+        "mode": f"{stat.S_IMODE(metadata.st_mode):04o}",
+        "size": metadata.st_size,
+        "mtime_ns": metadata.st_mtime_ns,
+        "inode": metadata.st_ino,
+    }
+
+
 def external_state_snapshot(source_repo: Path) -> dict[str, Any]:
     user_home = Path.home()
     gobby_home = user_home / ".gobby"
     codex_home = user_home / ".codex"
-    stable_paths = [
+    # Operator-owned files: the operator's standing rule forbids reading their bytes.
+    operator_paths = [
         gobby_home / "bootstrap.yaml",
         gobby_home / ".secret_kek",
         gobby_home / ".secret_salt",
         gobby_home / "local_cli_token",
+        codex_home / "auth.json",
+    ]
+    stable_paths = [
         gobby_home / "machine_id",
         gobby_home / "mcp-servers.json",
         gobby_home / "gcore.yaml",
-        codex_home / "auth.json",
         codex_home / "config.toml",
         codex_home / "hooks.json",
         codex_home / "installation_id",
@@ -269,7 +296,10 @@ def external_state_snapshot(source_repo: Path) -> dict[str, Any]:
         "captured_at": _utc_now(),
         "platform": platform.platform(),
         "source": _git_status(source_repo),
-        "stable_global_files": [_stable_file_record(path) for path in stable_paths],
+        "stable_global_files": [
+            *(_stable_file_record(path) for path in stable_paths),
+            *(_operator_stat_record(path) for path in operator_paths),
+        ],
         "ambient_environment_presence": {
             name: name in os.environ and bool(os.environ[name]) for name in ambient_names
         },
