@@ -33,6 +33,7 @@ from tests.e2e.composer_proof_admission import Admission, verify_binary_set
 from tests.e2e.composer_proof_live import LiveProof, Seat
 from tests.e2e.conftest import daemon_auth_headers
 from tests.e2e.handoff_continuation_barrier import HandoffBarrier
+from tests.e2e.handoff_continuation_runner import adopt
 
 # Reuse admission and temporary HOME; the handoff fixture has its own isolated runner.
 composer_admission = _composer.composer_admission
@@ -214,7 +215,7 @@ async def test_seat_continues_after_its_own_handoff(
     verify_binary_set(composer_admission)
     binary = composer_admission.providers[provider].path
     clear = scenario == "clear"
-    seat = await composer_fixture.adopt(provider, _seat_command(provider, binary, scenario))
+    seat = await adopt(composer_fixture, provider, _seat_command(provider, binary, scenario))
     writes_before = len(composer_fixture.trace.events)
     if scenario == "restart_hold":
         await _assert_restart_held(composer_fixture, seat, barrier, postgres_db)
