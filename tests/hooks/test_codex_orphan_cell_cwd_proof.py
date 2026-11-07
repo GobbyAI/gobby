@@ -530,6 +530,141 @@ def test_empty_poll_to_unmapped_shell_keeps_later_literal_cwd_proof(
     assert current_tool_cwd(event.data) == workdir
 
 
+STICKY_REFUSAL = "typed input reached an unmapped session; a pending cell is unattributed"
+TYPED_JS = json.dumps(TYPED + "\n")
+UNMAPPED_WRITE = f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:{TYPED_JS}}}));"
+# Cells that may type into the yielded batch's unmapped shell. Only a literal empty poll of a
+# literal session types nothing, so each of these must mark the batch.
+TYPING_CELLS = {
+    "concat": f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:"" + "ls\\n"}}));',
+    "concat_tight": f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""+"id"}}));',
+    "concat_method": (
+        f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:"".concat("id")}}));'
+    ),
+    "computed_session": (
+        f"const sid={SHELL_SESSION}; "
+        f"text(await tools.write_stdin({{session_id:sid,chars:{TYPED_JS}}}));"
+    ),
+    "computed_session_poll": (
+        f'const sid={SHELL_SESSION}; text(await tools.write_stdin({{session_id:sid,chars:""}}));'
+    ),
+    "leading_zero_session": (
+        f"text(await tools.write_stdin({{session_id:0{SHELL_SESSION},chars:{TYPED_JS}}}));"
+    ),
+    "spread_chars": (
+        f"const extra={{chars:{TYPED_JS}}}; "
+        f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},...extra}}));"
+    ),
+    "aliased": (
+        f"const w=tools.write_stdin; text(await w({{session_id:{SHELL_SESSION},chars:{TYPED_JS}}}));"
+    ),
+    "beside_poll": (
+        f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}})); {UNMAPPED_WRITE}'
+    ),
+    "beside_literal_exec": _literal("git status", "/opt/elsewhere") + UNMAPPED_WRITE,
+    "opaque": 'eval(atob("dG9vbHM="));',
+}
+
+
+@pytest.mark.parametrize("shape", list(TYPING_CELLS))
+def test_nested_input_that_is_not_a_literal_empty_poll_blocks_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path, shape: str
+) -> None:
+    """Computed chars, a computed session, aliasing or opaque code may type into the shell."""
+    workdir = tmp_path / "task"
+    records = [
+        _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+        _call("stdin", TYPING_CELLS[shape]),
+        _output("stdin", STDIN_OUTPUT),
+        _call("probe", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "block", current_tool_cwd(event.data)
+    assert "cannot prove its working directory" in (response.reason or "")
+    assert _lookup(tmp_path, records, REPLAY_PYTEST).refusal == STICKY_REFUSAL
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}})); '
+        f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}}));',
+        _literal("git status", "/opt/elsewhere")
+        + f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}}));',
+    ],
+    ids=["two_polls", "poll_beside_literal_exec"],
+)
+def test_literal_empty_polls_keep_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path, cell: str
+) -> None:
+    """Literal empty polls type nothing, however many a cell holds or what it launches beside."""
+    workdir = tmp_path / "task"
+    records = [
+        _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+        _call("stdin", cell),
+        _output("stdin", STDIN_OUTPUT),
+        _call("probe", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
+MAPPED_SESSION = 905
+# Input to a session an attributed launch owns is attributed; only the rest of the cell can
+# reach the unmapped shell. (cell, decision)
+MAPPED_CELLS = {
+    "literal": (
+        f"text(await tools.write_stdin({{session_id:{MAPPED_SESSION},chars:{TYPED_JS}}}));",
+        "allow",
+    ),
+    "quoted_id": (
+        f'text(await tools.write_stdin({{session_id:"{MAPPED_SESSION}",chars:{TYPED_JS}}}));',
+        "allow",
+    ),
+    "computed_suffix": (
+        f"const x=0; "
+        f"text(await tools.write_stdin({{session_id:{MAPPED_SESSION} + x,chars:{TYPED_JS}}}));",
+        "block",
+    ),
+    "beside_opaque": (
+        f'text(await tools.write_stdin({{session_id:{MAPPED_SESSION},chars:"ls\\n"}})); '
+        'eval(atob("dG9vbHM="));',
+        "block",
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(MAPPED_CELLS))
+def test_input_to_a_mapped_session_marks_only_what_else_may_type(
+    event_handlers: EventHandlers, tmp_path: Path, shape: str
+) -> None:
+    """A literal write to the mapped shell is attributed; a computed id or opaque code is not."""
+    workdir = tmp_path / "task"
+    cell, decision = MAPPED_CELLS[shape]
+    launch = (
+        'const r = await tools.exec_command({cmd:"zsh -i",'
+        f"workdir:{json.dumps(str(workdir))},tty:true}}); text(r);"
+    )
+    records = [
+        _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+        _call("shell", launch),
+        _output("shell", json.dumps({"session_id": MAPPED_SESSION, "output": "ready"})),
+        _call("stdin", cell),
+        _output("stdin", STDIN_OUTPUT),
+        _call("probe", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == decision, response.reason
+    if decision == "allow":
+        assert current_tool_cwd(event.data) == workdir
+    else:
+        assert _lookup(tmp_path, records, REPLAY_PYTEST).refusal == STICKY_REFUSAL
+
+
 def _lookup(tmp_path: Path, records: list[dict[str, Any]], command: str) -> _PendingLookup:
     transcript = tmp_path / "rollout.jsonl"
     transcript.write_text("".join(json.dumps(record) + "\n" for record in records))

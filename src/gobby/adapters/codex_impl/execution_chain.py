@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_code
+from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, may_type_input, static_code
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls, repeated_spans
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
@@ -341,12 +341,9 @@ def _decode_write_stdin_arguments(arguments: Any) -> dict[str, Any] | None:
 
 
 def write_stdin_sends_input(arguments: Any) -> bool:
-    """Whether a direct or nested write_stdin may type; only absent or literal empty chars polls."""
-    body = _nested_write_stdin_args(arguments)
-    if body is None:
-        decoded = _decode_write_stdin_arguments(arguments)
-        return decoded is None or decoded.get("chars") not in (None, "")
-    return bool(re.search(r"\bchars\b", body)) and _WRITE_STDIN_CHARS_RE.findall(body) != ['""']
+    """Whether JSON or object write_stdin arguments may type; absent or "" chars only polls."""
+    decoded = _decode_write_stdin_arguments(arguments)
+    return decoded is None or decoded.get("chars") not in (None, "")
 
 
 def _iter_output_text(value: Any) -> list[str]:
@@ -660,6 +657,7 @@ class ExecutionChainCorrelator:
         elif name in FUNCTIONS_EXEC_NAMES:
             command = extract_functions_exec_command(arguments)
             session_id = extract_functions_write_stdin_session_id(arguments)
+            owned: str | None = None
             if command is not None:
                 execution = PendingExecution(
                     call_id,
@@ -674,6 +672,7 @@ class ExecutionChainCorrelator:
             ):
                 execution = self._sessions.get(session_id)
                 if execution is not None:
+                    owned = session_id
                     # Each poll cell prints its own way, so trust follows this cell.
                     execution = replace(
                         execution, expects_serialized_result=_prints_whole_tool_results(arguments)
@@ -681,12 +680,17 @@ class ExecutionChainCorrelator:
                 typed = extract_functions_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
-                if execution is None and write_stdin_sends_input(arguments):
-                    self._mark_sticky_unattributed()
             # Only a cell that can start a shell blocks cwd proof. An MCP-only cell that
             # merely mentions exec_command in its text stays out of the chain.
             elif allow_unattributed and may_reach_shell(arguments):
                 execution = PendingExecution(call_id)
+            # Cell code that may type into a shell no execution owns, whatever its shape.
+            if (
+                may_type_input(arguments, owned)
+                if isinstance(arguments, str)
+                else execution is None and write_stdin_sends_input(arguments)
+            ):
+                self._mark_sticky_unattributed()
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
             typed = extract_direct_write_stdin_command(arguments)
@@ -897,12 +901,9 @@ class ExecutionChainCorrelator:
         self._calls.clear()
 
     def _mark_sticky_unattributed(self) -> None:
-        """Typed input reached a shell this chain cannot attribute, so each pending cell is suspect.
-
-        Empty polls never reach here; the marker clears when the marked cell leaves pending state.
-        """
-        for execution in self._cells.values():
-            self._sticky_unattributed[execution.outer_call_id] = None
+        """Typed input may reach a shell no execution owns: mark exactly the pending cells."""
+        pending = self._cells.values()
+        self._sticky_unattributed = dict.fromkeys(cell.outer_call_id for cell in pending)
 
     def snapshot_state(self) -> dict[str, Any]:
         return {
