@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from gobby.agents import srt_monitor
+from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
@@ -265,6 +266,21 @@ def test_reviewer_cached_settings_and_python_environment(
     settings.write_text("{}")
     uv = shutil.which("uv")
     assert uv is not None
+    # #25645: seats use the checkout's .venv, which spawn seeds before launch. This
+    # proof launches directly, so it seeds the same way, outside the sandbox.
+    if not (workspace / "uv.lock").exists():
+        lock = subprocess.run(
+            [uv, "lock", "--offline"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        assert lock.returncode == 0, lock.stderr
+    seeded = asyncio.run(preseed_isolated_python_environment(str(workspace)))
+    assert seeded.success, seeded
+    assert environment["UV_PROJECT_ENVIRONMENT"] == ""
     script = (
         "import json, os, subprocess, sys; from pathlib import Path; "
         "p=Path(os.environ['XDG_CACHE_HOME'])/'claude'/'settings.json'; "
@@ -281,16 +297,18 @@ def test_reviewer_cached_settings_and_python_environment(
         "    assert 'database_url' in str(error), str(error)\n"
         "else:\n"
         "    raise AssertionError('hook config silently fell back')\n"
-        "r=subprocess.run([sys.argv[1], 'run', '--no-sync', '--python', sys.executable, "
+        "assert os.environ['UV_PROJECT_ENVIRONMENT'] == ''; "
+        "r=subprocess.run([sys.argv[1], 'run', '--no-sync', "
         "'python', '-c', 'import sys; print(sys.prefix)'], capture_output=True, text=True); "
         "assert r.returncode == 0, r.stderr; "
-        "assert r.stdout.strip() == os.environ['UV_PROJECT_ENVIRONMENT'], r.stdout; "
+        "assert os.path.realpath(r.stdout.strip()) == os.path.realpath('.venv'), r.stdout; "
         "print('cached-settings-and-endpoint-and-uv-ok')"
     )
-    result = _run(launch, workspace, environment, [sys.executable, "-c", script, uv])
+    # The provider runs at niceness 19 and this import alone takes about 30 s on a
+    # loaded host, so the default budget leaves no margin.
+    result = _run(launch, workspace, environment, [sys.executable, "-c", script, uv], timeout=180)
     assert result.returncode == 0, result.stderr
     assert "cached-settings-and-endpoint-and-uv-ok" in result.stdout
-    assert Path(environment["UV_PROJECT_ENVIRONMENT"]).is_dir()
 
 
 @pytest.mark.parametrize("reviewer_launch", ["task-worktree"], indirect=True)
