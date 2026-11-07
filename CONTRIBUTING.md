@@ -140,10 +140,13 @@ The key is restart-required. The daemon reads it at startup, and an invalid valu
 the next start.
 
 `gobby build-sweep` lists build folders that no registered checkout, worktree or clone
-owns, and superseded hashed executables in folders that are still live. It is a dry run
-by default. `--apply` removes what it lists, and `--json` prints machine-readable output.
-It keeps anything touched in the last 24 hours, never follows symlinks, and reports an
-empty legacy `cache/cargo-target` without removing it.
+owns. For live trees, each debug/release profile has an 8 GiB budget for hashed test
+executables: above that budget, the oldest test executables are trimmed until it is met.
+An executable written in the last 24 hours is always kept. This is a size-threshold
+clean, so a later test run may relink a trimmed executable. Ordinary binaries, data files
+and unhashed names are preserved. The command is a dry run by default; `--apply` performs
+the cleanup, and `--json` prints machine-readable output. It never follows symlinks and
+reports an empty legacy `cache/cargo-target` without removing it.
 
 ### One test program per crate
 

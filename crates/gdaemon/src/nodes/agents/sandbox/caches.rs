@@ -382,6 +382,31 @@ pub(super) fn spawn_grants(
     Ok(config)
 }
 
+/// Mirror Python's launch filter: run-local caches replace the spawn env's grants.
+pub(super) fn retained_launch_write_paths(
+    grants: Vec<String>,
+    env: &BTreeMap<String, String>,
+    inputs: &PolicyInputs,
+) -> Vec<String> {
+    let superseded = super::paths::canonical_paths(
+        RUN_CACHE_ENV_VARS
+            .iter()
+            .copied()
+            .chain([CARGO_HOME, CARGO_TARGET_DIR])
+            .filter_map(|name| non_empty(env, name)),
+        Some(&inputs.workspace),
+        &inputs.home,
+    );
+    grants
+        .into_iter()
+        .filter(|path| {
+            !super::paths::canonical_paths([path], Some(&inputs.workspace), &inputs.home)
+                .iter()
+                .any(|canonical| superseded.contains(canonical))
+        })
+        .collect()
+}
+
 /// `sandbox_policy.py::secure_policy_directory`: the per-run policy directory.
 fn secure_policy_directory(gobby: &Path, run_id: &str) -> Result<PathBuf> {
     let safe: String = run_id

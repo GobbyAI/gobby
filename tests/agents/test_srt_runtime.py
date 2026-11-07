@@ -36,6 +36,7 @@ from gobby.agents.srt_runtime import (
     SrtInstallation,
     SrtRuntimeError,
     prepare_sandbox_launch,
+    retained_launch_write_paths,
     verify_srt_installation,
     verify_srt_installation_for_launch,
 )
@@ -122,6 +123,19 @@ def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
     superseded = previous_run_write_paths({})
 
     assert str((gobby_home / "hooks" / "inbox").resolve()) not in superseded
+
+
+def test_launch_drops_the_per_session_grants_the_run_cache_supersedes(tmp_path: Path) -> None:
+    session_go_cache = str(tmp_path / "gobby" / "go-cache" / "session-one")
+    hook_inbox = str(tmp_path / "gobby-home" / "hooks" / "inbox")
+
+    retained = retained_launch_write_paths(
+        [session_go_cache, hook_inbox],
+        {"GOCACHE": session_go_cache},
+        tmp_path,
+    )
+
+    assert retained == [hook_inbox]
 
 
 @pytest.mark.parametrize("provider", ["grok", "claude", "codex", "agy", "droid", None])

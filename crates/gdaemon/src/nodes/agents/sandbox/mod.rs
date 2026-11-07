@@ -160,8 +160,7 @@ pub(super) fn compile_policy(
             paths::text(&layout.cargo_target),
         ]);
     effective.extra_write_paths = paths::dedupe(
-        effective
-            .extra_write_paths
+        caches::retained_launch_write_paths(effective.extra_write_paths, &env, inputs)
             .into_iter()
             .chain(run_grants)
             .chain(home_writes.iter().cloned()),

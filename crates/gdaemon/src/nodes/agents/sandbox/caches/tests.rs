@@ -544,6 +544,49 @@ fn a_seat_grant_never_includes_the_unsandboxed_session_uv_cache() -> Result<()> 
 }
 
 #[test]
+fn a_launch_drops_the_per_session_toolchain_grants_the_run_supersedes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let gobby_home = dir.path().join("gobby");
+    let workspace = dir.path().join("checkout");
+    let build_root = dir.path().join("GobbyBuild");
+    let temp = dir.path().join("tmp");
+    fs::create_dir_all(&gobby_home)?;
+    fs::create_dir_all(&workspace)?;
+    fs::create_dir_all(&build_root)?;
+    let mut inputs = native_inputs(&gobby_home, &workspace);
+    inputs.build_root = build_root.canonicalize()?;
+    inputs.env.insert("TMPDIR".to_string(), text(&temp));
+
+    // The spawn env carries each per-session toolchain cache, as `fill_spawn_env` materializes it.
+    let mut spawn_env = inputs.env.clone();
+    let spawned = spawn_grants(inputs.sandbox.clone(), &[], &mut spawn_env, &inputs)?;
+    let per_session: Vec<String> = SANDBOX_CACHE_POLICY
+        .iter()
+        .map(|(name, _)| spawn_env[*name].clone())
+        .collect();
+    for path in &per_session {
+        assert!(
+            spawned.extra_write_paths.contains(path),
+            "the spawn level must keep {path}"
+        );
+    }
+
+    // The run's env points each of these at its own cache, so the launch must not grant them.
+    let policy = compile_policy(&inputs, &[], &[])?;
+    let kept: Vec<&String> = policy
+        .sandbox
+        .extra_write_paths
+        .iter()
+        .filter(|path| per_session.contains(path))
+        .collect();
+    assert!(
+        kept.is_empty(),
+        "a launch keeps per-session toolchain grants the run supersedes: {kept:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_spawn_without_a_session_id_is_refused_before_any_grant() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let gobby_home = dir.path().join("gobby");
