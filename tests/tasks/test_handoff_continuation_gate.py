@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _E2E_KIND = "handoff-continuation-e2e"
+_GATE_TAG = "synthetic-handoff-gate"
 _HANDOFF_PATH = "src/gobby/hooks/compaction_ownership.py"
 _UNRELATED_PATH = "src/gobby/tasks/closure_policy.py"
 _CANDIDATE = "a" * 40
@@ -35,12 +36,13 @@ def _gate_rows() -> list[RuleDefinitionRow]:
     """Every bundled closure rule whose condition consults the e2e attestation kind.
 
     Each entry is normalized the way bundled sync normalizes it, so the closure engine
-    sees the persisted body rather than authoring-only keys.
+    sees the persisted body rather than authoring-only keys. Every row carries the synthetic
+    selector tag, so the lander selects the bundled gate without naming its bundled group.
     """
     rows: list[RuleDefinitionRow] = []
     for path in sorted((get_bundled_rules_path() / "task-closure").glob("*.yaml")):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        tags = list(document.get("tags") or [])
+        tags = [_GATE_TAG]
         for name, rule in (document.get("rules") or {}).items():
             if _E2E_KIND not in str(rule.get("when", "")):
                 continue
@@ -74,7 +76,7 @@ def _lander() -> AgentDefinitionBody:
         {
             "name": "arbitrary-lander",
             "prompts": {"agent": "Land the task."},
-            "workflows": {"rule_selectors": {"include": ["tag:task-closure-general"]}},
+            "workflows": {"rule_selectors": {"include": [f"tag:{_GATE_TAG}"]}},
         }
     )
 

@@ -101,12 +101,12 @@ unprepared onboarding refuse the proof; there is no permissive fallback. See
 [Codex CLI reference](https://developers.openai.com/codex/cli/reference/).
 
 The handoff continuation fixture (`tests/e2e/test_handoff_continuation_e2e.py`) is the one
-named exception. Its Claude seat gets `--allowedTools` for only `mcp__gobby__call_tool` and
+named exception. Its Claude seat passes `--tools ""` for compact and clear, and `--tools Bash`
+for restart_hold. Its `--allowedTools` covers only `mcp__gobby__call_tool` and
 `mcp__gobby__get_tool_schema`, the gobby proxy tools its set_handoff path calls, plus
-`Bash(sleep:*)` in the restart_hold scenario, which holds the launch turn. Its Codex seat
-passes `-c mcp_servers.gobby.enabled=true` and keeps the read-only sandbox and approval
-policy `never`. The fixture passes no `--tools` flag, so built-in tools outside those grants
-are not pre-approved. Every other fixture keeps built-in and MCP tools disabled.
+`Bash(sleep:*)` in restart_hold, which holds the launch turn. Its Codex seat passes
+`-c mcp_servers.gobby.enabled=true` and keeps the read-only sandbox and approval policy
+`never`. Every other fixture keeps built-in and MCP tools disabled.
 `tests/test_handoff_continuation_seat_launch.py` pins these launch arguments.
 
 ## Execute only after admission

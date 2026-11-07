@@ -26,14 +26,19 @@ _CODEX_FLAGS = [
 ]
 
 
-@pytest.mark.parametrize("scenario", _SCENARIOS)
-def test_claude_seat_allows_only_the_gobby_proxy_tools_and_the_hold_sleep(scenario: str) -> None:
+@pytest.mark.parametrize(
+    ("scenario", "builtin_tools"),
+    [("compact", ""), ("clear", ""), ("restart_hold", "Bash")],
+)
+def test_claude_seat_disables_builtins_and_allows_only_the_gobby_proxy_tools(
+    scenario: str, builtin_tools: str
+) -> None:
     command = _seat_command("claude", _BINARY, scenario)
     allowed = [*_GOBBY_PROXY_TOOLS]
     if scenario == "restart_hold":
         allowed.append(_HOLD_SLEEP_RULE)
     assert command[0] == str(_BINARY)
-    assert command[2:] == ["--allowedTools", *allowed]
+    assert command[2:] == ["--tools", builtin_tools, "--allowedTools", *allowed]
 
 
 @pytest.mark.parametrize("scenario", _SCENARIOS)
