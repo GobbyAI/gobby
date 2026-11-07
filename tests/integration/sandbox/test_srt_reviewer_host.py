@@ -282,7 +282,10 @@ def test_reviewer_cached_settings_and_python_environment(
     assert seeded.success, seeded
     assert environment["UV_PROJECT_ENVIRONMENT"] == ""
     script = (
-        "import json, os, subprocess, sys; from pathlib import Path; "
+        "import atexit, json, os, subprocess, sys, time; from pathlib import Path; "
+        "t0=time.monotonic(); "
+        "atexit.register(lambda: print(f'child elapsed {time.monotonic()-t0:.1f}s', "
+        "file=sys.stderr)); "
         "p=Path(os.environ['XDG_CACHE_HOME'])/'claude'/'settings.json'; "
         "t=p.with_suffix('.tmp'); t.write_text('{\"updated\":true}'); t.replace(p); "
         "assert json.loads(p.read_text())['updated']; p.unlink(); "
@@ -305,8 +308,10 @@ def test_reviewer_cached_settings_and_python_environment(
         "print('cached-settings-and-endpoint-and-uv-ok')"
     )
     # The provider runs at niceness 19 and this import alone takes about 30 s on a
-    # loaded host, so the default budget leaves no margin.
+    # loaded host, so the default budget leaves no margin. The child's own elapsed
+    # time, set against the runner's, shows how much the runner adds.
     result = _run(launch, workspace, environment, [sys.executable, "-c", script, uv], timeout=180)
+    print(result.stderr)
     assert result.returncode == 0, result.stderr
     assert "cached-settings-and-endpoint-and-uv-ok" in result.stdout
 
