@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -101,35 +102,52 @@ def reviewer_launch(
         )
     environment = dict(os.environ)
     environment["GOBBY_DAEMON_URL"] = "http://127.0.0.1:1"
-    before = len(srt_monitor._children)
+    existing = set(srt_monitor._children)
     try:
         with tempfile.TemporaryDirectory(prefix="gsrt-proof-") as monitor_directory:
-            monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: Path(monitor_directory))
-            launch = asyncio.run(
-                prepare_sandbox_launch(
-                    config=config,
-                    provider="claude",
-                    workspace_path=str(workspace),
-                    run_id="reviewer-host-proof",
-                    resolver=None,
-                    daemon_port=1,
-                    websocket_port=2,
-                    api_base=None,
-                    env=environment,
-                    prewarm_pre_commit_store=False,
-                )
-            )
-            _, environment = launch.compose_subprocess([], environment)
-            yield launch, workspace, environment
-    finally:
-        for monitor in srt_monitor._children[before:]:
-            monitor.terminate()
             try:
-                monitor.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                monitor.kill()
-                monitor.wait(timeout=5)
+                monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: Path(monitor_directory))
+                launch = asyncio.run(
+                    prepare_sandbox_launch(
+                        config=config,
+                        provider="claude",
+                        workspace_path=str(workspace),
+                        run_id="reviewer-host-proof",
+                        resolver=None,
+                        daemon_port=1,
+                        websocket_port=2,
+                        api_base=None,
+                        env=environment,
+                        prewarm_pre_commit_store=False,
+                    )
+                )
+                _, environment = launch.compose_subprocess([], environment)
+                yield launch, workspace, environment
+            finally:
+                _stop_monitors(existing, Path(monitor_directory))
+    finally:
         _make_writable(runtime)
+
+
+def _stop_monitors(existing: set[subprocess.Popen[bytes]], directory: Path) -> None:
+    """Stop this proof's brokers, then print their diagnostics before the directory goes."""
+    # ensure_srt_monitor prunes _children in place, so an index taken earlier goes stale.
+    for monitor in [child for child in srt_monitor._children if child not in existing]:
+        print(f"monitor {monitor.pid} exit status before teardown: {monitor.poll()}")
+        monitor.terminate()
+        try:
+            monitor.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            monitor.kill()
+            monitor.wait(timeout=5)
+    # pytest reports teardown output with a failed proof.
+    for path in sorted(directory.iterdir()):
+        if path.is_file() and not path.is_symlink():
+            print(f"--- {path.name}\n{path.read_bytes()[-16384:].decode(errors='replace')}")
+
+
+def _decoded(output: bytes | str | None) -> str:
+    return output.decode(errors="replace") if isinstance(output, bytes) else output or ""
 
 
 def _run(
@@ -142,15 +160,25 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     argv = launch.wrap(command)
     argv[argv.index("--") + 1] = command[0]
-    return subprocess.run(
-        argv,
-        cwd=workspace,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    started = time.monotonic()
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=workspace,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # run() keeps the output it read before the deadline; the bare exception hides it.
+        pytest.fail(
+            f"runner timed out after {timeout}s\nstdout:\n{_decoded(exc.stdout)}\n"
+            f"stderr:\n{_decoded(exc.stderr)}"
+        )
+    print(f"runner exited {result.returncode} after {time.monotonic() - started:.1f}s")
+    return result
 
 
 def test_workspace_read_boundary_beneath_shell_expansion(
