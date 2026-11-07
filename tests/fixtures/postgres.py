@@ -39,6 +39,7 @@ from gobby.storage.managed_credential_types import auth_schema_for
 from gobby.storage.schema_contract import apply_schema, gdaemon_available
 from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.machine_id import get_machine_id
+from tests.fixtures.shared_hub import shared_hub_lock_waits
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
 _DEFAULT_POSTGRES_PORT = "5432"
@@ -320,7 +321,10 @@ def isolated_test_database(url: str) -> Iterator[str]:
     database_name = f"gobby_test_{os.getpid()}_{uuid.uuid4().hex[:12]}"
     maintenance_url = make_conninfo(url, dbname="postgres")
     isolated_url = urlunsplit(urlsplit(url)._replace(path=f"/{database_name}"))
-    with psycopg.connect(maintenance_url, autocommit=True) as connection:
+    with (
+        psycopg.connect(maintenance_url, autocommit=True) as connection,
+        shared_hub_lock_waits(connection, "CREATE DATABASE"),
+    ):
         _reap_dead_process_databases(connection, url)
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
     try:
@@ -328,7 +332,10 @@ def isolated_test_database(url: str) -> Iterator[str]:
             connection.execute("CREATE EXTENSION pg_search")
         yield isolated_url
     finally:
-        with psycopg.connect(maintenance_url, autocommit=True) as connection:
+        with (
+            psycopg.connect(maintenance_url, autocommit=True) as connection,
+            shared_hub_lock_waits(connection, "DROP DATABASE"),
+        ):
             connection.execute(
                 sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
             )
