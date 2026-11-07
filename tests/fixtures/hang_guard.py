@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import faulthandler
 import gc
-import sys
 
 import pytest
 
@@ -26,14 +25,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 @pytest.hookimpl(trylast=True)
-def pytest_unconfigure(config: pytest.Config) -> None:
-    # Teardown runs several full collections (pytest's unraisable-exception cleanup).
-    # The run's heap is still live, so each one re-traverses every object the suite built.
-    # Freezing it keeps those passes proportional to what teardown creates, not to the
-    # whole suite; under load the unfrozen passes alone outlasted the watchdog below.
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # Pytest's unconfigure forces five full collections, and interpreter shutdown adds
+    # more. Each scans every tracked object, and the import graph alone is ~370k of them,
+    # so under load the exit overran the watchdog below (#25804). Freezing the
+    # import-time heap leaves those passes scanning only what the tests create.
     gc.freeze()
-    # The watchdog exits without flushing stdio, so flush the run summary first.
-    sys.stdout.flush()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config: pytest.Config) -> None:
     # The process's own stderr descriptor: pytest's capture has ended by now.
     faulthandler.dump_traceback_later(
         float(config.getini("exit_watchdog_timeout")), exit=True, file=_STDERR_FD

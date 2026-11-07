@@ -468,7 +468,10 @@ def _ensure_codex_hook_trust_state(
                 )
             del entry["enabled"]
         entry["trusted_hash"] = trusted_hash
-        state_table[key] = entry
+        if not isinstance(existing, Table):
+            # Re-assigning a table that already exists rewrites its spacing on every
+            # install, so a repeat install would change config.toml's text.
+            state_table[key] = entry
         trusted_keys.add(key)
 
     return trusted_keys
@@ -663,13 +666,20 @@ def install_codex(
         # Enable stable hooks and remove the deprecated codex_hooks flag.
         _remove_toml_key(updated_config, "features.codex_hooks")
         _set_toml_value(updated_config, "features.hooks", True)
+        # Disable Codex's native worktree feature: /new into it yields an unregistered
+        # session with no thread lineage (#25654). Forced by operator direction, even
+        # when the operator set it to true.
+        _set_toml_value(updated_config, "features.worktrees", False)
         _ensure_codex_hook_trust_state(
             updated_config,
             codex_home / "hooks.json",
             previous_entries=previous_gobby_trust_entries,
         )
 
-        if updated_config != parsed_config:
+        # Compare rendered text: tomlkit's structural equality still reports a change
+        # after a no-op pass over the hook trust tables, which would rewrite the backup
+        # and report config_updated on every install.
+        if tomlkit.dumps(updated_config) != tomlkit.dumps(parsed_config):
             if codex_config_path.exists():
                 backup_path = codex_config_path.with_suffix(".toml.bak")
                 backup_path.write_text(existing_config, encoding="utf-8")
@@ -768,7 +778,7 @@ def install_codex_project_hooks(
         # writes nothing; the dumped text is then the text the cache serves next time.
         ensure_codex_project_trust(updated_config, project_path)
 
-        if updated_config != parsed_config:
+        if tomlkit.dumps(updated_config) != tomlkit.dumps(parsed_config):
             if codex_config_path.exists():
                 backup_path = codex_config_path.with_suffix(".toml.bak")
                 backup_path.write_text(existing_config, encoding="utf-8")
