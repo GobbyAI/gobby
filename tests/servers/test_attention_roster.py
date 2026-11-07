@@ -33,6 +33,7 @@ from gobby.storage.attention import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._transitions import release_task_claim_if_owned
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -1285,6 +1286,45 @@ def test_ended_run_whose_child_still_holds_a_claim_is_a_dead_entry(
     assert entry["lifecycle_status"] == "dead"
     assert entry["definition_name"] == "fixture-seat"
     assert entry["task"]["id"] == task.id
+
+
+def test_ended_run_with_released_claim_stays_until_its_linked_task_closes(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    child = session_manager.register(
+        external_id="roster-ended-run-released-claim",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = _claim_open_task(temp_db, sample_project["id"], child.id)
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+        task_id=task.id,
+    )
+    manager.start(run.id)
+    manager.complete(run.id)
+    session_manager.update_session_status(child.id, "completed")
+    released = release_task_claim_if_owned(temp_db, task.id, expected_owner=child.id)
+    assert released is not None
+    assert released.claimed_by_session_id is None
+
+    roster = _roster_by_id(temp_db)
+    entry = roster[f"run:{run.id}"]
+    assert entry["lifecycle_status"] == "dead"
+    assert entry["task"]["id"] == task.id
+    assert f"session:{child.id}" not in roster
+
+    LocalTaskManager(temp_db).close_task(task.id, closed_in_session_id=child.id)
+
+    assert f"run:{run.id}" not in _roster_by_id(temp_db)
 
 
 def test_ended_run_under_a_live_child_is_not_a_second_row(
