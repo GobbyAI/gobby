@@ -262,6 +262,9 @@ fn policy_inputs(
         build_root: PathBuf::from(&payload.build_root),
         env,
         provider_executable: find_on_path(&context.path_env, &payload.provider),
+        sccache_executable: find_on_path(&context.path_env, "sccache"),
+        // Native launches are spawns and resumes, which the Python spawn path grants.
+        allow_run_unix_sockets: true,
         daemon_port: context.daemon_port,
         websocket_port: context.websocket_port,
         run_id: run_id.to_owned(),

@@ -7,7 +7,7 @@ use super::{
     PolicyInputs,
     paths::{dedupe, expand_user, resolve_nonstrict, text},
 };
-use crate::node_commands::Sandbox;
+use crate::node_commands::{Sandbox, SandboxBackend};
 use anyhow::{Result, anyhow, bail};
 use std::{
     collections::BTreeMap,
@@ -262,6 +262,64 @@ pub(super) fn agent_cargo_target_dir(inputs: &PolicyInputs) -> String {
     text(&project_root.join(format!("{checkout}-agent")))
 }
 
+/// The longest Unix socket path `cargo_environment` wires, in bytes.
+const SOCKET_PATH_LIMIT: usize = 103;
+
+/// The sccache wiring a native launch gets: the run tmp as a Unix socket root, and the cargo
+/// variables that route rustc through sccache. Both follow `srt_runtime.py`: srt on darwin
+/// with the socket grant. The variables stay blank when the socket path does not fit.
+pub(super) fn native_cargo_grants(
+    inputs: &PolicyInputs,
+    layout: &RunLayout,
+) -> (Option<String>, BTreeMap<String, String>) {
+    let run_sockets = inputs.allow_run_unix_sockets
+        && inputs.sandbox.backend == SandboxBackend::Srt
+        && inputs.platform == "darwin";
+    let socket_root = run_sockets.then(|| text(&resolve_nonstrict(&layout.tmp)));
+    let socket = run_sockets.then(|| layout.tmp.join("sccache.sock"));
+    let env = cargo_environment(
+        &layout.cargo_home().join("sccache"),
+        inputs.sccache_executable.as_deref(),
+        socket.as_deref(),
+    );
+    (socket_root, env)
+}
+
+/// Mirrors `cargo_environment.cargo_environment`. sccache is wired only when the wrapper is
+/// found and the server socket fits `SOCKET_PATH_LIMIT`. Otherwise every sccache key is
+/// blank, which clears an inherited value and leaves `CARGO_INCREMENTAL` off, because
+/// sccache cannot cache incremental output and a wrapped build turns it off.
+pub(super) fn cargo_environment(
+    cache_dir: &Path,
+    wrapper: Option<&Path>,
+    socket: Option<&Path>,
+) -> BTreeMap<String, String> {
+    let wired = match (wrapper, socket) {
+        (Some(wrapper), Some(socket))
+            if socket.as_os_str().as_encoded_bytes().len() <= SOCKET_PATH_LIMIT =>
+        {
+            Some((wrapper, socket))
+        }
+        _ => None,
+    };
+    let (wrapper, cache, server, incremental) = match wired {
+        Some((wrapper, socket)) => (
+            text(wrapper),
+            text(cache_dir),
+            text(socket),
+            "0".to_string(),
+        ),
+        None => (String::new(), String::new(), String::new(), String::new()),
+    };
+    BTreeMap::from([
+        ("CARGO_BUILD_JOBS".to_string(), "4".to_string()),
+        ("CARGO_INCREMENTAL".to_string(), incremental),
+        ("RUSTC_WRAPPER".to_string(), wrapper),
+        ("SCCACHE_DIR".to_string(), cache),
+        ("SCCACHE_SERVER_UDS".to_string(), server),
+    ])
+}
+
 /// The seat's workspace grant: `agent_workspaces.py::spawn_workspace_write_paths`, added
 /// right after the nextest grant so the order matches the Python chain.
 pub(super) fn grant_workspace_folders(
@@ -369,8 +427,8 @@ impl RunLayout {
         self.shared_cache.join("cargo-home")
     }
 
-    /// `SandboxRunPaths.environment`. Without a sccache socket, the sccache keys are blank,
-    /// and so is `CARGO_INCREMENTAL`: a blank value turns incremental output off.
+    /// `SandboxRunPaths.environment`. The Cargo job and sccache keys come from
+    /// [`cargo_environment`] and are merged over these values by the caller.
     pub(super) fn environment(&self, provider: &str) -> BTreeMap<String, String> {
         let mut values: BTreeMap<String, String> = RUN_CACHE_ENV_VARS
             .iter()
@@ -391,15 +449,6 @@ impl RunLayout {
         values.insert("TMPPREFIX".to_string(), text(&self.tmp.join("zsh")));
         values.insert("GOBBY_LOG_DIR".to_string(), text(&self.logs));
         values.insert("OCR_NO_UPDATE".to_string(), "1".to_string());
-        for (name, value) in [
-            ("CARGO_BUILD_JOBS", "4"),
-            ("CARGO_INCREMENTAL", ""),
-            ("RUSTC_WRAPPER", ""),
-            ("SCCACHE_DIR", ""),
-            ("SCCACHE_SERVER_UDS", ""),
-        ] {
-            values.insert(name.to_string(), value.to_string());
-        }
         values
     }
 }
