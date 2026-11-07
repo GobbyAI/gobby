@@ -13,9 +13,9 @@ from typing import Any
 from c0_poller import IndexPoller
 from prepare_daemon import isolated_environment
 from runtime_boundary import require, write_once
+from schema_head import read_archived_gcode_version
 
 GRAPHIFY_PIN = "0.9.103"
-GCODE_PIN = "1.9.104"
 # September's interrupt marker: run_c7.py MARKER_PATTERN and command-manifest.json c7_markers.
 GRAPHIFY_MARKER_PATTERN = r"AST extraction: 100/119 uncached files \(84%\)"
 GCODE_CONTRACT_VERSION = 12
@@ -147,7 +147,11 @@ def concurrency_receipt_ok(receipt: object) -> bool:
 
 
 def build_command_manifest(
-    root: Path, *, probe_symbols: tuple[str, ...], graphify_concurrency: Mapping[str, Any]
+    root: Path,
+    *,
+    probe_symbols: tuple[str, ...],
+    graphify_concurrency: Mapping[str, Any],
+    gcode_version: str,
 ) -> dict[str, Any]:
     require(
         concurrency_receipt_ok(graphify_concurrency),
@@ -217,7 +221,7 @@ def build_command_manifest(
     return {
         "pins": {
             "graphify": GRAPHIFY_PIN,
-            "gcode": GCODE_PIN,
+            "gcode": gcode_version,
             "gcode_contract": GCODE_CONTRACT_VERSION,
         },
         "probe_symbols": list(probe_symbols),
@@ -237,7 +241,10 @@ def freeze_command_manifest(
     text = (
         json.dumps(
             build_command_manifest(
-                root, probe_symbols=probe_symbols, graphify_concurrency=graphify_concurrency
+                root,
+                probe_symbols=probe_symbols,
+                graphify_concurrency=graphify_concurrency,
+                gcode_version=read_archived_gcode_version(root),
             ),
             indent=2,
             sort_keys=True,
@@ -322,7 +329,7 @@ def run_c0(
     runner: Runner,
     *,
     ambient: dict[str, str],
-    expected_schema_identity: Any,
+    project_id: str,
     observer: IndexPoller | None,
     graphify_marker_pattern: str | None,
 ) -> dict[str, Any]:
@@ -367,7 +374,7 @@ def run_c0(
     checks = evaluate_c0(
         outputs,
         manifest,
-        expected_schema_identity=expected_schema_identity,
+        project_id=project_id,
         c7_poller_rows=first_qualifying,
         c7_clean_count=clean,
         graphify_marker_pattern=graphify_marker_pattern,
@@ -417,13 +424,12 @@ def evaluate_c0(
     outputs: dict[str, CommandResult],
     manifest: dict[str, Any],
     *,
-    expected_schema_identity: Any,
+    project_id: str,
     c7_poller_rows: int | None,
     c7_clean_count: int | None,
     graphify_marker_pattern: str | None,
 ) -> list[dict[str, Any]]:
     contract = _payload(outputs.get("gcode-contract"))
-    identity = _payload(outputs.get("gcode-schema-identity"))
     doctor = outputs.get("gcode-embeddings-doctor")
     doctor_payload = _payload(doctor)
     status = _payload(outputs.get("gcode-status"))
@@ -441,19 +447,18 @@ def evaluate_c0(
     )
     checks = {
         "graphify-pin": _pin_line(outputs.get("graphify-version"), f"graphify {GRAPHIFY_PIN}"),
-        "gcode-pin": _pin_line(outputs.get("gcode-version"), f"gcode {GCODE_PIN}"),
+        "gcode-pin": _pin_line(outputs.get("gcode-version"), f"gcode {manifest['pins']['gcode']}"),
         "gcode-contract": isinstance(contract, dict)
         and contract.get("tool") == "gcode"
         and contract.get("contract_version") == GCODE_CONTRACT_VERSION,
         "graphify-inventory": _inventory_ok(
             outputs.get("graphify-help"), outputs.get("graphify-export-help")
         ),
-        "gcode-schema-identity": expected_schema_identity is not None
-        and identity == expected_schema_identity,
         "embedding-preflight": doctor is not None
         and doctor.returncode == 0
         and isinstance(doctor_payload, dict)
         and doctor_payload.get("agrees") is True,
+        "gcode-status-project-id": isinstance(status, dict) and status.get("id") == project_id,
         "gcode-status-indexed": isinstance(status, dict)
         and "id" in status
         and isinstance(status.get("code_index"), dict)

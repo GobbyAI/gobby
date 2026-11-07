@@ -7,7 +7,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 from c0_poller import IndexPoller, clean_file_count, corpus_project_id, index_row_count
 from c0_runner import (
@@ -28,8 +27,6 @@ from runtime_boundary import assert_owned_runtime
 from validate_environment import SEPTEMBER_ROOT
 
 CLEAN_MANIFEST_RELATIVE = "manifests/corpora/gcode/C1.json"
-# The expected gcode schema identity is not ruled yet, so C0 records that check as failed.
-GCODE_SCHEMA_IDENTITY_PENDING: Any = None
 
 
 def sandboxed_runner(root: Path, attempt: str) -> Runner:
@@ -67,8 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     freeze_command_manifest(root, probe_symbols=PROBE_SYMBOLS, graphify_concurrency=concurrency)
     (root / "receipts").mkdir(mode=0o700, parents=True, exist_ok=True)
+    project_id = corpus_project_id(root, GCODE_CORPUS)
     observer = IndexPoller(
-        count=index_row_count(root, corpus_project_id(root, GCODE_CORPUS)),
+        count=index_row_count(root, project_id),
         clock=time.monotonic,
         clean=clean_file_count(SEPTEMBER_ROOT / CLEAN_MANIFEST_RELATIVE),
         log=root / f"receipts/c7-poller-{args.attempt}.jsonl",
@@ -78,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         args.attempt,
         runner,
         ambient=ambient,
-        expected_schema_identity=GCODE_SCHEMA_IDENTITY_PENDING,
+        project_id=project_id,
         observer=observer,
         graphify_marker_pattern=GRAPHIFY_MARKER_PATTERN,
     )

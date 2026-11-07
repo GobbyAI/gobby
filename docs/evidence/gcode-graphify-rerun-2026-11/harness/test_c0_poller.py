@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -74,6 +75,38 @@ def test_a_poller_cannot_start_twice_or_stop_before_it_starts(tmp_path: Path) ->
             poller.start()
     finally:
         poller.stop()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("count broke"), EvidenceError("index row count returned no row")],
+)
+def test_an_unexpected_sampler_failure_is_raised_by_stop_and_fails_closed(
+    tmp_path: Path, failure: Exception
+) -> None:
+    sampled = threading.Event()
+    failed = threading.Event()
+
+    def read_count() -> int:
+        if not sampled.is_set():
+            sampled.set()
+            return 4
+        failed.set()
+        raise failure
+
+    poller = IndexPoller(
+        count=read_count,
+        clock=time.monotonic,
+        clean=9,
+        log=tmp_path / "poll.jsonl",
+        interval=0.001,
+    )
+    poller.start()
+    assert failed.wait(timeout=5)
+
+    with pytest.raises(EvidenceError, match="index poller failed"):
+        poller.stop()
+    assert poller.first_qualifying is None
 
 
 def test_the_clean_count_is_the_manifest_file_count_when_it_matches_its_entries(

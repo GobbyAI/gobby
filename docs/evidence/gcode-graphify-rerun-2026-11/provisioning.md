@@ -17,7 +17,7 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | Owner session | `7674aa11-70a3-40d5-91dd-1fe46140732b` (orchestrator root pane) |
 | Compose project | `gcode-graphify-rerun-2026-11` |
 | Source commit (gobby, gcode) | `30d2a5956241c208e670133efbc9d9452721118f`, the 0.5.0 tip at candidate time |
-| gcode pins | version `1.9.104`, contract `12`; read from `crates/gcode` at the source commit and matching the installed binary |
+| gcode pins | version read from `sources/gobby/crates/gcode/Cargo.toml` `package.version` (archived at `GOBBY_SHA`; `1.9.104` at candidate time), frozen into the command manifest and checked against `gcode --version` at C0; contract `12` |
 | Graphify | PyPI `graphifyy==0.9.103` (version-only pin, `GRAPHIFY_PACKAGE` in `harness/launch_services.py`); recorded by version, executable SHA-256 and lock |
 | Graphify wheel | `graphifyy-0.9.103-py3-none-any.whl`, SHA-256 `7948c030f8b04153d88bc1ee23a485ddaa0c2d6aaa03a748c177e3c217bcfe34` (PyPI, latest release at review time) |
 | Database and account | `gobby_bakeoff_22948`; account email `bakeoff-22948@example.invalid` (reserved placeholder) |
@@ -27,7 +27,11 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 1. `provision_environment.py init --owner-session <session>`: creates the runtime root, archives
    the sources at `GOBBY_SHA`, copies the templates and corpora, and writes the manifests.
    It refuses an existing root.
-2. `provision_environment.py write-compose --owner-session <session> ...`: renders the compose file.
+2. `provision_environment.py write-compose --owner-session <session> ...`: refuses any reference that is not
+   digest-pinned or that names `:latest`, renders `config/compose.yaml` and checks the rendered text for
+   `:latest`, and records `receipts/image-references.json`. Then it runs `docker image inspect` on each
+   reference and `docker pull` only for the references that are missing. A failed pull stops the step
+   with `docker pull failed for <service> image <reference>: <stderr>`.
 3. `launch_services.py provision --owner-session <session> --attempt <id>`:
    - writes `isolation/external-state.before.json` once;
    - renders Compose, checks names and ports, and starts the three services, or verifies the
@@ -86,8 +90,9 @@ this machine before step 2. Otherwise the orchestrator picks new digests.
    `--max-workers 1`. If the flag is absent, the receipt records `source: unsupported` and the
    extract runs with default workers. This run sets the flag only. `GRAPHIFY_NATIVE_CONCURRENCY`
    is not set (orchestrator ruling 4b, via gobby#19309).
-2. **Frozen manifest.** `command-manifest.json` lists each exact argv. The first gcode command is the
-   cold index, `gcode --project <C0> --format json index <C0> --full --sync-projections`.
+2. **Frozen manifest.** `command-manifest.json` lists each exact argv and the gcode pin, which is the
+   archived crate version. The first gcode command is the cold index,
+   `gcode --project <C0> --format json index <C0> --full --sync-projections`.
 3. **C7 poller.** The cold index runs under `IndexPoller`. It samples
    `SELECT count(*) FROM code_indexed_file_states WHERE project_id = %s` every 0.2 s over a
    read-only connection, and logs to `receipts/c7-poller-<attempt>.jsonl`. The project id is read
@@ -100,9 +105,11 @@ this machine before step 2. Otherwise the orchestrator picks new digests.
    `load_policy`), `src/game_goblins/replenishment/planner.py` (`plan_product`), and
    `src/game_goblins/platform/mcp.py` (`MCPError`).
 
-The receipt is `receipts/c0-<attempt>.json`. `c0.py` exits 0 only if every check passes. The gcode
-schema-identity expected value is not ruled yet (`GCODE_SCHEMA_IDENTITY_PENDING` in `c0.py`), so
-that check fails and C0 cannot pass until the orchestrator rules it.
+The receipt is `receipts/c0-<attempt>.json`. `c0.py` exits 0 only if every check passes. C0 checks
+that `gcode status --format json` reports an `id` equal to the project id in `project.json`
+(`gcode-status-project-id`). C0 has no schema-identity gate. `gcode schema-identity --json` is recorded
+as unchecked output in `logs/c0/<attempt>/gcode-schema-identity.stdout`. The archived six-key identity
+is checked at step 8 by `validate_environment.py --live`, through `schema_head.schema_head_proof`.
 
 ## Receipts
 
@@ -145,11 +152,25 @@ that check fails and C0 cannot pass until the orchestrator rules it.
   is passed, and only when this run's `extract --help` lists the flag. `GRAPHIFY_NATIVE_CONCURRENCY`
   is not set.
 - gcode schema identity: `schema-identity --json` has a different shape from the archived six-key
-  identity, and no expected value is ruled. C0 fails that check until one is.
-- The C7 poller's project id comes from `project.json`. Its match with the `id` that `gcode status`
-  reports has not been checked. If the two differ, C7 counts no rows and fails closed.
-- `MCPError` callers (total of at least one) are not checked live. Nothing in this attempt runs
-  that check.
-- The `uv run python <script>` form on each command line is unconfirmed. No live step has run yet.
+  identity, so C0 records it unchecked. The six archived keys are the only identity gate.
+  `schema_head.check_schema_head` projects the gdaemon identity onto those keys. A missing key fails
+  closed, and extra keys are ignored.
+- Project id: `gcode status --format json` flattens the indexed project into the top-level object
+  (`IndexedProject` through `#[serde(flatten)]` in `crates/gcode/src/node/mod.rs`), so its `id` is
+  top-level. An unindexed report carries `project_id` and no `id`. C0 compares the status `id` with
+  `project.json` (`gcode-status-project-id`). The C7 poller uses the same id, so a mismatch fails C0
+  closed.
+- `MCPError` callers (static probe of the September C0 corpus, not live): the definition is
+  `src/game_goblins/platform/mcp.py:23`. Source callers are `replenishment/sync.py:240`,
+  `integrations/lightspeed.py:96`, and `cli.py:167`. Test references are in
+  `tests/platform/test_mcp.py` and `tests/replenishment/test_lossless_sync.py`. C0's live
+  `callers-probe` check runs `gcode callers` for each probe symbol and requires a total of at least one.
+- The `uv run python <script>` form: each of the nine main-guarded scripts answers `--help` under
+  `uv run --directory <worktree> python docs/...`, checked locally. No live step has run yet.
+- Images: `falkordb` is pinned only to the September digest `sha256:e93fcd75...`. The local
+  `falkordb:latest` (`bef8acb1`) is never used. `gobby-postgres-local` must exist on this machine. If
+  it does not, `ensure_images` stops step 2 with the exact `docker pull` error.
+- Grant: at the step that hits `malformed grant: grant project does not match local project`, the run
+  stops and reports the exact error. The orchestrator does not retry with a hand-edited grant.
 - Known live risk: September saw `malformed grant: grant project does not match local project`
   under the isolated grant. It is the likely first live failure, at step 3 or step 8.

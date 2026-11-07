@@ -12,7 +12,6 @@ import pytest
 from c0_poller import IndexPoller
 from c0_runner import (
     COLD_INDEX_NAME,
-    GCODE_PIN,
     GRAPHIFY_BINARY,
     GRAPHIFY_MARKER_PATTERN,
     GRAPHIFY_PIN,
@@ -34,6 +33,7 @@ from c0_runner import (
 from runtime_boundary import EvidenceError
 
 SYMBOLS = PROBE_SYMBOLS
+ARCHIVED_GCODE = "1.9.104"
 SYMBOL_FILES = {
     "load_policy": "platform/settings.py",
     "repository_root": "platform/settings.py",
@@ -91,7 +91,7 @@ GOOD_STATUS = {
     "code_index": {"healthy": True},
 }
 CHECK_RULINGS: dict[str, Any] = {
-    "expected_schema_identity": {"assets_root_hash": "abc"},
+    "project_id": "case-id",
     "c7_poller_rows": 4,
     "c7_clean_count": 9,
     "graphify_marker_pattern": GRAPHIFY_MARKER_PATTERN,
@@ -104,8 +104,22 @@ def _ok(stdout: str = "") -> CommandResult:
 
 def _manifest(concurrency: dict[str, Any] = SEPTEMBER) -> dict[str, Any]:
     return build_command_manifest(
-        Path("/runtime"), probe_symbols=SYMBOLS, graphify_concurrency=concurrency
+        Path("/runtime"),
+        probe_symbols=SYMBOLS,
+        graphify_concurrency=concurrency,
+        gcode_version=ARCHIVED_GCODE,
     )
+
+
+def _stage_archive(root: Path, version: str = ARCHIVED_GCODE) -> None:
+    crate = root / "sources/gobby/crates/gcode"
+    crate.mkdir(parents=True, exist_ok=True)
+    (crate / "Cargo.toml").write_text(f'[package]\nname = "gcode"\nversion = "{version}"\n')
+
+
+@pytest.fixture(autouse=True)
+def _archived_gcode(tmp_path: Path) -> None:
+    _stage_archive(tmp_path)
 
 
 def _extract_argv(manifest: dict[str, Any]) -> list[str]:
@@ -148,7 +162,7 @@ def _passing_outputs(manifest: dict[str, Any]) -> dict[str, CommandResult]:
         "graphify-export-help": _ok(EXPORT_HELP),
         "graphify-extract": _ok(SEPTEMBER_EXTRACT_OUTPUT),
         COLD_INDEX_NAME: _ok(),
-        "gcode-version": _ok(f"gcode {GCODE_PIN}\n"),
+        "gcode-version": _ok(f"gcode {ARCHIVED_GCODE}\n"),
         "gcode-contract": _ok(json.dumps({"tool": "gcode", "contract_version": 12})),
         "gcode-schema-identity": _ok(json.dumps({"assets_root_hash": "abc"})),
         "gcode-embeddings-doctor": _ok(json.dumps({"agrees": True})),
@@ -170,7 +184,9 @@ def _checks(outputs: dict[str, CommandResult], **rulings: Any) -> dict[str, bool
 def _runner_for(
     root: Path, outputs: dict[str, CommandResult], concurrency: dict[str, Any] = SEPTEMBER
 ) -> Runner:
-    manifest = build_command_manifest(root, probe_symbols=SYMBOLS, graphify_concurrency=concurrency)
+    manifest = build_command_manifest(
+        root, probe_symbols=SYMBOLS, graphify_concurrency=concurrency, gcode_version=ARCHIVED_GCODE
+    )
     names = {tuple(command["argv"]): command["name"] for command in manifest["commands"]}
 
     def fake_runner(argv: list[str], cwd: Path, env: dict[str, str]) -> CommandResult:
@@ -204,9 +220,9 @@ def _observer(tmp_path: Path, count: int) -> IndexPoller:
 
 def _run_kwargs(tmp_path: Path, count: int = 4) -> dict[str, Any]:
     return {
-        "expected_schema_identity": {"assets_root_hash": "abc"},
         "observer": _observer(tmp_path, count),
         "graphify_marker_pattern": GRAPHIFY_MARKER_PATTERN,
+        "project_id": "case-id",
     }
 
 
@@ -242,7 +258,11 @@ def test_manifest_lists_every_matrix_command_with_pins_and_the_concurrency_recei
     assert [name for name in commands if name.startswith("gcode-callers-")] == [
         f"gcode-callers-{index}" for index in range(1, len(SYMBOLS) + 1)
     ]
-    assert manifest["pins"] == {"graphify": GRAPHIFY_PIN, "gcode": GCODE_PIN, "gcode_contract": 12}
+    assert manifest["pins"] == {
+        "graphify": GRAPHIFY_PIN,
+        "gcode": ARCHIVED_GCODE,
+        "gcode_contract": 12,
+    }
     assert manifest["graphify_concurrency"] == SEPTEMBER
 
 
@@ -581,16 +601,54 @@ def test_graphify_inventory_requires_every_matrix_command_and_the_callflow_expor
     assert _checks(no_callflow)["graphify-inventory"] is False
 
 
-def test_schema_identity_stays_pending_until_its_expected_value_is_ruled() -> None:
+def test_gcode_schema_identity_is_recorded_but_is_not_a_c0_gate() -> None:
     outputs = _passing_outputs(_manifest())
+    outputs["gcode-schema-identity"] = _ok(json.dumps({"anything": "else"}))
 
-    assert _checks(outputs, expected_schema_identity=None)["gcode-schema-identity"] is False
-    assert _checks(outputs)["gcode-schema-identity"] is True
+    assert "gcode-schema-identity" not in _checks(outputs)
+
+
+def test_the_gcode_pin_is_the_archived_crate_version_frozen_into_the_manifest(
+    tmp_path: Path,
+) -> None:
+    _stage_archive(tmp_path, "1.9.105")
+
+    manifest = json.loads(
+        freeze_command_manifest(tmp_path, probe_symbols=SYMBOLS, graphify_concurrency=SEPTEMBER)
+    )
+
+    assert manifest["pins"]["gcode"] == "1.9.105"
+
+
+def test_the_gcode_pin_check_compares_with_the_frozen_manifest_pin() -> None:
+    manifest = _manifest()
+    manifest["pins"]["gcode"] = "1.9.105"
+
+    checks = {
+        check["check"]: check["passed"]
+        for check in evaluate_c0(_passing_outputs(manifest), manifest, **CHECK_RULINGS)
+    }
+
+    assert checks["gcode-pin"] is False
+
+
+def test_the_gcode_status_id_must_be_the_corpus_project_id() -> None:
+    passing = _passing_outputs(_manifest())
+    assert _checks(passing).get("gcode-status-project-id") is True
+
+    other_id = {**GOOD_STATUS, "id": "other-id"}
+    no_id = {key: value for key, value in GOOD_STATUS.items() if key != "id"}
+    for status in (other_id, no_id):
+        outputs = {**passing, "gcode-status": _ok(json.dumps(status))}
+        assert _checks(outputs).get("gcode-status-project-id") is False
 
 
 def test_probe_set_fails_closed_without_the_ruled_symbols() -> None:
     manifest = build_command_manifest(
-        Path("/runtime"), probe_symbols=(), graphify_concurrency=SEPTEMBER
+        Path("/runtime"),
+        probe_symbols=(),
+        graphify_concurrency=SEPTEMBER,
+        gcode_version=ARCHIVED_GCODE,
     )
     checks = {
         check["check"]: check["passed"]

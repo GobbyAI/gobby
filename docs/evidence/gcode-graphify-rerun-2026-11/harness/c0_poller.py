@@ -41,6 +41,7 @@ class IndexPoller:
         self._handle: TextIO | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._failure: Exception | None = None
 
     def start(self) -> None:
         require(self._thread is None, "poller already started")
@@ -48,6 +49,7 @@ class IndexPoller:
         self._handle = os.fdopen(descriptor, "w", encoding="utf-8")
         self._origin = self._clock()
         self._stop = threading.Event()
+        self._failure = None
         self._thread = threading.Thread(
             target=self._run, args=(self._handle, self._stop), name="c7-index-poller", daemon=True
         )
@@ -58,15 +60,26 @@ class IndexPoller:
         self._stop.set()
         self._thread.join()
         self._handle.close()
+        failure = self._failure
         self._thread = None
         self._handle = None
+        if failure is not None:
+            raise EvidenceError(
+                f"index poller failed: {type(failure).__name__}: {failure}"
+            ) from failure
 
     def _run(self, handle: TextIO, stop: threading.Event) -> None:
         # Sample first, then wait: a run always records at least one row.
-        while True:
-            self._sample(handle)
-            if stop.wait(self._interval):
-                return
+        try:
+            while True:
+                self._sample(handle)
+                if stop.wait(self._interval):
+                    return
+        except Exception as error:
+            # The sampler owns its failures: withdraw any qualifying sample so C7 fails closed,
+            # and keep the failure for stop() to raise, so the thread cannot end silently.
+            self.first_qualifying = None
+            self._failure = error
 
     def _sample(self, handle: TextIO) -> None:
         elapsed_ms = int((self._clock() - self._origin) * 1000)

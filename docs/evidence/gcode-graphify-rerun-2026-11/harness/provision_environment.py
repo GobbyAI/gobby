@@ -16,6 +16,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -507,6 +508,8 @@ def write_compose(
         ("qdrant", qdrant_image),
         ("falkordb", falkordb_image),
     ):
+        if ":latest" in image:
+            raise ValueError(f"{name} image must not use the :latest tag")
         if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image) is None:
             raise ValueError(f"{name} image must be a resolved immutable reference")
     compose = f"""name: {COMPOSE_PROJECT}
@@ -571,6 +574,7 @@ networks:
   default:
     name: {NETWORK}
 """
+    require(":latest" not in compose, "rendered compose names a :latest image")
     _write_text(root / "config" / "compose.yaml", compose)
     image_path = root / "receipts" / "image-references.json"
     references = {"postgres": postgres_image, "qdrant": qdrant_image, "falkordb": falkordb_image}
@@ -582,6 +586,24 @@ networks:
         )
     else:
         _write_json(image_path, references)
+
+
+ImageRunner = Callable[[list[str]], subprocess.CompletedProcess[bytes]]
+
+
+def _docker_command(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(argv, capture_output=True, check=False)
+
+
+def ensure_images(images: Mapping[str, str], run: ImageRunner) -> None:
+    """Pull each pinned reference the local daemon lacks; stop at the first failed pull."""
+    for name, reference in images.items():
+        if run(["docker", "image", "inspect", reference]).returncode == 0:
+            continue
+        pulled = run(["docker", "pull", reference])
+        if pulled.returncode != 0:
+            detail = pulled.stderr.decode("utf-8", errors="replace").strip()
+            raise EvidenceError(f"docker pull failed for {name} image {reference}: {detail}")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -619,6 +641,14 @@ def main() -> int:
         refresh_manifest(root, args.comparator, args.case)
     elif args.command == "write-compose":
         write_compose(root, args.postgres_image, args.qdrant_image, args.falkordb_image)
+        ensure_images(
+            {
+                "postgres": args.postgres_image,
+                "qdrant": args.qdrant_image,
+                "falkordb": args.falkordb_image,
+            },
+            _docker_command,
+        )
     else:  # pragma: no cover - argparse enforces subcommands
         raise EvidenceError(args.command)
     return 0
