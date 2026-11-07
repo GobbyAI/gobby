@@ -6,8 +6,8 @@ Implementation and a passing unit suite do not establish live acceptance.
 
 ## Admission
 
-Execution needs a separate Orchestrator grant for the independently reviewed
-fixture commit and tree, plus the Lane Manager's runtime admission. Keep the task
+Execution needs the Orchestrator's grant for the independently reviewed fixture
+commit and tree, plus its runtime admission. Keep the task
 open until the remaining live criteria and close release are satisfied.
 
 Use only the two disposable proof processes. Never target an ordinary roster

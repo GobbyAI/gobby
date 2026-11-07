@@ -206,6 +206,16 @@ class LiveProof:
         return terminal
 
     async def bind(self, provider: str, command: list[str]) -> Seat:
+        seat = await self.adopt(provider, command)
+        await self.empty(seat, timeout=120)
+        return seat
+
+    async def adopt(self, provider: str, command: list[str]) -> Seat:
+        """Register and attach a seat without waiting for it to go idle.
+
+        A caller that must observe a transient window, such as a staged handoff that a later
+        idle wait could outlast, reads the seat's own events itself instead of calling bind.
+        """
         ws = ProofWsSession(self.daemon)
         client: FrameClient | None = None
         adopted = False
@@ -271,7 +281,6 @@ class LiveProof:
             self.trace.register(own)
             self.seats.append(seat)
             adopted = True
-            await self.empty(seat, timeout=120)
             return seat
         finally:
             if not adopted:

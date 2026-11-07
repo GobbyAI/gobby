@@ -9,11 +9,12 @@ handoff, and the daemon delivers it. The test types nothing into the pane. It as
 that the daemon delivers the get_handoff continuation and that the seat finishes that
 turn within a bound.
 
-The restart_hold scenario requests a daemon restart after the launch turn has ended
+The restart_hold scenario requests a daemon restart at the seat's own launch-turn stop,
 with the handoff staged. The handoff shutdown hold refuses it with 409 handoff_pending.
-The staged handoff stays live until the continuation's get_handoff consumes it. This
-test does not admit a restart after consumption, because an admitted restart stops the
-isolated daemon that the case still tears down.
+The staged handoff stays live until the continuation's get_handoff consumes it. The test
+does not wait for the seat to go idle first, because that wait can outlast the window. A
+restart admitted after consumption returns 200 and stops the isolated daemon, which fails
+the case.
 """
 
 from __future__ import annotations
@@ -86,7 +87,7 @@ def _is_continuation(event: dict[str, Any], seat: Seat, *, clear: bool) -> bool:
     if event.get("type") != "hook_event" or event.get("event_type") != "user-prompt-submit":
         return False
     data = event.get("data") or {}
-    if "get_handoff" not in str(data.get("prompt_text", data.get("prompt", ""))):
+    if "get_handoff" not in str(data.get("prompt_text", "")):
         return False
     # A cleared session starts under a new external id; a compacted one keeps it.
     if clear:
@@ -147,7 +148,7 @@ async def test_seat_continues_after_its_own_handoff(
     verify_binary_set(composer_admission)
     binary = composer_admission.providers[provider].path
     clear = scenario == "clear"
-    seat = await composer_fixture.bind(provider, _seat_command(provider, binary, clear=clear))
+    seat = await composer_fixture.adopt(provider, _seat_command(provider, binary, clear=clear))
     writes_before = len(composer_fixture.trace.events)
     # The launch turn ends only after set_handoff returns, so the handoff is staged by then.
     await seat.ws.wait_for(
