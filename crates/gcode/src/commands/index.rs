@@ -491,6 +491,10 @@ fn path_filter_for(
 }
 
 #[cfg(test)]
+#[path = "index/explicit_run_tests.rs"]
+mod explicit_run_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::index::api::{IndexDurations, IndexOutcome};
