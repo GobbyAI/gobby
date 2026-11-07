@@ -10,7 +10,9 @@ is written to its own transcript, never to the parent's.
   settles at the next main-thread event.
 - The next non-compaction main-thread event settles the held hooks. It counts the
   compact_boundary records in the parent's main transcript since the last verified boundary.
-  None drops every held hook, so a session_start(compact) alone never resets. One or more runs
+  None keeps the held hooks while the latest of them is younger than the grace window, because
+  Claude flushes the boundary after the settling event can already run. Past the window, None
+  drops every held hook, so a session_start(compact) alone never resets. One or more runs
   one parent lifecycle, built from the latest held payload of each kind, and records the newest
   boundary as verified. A held PreCompact is skipped when a manual PreCompact ran since the last
   settle. The lifecycle's response context is merged into the settling event's response. An
@@ -19,6 +21,8 @@ is written to its own transcript, never to the parent's.
 - Subagent transcripts are never read. Parent timestamps are read only for an unknown baseline:
   when the session's first compaction hook cannot read the transcript, a boundary counts as new
   when its timestamp is at or after that hook's millisecond.
+- A main-thread event that keeps the held hooks inside the grace window carries HOLD_OPEN_FLAG,
+  so the context observers keep a pending reset until the lifecycle settles or the window passes.
 - Each route decision is logged with its hook, trigger, source and signal.
 """
 
@@ -31,7 +35,7 @@ import threading
 from collections.abc import Generator
 from contextlib import closing
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +45,9 @@ from gobby.hooks.subagent_boundary import subagent_payload_signal
 logger = logging.getLogger(__name__)
 
 REPLAY_FLAG = "_compaction_settled"
+# Set on a kept main-thread event while held hooks are still inside their grace window, so the
+# context observers keep a pending reset instead of clearing it from pre-compaction usage.
+HOLD_OPEN_FLAG = "_compaction_hold_open"
 COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
 
 _AUTO = "auto"
@@ -52,11 +59,18 @@ _PRE = "pre_compact"
 _START = "session_start"
 _POST = "post_compact"
 _LIFECYCLE = (_PRE, _START, _POST)
+# How long held hooks wait for their boundary to appear in the transcript. Claude writes the
+# boundary 0-7 s after SessionStart in practice; the window covers slow flushes without keeping a
+# spurious SessionStart alive for long.
+_BOUNDARY_GRACE = timedelta(seconds=120)
 
 
 @dataclass
 class _SessionState:
     held: dict[str, HookEvent] = field(default_factory=dict)
+    # The receive time of the latest held hook. The grace window runs from it, so a compaction
+    # whose SessionStart arrives long after its PreCompact still gets a full window.
+    held_since: datetime | None = None
     verified: str | None = None
     # Set while the baseline is unknown: the receive time of the session's first compaction hook,
     # floored to its millisecond. Parent boundaries written at or after it are new.
@@ -97,6 +111,9 @@ class CompactionOwnership:
             if state is None or not state.held:
                 return [], False
             replays = self._settle(state, event)
+            if state.held and _within_grace(state):
+                # Awaiting the boundary inside the window: observers keep a pending reset.
+                event.metadata[HOLD_OPEN_FLAG] = True
             return ([] if replays is None else replays), False
 
     def _hold(self, event: HookEvent) -> tuple[list[HookEvent], bool]:
@@ -116,15 +133,17 @@ class CompactionOwnership:
             kind = _START
         else:
             kind = _POST
+        state.held_since = _receive_time()
         state.held[kind] = event
         _log_route("held", event, "awaiting_main_event")
         return [], True
 
     def _settle(self, state: _SessionState, event: HookEvent) -> list[HookEvent] | None:
-        """Settle the held lifecycle; None when the transcript cannot be read, which changes nothing.
+        """Settle the held lifecycle; None when nothing settles yet, which changes nothing.
 
-        With a known baseline, the boundaries newer than it count. With an unknown one, the
-        boundaries written at or after its hook count.
+        Nothing settles when the transcript cannot be read, or when no boundary is visible while
+        the held hooks are inside the grace window. With a known baseline, the boundaries newer
+        than it count. With an unknown one, the boundaries written at or after its hook count.
         """
         transcript = _transcript_of(event)
         if transcript is None:
@@ -140,11 +159,15 @@ class CompactionOwnership:
             _log_route("kept", event, "unreadable_transcript")
             return None
         kinds = [kind for kind in _LIFECYCLE if kind in state.held]
+        if not fresh and _within_grace(state):
+            _log_route("kept", event, "awaiting_boundary", f" held={','.join(kinds)}")
+            return None
         # A manual PreCompact already ran its rules for the boundary being settled.
         lifecycle = [
             state.held[kind] for kind in kinds if not (kind == _PRE and state.manual_pre_ran)
         ]
         state.held.clear()
+        state.held_since = None
         state.manual_pre_ran = False
         state.verified = newest
         state.unknown_since = None
@@ -191,6 +214,11 @@ def _receive_time() -> datetime:
     """
     now = datetime.now(UTC)
     return now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+
+def _within_grace(state: _SessionState) -> bool:
+    """Whether the held hooks are young enough to wait for their boundary to be flushed."""
+    return state.held_since is not None and _receive_time() - state.held_since < _BOUNDARY_GRACE
 
 
 def _newest_boundary(transcript: Path | None) -> str | None:

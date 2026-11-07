@@ -693,14 +693,17 @@ class DaemonProxy:
         session_id: str,
         scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
-        """Set a session or step variable."""
+        """Set a session or step variable.
+
+        ``session_id`` names the target in the path only. The caller is identified
+        by its own environment or terminal context, never by the target.
+        """
         if session_id in {"", ".", ".."}:
             return {"success": False, "error": "session_id must name one session"}
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/set",
             json={"name": name, "value": value, "scope": scope},
-            session_id=session_id,
         )
 
     async def get_variable(
@@ -710,14 +713,17 @@ class DaemonProxy:
         session_id: str,
         brief: bool = True,
     ) -> dict[str, Any]:
-        """Get session-scoped variable(s)."""
+        """Get session-scoped variable(s).
+
+        ``session_id`` names the target in the path only; the caller is identified as
+        in ``set_variable``.
+        """
         if session_id in {"", ".", ".."}:
             return {"success": False, "error": "session_id must name one session"}
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/get",
             json={"name": name, "scope": "session", "brief": brief},
-            session_id=session_id,
         )
 
     async def init_project(self, name: str, project_path: str | None = None) -> dict[str, Any]:

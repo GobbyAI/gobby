@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -77,13 +77,71 @@ def test_subagent_compaction_hooks_are_not_held(parent: Path) -> None:
     assert ownership.needs_transcripts(_event(START, subagent_file, source="compact")) is False
 
 
-def test_settle_without_a_new_boundary_drops_the_held_hooks(parent: Path) -> None:
+def test_settle_before_the_boundary_is_visible_keeps_the_held_hooks(
+    parent: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [datetime(2026, 11, 6, 7, 54, 34, tzinfo=UTC)]
+    monkeypatch.setattr(compaction_ownership, "_receive_time", lambda: clock[0])
     ownership = CompactionOwnership()
     ownership.route(_event(PRE, parent, trigger="auto"))
     ownership.route(_event(START, parent, source="compact"))
 
-    assert ownership.route(_event(BEFORE, parent, prompt="continue")) == ([], False)
+    # The settling event lands before Claude flushes the compact_boundary record.
+    clock[0] += timedelta(seconds=3)
+    assert ownership.route(_event(BEFORE, parent, prompt="early")) == ([], False)
+    assert ownership.needs_transcripts(_event(BEFORE, parent, prompt="again")) is True
+
+    _append(parent, _boundary("boundary-1"))
+    clock[0] += timedelta(seconds=8)
+    replays, held = ownership.route(_event(BEFORE, parent, prompt="late"))
+
+    assert held is False
+    assert [replay.event_type for replay in replays] == [PRE, START]
+
+
+def test_held_hooks_are_dropped_once_the_grace_window_passes_without_a_boundary(
+    parent: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [datetime(2026, 11, 6, 7, 54, 34, tzinfo=UTC)]
+    monkeypatch.setattr(compaction_ownership, "_receive_time", lambda: clock[0])
+    ownership = CompactionOwnership()
+    ownership.route(_event(PRE, parent, trigger="auto"))
+    ownership.route(_event(START, parent, source="compact"))
+
+    assert ownership.route(_event(BEFORE, parent, prompt="early")) == ([], False)
+
+    clock[0] += timedelta(minutes=5)
+    assert ownership.route(_event(BEFORE, parent, prompt="expired")) == ([], False)
     assert ownership.needs_transcripts(_event(BEFORE, parent, prompt="again")) is False
+
+    _append(parent, _boundary("boundary-late"))
+    clock[0] += timedelta(seconds=1)
+    replays, _ = ownership.route(_event(BEFORE, parent, prompt="after"))
+
+    assert replays == []
+
+
+def test_a_long_compaction_gets_a_full_grace_window_from_its_session_start(
+    parent: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [datetime(2026, 11, 6, 7, 54, 34, tzinfo=UTC)]
+    monkeypatch.setattr(compaction_ownership, "_receive_time", lambda: clock[0])
+    ownership = CompactionOwnership()
+    ownership.route(_event(PRE, parent, trigger="auto"))
+
+    # Summarizing the conversation can take minutes between PreCompact and SessionStart.
+    clock[0] += timedelta(minutes=3)
+    ownership.route(_event(START, parent, source="compact"))
+
+    clock[0] += timedelta(seconds=1)
+    assert ownership.route(_event(BEFORE, parent, prompt="early")) == ([], False)
+    assert ownership.needs_transcripts(_event(BEFORE, parent, prompt="again")) is True
+
+    _append(parent, _boundary("boundary-1"))
+    clock[0] += timedelta(seconds=3)
+    replays, _ = ownership.route(_event(BEFORE, parent, prompt="late"))
+
+    assert [replay.event_type for replay in replays] == [PRE, START]
 
 
 def test_settle_replays_one_lifecycle_in_pre_start_post_order(parent: Path) -> None:
@@ -122,7 +180,8 @@ def test_boundaries_before_the_buffer_began_are_baseline(parent: Path) -> None:
     _append(parent, _boundary("boundary-1"))
     replays, _ = ownership.route(_event(BEFORE, parent, prompt="parent"))
 
-    assert [replay.event_type for replay in replays] == [START]
+    # The auto PreCompact outlives the early settle: its boundary is the one that arrives later.
+    assert [replay.event_type for replay in replays] == [PRE, START]
 
 
 def test_a_known_baseline_ignores_timestamps(parent: Path) -> None:
@@ -297,8 +356,8 @@ def test_each_route_decision_is_logged_with_its_hook_trigger_source_and_signal(
             "signal=manual_pre_compact session=session-under-test"
         ),
         (
-            "compaction route dropped: hook=before_agent trigger=- source=- "
-            "signal=no_parent_boundary held=pre_compact session=session-under-test"
+            "compaction route kept: hook=before_agent trigger=- source=- "
+            "signal=awaiting_boundary held=pre_compact session=session-under-test"
         ),
         (
             "compaction route held: hook=session_start trigger=- source=compact "
@@ -306,7 +365,7 @@ def test_each_route_decision_is_logged_with_its_hook_trigger_source_and_signal(
         ),
         (
             "compaction route settled: hook=before_agent trigger=- source=- "
-            "signal=parent_boundary boundaries=1 held=session_start replays=1 "
+            "signal=parent_boundary boundaries=1 held=pre_compact,session_start replays=1 "
             "session=session-under-test"
         ),
         (
