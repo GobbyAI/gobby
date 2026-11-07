@@ -50,6 +50,10 @@ _FINALIZER_SETTLE_SECONDS = 10.0
 # Budget for the child-process tail when the overall deadline cut the cleanup before its
 # reap. Each step is bounded: pool drain 2s, CLI calls 5s, agent listing 3s, reap ~2s.
 _DEADLINE_CHILD_REAP_BUDGET_SECONDS = 15.0
+# Per-step bounds for the async cleanup steps that ran without their own timeout. A step
+# that overruns is named in the log instead of silently consuming the overall deadline.
+_CLEANUP_STEP_TIMEOUT_SECONDS = 2.0
+_TERMINAL_HOST_STOP_TIMEOUT_SECONDS = 10.0
 
 # Set on the finalizer-deadline expiry branch: an abandoned settlement scope
 # can leave a wedged non-daemon executor worker that blocks interpreter exit
@@ -778,12 +782,17 @@ async def _run_async_shutdown_cleanup(
     await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
     config_runtime = getattr(runner, "config_runtime", None)
     if config_runtime is not None:
-        await _best_effort(config_runtime.close, "Config runtime shutdown")
+        await _best_effort(
+            config_runtime.close,
+            "Config runtime shutdown",
+            timeout=_CLEANUP_STEP_TIMEOUT_SECONDS,
+        )
     definition_revision_listener = getattr(runner, "definition_revision_listener", None)
     if definition_revision_listener is not None:
         await _best_effort(
             definition_revision_listener.close,
             "Definition revision listener shutdown",
+            timeout=_CLEANUP_STEP_TIMEOUT_SECONDS,
         )
     drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
     host = getattr(runner, "terminal_host_manager", None)
@@ -795,6 +804,7 @@ async def _run_async_shutdown_cleanup(
             await _best_effort(
                 lambda: stop(drain_host=drain_host),
                 "gterm host stop",
+                timeout=_TERMINAL_HOST_STOP_TIMEOUT_SECONDS,
             )
     # Nothing feeds the composer ledger once the host stops; cancelling flushes it.
     await _cancel_runner_task(runner, "_composer_ledger_task")

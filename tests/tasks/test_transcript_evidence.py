@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -292,6 +292,37 @@ def test_missing_transcript_exception_preserves_process_pool() -> None:
         assert raised.value.retry_after == 5
         assert pool.submit(os.getpid).result(timeout=15) == worker_pid
         assert worker_pid != os.getpid()
+
+
+class _StalledPrewarmExecutor:
+    """Pool whose probes never start, as on a host too loaded to start workers in time."""
+
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+
+    def submit(self, function: object, /, *args: object) -> Future[None]:
+        return Future()
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        self.shutdown_calls += 1
+
+
+async def test_prewarm_miss_keeps_the_pool_in_service(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stalled = _StalledPrewarmExecutor()
+    pool = cast(ProcessPoolExecutor, stalled)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", pool)
+    monkeypatch.setattr(transcript_evidence_pool, "_POOL_PREWARM_WAIT_SECONDS", 0.05)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.tasks.transcript_evidence_pool"):
+        await transcript_evidence_pool.prewarm_transcript_evidence_pool()
+
+    # A slow host misses the barrier while its workers are still starting. The pool is
+    # not torn down: the same executor keeps serving derivations.
+    assert transcript_evidence_pool._pool is pool
+    assert stalled.shutdown_calls == 0
+    assert "prewarm did not finish" in caplog.text
 
 
 def _concurrent_pool_probe(directory: str) -> int:

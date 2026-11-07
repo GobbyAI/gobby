@@ -5497,6 +5497,51 @@ class TestAgentRestartRecoveryHelpers:
         assert events[-1] == "executor"
 
     @pytest.mark.asyncio
+    async def test_async_cleanup_names_each_stalled_step_and_still_reaps(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        async def stalled(**_kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        reap = AsyncMock()
+        runner = cast(
+            GobbyRunner,
+            SimpleNamespace(
+                config_runtime=SimpleNamespace(close=stalled),
+                definition_revision_listener=SimpleNamespace(close=stalled),
+                terminal_host_manager=SimpleNamespace(stop=stalled),
+                _drain_terminals_on_shutdown=False,
+            ),
+        )
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_CLEANUP_STEP_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_TERMINAL_HOST_STOP_TIMEOUT_SECONDS", 0.05)
+        settle = AsyncMock()
+        audit = AsyncMock()
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_settle_terminal_delivery_barrier", settle)
+        monkeypatch.setattr("gobby.telemetry.rule_allow_audit.shutdown_rule_allow_audit", audit)
+
+        async with asyncio.timeout(5):
+            await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
+                runner,
+                shutdown_intent=ShutdownIntent.STOP,
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=lambda: None,
+            )
+
+        # Each stalled step is bounded and named in order, and the cleanup still reaps.
+        timed_out = [r.getMessage() for r in caplog.records if "timed out" in r.getMessage()]
+        assert timed_out == [
+            "Config runtime shutdown timed out",
+            "Definition revision listener shutdown timed out",
+            "gterm host stop timed out",
+        ]
+        assert settle.await_count == 1
+        assert audit.await_count == 1
+        assert reap.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_async_shutdown_flushes_the_composer_ledger_after_the_host_stops(
         self,
         monkeypatch: pytest.MonkeyPatch,

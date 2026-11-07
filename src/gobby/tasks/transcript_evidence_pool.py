@@ -22,6 +22,7 @@ _pool_lock = threading.Lock()
 _fallback_warning_logged = False
 _POOL_WORKERS = 4
 _POOL_PREWARM_TIMEOUT_SECONDS = 60.0
+_POOL_PREWARM_WAIT_SECONDS = _POOL_PREWARM_TIMEOUT_SECONDS + 5
 _PARENT_POLL_SECONDS = 1.0
 
 
@@ -65,7 +66,12 @@ def _get_pool() -> ProcessPoolExecutor:
 
 
 async def prewarm_transcript_evidence_pool() -> None:
-    """Warm worker imports during background daemon initialization."""
+    """Warm worker imports during background daemon initialization.
+
+    A loaded host can miss the barrier while its workers are still starting. Those workers
+    finish importing and serve derivations, so a miss keeps the pool in service. Only a
+    pool that fails outright is discarded.
+    """
     with tempfile.TemporaryDirectory(prefix="gobby-transcript-pool-") as marker_directory:
 
         def submit_probes() -> list[Future[None]]:
@@ -77,8 +83,15 @@ async def prewarm_transcript_evidence_pool() -> None:
             probes = await asyncio.to_thread(submit_probes)
             await asyncio.wait_for(
                 asyncio.gather(*(asyncio.wrap_future(probe) for probe in probes)),
-                timeout=_POOL_PREWARM_TIMEOUT_SECONDS + 5,
+                timeout=_POOL_PREWARM_WAIT_SECONDS,
             )
+        except TimeoutError:
+            logger.warning(
+                "Transcript evidence pool prewarm did not finish within %.0fs; "
+                "workers keep starting and the pool stays in service",
+                _POOL_PREWARM_WAIT_SECONDS,
+            )
+            return
         except BaseException:
             shutdown_transcript_evidence_pool()
             raise
