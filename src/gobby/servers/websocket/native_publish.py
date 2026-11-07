@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -46,7 +45,7 @@ LEG_CLOSE_TIMEOUT = 1.0
 # on this loop; a bind logs how far its request got. Lags at or above these thresholds are logged.
 LOOP_LAG_INTERVAL = 0.25
 LOOP_LAG_WARN = 0.5
-BIND_SLOW_WARN = 0.5
+SLOW_REQUEST_WARN = 0.5
 
 BIND_PATH = "/_gobby/ws/bind"
 PUBLISH_PATH = "/_gobby/ws/publish"
@@ -139,7 +138,7 @@ class NativePublisher:
             logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
             self._schedule_rebind(immediate=False)
 
-    async def bind(self) -> str:
+    async def bind(self, label: str = "bind") -> str:
         token = await self._await_token()
         body = json_dumps(
             {
@@ -152,33 +151,30 @@ class NativePublisher:
         started = loop.time()
         phases: dict[str, float] = {}
 
-        async def trace(event: str, _info: Mapping[str, Any]) -> None:
-            # httpcore reports "<layer>.<step>.complete" when each phase finishes on this loop.
-            if event.endswith(".complete"):
-                phases[event.removesuffix(".complete")] = loop.time() - started
-
         try:
             response = await asyncio.wait_for(
                 self._client.post(
                     f"{self._base_url}{BIND_PATH}",
                     content=body,
                     headers=self._headers(token),
-                    extensions={"trace": trace},
+                    extensions={"trace": _phase_recorder(loop, started, phases)},
                 ),
                 REQUEST_TIMEOUT,
             )
         except (TimeoutError, httpx.HTTPError) as exc:
             logger.warning(
-                "Native WS bind failed after %.2fs; phases %s: %r",
+                "Native WS %s failed after %.2fs; phases %s: %r",
+                label,
                 loop.time() - started,
                 _format_phases(phases),
                 exc,
             )
             raise
         elapsed = loop.time() - started
-        if elapsed >= BIND_SLOW_WARN:
+        if elapsed >= SLOW_REQUEST_WARN:
             logger.warning(
-                "Native WS bind answered after %.2fs; phases %s",
+                "Native WS %s answered after %.2fs; phases %s",
+                label,
                 elapsed,
                 _format_phases(phases),
             )
@@ -331,25 +327,38 @@ class NativePublisher:
             logger.warning("Native WS publish has no supervisor write token")
             return False
         body = _request_body(generation, [op.encoded for op in batch])
-        started = time.monotonic()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        phases: dict[str, float] = {}
         try:
             response = await asyncio.wait_for(
                 self._client.post(
-                    f"{self._base_url}{PUBLISH_PATH}", content=body, headers=self._headers(token)
+                    f"{self._base_url}{PUBLISH_PATH}",
+                    content=body,
+                    headers=self._headers(token),
+                    extensions={"trace": _phase_recorder(loop, started, phases)},
                 ),
                 REQUEST_TIMEOUT,
             )
         except (httpx.HTTPError, TimeoutError) as exc:
             logger.warning(
                 "Native WS publish failed for generation %s after %.2fs with %d ops and "
-                "%d body bytes: %r",
+                "%d body bytes; phases %s: %r",
                 generation,
-                time.monotonic() - started,
+                loop.time() - started,
                 len(batch),
                 len(body),
+                _format_phases(phases),
                 exc,
             )
             return False
+        elapsed = loop.time() - started
+        if elapsed >= SLOW_REQUEST_WARN:
+            logger.warning(
+                "Native WS publish answered after %.2fs; phases %s",
+                elapsed,
+                _format_phases(phases),
+            )
         if response.status_code != 204:
             logger.warning(
                 "Native WS publish for generation %s answered %s", generation, response.status_code
@@ -407,7 +416,7 @@ class NativePublisher:
             await asyncio.sleep(REBIND_INTERVAL)
         while not self._stopped:
             try:
-                await self.bind()
+                await self.bind(label="rebind")
                 return
             except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
                 logger.warning("Native WS rebind failed: %r", exc)
@@ -431,6 +440,19 @@ class NativePublisher:
                     lag,
                     LOOP_LAG_INTERVAL,
                 )
+
+
+def _phase_recorder(
+    loop: asyncio.AbstractEventLoop, started: float, phases: dict[str, float]
+) -> Callable[[str, Mapping[str, Any]], Coroutine[Any, Any, None]]:
+    """An httpx trace hook that records when each httpcore phase of one request completes."""
+
+    async def trace(event: str, _info: Mapping[str, Any]) -> None:
+        # httpcore reports "<layer>.<step>.complete" when each phase finishes on this loop.
+        if event.endswith(".complete"):
+            phases[event.removesuffix(".complete")] = loop.time() - started
+
+    return trace
 
 
 def _format_phases(phases: dict[str, float]) -> str:

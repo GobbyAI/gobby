@@ -894,6 +894,72 @@ async def test_a_slow_bind_names_the_phase_it_reached(
     assert ("http11.receive_response_headers" in line) is first_byte_seen
 
 
+@pytest.mark.parametrize(
+    ("publish_delay", "deadline", "outcome", "first_byte_seen"),
+    [
+        (1.0, 0.3, "publish failed for generation", False),
+        (0.6, 2.0, "publish answered after", True),
+    ],
+)
+async def test_a_slow_publish_names_the_phase_it_reached(
+    publish_delay: float,
+    deadline: float,
+    outcome: str,
+    first_byte_seen: bool,
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The publish log says how far the request got, as the bind log does."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", deadline)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, publish_delay=publish_delay)
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1)
+            publisher.publish({"type": "agent_event"})
+            await _until(lambda: any(outcome in r.getMessage() for r in caplog.records), 5.0)
+        finally:
+            await publisher.stop()
+    line = next(r.getMessage() for r in caplog.records if outcome in r.getMessage())
+    assert "phases" in line
+    # Publish reuses the connection the bind opened, so no connect phase is logged.
+    assert "http11.send_request_headers" in line
+    assert ("http11.receive_response_headers" in line) is first_byte_seen
+
+
+async def test_a_held_rebind_is_logged_as_a_rebind(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A rebind that the front door holds past the deadline logs as a rebind, with phases."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.3)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[1.0, 1.0])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1, 5.0)
+        finally:
+            await publisher.stop()
+    assert any(
+        "rebind failed after" in r.getMessage() and "phases" in r.getMessage()
+        for r in caplog.records
+    )
+
+
 @pytest.mark.slow
 async def test_a_publish_slower_than_httpx_default_stays_bound_inside_the_deadline(
     supervisor_token: str, monkeypatch: pytest.MonkeyPatch

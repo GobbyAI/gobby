@@ -71,7 +71,7 @@ impl TestDb {
         config
             .environment
             .insert("HOME".into(), home.as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = TERM_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         Ok(BackendSupervisor::new(lease, claim, config))
     }
@@ -551,9 +551,16 @@ async fn pre_spawn_stop_marker_and_shutdown_in_backoff_do_not_respawn() -> Resul
     }).await
 }
 
+/// Grace between SIGTERM and SIGKILL for the tests that check the TERM marker. A TERM handler
+/// can run late under host load, so the grace must outlast it. At 100 ms the kill won that
+/// race and both tests failed with ENOENT reading the marker.
+const TERM_GRACE: Duration = Duration::from_secs(2);
+
 const IGNORE_TERM: &str = r#"import os,pathlib,signal,time
 home=pathlib.Path(os.environ['GOBBY_HOME'])
-def term(*args): (home/'term').write_text('TERM')
+def term(*args):
+    time.sleep(.3)
+    (home/'term').write_text('TERM')
 signal.signal(signal.SIGTERM,term)
 (home/'ready').write_text(str(os.getpid()))
 while True: time.sleep(.01)
@@ -571,11 +578,11 @@ async fn shutdown_sends_term_then_bounded_kill() -> Result<()> {
         let started = Instant::now();
         tx.send(true)?;
         assert_eq!(
-            timeout(Duration::from_secs(5), task).await???,
+            timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::Stopped
         );
         assert!(started.elapsed() >= Duration::from_millis(90));
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(fs::read_to_string(home.path().join("term"))?, "TERM");
         // SAFETY: signal zero only probes the already reaped isolated child.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
@@ -603,7 +610,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         config
             .environment
             .insert("HOME".into(), home.path().as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = TERM_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
         let (_tx, rx) = watch::channel(false);
@@ -619,7 +626,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
             .await?;
         assert_eq!(rows.len(), 1);
         assert_eq!(
-            timeout(Duration::from_secs(5), task).await???,
+            timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::LeaseLost
         );
         assert_eq!(fs::read_to_string(home.path().join("term"))?, "TERM");
