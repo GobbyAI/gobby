@@ -11,10 +11,12 @@ import subprocess  # nosec B404 # argv-only Git process boundary
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 from gobby.hooks import checkout_reads
 from gobby.utils.git import git_subprocess_env
@@ -79,6 +81,13 @@ type _StatusKey = tuple[
 
 _STREAM_CHUNK_BYTES = 64 * 1024
 _MAX_STREAM_STDERR_BYTES = 64 * 1024
+# A killed Git leader is reaped in milliseconds; past this bound the caller stops waiting.
+_UNREAPED_CLEANUP_GRACE_SECONDS = 3.0
+_REAP_POLL_SECONDS = 0.01
+# Completions of Git children that outlived their kill, collected per caller scope.
+_UNREAPED_CHILDREN: ContextVar[list[asyncio.Future[Any]] | None] = ContextVar(
+    "gobby_unreaped_git_children", default=None
+)
 
 
 type _GitProcess = subprocess.Popen[bytes] | SpawnedSession
@@ -176,6 +185,16 @@ class _ProcessControl:
     spawn_finished_at: float | None = None
     kill_started_at: float | None = None
     pid: int | None = None
+    reaped: bool = False
+
+    def mark_reaped(self) -> None:
+        """Record that the leader has been waited on, so no process remains to kill."""
+        with self.lock:
+            self.reaped = True
+
+    def is_reaped(self) -> bool:
+        with self.lock:
+            return self.reaped
 
     def begin_preparing(self) -> None:
         with self.lock:
@@ -539,7 +558,20 @@ class DaemonGitService:
                 diagnostic,
             )
             control.kill()
-            cancelled = await _await_worker_cleanup(completion)
+            reaped, cancelled = await _await_reap(control, completion)
+            if not reaped:
+                # The child survived its kill. Return within the grace period; the
+                # completion stays pending, so the caller holds its claim until it exits.
+                _report_unreaped(argv, control, completion)
+                if cancelled:
+                    raise asyncio.CancelledError() from None
+                return GitTimeout(
+                    "timeout",
+                    argv,
+                    timeout,
+                    stderr=f"Git child did not exit after its kill: {control.diagnostic()}",
+                )
+            cancelled = await _await_worker_cleanup(completion) or cancelled
             completion.cancel()
             if cancelled:
                 raise asyncio.CancelledError() from None
@@ -552,6 +584,10 @@ class DaemonGitService:
             )
         except asyncio.CancelledError:
             control.kill()
+            reaped, _ = await _await_reap(control, completion)
+            if not reaped:
+                _report_unreaped(argv, control, completion)
+                raise
             await _await_worker_cleanup(completion)
             completion.cancel()
             raise
@@ -579,6 +615,7 @@ def _run_git_worker(
         process = spawn(input_bytes)
         control.attach(process)
         stdout_bytes, stderr_bytes = process.communicate(input_bytes)
+        control.mark_reaped()
         stdout = stdout_bytes.decode("utf-8", errors="surrogateescape")
         stderr = stderr_bytes.decode("utf-8", errors="surrogateescape")
         if process.returncode == 0:
@@ -589,6 +626,7 @@ def _run_git_worker(
         if process is not None:
             _kill_process_group(process)
             process.wait()
+            control.mark_reaped()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:
         control.mark_finished()
@@ -626,6 +664,7 @@ def _stream_git_worker(
             )
             control.attach(process)
             process.wait()
+            control.mark_reaped()
             may_consume = control.begin_consuming()
             stderr_file.seek(0)
             stderr = stderr_file.read(_MAX_STREAM_STDERR_BYTES).decode(
@@ -650,6 +689,7 @@ def _stream_git_worker(
         if process is not None:
             _kill_process_group(process)
             process.wait()
+            control.mark_reaped()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:
         control.mark_finished()
@@ -720,6 +760,62 @@ def _kill_process_group(process: _GitProcess) -> None:
         process.kill()
     except ProcessLookupError:
         pass
+
+
+async def _await_reap(
+    control: _ProcessControl, completion: asyncio.Future[GitOk | GitFailed]
+) -> tuple[bool, bool]:
+    """Wait up to the grace period for the Git leader to be reaped.
+
+    Returns ``(reaped, cancelled)``. A caller cancellation is recorded and waited through, so
+    the wait still ends at the grace period and the caller re-raises it.
+    """
+    cancelled = False
+    deadline = time.monotonic() + _UNREAPED_CLEANUP_GRACE_SECONDS
+    while not (control.is_reaped() or completion.done()):
+        if time.monotonic() >= deadline:
+            return False, cancelled
+        try:
+            await asyncio.sleep(_REAP_POLL_SECONDS)
+        except asyncio.CancelledError:
+            cancelled = True
+    return True, cancelled
+
+
+def _report_unreaped(
+    argv: tuple[str, ...], control: _ProcessControl, completion: asyncio.Future[GitOk | GitFailed]
+) -> None:
+    note_unreaped_child(completion)
+    logger.error(
+        "Git child did not exit after its kill; the worktree claim stays held until it exits: "
+        "argv=%s %s",
+        " ".join(argv),
+        control.diagnostic(),
+    )
+
+
+def note_unreaped_child(completion: asyncio.Future[Any]) -> None:
+    """Record a Git child still running after its kill in the enclosing scope, if any."""
+    unreaped = _UNREAPED_CHILDREN.get()
+    if unreaped is not None:
+        unreaped.append(completion)
+
+
+@contextmanager
+def unreaped_children_scope() -> Iterator[list[asyncio.Future[Any]]]:
+    """Collect the completions of Git children that outlive their kill inside this scope."""
+    unreaped: list[asyncio.Future[Any]] = []
+    token = _UNREAPED_CHILDREN.set(unreaped)
+    try:
+        yield unreaped
+    finally:
+        _UNREAPED_CHILDREN.reset(token)
+
+
+def pending_unreaped_children() -> tuple[asyncio.Future[Any], ...]:
+    """Return the children in the current scope that have not exited yet."""
+    unreaped = _UNREAPED_CHILDREN.get() or []
+    return tuple(future for future in unreaped if not future.done())
 
 
 daemon_git = DaemonGitService()

@@ -41,8 +41,8 @@ def write_project_marker(root: Path, *, project_id: str, name: str) -> None:
 
 def init_git_checkout(root: Path) -> None:
     """Make `root` a git repository whose HEAD commit holds its current files."""
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, stdin=subprocess.DEVNULL)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, stdin=subprocess.DEVNULL)
     subprocess.run(
         [
             "git",
@@ -57,6 +57,7 @@ def init_git_checkout(root: Path) -> None:
         ],
         cwd=root,
         check=True,
+        stdin=subprocess.DEVNULL,
     )
 
 

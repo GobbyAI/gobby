@@ -13,10 +13,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_git_hygiene import blocking_status_lines
+from gobby.utils.daemon_git import pending_unreaped_children, unreaped_children_scope
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
@@ -91,6 +92,45 @@ def _release_deletion(worktree_id: str) -> None:
         _IN_FLIGHT.discard(worktree_id)
 
 
+# Holds strong references to claims that wait for a Git child to exit.
+_SETTLING: set[asyncio.Task[None]] = set()
+
+
+def _release_claim(worktree_id: str, unreaped: list[asyncio.Future[Any]]) -> bool:
+    """Release the claim now, or once every Git child left running has exited.
+
+    A child that survived its kill may still be removing the tree, so a second
+    deletion must not start on it. Returns whether the claim is still held.
+    """
+    pending = [future for future in unreaped if not future.done()]
+    if not pending:
+        _release_deletion(worktree_id)
+        return False
+    task = asyncio.ensure_future(_release_after_exit(worktree_id, pending))
+    _SETTLING.add(task)
+    task.add_done_callback(_SETTLING.discard)
+    return True
+
+
+async def _release_after_exit(worktree_id: str, pending: list[asyncio.Future[Any]]) -> None:
+    try:
+        await asyncio.gather(*pending, return_exceptions=True)
+    finally:
+        _release_deletion(worktree_id)
+
+
+def _git_child_unreaped_refusal() -> WorktreeDeletionResult:
+    return WorktreeDeletionResult(
+        success=False,
+        git_deleted=False,
+        error=(
+            "Worktree is still in use: a Git process did not exit after it was killed; "
+            "the record is kept and the deletion retries once it exits"
+        ),
+        error_code="worktree_in_use",
+    )
+
+
 async def delete_worktree_transaction(
     boundary: DestructiveBoundary,
     *,
@@ -112,16 +152,20 @@ async def delete_worktree_transaction(
             error="Worktree deletion is already in progress; the next pass retries",
             error_code="deletion_in_progress",
         )
-    try:
-        return await _run_delete_transaction(
-            boundary,
-            request=request,
-            worktree_storage=worktree_storage,
-            resolve_git_manager=resolve_git_manager,
-            task_manager=task_manager,
-        )
-    finally:
-        _release_deletion(request.worktree_id)
+    with unreaped_children_scope() as unreaped:
+        try:
+            result = await _run_delete_transaction(
+                boundary,
+                request=request,
+                worktree_storage=worktree_storage,
+                resolve_git_manager=resolve_git_manager,
+                task_manager=task_manager,
+            )
+        finally:
+            still_held = _release_claim(request.worktree_id, unreaped)
+    if still_held and not result.success:
+        return _git_child_unreaped_refusal()
+    return result
 
 
 async def _run_delete_transaction(
@@ -258,6 +302,9 @@ async def _delete_worktree(
     git_failure = await _delete_git_worktree(request, worktree, git_manager, force=force)
     if git_failure is not None:
         return git_failure
+    if pending_unreaped_children():
+        # A Git child is still running, so neither the tree nor the record may be cleared.
+        return _git_child_unreaped_refusal()
 
     cargo_cleanup_error = await run_thread_to_completion(
         context.run,
@@ -500,6 +547,9 @@ async def _delete_git_worktree(
             error=str(exc),
         )
 
+    if pending_unreaped_children():
+        # The killed Git child may still be editing the tree, so nothing further reads it.
+        return _git_child_unreaped_refusal()
     if result.success:
         unverified = await _verify_removed(git_manager, worktree.worktree_path)
         if unverified is None:

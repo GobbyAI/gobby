@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
+import signal
 import stat
 import subprocess
 import threading
@@ -505,6 +507,44 @@ async def test_timeout_kills_process_group_and_reaps_leader(
     assert "timeout_seconds=0.500" in message
     assert "spawn_seconds=" in message
     assert "running_seconds=" in message
+
+
+def _kill_recorded_group(pids: Path) -> None:
+    """Reap a fake Git group that a test deliberately left running."""
+    if not pids.exists():
+        return
+    leader = int(pids.read_text(encoding="utf-8").split()[0])
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(leader, signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_child_that_survives_its_kill_returns_a_bounded_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Git child that ignores the deadline kill must not hold its caller past the grace."""
+    _write_fake_git(tmp_path)
+    pids = tmp_path / "pids"
+    monkeypatch.setattr(daemon_git, "_kill_process_group", lambda _process: None)
+
+    try:
+        started = time.monotonic()
+        result = await asyncio.wait_for(
+            DaemonGitService().run(
+                ["status"],
+                cwd=tmp_path,
+                timeout=0.2,
+                env=_git_env(tmp_path, GIT_TEST_DELAY="15", GIT_TEST_PIDS=str(pids)),
+            ),
+            timeout=10,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        _kill_recorded_group(pids)
+
+    assert isinstance(result, GitTimeout)
+    assert elapsed < 8
+    assert "did not exit" in result.stderr
 
 
 @pytest.mark.asyncio

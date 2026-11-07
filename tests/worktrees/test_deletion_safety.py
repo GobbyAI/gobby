@@ -18,6 +18,7 @@ import pytest
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
+from gobby.utils import daemon_git
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
@@ -74,12 +75,14 @@ class _Git:
         tracked_lines: tuple[str, ...] = (),
         lie_about_removal: bool = False,
         gate: asyncio.Event | None = None,
+        unreaped: asyncio.Future[None] | None = None,
     ) -> None:
         self.tree = tree
         self.repo_path = tree.parent
         self.tracked_lines = tracked_lines
         self.lie_about_removal = lie_about_removal
         self.gate = gate
+        self.unreaped = unreaped
         self.started = asyncio.Event()
         self.status_calls = 0
         self.delete_calls = 0
@@ -114,6 +117,12 @@ class _Git:
 
     async def delete_worktree(self, path: str, **kwargs: Any) -> SimpleNamespace:
         self.delete_calls += 1
+        if self.unreaped is not None and not self.unreaped.done():
+            # The Git child ignored its kill: the Git layer reports it, then the call times out.
+            daemon_git.note_unreaped_child(self.unreaped)
+            return SimpleNamespace(
+                success=False, message="Git command timed out", error=None, output=""
+            )
         force = bool(kwargs.get("force", False))
         self.force_calls.append(force)
         self.started.set()
@@ -352,3 +361,35 @@ async def test_missing_tree_without_git_manager_refuses_and_keeps_stale_row(
     assert result.error_code == "worktree_git_unavailable"
     assert result.git_deleted is False
     assert WORKTREE_ID in storage.rows
+
+
+@pytest.mark.asyncio
+async def test_unreaped_git_child_holds_the_claim_until_it_exits(tmp_path: Path) -> None:
+    tree = _tree(tmp_path)
+    settled: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    git = _Git(tree, unreaped=settled)
+    storage = _Storage(_worktree(tree))
+
+    refused = await _delete(DeletionSurface.MCP, storage, git)
+
+    assert refused.success is False
+    assert refused.error_code == "worktree_in_use"
+    assert refused.git_deleted is False
+    assert tree.is_dir()
+    assert WORKTREE_ID in storage.rows
+
+    held = await _delete(DeletionSurface.TEARDOWN, storage, git)
+    assert held.error_code == "deletion_in_progress"
+    assert git.delete_calls == 1
+
+    settled.set_result(None)
+    retried: Any = None
+    for _ in range(100):
+        retried = await _delete(DeletionSurface.MCP, storage, git)
+        if retried.error_code != "deletion_in_progress":
+            break
+        await asyncio.sleep(0)
+
+    assert retried.success is True
+    assert not tree.exists()
+    assert WORKTREE_ID not in storage.rows
