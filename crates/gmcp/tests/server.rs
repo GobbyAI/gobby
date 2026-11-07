@@ -6,11 +6,11 @@ use anyhow::{Context, Result, bail};
 use gobby_mcp::contract::WRAPPER_CONTRACT;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use stub_daemon::{Response, StubDaemon};
@@ -81,10 +81,15 @@ struct Gmcp {
     stdin: Option<ChildStdin>,
     messages: mpsc::Receiver<Value>,
     next_id: u64,
+    stderr: Arc<Mutex<Vec<String>>>,
 }
 
 impl Gmcp {
     fn spawn(daemon_url: &str, home: &Path) -> Result<Self> {
+        Self::spawn_with_env(daemon_url, home, &[])
+    }
+
+    fn spawn_with_env(daemon_url: &str, home: &Path, environment: &[(&str, &str)]) -> Result<Self> {
         std::fs::write(home.join("bootstrap.yaml"), "api_key: test\n")?;
         let mut child = Command::new(env!("CARGO_BIN_EXE_gmcp"))
             .current_dir(home)
@@ -96,9 +101,13 @@ impl Gmcp {
             .env_remove("GOBBY_AGENT_RUN_ID")
             .env_remove("GOBBY_SESSION_ID")
             .env_remove("GOBBY_PROJECT_ID")
+            // A test runner inside tmux would otherwise pin caller identity to its pane.
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .envs(environment.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .context("spawn gmcp")?;
         let stdout = child.stdout.take().context("gmcp stdout")?;
@@ -112,12 +121,21 @@ impl Gmcp {
                 }
             }
         });
+        let stderr_pipe = child.stderr.take().context("gmcp stderr")?;
+        let stderr = Arc::new(Mutex::new(Vec::new()));
+        let lines = Arc::clone(&stderr);
+        thread::spawn(move || {
+            for line in BufReader::new(stderr_pipe).lines().map_while(Result::ok) {
+                lines.lock().unwrap().push(line);
+            }
+        });
         let stdin = child.stdin.take();
         Ok(Self {
             child,
             stdin,
             messages,
             next_id: 1,
+            stderr,
         })
     }
 
@@ -192,6 +210,12 @@ impl Drop for Gmcp {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // Shows the child's own error when a stub expectation fails.
+        if thread::panicking() {
+            for line in self.stderr.lock().unwrap().iter() {
+                eprintln!("gmcp stderr: {line}");
+            }
+        }
     }
 }
 
@@ -206,22 +230,42 @@ fn closed_url() -> Result<String> {
 #[test]
 fn initialize_does_not_wait_for_startup_probe() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
-    listener.set_nonblocking(true)?;
     let url = format!("http://{}", listener.local_addr()?);
+    // Accept the startup probe and leave it unanswered.
+    let (probes, probe_arrived) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = probes.send(listener.accept().map(|(stream, _)| stream));
+    });
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&url, home.path())?;
+    let mut probe = probe_arrived
+        .recv_timeout(RESPONSE_TIMEOUT)
+        .context("startup probe never reached the listener")??;
 
-    let started = Instant::now();
     let result = gmcp.initialize()?;
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "initialize waited on the unanswered 2 s startup probe"
-    );
 
+    // The probe stays open only if initialize returned before startup gave up on it.
+    assert!(
+        probe_still_open(&mut probe)?,
+        "initialize waited for the startup probe to close"
+    );
     let expected = fixture(WIRE_CASES)?["initialize"].clone();
     assert_eq!(canonical(result), canonical(expected));
-    // No health response is served: initialize must finish while startup is still waiting.
     Ok(())
+}
+
+/// Drains buffered probe bytes without blocking; false once the peer has closed.
+fn probe_still_open(probe: &mut TcpStream) -> Result<bool> {
+    probe.set_nonblocking(true)?;
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match probe.read(&mut buffer) {
+            Ok(0) => return Ok(false),
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(true),
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 #[test]
@@ -540,11 +584,11 @@ fn stdin_close_exits_with_outstanding_wait() -> Result<()> {
         "tools/call",
         json!({"name": "list_mcp_servers", "arguments": {}}),
     )?;
-    held.recv_timeout(Duration::from_secs(5))
+    held.recv_timeout(RESPONSE_TIMEOUT)
         .context("the daemon never received the wait request")?;
 
     gmcp.close_stdin();
-    let status = gmcp.wait_for_exit(Duration::from_secs(2))?;
+    let status = gmcp.wait_for_exit(RESPONSE_TIMEOUT)?;
     // Only after the child has exited does the held response go out.
     release_sender.send(())?;
     assert!(status.success());
@@ -642,6 +686,84 @@ fn shaping_get_tool_schema_reshapes_the_answer() -> Result<()> {
 #[test]
 fn shaping_get_tool_schema_keeps_only_the_error() -> Result<()> {
     shaping_case_matches_fixture("get_tool_schema_keeps_only_the_error")?;
+    Ok(())
+}
+
+#[test]
+fn variable_shortcuts_send_caller_identity_never_the_target() -> Result<()> {
+    let ok = || Response::json(200, json!({"success": true}));
+    let calls = |gmcp: &mut Gmcp| -> Result<()> {
+        let arguments = json!({"session_id": "target-session", "name": "x", "value": 1});
+        gmcp.call_tool("set_variable", arguments.clone())?;
+        gmcp.call_tool("get_variable", arguments)?;
+        Ok(())
+    };
+    let variable_requests = |daemon: &StubDaemon| {
+        daemon
+            .requests()
+            .into_iter()
+            .filter(|request| request.path.contains("/variables/"))
+            .collect::<Vec<_>>()
+    };
+
+    {
+        // Headless caller: no managed session and no tmux pane, so the header must stay
+        // empty and the daemon resolves the caller from terminal context.
+        let daemon = start_daemon((0..4).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
+        gmcp.initialize()?;
+        calls(&mut gmcp)?;
+        let requests = variable_requests(&daemon);
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for request in &requests {
+            assert!(
+                request
+                    .path
+                    .starts_with("/api/sessions/target-session/variables/"),
+                "{}",
+                request.path
+            );
+            assert!(
+                !request.headers.contains_key("x-gobby-session-id"),
+                "target leaked into caller identity: {:?}",
+                request.headers
+            );
+            assert!(
+                request.headers.contains_key("x-gobby-terminal-context"),
+                "{:?}",
+                request.headers
+            );
+        }
+    }
+
+    {
+        // Managed caller: the environment session is the caller and must not be replaced.
+        let daemon = start_daemon((0..4).map(|_| ok()).collect())?;
+        let home = tempfile::tempdir()?;
+        let mut gmcp = Gmcp::spawn_with_env(
+            &daemon.url(),
+            home.path(),
+            &[("GOBBY_SESSION_ID", "caller-session")],
+        )?;
+        daemon.wait_for_requests(1);
+        gmcp.initialize()?;
+        calls(&mut gmcp)?;
+        let requests = variable_requests(&daemon);
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for request in &requests {
+            assert_eq!(
+                request
+                    .headers
+                    .get("x-gobby-session-id")
+                    .map(String::as_str),
+                Some("caller-session"),
+                "{:?}",
+                request.headers
+            );
+        }
+    }
     Ok(())
 }
 

@@ -12,6 +12,8 @@ from typing import Any, NoReturn
 
 import redis.exceptions
 
+from gobby.memory import stage_timing
+
 logger = logging.getLogger(__name__)
 
 _CONSTRAINT_POLL_INTERVAL_SECONDS = 0.25
@@ -190,7 +192,13 @@ class FalkorClient:
         cypher: str,
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Execute a Cypher query and return rows as flat dictionaries."""
+        """Execute a Cypher query and return rows as flat dictionaries.
+
+        The round trip is recorded into the active recall: ``falkor_wall`` is the
+        client-observed time and ``falkor_server`` the server's own execution time,
+        so the difference is queueing, pool, and socket wait.
+        """
+        start = time.perf_counter()
         try:
             result = await self._graph.query(cypher, params, timeout=self._query_timeout_ms)
         except redis.exceptions.TimeoutError as exc:
@@ -201,7 +209,12 @@ class FalkorClient:
             raise FalkorConnectionError(f"FalkorDB connection failed: {exc}") from exc
         except redis.exceptions.ResponseError as exc:
             _raise_mapped_response_error(exc)
+        finally:
+            stage_timing.record("falkor_wall", time.perf_counter() - start)
 
+        server_ms = getattr(result, "run_time_ms", None)
+        if isinstance(server_ms, (int, float)):
+            stage_timing.record("falkor_server", server_ms / 1000.0)
         return self._parse_falkor_result(result)
 
     @staticmethod

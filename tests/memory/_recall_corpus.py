@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph.clustering import EntityVector
+from gobby.memory.services.knowledge_graph.extraction import KnowledgeGraphExtractor
 from gobby.memory.services.knowledge_graph.models import Entity, Relationship
 from gobby.memory.services.knowledge_graph.normalization import display_entity_name
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -136,7 +137,13 @@ def _seed_keys(mem: MemoryDef) -> list[str]:
     return [entity_key(PERSONAL_PROJECT_ID, display_entity_name(name)) for name in mem.entities]
 
 
-class _StubExtractor:
+class _StubExtractor(KnowledgeGraphExtractor):
+    """Deterministic extractor that serves the corpus's entities and relations.
+
+    It replaces the LLM-backed extractor, so the base constructor's LLM and prompt
+    dependencies are never used and ``super().__init__()`` is not called.
+    """
+
     def __init__(self, by_content: dict[str, MemoryDef]) -> None:
         self._by_content = by_content
 
