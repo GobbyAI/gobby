@@ -33,6 +33,10 @@ fn repo_venv() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv")
 }
 
+/// SIGTERM-to-SIGKILL grace for fixture backends. A backend's TERM handler must run inside this
+/// window to write its marker; 100 ms missed it under CPU load (1 of 10 stress runs).
+const DRAIN_GRACE: Duration = Duration::from_secs(1);
+
 fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
     let mut config = BackendConfig::from_command_json(home, Some(argv))?;
     config.environment.insert(
@@ -71,7 +75,7 @@ impl TestDb {
         config
             .environment
             .insert("HOME".into(), home.as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = DRAIN_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         Ok(BackendSupervisor::new(lease, claim, config))
     }
@@ -603,7 +607,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         config
             .environment
             .insert("HOME".into(), home.path().as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = DRAIN_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
         let (_tx, rx) = watch::channel(false);
