@@ -198,6 +198,18 @@ fn agent_and_terminal_rows_are_separate() {
     assert!(!terminals[0].nested);
 }
 
+/// Pane output is not a state: a bare terminal has nothing assigned, so a pane
+/// streaming output still draws blank in the terminals section (#25790).
+#[test]
+fn bare_terminal_streaming_output_stays_blank() {
+    let mut ws = scripted_workspace();
+    let beta = ws.pane_for_terminal("term-beta").unwrap();
+    ws.pane_mut(beta).new_output = true;
+    let terminals = crate::ui::sidebar::terminal_rows(&ws, &Chrome::dark());
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0].state, RowState::Blank);
+}
+
 #[test]
 fn agent_rows_render_three_lines_with_the_model_slug() {
     let mut ws = Workspace::scripted();
@@ -397,14 +409,14 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
     };
     assert_eq!(
         line_text(&row_line(&row, 24, &chrome, 0)),
-        " ○ alpha (main ↑2 ↓1)  ▾"
+        "   alpha (main ↑2 ↓1)  ▾"
     );
     // The parenthetical goes whole before the name loses a cell.
     assert_eq!(
         line_text(&row_line(&row, 16, &chrome, 0)),
-        " ○ alpha       ▾"
+        "   alpha       ▾"
     );
-    assert_eq!(line_text(&row_line(&row, 7, &chrome, 0)), " ○ a… ▾");
+    assert_eq!(line_text(&row_line(&row, 7, &chrome, 0)), "   a… ▾");
     assert_eq!(line_text(&row_second_line(&row, 24, &chrome)), "");
     let worktree = SidebarRow {
         id: "wt-1".into(),
@@ -418,12 +430,12 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
     };
     assert_eq!(
         line_text(&row_line(&worktree, 30, &chrome, 0)),
-        "▸  └─ ○ feature · #123"
+        "▸  └─   feature · #123"
     );
     // With no agent bound the worktree has no state: a blank holds the
     // glyph's cell so the branch stays under the card's name.
     let unbound = SidebarRow {
-        state: RowState::Unknown,
+        state: RowState::Blank,
         ..worktree.clone()
     };
     assert_eq!(
@@ -438,6 +450,33 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
     };
     assert_eq!(line_text(&row_line(&group, 12, &chrome, 0)), " alpha ─────");
     assert_eq!(group.height(), 1);
+}
+
+#[test]
+fn project_glyph_draws_its_counts_beside_the_state() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        id: "proj-alpha".into(),
+        label: "alpha".into(),
+        kind: RowKind::Project,
+        state: RowState::Working,
+        no_live: 2,
+        branch: Some("main".into()),
+        ..SidebarRow::default()
+    };
+    // One active agent beside two dead ones reads active with two no-live.
+    assert_eq!(
+        line_text(&row_line(&row, 24, &chrome, 0)),
+        " ▶ ✕2 alpha (main)"
+    );
+    let quiet = SidebarRow {
+        no_live: 0,
+        ..row.clone()
+    };
+    assert_eq!(
+        line_text(&row_line(&quiet, 24, &chrome, 0)),
+        " ▶ alpha (main)"
+    );
 }
 
 #[test]
@@ -461,12 +500,12 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
         "   Working task 123 Review auth"
     );
     let idle = SidebarRow {
-        state: RowState::Idle,
+        state: RowState::Blank,
         ..row.clone()
     };
     assert_eq!(
         line_text(&row_line(&idle, 60, &chrome, 0)),
-        " ○ #123: Backend"
+        "   #123: Backend"
     );
     let nested = SidebarRow {
         nested: true,
@@ -707,12 +746,12 @@ fn a_worktree_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     );
     assert_eq!(
         line_text(&row_line(&worktree, 20, &chrome, 0)),
-        "   └─ ○ feature-with"
+        "   └─   feature-with"
     );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     assert_eq!(
         line_text(&row_line(&worktree, 20, &chrome, 0)),
-        "   └─ ○ ature-with-a"
+        "   └─   ature-with-a"
     );
 
     // A name that fits once its task drops stays still.
@@ -723,7 +762,7 @@ fn a_worktree_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     assert_eq!(row_travel(&fits, 20), 0);
     assert_eq!(
         line_text(&row_line(&fits, 20, &chrome, 0)),
-        "   └─ ○ feature-name"
+        "   └─   feature-name"
     );
 }
 
@@ -742,16 +781,16 @@ fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     assert_eq!(row_travel(&lane, 24), 31 - 13);
     assert_eq!(
         line_text(&row_line(&lane, 24, &chrome, 0)),
-        " ○ #15398: Lane 2 develo"
+        "   #15398: Lane 2 develo"
     );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     assert_eq!(
         line_text(&row_line(&lane, 24, &chrome, 0)),
-        " ○ #15398: ne 2 develope"
+        "   #15398: ne 2 develope"
     );
     chrome.ticker = (TICKER_PAUSE + 18) * TICKER_STEP;
     let line = row_line(&lane, 24, &chrome, 0);
-    assert_eq!(line_text(&line), " ○ #15398: Client chrome");
+    assert_eq!(line_text(&line), "   #15398: Client chrome");
     let reference = line
         .spans
         .iter()
@@ -762,13 +801,13 @@ fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     chrome.prefs.title_scrolling = TitleScrolling::Off;
     assert_eq!(
         line_text(&row_line(&lane, 24, &chrome, 0)),
-        " ○ #15398: Lane 2 devel…"
+        "   #15398: Lane 2 devel…"
     );
 
     // A row too narrow to pin the reference beside a title truncates.
     chrome.prefs.title_scrolling = TitleScrolling::Left;
     assert_eq!(row_travel(&lane, 10), 0);
-    assert_eq!(line_text(&row_line(&lane, 10, &chrome, 0)), " ○ #15398…");
+    assert_eq!(line_text(&row_line(&lane, 10, &chrome, 0)), "   #15398…");
 
     // A name that fits stays still.
     let fits = SidebarRow {
@@ -779,7 +818,7 @@ fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     assert_eq!(row_travel(&fits, 24), 0);
     assert_eq!(
         line_text(&row_line(&fits, 24, &chrome, 0)),
-        " ○ #15398: Lane 2"
+        "   #15398: Lane 2"
     );
 }
 
@@ -796,7 +835,7 @@ fn a_terminal_row_puts_its_address_at_the_right_edge_while_the_name_leaves_room(
     };
     assert_eq!(
         line_text(&row_line(&row, 20, &chrome, 0)),
-        " ○ zsh       0:0:0:2"
+        "   zsh       0:0:0:2"
     );
     assert_eq!(
         line_text(&row_second_line(&row, 20, &chrome)),
@@ -810,7 +849,7 @@ fn a_terminal_row_puts_its_address_at_the_right_edge_while_the_name_leaves_room(
     };
     assert_eq!(
         line_text(&row_line(&long, 20, &chrome, 0)),
-        " ○ cargo-nextest-run"
+        "   cargo-nextest-run"
     );
 }
 
@@ -884,28 +923,28 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         line_text(&row_line(row, 34, &chrome, 0))
     };
 
-    assert_eq!(line_one("sess-named"), " ○ #77: Assistant");
+    assert_eq!(line_one("sess-named"), "   #77: Assistant");
     assert_eq!(
         line_one("sess-bare-ref"),
-        " ○ #78: Codex",
+        "   #78: Codex",
         "a manual title that is only the ref names nothing"
     );
     assert_eq!(
         line_one("sess-auto"),
-        " ○ #79: Codex",
+        "   #79: Codex",
         "an automatic title keeps the provider"
     );
     assert_eq!(
         line_one("sess-suffix"),
-        " ○ #80: Release #80",
+        "   #80: Release #80",
         "a ref inside the title is part of the name"
     );
     assert_eq!(
         line_one("sess-other"),
-        " ○ #81: other#81: Handoff",
+        "   #81: other#81: Handoff",
         "another project's prefix is not this session's ref"
     );
-    assert_eq!(line_one("sess-ref"), " ○ #82: Ship");
+    assert_eq!(line_one("sess-ref"), "   #82: Ship");
 }
 
 /// The style of the one span in `line` whose text is exactly `text`.

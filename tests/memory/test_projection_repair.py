@@ -61,7 +61,9 @@ async def test_repair_uses_authoritative_scope_and_repairs_falkor_in_place() -> 
     )
     storage.get_memories.assert_called_once_with([memory.id], ALL_MEMORIES, visibility="all")
     memory_cypher, memory_params = falkor.query.await_args_list[0].args
-    assert "UNWIND $memories AS memory" in memory_cypher
+    assert (
+        "UNWIND $memories AS memory WITH memory MATCH (m:Memory {memory_id: memory.memory_id})"
+    ) in " ".join(memory_cypher.split())
     assert "SET m.project_id = memory.project_id, m.is_global = memory.is_global" in memory_cypher
     assert "DELETE" not in memory_cypher
     assert memory_params == {
@@ -119,7 +121,9 @@ async def test_repair_preserves_pending_work_and_reports_retryable_failures() ->
 
 
 @pytest.mark.asyncio
-async def test_graph_repair_paginates_list_memories_with_positive_limit(monkeypatch) -> None:
+async def test_graph_repair_paginates_list_memories_with_positive_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """limit=None crashed list_memories; the graph sweep must page instead."""
     from gobby.memory.services import projection_repair as module
 

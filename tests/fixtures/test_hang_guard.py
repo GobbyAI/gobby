@@ -15,8 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures import hang_guard
-
 pytestmark = pytest.mark.integration
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,13 +99,7 @@ def test_run_that_never_exits_dumps_its_threads(
     assert "_leaked_worker" in output
 
 
-def test_session_finish_freezes_the_heap_before_unconfigure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Unconfigure's full collections otherwise re-walk every object the suite imported (#25830).
-    frozen: list[bool] = []
-    monkeypatch.setattr(gc, "freeze", lambda: frozen.append(True))
-
-    hang_guard.pytest_sessionfinish()
-
-    assert frozen == [True]
+def test_import_heap_is_frozen_before_tests_run() -> None:
+    # Exit forces full GC passes over every tracked object. The import-time heap is
+    # ~370k objects, so under load five such passes overran the exit watchdog (#25804).
+    assert gc.get_freeze_count() > 0

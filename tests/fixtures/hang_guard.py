@@ -25,16 +25,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 @pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # Pytest's unconfigure forces five full collections, and interpreter shutdown adds
+    # more. Each scans every tracked object, and the import graph alone is ~370k of them,
+    # so under load the exit overran the watchdog below (#25804). Freezing the
+    # import-time heap leaves those passes scanning only what the tests create.
+    gc.freeze()
+
+
+@pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config: pytest.Config) -> None:
     # The process's own stderr descriptor: pytest's capture has ended by now.
     faulthandler.dump_traceback_later(
         float(config.getini("exit_watchdog_timeout")), exit=True, file=_STDERR_FD
     )
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_sessionfinish() -> None:
-    # Every full collection walks each object the suite imported, about 0.6M by the end
-    # of tests/memory. Freezing them first keeps unconfigure's collections and the
-    # interpreter's final collection from re-walking that heap (#25830).
-    gc.freeze()

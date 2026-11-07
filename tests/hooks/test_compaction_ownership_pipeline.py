@@ -28,6 +28,11 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.observer_context_usage import (
+    PRESSURE_BAND_VARIABLE,
+    detect_context_compact_guidance,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -102,6 +107,27 @@ SYNTHETIC_RULES: list[tuple[str, dict[str, Any]]] = [
             "effects": [{"type": "inject_context", "template": HANDOFF_MARKER}],
         },
     ),
+    (
+        "flag-pending-reset-on-pre-compact",
+        {
+            "event": "pre_compact",
+            "priority": 5,
+            "effects": [
+                {"type": "set_variable", "variable": "pending_context_reset", "value": True}
+            ],
+        },
+    ),
+    (
+        "unflag-pending-reset-on-compact-start",
+        {
+            "event": "session_start",
+            "when": "variables.get('pending_context_reset')",
+            "priority": 100,
+            "effects": [
+                {"type": "set_variable", "variable": "pending_context_reset", "value": False}
+            ],
+        },
+    ),
 ]
 
 
@@ -151,11 +177,18 @@ class _Session:
         self.engine = _engine(db)
         self.variables: dict[str, Any] = {"unlocked_tools": ["mcp__gobby__call_tool"]}
         self.evaluated: list[HookEvent] = []
+        self._wire()
+
+    def _wire(self) -> None:
         self.manager = MagicMock()
         self.manager._compaction_ownership = CompactionOwnership()
         self.manager._handle_after_daemon_ready = self._evaluate
         for name in _HOOK_METHODS:
             setattr(self.manager, name, functools.partial(getattr(HookManager, name), self.manager))
+
+    def restart(self) -> None:
+        """A daemon restart: fresh in-memory ownership over the same rules and stored variables."""
+        self._wire()
 
     @property
     def kinds(self) -> list[HookEventType]:
@@ -389,8 +422,136 @@ def test_boundaries_written_before_the_buffer_began_are_not_replayed(
     send(session.event(START, source="compact"))
     send(session.event(BEFORE, prompt="parent-compacted"))
 
-    assert session.kinds == [BEFORE, START, BEFORE]
+    assert session.kinds == [BEFORE, PRE, START, BEFORE]
     assert session.variables["unlocked_tools"] == []
+
+
+def test_a_manual_compaction_whose_boundary_flushes_late_still_clears_the_pending_reset(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # A manual PreCompact runs its rules at once, so it is the compaction that sets the flag.
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(START, source="compact"))
+    assert session.variables["pending_context_reset"] is True
+
+    # The settling event lands before Claude flushes the compact_boundary record.
+    send(session.event(BEFORE, prompt="early"))
+    assert session.variables["pending_context_reset"] is True
+
+    session.parent_boundary("boundary-1")
+    send(session.event(BEFORE, prompt="late"))
+
+    assert session.variables["pending_context_reset"] is False
+
+
+def test_a_session_start_lost_to_a_restart_does_not_mute_the_next_turn_band(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # The manual PreCompact ran its rules at once and set the flag. Its held SessionStart lived in
+    # the old daemon process, so nothing replays the clear after the restart.
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(START, source="compact"))
+    assert session.variables["pending_context_reset"] is True
+
+    session.restart()
+    session.parent_boundary("boundary-after-restart")
+    session.send_sync(session.event(BEFORE, prompt="first turn after restart"))
+    assert session.variables["pending_context_reset"] is True
+
+    # The turn-start observer reads the same stored variables and computes the band on that turn.
+    sessions = MagicMock()
+    sessions.get.return_value = SimpleNamespace(
+        context_used_tokens=260_000, context_window=1_000_000
+    )
+    detect_context_compact_guidance(session.variables, "session-id", sessions)
+
+    assert session.variables["pending_context_reset"] is False
+    assert session.variables["context_compact_guidance_kind"] == "warn"
+
+
+def _usage_manager() -> MagicMock:
+    """A session store reporting 260k of a 1M window, the usage that predates the compaction."""
+    sessions = MagicMock()
+    sessions.get.return_value = SimpleNamespace(
+        context_used_tokens=260_000, context_window=1_000_000
+    )
+    return sessions
+
+
+def _run_turn_observers(session: _Session, event: HookEvent, sessions: MagicMock) -> None:
+    """Run the observers HookManager runs for a turn start, over the session's stored variables."""
+    failures = WorkflowHookHandler(session_manager=sessions)._run_observers(
+        event, SESSION_ID, session.variables
+    )
+    assert failures == set()
+
+
+def test_a_turn_inside_the_grace_window_keeps_a_held_reset_and_writes_no_band(
+    session: _Session,
+    send: Callable[[HookEvent], HookResponse],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The manual PreCompact set the reset, and its SessionStart is held with no boundary flushed.
+    # The turn inside the grace window still reads pre-compaction usage, so it must write no band.
+    clock = [datetime.now(UTC)]
+    monkeypatch.setattr(compaction_ownership, "_receive_time", lambda: clock[0])
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(START, source="compact"))
+    clock[0] += timedelta(seconds=30)
+    turn = session.event(BEFORE, prompt="turn inside the grace window")
+
+    send(turn)
+    _run_turn_observers(session, turn, _usage_manager())
+
+    assert session.kinds == [PRE, BEFORE]
+    assert session.variables["pending_context_reset"] is True
+    assert session.variables["context_compact_guidance_kind"] == ""
+    assert session.variables[PRESSURE_BAND_VARIABLE] == "none"
+
+
+def test_a_turn_after_the_grace_window_computes_the_band_from_the_stale_reset(
+    session: _Session,
+    send: Callable[[HookEvent], HookResponse],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Past the window with no boundary, the held SessionStart is dropped and nothing clears the
+    # reset. The next turn is the stale clear, and it computes the band from the usage it reads.
+    clock = [datetime.now(UTC)]
+    monkeypatch.setattr(compaction_ownership, "_receive_time", lambda: clock[0])
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(START, source="compact"))
+    clock[0] += timedelta(seconds=121)
+    turn = session.event(BEFORE, prompt="turn after the grace window")
+
+    send(turn)
+    _run_turn_observers(session, turn, _usage_manager())
+
+    assert session.kinds == [PRE, BEFORE]
+    assert session.variables["pending_context_reset"] is False
+    assert session.variables["context_compact_guidance_kind"] == "warn"
+
+
+def test_an_auto_compaction_turn_inside_the_grace_window_writes_no_band(
+    session: _Session,
+    send: Callable[[HookEvent], HookResponse],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An auto PreCompact and its SessionStart are both held with no boundary flushed, so no reset
+    # is set yet. The turn inside the grace window still reads pre-compaction usage: no band.
+    clock = [datetime.now(UTC)]
+    monkeypatch.setattr(compaction_ownership, "_receive_time", lambda: clock[0])
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    clock[0] += timedelta(seconds=30)
+    turn = session.event(BEFORE, prompt="turn inside the grace window")
+
+    send(turn)
+    _run_turn_observers(session, turn, _usage_manager())
+
+    assert session.kinds == [BEFORE]
+    assert session.variables.get("pending_context_reset") is not True
+    assert session.variables["context_compact_guidance_kind"] == ""
+    assert session.variables[PRESSURE_BAND_VARIABLE] == "none"
 
 
 def test_a_verified_parent_boundary_is_not_replayed_again(

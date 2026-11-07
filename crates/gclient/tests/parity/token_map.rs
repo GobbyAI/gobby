@@ -32,11 +32,10 @@ pub fn palette() -> Palette {
 fn state_dot_role(state: RowState, p: &Palette) -> Color {
     match state {
         RowState::Attention => p.peach,
-        RowState::Orphaned => p.red,
+        RowState::NoLive => p.red,
         RowState::Paused => p.overlay1,
         RowState::Working => p.accent,
-        RowState::Unseen => p.teal,
-        RowState::Idle | RowState::Unknown => p.overlay0,
+        RowState::Blank => p.overlay0,
     }
 }
 

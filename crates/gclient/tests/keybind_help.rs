@@ -155,23 +155,33 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
         .map(line_text)
         .collect();
     assert_eq!(legend[0], " Legend");
+    // Five rows, one per state, named by the state labels alone: the status
+    // bar counts under the same words, so no second column repeats them.
+    assert!(!legend[1].contains("counts as"), "{:?}", legend[1]);
     let states = [
-        ("⍾ needs you", "need you", "an error it cannot pass"),
-        ("▶ active", "active", "running a turn"),
         (
-            "○ idle",
-            "idle",
-            "at its prompt, or ended its turn on an armed wait or background work",
+            "⍾ needs you",
+            "waiting on you: a question, a plan approval or a permission prompt",
         ),
-        ("◆ output unseen", "idle", "clears when its pane is focused"),
-        ("‖ held", "idle", "paused on purpose or interrupted by you"),
-        ("◌ gone", "n gone", "shown only when not zero"),
-        ("· no state yet", "idle", "before the daemon has a state"),
+        (
+            "▶ active",
+            "mid-turn, or between turns while waiting on a child run it started",
+        ),
+        (
+            "‖ paused",
+            "alive but stopped: paused on purpose or interrupted by you",
+        ),
+        (
+            "✕ no live agents",
+            "agents are assigned but all are dead, or the machine's daemon is unreachable",
+        ),
+        ("  blank", "nothing is assigned or being worked"),
     ];
-    for ((state, counts_as, means), row) in states.iter().zip(&legend[2..]) {
+    assert_eq!(legend.len(), 2 + states.len() + 1, "{legend:?}");
+    for ((state, means), row) in states.iter().zip(&legend[2..]) {
         assert!(row.starts_with(&format!(" {state} ")), "{row:?}");
-        assert!(row.contains(&format!(" {counts_as} ")), "{row:?}");
         assert!(row.ends_with(means), "{row:?}");
+        assert!(!row.contains(" idle") && !row.contains(" gone"), "{row:?}");
     }
 
     let screen = rendered_help(&chrome, 120, 40);
@@ -187,5 +197,5 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
     chrome.keybind_help.query = "split".to_string();
     let searched = rendered_help(&chrome, 120, 40);
     assert!(!searched.contains("needs you"), "{searched}");
-    assert!(!searched.contains("running a turn"), "{searched}");
+    assert!(!searched.contains("waiting on a child run"), "{searched}");
 }

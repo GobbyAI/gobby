@@ -38,7 +38,11 @@ from gobby.utils.session_context import (
     set_daemon_execution,
     set_session_context,
 )
+from tests.terminal_scene import agent_target
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+
+# The shared send_keys scene is autouse: every dispatcher here is wired like the runner's.
+__all__ = ["agent_target"]
 
 pytestmark = pytest.mark.unit
 
