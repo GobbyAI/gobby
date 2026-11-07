@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import logging
 import sys
 import types
 from typing import Any
@@ -11,6 +13,47 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 pytestmark = pytest.mark.unit
+
+
+async def test_query_reports_midflight_cancellation(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _client(monkeypatch)
+    client._graph.query = AsyncMock(side_effect=asyncio.CancelledError)
+    with caplog.at_level(logging.INFO, logger="gobby.memory.falkor_client"):
+        with pytest.raises(asyncio.CancelledError):
+            await client.query("RETURN 1")
+    assert any(
+        "cancelled=True" in record.getMessage() and "opened_connections=0" in record.getMessage()
+        for record in caplog.records
+    )
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    "method,stage",
+    [
+        ("_connect", "falkor_connect"),
+        ("on_connect_check_health", "falkor_auth"),
+        ("read_response", "falkor_response"),
+    ],
+)
+async def test_connection_phase_survives_cancellation(
+    monkeypatch: pytest.MonkeyPatch, method: str, stage: str
+) -> None:
+    from redis.asyncio.connection import Connection
+
+    from gobby.memory import falkor_client, stage_timing
+
+    connection_type = getattr(falkor_client, "_TimedConnection", None)
+    assert connection_type is not None
+    monkeypatch.setattr(Connection, method, AsyncMock(side_effect=asyncio.CancelledError))
+    connection = connection_type()
+    with stage_timing.recording() as timings:
+        with pytest.raises(asyncio.CancelledError):
+            await getattr(connection, method)()
+    assert timings.calls[stage] == 1
+    assert timings.seconds[stage] >= 0
 
 
 class FakeGraph:
@@ -71,7 +114,7 @@ class FakeFalkorDB:
 def _install_fake_falkordb(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_package = types.ModuleType("falkordb")
     fake_asyncio = types.ModuleType("falkordb.asyncio")
-    fake_asyncio.FalkorDB = FakeFalkorDB
+    monkeypatch.setattr(fake_asyncio, "FalkorDB", FakeFalkorDB, raising=False)
     monkeypatch.setitem(sys.modules, "falkordb", fake_package)
     monkeypatch.setitem(sys.modules, "falkordb.asyncio", fake_asyncio)
 
@@ -100,6 +143,7 @@ async def test_constructor_uses_async_falkordb_client(monkeypatch: pytest.Monkey
         "port": 16379,
         "password": "secret",
         "socket_timeout": 9.5,
+        "connection_pool": client._pool,
     }
     assert fake_db.graph_name == "gobby_kg"
     assert client.base_url == "redis://127.0.0.1:16379"
@@ -207,9 +251,9 @@ async def test_query_maps_redis_response_error_to_falkor_query_error(
 
     import redis.exceptions
 
-    FakeFalkorDB.last_instance.graph.next_error = redis.exceptions.ResponseError(
-        "Invalid input near ')'"
-    )
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.next_error = redis.exceptions.ResponseError("Invalid input near ')'")
 
     from gobby.memory.falkor_client import FalkorQueryError
 
@@ -416,7 +460,9 @@ async def test_ping_returns_false_for_connection_or_query_errors(
 
     import redis.exceptions
 
-    FakeFalkorDB.last_instance.graph.next_error = redis.exceptions.ConnectionError("refused")
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.next_error = redis.exceptions.ConnectionError("refused")
 
     assert await client.ping() is False
 

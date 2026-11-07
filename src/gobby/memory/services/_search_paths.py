@@ -42,7 +42,8 @@ async def _candidate_vectors(
     if fetch is None:
         return None
     try:
-        vectors = await fetch(merged_ids, timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS)
+        with stage_timing.timed("candidate_vectors"):
+            vectors = await fetch(merged_ids, timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -169,11 +170,12 @@ async def _score_unwindowed_candidates(
     ]
     if to_score:
         try:
-            fetched = await vector_store.score_ids(
-                query_embedding,
-                to_score,
-                timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
-            )
+            with stage_timing.timed("candidate_rescore"):
+                fetched = await vector_store.score_ids(
+                    query_embedding,
+                    to_score,
+                    timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
+                )
             qdrant_score_map.update(fetched)
             memo.attempted.update(to_score)
         except asyncio.CancelledError:

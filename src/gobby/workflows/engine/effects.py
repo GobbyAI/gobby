@@ -4,7 +4,6 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, run_command, and block matching.
 """
 
-import asyncio
 import copy
 import json
 import logging
@@ -168,13 +167,9 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             # path because there is nowhere to deliver a deferred result.
             if effect.inject_result and not effect.background and self._mcp_dispatcher:
                 try:  # Broad catch intentional — external MCP dispatcher is an opaque async callable
-                    dispatch = self._mcp_dispatcher(
-                        effect.server, effect.tool, rendered_args, event
+                    dr = await self._timed_mcp_dispatch(
+                        effect, row, rendered_args, event, effect.timeout_seconds
                     )
-                    if effect.timeout_seconds is None:
-                        dr = await dispatch
-                    else:
-                        dr = await asyncio.wait_for(dispatch, timeout=effect.timeout_seconds)
                     success = isinstance(dr, dict) and dr.get("success", False)
                     if success and effect.success_variable:
                         write_rule_variable(
