@@ -16,7 +16,22 @@ _ELSE_RE = re.compile(r"else(?![\w$])")
 
 
 def literal_shell_calls(arguments: Any) -> list[dict[str, Any]] | None:
-    """Read all statically invoked literal shells; batch members need explicit absolute cwd."""
+    """Prove every literal shell in a cell; a batch member needs an explicit absolute cwd."""
+    calls = literal_exec_calls(arguments)
+    if calls is not None and len(calls) > 1:
+        for call in calls:
+            workdir = call.get("workdir")
+            if not isinstance(workdir, str) or not Path(workdir).is_absolute():
+                return None
+    return calls
+
+
+def literal_exec_calls(arguments: Any) -> list[dict[str, Any]] | None:
+    """Enumerate every statically invoked literal shell, without requiring any cwd.
+
+    Attribution reads a batch's members from this list; only ``literal_shell_calls`` proves
+    their cwd. Any shell that cannot be read (dynamic, looped, repeated, unparsed) is None.
+    """
     if not isinstance(arguments, str):
         return None
     # Known direct shells are inspected below; reject every other dynamic shell path.
@@ -41,8 +56,6 @@ def literal_shell_calls(arguments: Any) -> list[dict[str, Any]] | None:
             return None
         workdir = fields.get("workdir")
         if "workdir" in fields and (not isinstance(workdir, str) or not workdir):
-            return None
-        if len(matches) > 1 and (not isinstance(workdir, str) or not Path(workdir).is_absolute()):
             return None
         calls.append(fields)
     return calls or None

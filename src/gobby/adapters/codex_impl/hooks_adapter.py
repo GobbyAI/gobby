@@ -26,7 +26,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     functions_exec_shell_input,
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
-from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
+from gobby.adapters.codex_impl.literal_shell_calls import literal_exec_calls, literal_shell_calls
 from gobby.adapters.codex_impl.native_exec_failures import is_simple_native_exec_cell
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
@@ -101,11 +101,15 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
                     if parsed.tool_use_id and parsed.tool_name in FUNCTIONS_EXEC_NAMES:
                         if is_simple_native_exec_cell(arguments.get("raw")):
                             simple_cells.add(parsed.tool_use_id)
-                        calls = literal_shell_calls(arguments.get("raw"))
+                        calls = literal_exec_calls(arguments.get("raw"))
                         if calls is not None and len(calls) > 1:
+                            # Attribution reads every member; only absolute workdirs prove cwd.
                             batches[parsed.tool_use_id] = calls
-                            cwd = arguments.get("cwd")
-                            validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
+                            if literal_shell_calls(arguments.get("raw")) is not None:
+                                cwd = arguments.get("cwd")
+                                validated[parsed.tool_use_id] = (
+                                    cwd if isinstance(cwd, str) else None
+                                )
                     if parsed.tool_use_id and (
                         parsed.tool_name in DIRECT_EXEC_NAMES
                         or (

@@ -271,3 +271,179 @@ def test_loop_in_cell_code_still_fails_closed(
     event, response = _hook(event_handlers, tmp_path, records, command=TASK_COMMAND)
     assert response.decision == "block", current_tool_cwd(event.data)
     assert "cannot prove its working directory" in (response.reason or "")
+
+
+# Replay of the reviewer's rollout for task #25842: a yielded cell of two exec_command calls
+# with no workdir, waited on twice; then a refused single-call cell; then a compliant cell.
+REPLAY_DIFF = (
+    "git diff 0.5.0...048e8bd2eb95e93ca25b35b30aa600371c9b5841 -- src/gobby/storage/plans.py "
+    "src/gobby/mcp_proxy/tools/plans/__init__.py "
+    "crates/gcore/migrations/490_grant_plan_coverage_reads.sql docs/contracts/plan-coverage.md"
+)
+REPLAY_OCR = (
+    "ocr delegate preview --format json --from 0.5.0 --to 048e8bd2eb95e93ca25b35b30aa600371c9b5841"
+)
+REPLAY_PYTEST = (
+    "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+    "GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest "
+    "tests/mcp_proxy/test_plans_linked_checkout.py tests/storage/test_storage_plans.py "
+    "tests/storage/test_plan_coverage_read_grant.py "
+    "tests/storage/test_postgres_agent_authorization.py "
+    "tests/fixtures/test_hang_guard.py -p no:cacheprovider -q -m 'not e2e'"
+)
+CELL_ONE = (
+    f"text(await tools.exec_command({{cmd:{json.dumps(REPLAY_PYTEST)},"
+    "yield_time_ms:1000,max_output_tokens:1500}));"
+    'text((await tools.mcp__gobby__call_tool({server_name:"gobby-results",'
+    'tool_name:"get_tool_result",arguments:{result_id:"4c073743-a578-4a7f-8452-bfe6ddf6fe56",'
+    "offset:2000,limit:1800}})).structuredContent);"
+)
+YIELD_TEN = "Script running with cell ID 10\nWall time 31.2 seconds\nOutput:\n"
+REFUSED_ONE = (
+    "Script failed\nWall time 5.0 seconds\nOutput:\nScript error:\n"
+    "Command blocked by PreToolUse hook: Gobby cannot prove its working directory."
+)
+
+
+def _unscoped(command: str, max_output_tokens: int) -> str:
+    """One exec_command with no workdir, as a non-compliant cell writes it."""
+    return (
+        f"text(await tools.exec_command({{cmd:{json.dumps(command)},"
+        f"max_output_tokens:{max_output_tokens}}}));"
+    )
+
+
+def _wait(call_id: str, cell_id: str) -> dict[str, Any]:
+    """Codex's wait tool: a function_call whose JSON arguments name the yielded cell."""
+    arguments = json.dumps({"cell_id": cell_id, "yield_time_ms": 30000})
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "wait",
+            "call_id": call_id,
+            "arguments": arguments,
+        },
+    }
+
+
+def _wait_output(call_id: str, text: str) -> dict[str, Any]:
+    return {
+        "type": "response_item",
+        "payload": {"type": "function_call_output", "call_id": call_id, "output": text},
+    }
+
+
+def test_yielded_unscoped_batch_does_not_block_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """The yielded batch cannot have launched the probe, so it must not poison later proofs."""
+    workdir = tmp_path / "task-25804"
+    records = [
+        _call("cell10", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+        _wait("wait1", "10"),
+        _wait_output("wait1", YIELD_TEN),
+        _wait("wait2", "10"),
+        _wait_output("wait2", YIELD_TEN),
+        _call("cell1", CELL_ONE),
+        _output("cell1", REFUSED_ONE),
+        _call("cell2", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
+def test_yielded_unscoped_batch_member_does_not_prove_its_own_command(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A member of the yielded batch is never validated: a bare run of it stays refused."""
+    records = [
+        _call("cell10", _unscoped(REPLAY_PYTEST, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell10", YIELD_TEN),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "block", current_tool_cwd(event.data)
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+@pytest.mark.parametrize("name", list(UNKNOWN_CELLS))
+def test_yielded_unknown_cell_blocks_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path, name: str
+) -> None:
+    workdir = tmp_path / "task"
+    records = [
+        _call("unknown", UNKNOWN_CELLS[name]),
+        _output("unknown", YIELD_TEN),
+        _call("pytest", _literal(PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=PYTEST)
+    assert response.decision == "block", current_tool_cwd(event.data)
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+YIELDED_NON_COMPLIANT = {
+    "variable_workdir": (
+        f"text(await tools.exec_command({{cmd:{json.dumps(REPLAY_DIFF)},workdir:dir}}));"
+        f"text(await tools.exec_command({{cmd:{json.dumps(REPLAY_OCR)},max_output_tokens:1000}}));"
+    ),
+    "load_helper": (
+        "const job = await load('job');"
+        " text(await tools.exec_command({cmd: job.cmd, workdir: job.dir}));"
+        f"text(await tools.exec_command({{cmd:{json.dumps(REPLAY_OCR)}}}));"
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(YIELDED_NON_COMPLIANT))
+def test_yielded_non_compliant_batch_still_blocks_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path, name: str
+) -> None:
+    workdir = tmp_path / "task"
+    records = [
+        _call("batch", YIELDED_NON_COMPLIANT[name]),
+        _output("batch", YIELD_TEN),
+        _call("pytest", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "block", current_tool_cwd(event.data)
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_refused_unscoped_batch_does_not_block_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """The two-cell shape of the report: a refused multi-call cell, then one literal cell."""
+    workdir = tmp_path / "task"
+    records = [
+        _call("refused", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("refused", REFUSED_ONE),
+        _call("cell2", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
+RUFF_CHECK = "uv run --no-sync ruff check src/gobby/adapters/codex_impl"
+
+
+@pytest.mark.parametrize("prior", ["alone", "after_yielded_batch", "after_refused_cell"])
+def test_literal_ruff_check_proves_its_workdir(
+    event_handlers: EventHandlers, tmp_path: Path, prior: str
+) -> None:
+    """Report 756fe608: a literal, read-only ruff check was refused in a Codex developer tree."""
+    workdir = tmp_path / "task"
+    records: list[dict[str, Any]] = []
+    if prior == "after_yielded_batch":
+        records += [
+            _call("cell10", _unscoped(REPLAY_PYTEST, 8500) + _unscoped(REPLAY_OCR, 1000)),
+            _output("cell10", YIELD_TEN),
+        ]
+    elif prior == "after_refused_cell":
+        records += [_call("cell1", CELL_ONE), _output("cell1", REFUSED_ONE)]
+    records.append(_call("ruff", _literal(RUFF_CHECK, workdir)))
+    event, response = _hook(event_handlers, tmp_path, records, command=RUFF_CHECK)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
