@@ -1035,7 +1035,9 @@ async def test_uninitialized_client_blocking_init_fails_vector_channel() -> None
     client.close = AsyncMock()
     session = RelatedEvidenceSession()
     with (
-        patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as client_factory,
+        patch(
+            "gobby.memory.vectorstore._new_async_qdrant_client", return_value=client
+        ) as client_factory,
         patch.object(related_module, "RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS", 0.02),
         patch.object(related_module, "RELATED_EVIDENCE_RETRY_ATTEMPTS", 1),
         patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),

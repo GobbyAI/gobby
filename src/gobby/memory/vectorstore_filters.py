@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from typing import TYPE_CHECKING
 
 from gobby.storage.memories_models import MemoryType, validate_memory_type
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
 
+if TYPE_CHECKING:
+    from qdrant_client.models import Filter
+
 
 def payload_filter(filters: Mapping[str, str] | Filter | None) -> Filter | None:
     """Convert simple payload equality constraints to a Qdrant filter."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     if filters is None or isinstance(filters, Filter):
         return filters
     conditions = [
@@ -24,6 +28,8 @@ def memory_scope_filter(
     scope: MemoryScope, memory_type: str | MemoryType | None = None
 ) -> Filter | None:
     """Return a Qdrant filter for an explicit memory scope."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     type_conditions = []
     if memory_type is not None:
         type_conditions.append(
