@@ -9,12 +9,14 @@ handoff, and the daemon delivers it. The test types nothing into the pane. It as
 that the daemon delivers the get_handoff continuation and that the seat finishes that
 turn within a bound.
 
-The restart_hold scenario requests a daemon restart at the seat's own launch-turn stop,
-with the handoff staged. The handoff shutdown hold refuses it with 409 handoff_pending.
-The staged handoff stays live until the continuation's get_handoff consumes it. The test
-does not wait for the seat to go idle first, because that wait can outlast the window. A
-restart admitted after consumption returns 200 and stops the isolated daemon, which fails
-the case.
+The restart_hold scenario keeps the launch turn running after set_handoff stages the handoff,
+with a shell sleep longer than the daemon's settle budget. The daemon then interrupts the
+turn and types the compact, and the staged handoff stays live until the continuation's
+get_handoff consumes it. The test sends the restart as soon as the daemon's own marker shows
+the staged handoff. It expects 409 handoff_pending and then confirms the marker is still
+live. This window is bounded, not absolute: the restart is judged after the start probe,
+and consumption needs the compact and a continuation turn first. A restart admitted after
+consumption returns 200 and stops the isolated daemon, which fails the case.
 """
 
 from __future__ import annotations
@@ -54,24 +56,41 @@ pytestmark = [
 ]
 
 
-def _seat_prompt(*, clear: bool) -> str:
+_HOLD_SECONDS = 90
+_REPLY_TAIL = "Reply READY after the call, then stop."
+# The shell hold keeps the launch turn running past the daemon's settle budget, so the daemon
+# interrupts the turn to submit the compact. The restart is judged inside that budget.
+_HOLD_TAIL = (
+    f"Then run `sleep {_HOLD_SECONDS}` in the shell with a timeout of "
+    f"{(_HOLD_SECONDS + 30) * 1000} milliseconds. "
+    "Reply READY after the sleep returns, then stop."
+)
+
+
+def _seat_prompt(scenario: str) -> str:
     # The launch turn stages the seat's own handoff. The prompt must not name the
     # continuation tool, or the launch turn itself would match the continuation filter.
+    clear = str(scenario == "clear").lower()
+    tail = _HOLD_TAIL if scenario == "restart_hold" else _REPLY_TAIL
     return (
         "Disposable handoff continuation seat. Load the gobby:references/sessions/handoffs.md "
         "skill reference with gobby-skills get_skill. Fetch the gobby-sessions set_handoff "
         "schema with get_tool_schema. Then call set_handoff with "
-        f"clear_session={str(clear).lower()}, current_state "
+        f"clear_session={clear}, current_state "
         "'Disposable continuation seat idle after bind.', and next_steps ['Reply READY.']. "
-        "Reply READY after the call, then stop."
+        f"{tail}"
     )
 
 
-def _seat_command(provider: Provider, binary: Path, *, clear: bool) -> list[str]:
+def _seat_command(provider: Provider, binary: Path, scenario: str) -> list[str]:
     # MCP stays enabled: the seat itself loads the reference and calls set_handoff.
-    prompt = _seat_prompt(clear=clear)
+    prompt = _seat_prompt(scenario)
     if provider == "claude":
-        return [str(binary), prompt, "--allowedTools", "mcp__gobby"]
+        allowed = ["mcp__gobby"]
+        if scenario == "restart_hold":
+            # The only added permission is the shell sleep that holds the launch turn.
+            allowed.append("Bash(sleep:*)")
+        return [str(binary), prompt, "--allowedTools", *allowed]
     return [str(binary), "--sandbox", "read-only", "--ask-for-approval", "never", prompt]
 
 
@@ -108,6 +127,32 @@ def _compact_boundary_recorded(db: Any, seat: Seat) -> bool:
             (seat.surface.session_id,),
         ).fetchone()
     return row is not None
+
+
+def _handoff_staged(db: Any) -> bool:
+    """Whether a set_handoff marker is live on the hub.
+
+    The shutdown guard refuses a restart while any such marker exists. The marker is cleared
+    only when get_handoff consumes it, and that call follows the compact, so a live marker
+    means the restart is held.
+    """
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM session_variables"
+            " WHERE jsonb_typeof(variables -> 'set_handoff_pending') = 'object'"
+            " LIMIT 1"
+        ).fetchone()
+    return row is not None
+
+
+async def _await_staged_handoff(db: Any) -> None:
+    """Block until set_handoff stages a marker, failing closed at the bound."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _BOUND_SECONDS
+    while not await asyncio.to_thread(_handoff_staged, db):
+        if loop.time() >= deadline:
+            raise AssertionError("set_handoff staged no handoff marker within the bound")
+        await asyncio.sleep(0.25)
 
 
 async def _request_restart(proof: LiveProof) -> httpx.Response:
@@ -164,18 +209,24 @@ async def test_seat_continues_after_its_own_handoff(
     verify_binary_set(composer_admission)
     binary = composer_admission.providers[provider].path
     clear = scenario == "clear"
-    seat = await composer_fixture.adopt(provider, _seat_command(provider, binary, clear=clear))
+    seat = await composer_fixture.adopt(provider, _seat_command(provider, binary, scenario))
     writes_before = len(composer_fixture.trace.events)
+    if scenario == "restart_hold":
+        # The shell hold keeps the launch turn running through the restart judgment. The daemon's
+        # own marker is the sync point, and the wait fails closed before any restart is sent.
+        await _await_staged_handoff(postgres_db)
+        held = await _request_restart(composer_fixture)
+        assert held.status_code == 409, held.text
+        assert held.json().get("status") == "handoff_pending", held.text
+        assert await asyncio.to_thread(_handoff_staged, postgres_db), (
+            "the staged handoff was consumed while the restart was held"
+        )
     # The launch turn ends only after set_handoff returns, so the handoff is staged by then.
     await seat.ws.wait_for(
         lambda event: _is_turn_end(event, seat),
         timeout=_BOUND_SECONDS,
         description="launch turn ended after the seat's set_handoff",
     )
-    if scenario == "restart_hold":
-        held = await _request_restart(composer_fixture)
-        assert held.status_code == 409, held.text
-        assert held.json().get("status") == "handoff_pending", held.text
     await _assert_continuation(composer_fixture, seat, writes_before=writes_before, clear=clear)
     # A clear is not a compaction, so its boundary kind is not asserted here.
     if scenario != "clear":
