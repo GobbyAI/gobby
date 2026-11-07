@@ -16,7 +16,8 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | Compose project | `gcode-graphify-rerun-2026-11` |
 | Source commit (gobby, gcode) | `30d2a5956241c208e670133efbc9d9452721118f`, the 0.5.0 tip at candidate time |
 | gcode pins | version `1.9.104`, contract `12`; read from `crates/gcode` at the source commit and matching the installed binary |
-| Graphify | PyPI `graphifyy`, unpinned; recorded by version, executable SHA-256 and lock |
+| Graphify | PyPI `graphifyy==0.9.103` (version-only pin, `GRAPHIFY_PACKAGE` in `harness/launch_services.py`); recorded by version, executable SHA-256 and lock |
+| Graphify wheel | `graphifyy-0.9.103-py3-none-any.whl`, SHA-256 `7948c030f8b04153d88bc1ee23a485ddaa0c2d6aaa03a748c177e3c217bcfe34` (PyPI, latest release at review time) |
 | Database and account | `gobby_bakeoff_22948`; account email `bakeoff-22948@example.invalid` (reserved placeholder) |
 
 ## Order of live steps (orchestrator)
@@ -29,7 +30,7 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
    - writes `isolation/external-state.before.json` once;
    - renders Compose, checks names and ports, and starts the three services, or verifies the
      existing services receipt and skips the start;
-   - builds `tools/graphify/venv` (latest `graphifyy`) and `tools/gobby/venv` (`uv sync --frozen`
+   - builds `tools/graphify/venv` (`graphifyy==0.9.103`) and `tools/gobby/venv` (`uv sync --frozen`
      from `sources/gobby`), each through a probe receipt;
    - runs `prepare_daemon.py` and `prepare_identity.py`;
    - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by

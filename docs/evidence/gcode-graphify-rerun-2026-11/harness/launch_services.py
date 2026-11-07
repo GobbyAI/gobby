@@ -33,7 +33,7 @@ from service_safety import validate_container, validate_rendered
 from validate_environment import _load_env_file
 
 DAEMON_PORTS = (59480, 59481, 59482)
-GRAPHIFY_PACKAGE = "graphifyy"
+GRAPHIFY_PACKAGE = "graphifyy==0.9.103"
 PYTHON_VERSION = "3.13"
 
 
