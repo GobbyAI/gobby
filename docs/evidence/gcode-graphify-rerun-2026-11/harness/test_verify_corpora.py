@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from provision_environment import build_manifest
-from runtime_boundary import write_once
+from runtime_boundary import EvidenceError, write_once
 from verify_corpora import compare_case, compare_manifests, verify_corpora
 
 
@@ -68,5 +68,5 @@ def test_manifests_must_match_the_september_copies(tmp_path: Path) -> None:
     september = tmp_path / "september"
     write_once(rerun / "manifests/corpora/gcode/C0.json", '{"a": 1}', 0o600)
     write_once(september / "manifests/corpora/gcode/C0.json", '{"a": 2}', 0o600)
-    with pytest.raises(AssertionError, match="gcode/C0"):
+    with pytest.raises(EvidenceError, match="gcode/C0"):
         compare_manifests(rerun, september, cases={"gcode": ("C0",)})

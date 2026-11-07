@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from provision_environment import COMPARATOR_CASES, DEFAULT_RUNTIME_ROOT, build_manifest
+from runtime_boundary import require
 
 COMPARED_FIELDS = ("type", "mode", "bytes", "sha256")
 
@@ -50,7 +51,7 @@ def compare_manifests(
             relative = Path("manifests/corpora") / comparator / f"{case}.json"
             rerun = (root / relative).read_bytes()
             september = (september_root / relative).read_bytes()
-            assert rerun == september, f"manifest differs from September: {comparator}/{case}"
+            require(rerun == september, f"manifest differs from September: {comparator}/{case}")
 
 
 def verify_corpora(

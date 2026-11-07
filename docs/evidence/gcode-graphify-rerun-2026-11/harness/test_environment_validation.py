@@ -5,12 +5,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 from provision_environment import GOBBY_SHA
-from runtime_boundary import file_record, write_once
+from runtime_boundary import EvidenceError, file_record, write_once
 from validate_environment import (
     _validate_grant_binding,
     _validate_installation_checks,
@@ -86,7 +88,7 @@ def test_grant_rejects_stale_foreign_or_shared_capabilities(
     for part in parts[:-1]:
         target = target[part]
     target[parts[-1]] = value
-    with pytest.raises(AssertionError):
+    with pytest.raises(EvidenceError):
         _validate_grant_binding(tmp_path, grant, 150)
 
 
@@ -103,7 +105,7 @@ def test_installation_rejects_tampered_probe_log(tmp_path: Path) -> None:
     ]
     _validate_installation_checks(tmp_path, checks)
     log.write_text("failed")
-    with pytest.raises(AssertionError, match="artifact hash changed"):
+    with pytest.raises(EvidenceError, match="artifact hash changed"):
         _validate_installation_checks(tmp_path, checks)
 
 
@@ -174,7 +176,7 @@ def test_isolation_rejects_additional_global_change(
     before, after = external_snapshots
     before["stable_global_files"].append({"path": "/global/other", "sha256": "before"})
     after["stable_global_files"].append({"path": "/global/other", "sha256": "after"})
-    with pytest.raises(AssertionError, match="unattributed global file change"):
+    with pytest.raises(EvidenceError, match="unattributed global file change"):
         validate_external_changes(tmp_path, before, after)
 
 
@@ -189,7 +191,7 @@ def test_isolation_rejects_unrelated_config_edit_despite_matching_capture_hash(
     proof["codex_trust"]["capture"] = file_record(tmp_path, capture)
     proof_path.write_text(json.dumps(proof))
     after["stable_global_files"][0]["sha256"] = hashlib.sha256(capture.read_bytes()).hexdigest()
-    with pytest.raises(AssertionError, match="exceeds the attributed"):
+    with pytest.raises(EvidenceError, match="exceeds the attributed"):
         validate_external_changes(tmp_path, before, after)
 
 
@@ -250,7 +252,7 @@ def test_source_manifest_rejects_symlink_escaping_source(tmp_path: Path) -> None
     source.mkdir(parents=True)
     (source / "leak.txt").symlink_to(outside)
     record = _write_source_manifest(tmp_path, [_symlink_item("leak.txt", str(outside))])
-    with pytest.raises(AssertionError, match="escapes source root"):
+    with pytest.raises(EvidenceError, match="escapes source root"):
         _validate_source_manifest(tmp_path, "gobby", SOURCE_PIN, record)
 
 
@@ -263,7 +265,7 @@ def test_source_manifest_rejects_retargeted_symlink(tmp_path: Path) -> None:
     record = _write_source_manifest(tmp_path, [_symlink_item("CLAUDE.md", "AGENTS.md")])
     (source / "CLAUDE.md").unlink()
     (source / "CLAUDE.md").symlink_to("OTHER.md")
-    with pytest.raises(AssertionError, match="symlink target changed"):
+    with pytest.raises(EvidenceError, match="symlink target changed"):
         _validate_source_manifest(tmp_path, "gobby", SOURCE_PIN, record)
 
 
@@ -322,7 +324,7 @@ def test_graphify_receipt_rejects_version_absent_from_dependency_lock(
     tmp_path: Path, graphify_receipt: dict[str, Any]
 ) -> None:
     graphify_receipt["pypi_version"] = "0.10.1"
-    with pytest.raises(AssertionError, match="absent from dependency lock"):
+    with pytest.raises(EvidenceError, match="absent from dependency lock"):
         validate_graphify_receipt(tmp_path, graphify_receipt)
 
 
@@ -332,7 +334,7 @@ def test_graphify_receipt_rejects_unexpected_entrypoint(
     other = tmp_path / "tools/graphify/venv/bin/other"
     write_once(other, "other-binary\n", 0o755)
     graphify_receipt["entrypoints"] = [file_record(tmp_path, other)]
-    with pytest.raises(AssertionError, match="unexpected graphify entrypoint"):
+    with pytest.raises(EvidenceError, match="unexpected graphify entrypoint"):
         validate_graphify_receipt(tmp_path, graphify_receipt)
 
 
@@ -340,7 +342,7 @@ def test_graphify_receipt_rejects_tampered_executable(
     tmp_path: Path, graphify_receipt: dict[str, Any]
 ) -> None:
     (tmp_path / "tools/graphify/venv/bin/graphify").write_text("graphify-hacked\n")
-    with pytest.raises(AssertionError, match="artifact hash changed"):
+    with pytest.raises(EvidenceError, match="artifact hash changed"):
         validate_graphify_receipt(tmp_path, graphify_receipt)
 
 
@@ -386,13 +388,41 @@ def test_gcode_receipt_rejects_contract_version_drift(
     tmp_path: Path, gcode_receipt: dict[str, Any]
 ) -> None:
     gcode_receipt["contract_version"] = 7
-    with pytest.raises(AssertionError, match="contract"):
+    with pytest.raises(EvidenceError, match="contract"):
         validate_gcode_receipt(tmp_path, gcode_receipt)
+
+
+def test_graphify_rejection_survives_python_optimize(
+    tmp_path: Path, graphify_receipt: dict[str, Any]
+) -> None:
+    # Under -O, assert statements are stripped. The rejection must still raise.
+    graphify_receipt["pypi_version"] = "0.10.1"
+    probe = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from runtime_boundary import EvidenceError\n"
+        "from validate_environment import validate_graphify_receipt\n"
+        "receipt = json.loads(sys.stdin.read())\n"
+        "try:\n"
+        "    validate_graphify_receipt(Path(sys.argv[1]), receipt)\n"
+        "except EvidenceError:\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(3)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", probe, str(tmp_path)],
+        input=json.dumps(graphify_receipt),
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).parent,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_gcode_receipt_rejects_source_commit_other_than_gobby_pin(
     tmp_path: Path, gcode_receipt: dict[str, Any]
 ) -> None:
     gcode_receipt["source_commit"] = "0" * 40
-    with pytest.raises(AssertionError, match="source_commit"):
+    with pytest.raises(EvidenceError, match="source_commit"):
         validate_gcode_receipt(tmp_path, gcode_receipt)

@@ -9,7 +9,7 @@ from urllib.parse import quote, urlparse
 
 import yaml
 from provision_environment import DEFAULT_RUNTIME_ROOT, PORTS, _write_json, _write_text
-from runtime_boundary import assert_owned_runtime, contained_file
+from runtime_boundary import assert_owned_runtime, contained_file, require
 from validate_environment import _load_env_file
 
 
@@ -41,23 +41,25 @@ def preserve_image_probe(dsn: str) -> None:
 
     with psycopg.connect(dsn, connect_timeout=5) as conn:
         row = conn.execute("SELECT to_regclass('public._pgaudit_probe')::oid").fetchone()
-        assert row is not None
+        require(row is not None, "check failed: row is not None")
         if row[0] is None:
             return
         target = conn.execute(
             "SELECT to_regclass('bakeoff_image_audit._pgaudit_probe')::oid"
         ).fetchone()
-        assert target == (None,), "ambiguous image audit probe; refusing to replace either table"
+        require(target == (None,), "ambiguous image audit probe; refusing to replace either table")
         count = conn.execute("SELECT count(*) FROM public._pgaudit_probe").fetchone()
         conn.execute("CREATE SCHEMA IF NOT EXISTS bakeoff_image_audit")
         conn.execute("ALTER TABLE public._pgaudit_probe SET SCHEMA bakeoff_image_audit")
-        assert (
+        require(
             conn.execute("SELECT to_regclass('bakeoff_image_audit._pgaudit_probe')::oid").fetchone()
-            == row
+            == row,
+            "check failed: conn.execute(\"SELECT to_regclass('bakeoff_image_audit._pgaudit_probe')::oid\").fetchone() == row",
         )
-        assert (
+        require(
             conn.execute("SELECT count(*) FROM bakeoff_image_audit._pgaudit_probe").fetchone()
-            == count
+            == count,
+            "check failed: conn.execute('SELECT count(*) FROM bakeoff_image_audit._pgaudit_probe').fetchone() == count",
         )
 
 
@@ -108,8 +110,14 @@ def prepare(root: Path) -> None:
     from gobby.storage.schema_contract import apply_schema
     from gobby.utils.native_bin import resolve_native_bin
 
-    assert Path(gobby.__file__).resolve().is_relative_to(root / "sources/gobby")
-    assert resolve_native_bin("gdaemon") == str(root / "gobby-home/bin/gdaemon")
+    require(
+        Path(gobby.__file__).resolve().is_relative_to(root / "sources/gobby"),
+        "check failed: Path(gobby.__file__).resolve().is_relative_to(root / 'sources/gobby')",
+    )
+    require(
+        resolve_native_bin("gdaemon") == str(root / "gobby-home/bin/gdaemon"),
+        "check failed: resolve_native_bin('gdaemon') == str(root / 'gobby-home/bin/gdaemon')",
+    )
     credentials = _load_env_file(contained_file(root, "config/services.env"))
     dsn = (
         f"postgresql://{credentials['BAKEOFF_POSTGRES_USER']}:"
@@ -117,8 +125,13 @@ def prepare(root: Path) -> None:
         f"{PORTS['postgres']}/{credentials['BAKEOFF_POSTGRES_DB']}"
     )
     parsed = urlparse(dsn)
-    assert parsed.hostname == "127.0.0.1" and parsed.port == 61234
-    assert parsed.path == "/gobby_bakeoff_22948"
+    require(
+        parsed.hostname == "127.0.0.1" and parsed.port == 61234,
+        "check failed: parsed.hostname == '127.0.0.1' and parsed.port == 61234",
+    )
+    require(
+        parsed.path == "/gobby_bakeoff_22948", "check failed: parsed.path == '/gobby_bakeoff_22948'"
+    )
     bootstrap = {
         "database_url": dsn,
         "daemon_port": PORTS["daemon_http"],
@@ -158,7 +171,7 @@ def prepare(root: Path) -> None:
         )
         revision = mutations.patch_internal(
             expected_revision=mutations.repository.current_revision(),
-            source="wiki-bakeoff-21942",
+            source="wiki-bakeoff-22948",
             patch=ConfigPatch(
                 values=values,
                 secrets={

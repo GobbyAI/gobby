@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from provision_environment import COMPOSE_PROJECT, CONTAINERS, NETWORK, PORTS, VOLUMES
+from runtime_boundary import require
 
 SERVICE_PORTS = {
     "postgres": {5432: PORTS["postgres"]},
@@ -31,10 +32,22 @@ HEALTH_COMMANDS = {
 
 
 def expected_environments(credentials: dict[str, str]) -> dict[str, dict[str, str]]:
-    assert credentials["BAKEOFF_POSTGRES_DB"] == "gobby_bakeoff_22948"
-    assert credentials["BAKEOFF_POSTGRES_USER"] == "gobby_bakeoff_22948"
-    assert len(credentials["BAKEOFF_POSTGRES_PASSWORD"]) >= 32
-    assert len(credentials["BAKEOFF_FALKORDB_PASSWORD"]) >= 32
+    require(
+        credentials["BAKEOFF_POSTGRES_DB"] == "gobby_bakeoff_22948",
+        "check failed: credentials['BAKEOFF_POSTGRES_DB'] == 'gobby_bakeoff_22948'",
+    )
+    require(
+        credentials["BAKEOFF_POSTGRES_USER"] == "gobby_bakeoff_22948",
+        "check failed: credentials['BAKEOFF_POSTGRES_USER'] == 'gobby_bakeoff_22948'",
+    )
+    require(
+        len(credentials["BAKEOFF_POSTGRES_PASSWORD"]) >= 32,
+        "check failed: len(credentials['BAKEOFF_POSTGRES_PASSWORD']) >= 32",
+    )
+    require(
+        len(credentials["BAKEOFF_FALKORDB_PASSWORD"]) >= 32,
+        "check failed: len(credentials['BAKEOFF_FALKORDB_PASSWORD']) >= 32",
+    )
     return {
         "postgres": {
             "POSTGRES_DB": credentials["BAKEOFF_POSTGRES_DB"],
@@ -54,89 +67,176 @@ def validate_rendered(
     compose: dict[str, Any], images: dict[str, str], credentials: dict[str, str]
 ) -> None:
     environments = expected_environments(credentials)
-    assert set(compose) <= {"name", "services", "networks", "volumes"}
-    assert compose["name"] == COMPOSE_PROJECT
-    assert set(compose["services"]) == set(CONTAINERS)
+    require(
+        set(compose) <= {"name", "services", "networks", "volumes"},
+        "check failed: set(compose) <= {'name', 'services', 'networks', 'volumes'}",
+    )
+    require(compose["name"] == COMPOSE_PROJECT, "check failed: compose['name'] == COMPOSE_PROJECT")
+    require(
+        set(compose["services"]) == set(CONTAINERS),
+        "check failed: set(compose['services']) == set(CONTAINERS)",
+    )
     network = compose["networks"]
-    assert set(network) == {"default"}
-    assert network["default"] in ({"name": NETWORK}, {"name": NETWORK, "ipam": {}})
-    assert compose["volumes"] == {
-        f"{service}-data": {"name": volume} for service, volume in VOLUMES.items()
-    }
+    require(set(network) == {"default"}, "check failed: set(network) == {'default'}")
+    require(
+        network["default"] in ({"name": NETWORK}, {"name": NETWORK, "ipam": {}}),
+        "check failed: network['default'] in ({'name': NETWORK}, {'name': NETWORK, 'ipam': {}})",
+    )
+    require(
+        compose["volumes"]
+        == {f"{service}-data": {"name": volume} for service, volume in VOLUMES.items()},
+        "check failed: compose['volumes'] == {f'{service}-data': {'name': volume} for service, volume in VOLUMES.items()}",
+    )
     for name, container in CONTAINERS.items():
         service = compose["services"][name]
-        assert service["environment"] == environments[name], f"environment mismatch: {name}"
-        assert service["healthcheck"] == {
-            "test": ["CMD-SHELL", HEALTH_COMMANDS[name]],
-            "timeout": "2s",
-            "interval": "2s",
-            "retries": 30,
-        }, f"healthcheck mismatch: {name}"
-        assert set(service) <= {
-            "image",
-            "container_name",
-            "command",
-            "environment",
-            "ports",
-            "volumes",
-            "healthcheck",
-            "networks",
-            "entrypoint",
-        }, f"unexpected service settings: {name}"
-        assert service["container_name"] == container
-        assert service.get("entrypoint") is None
+        require(service["environment"] == environments[name], f"environment mismatch: {name}")
+        require(
+            service["healthcheck"]
+            == {
+                "test": ["CMD-SHELL", HEALTH_COMMANDS[name]],
+                "timeout": "2s",
+                "interval": "2s",
+                "retries": 30,
+            },
+            f"healthcheck mismatch: {name}",
+        )
+        require(
+            set(service)
+            <= {
+                "image",
+                "container_name",
+                "command",
+                "environment",
+                "ports",
+                "volumes",
+                "healthcheck",
+                "networks",
+                "entrypoint",
+            },
+            f"unexpected service settings: {name}",
+        )
+        require(
+            service["container_name"] == container,
+            "check failed: service['container_name'] == container",
+        )
+        require(
+            service.get("entrypoint") is None, "check failed: service.get('entrypoint') is None"
+        )
         if name == "postgres":
-            assert service["command"] == [
-                "postgres",
-                "-c",
-                "shared_preload_libraries=pg_search,pgaudit",
-                "-c",
-                "pgaudit.log=none",
-            ]
+            require(
+                service["command"]
+                == [
+                    "postgres",
+                    "-c",
+                    "shared_preload_libraries=pg_search,pgaudit",
+                    "-c",
+                    "pgaudit.log=none",
+                ],
+                "check failed: service['command'] == ['postgres', '-c', 'shared_preload_libraries=pg_search,pgaudit', '-c', 'pgaudit.log=none']",
+            )
         else:
-            assert service.get("command") is None
-        assert service["image"] == images[name]
-        assert re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", service["image"])
-        assert service["networks"] == {"default": None}
+            require(service.get("command") is None, "check failed: service.get('command') is None")
+        require(service["image"] == images[name], "check failed: service['image'] == images[name]")
+        require(
+            re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", service["image"]),
+            "check failed: re.fullmatch('[^\\\\s@]+@sha256:[0-9a-f]{64}', service['image'])",
+        )
+        require(
+            service["networks"] == {"default": None},
+            "check failed: service['networks'] == {'default': None}",
+        )
         ports = service["ports"]
-        assert len(ports) == len(SERVICE_PORTS[name])
+        require(
+            len(ports) == len(SERVICE_PORTS[name]),
+            "check failed: len(ports) == len(SERVICE_PORTS[name])",
+        )
         observed = {}
         for binding in ports:
-            assert set(binding) <= {"mode", "host_ip", "target", "published", "protocol"}
-            assert binding.get("mode", "ingress") == "ingress"
-            assert binding["host_ip"] == "127.0.0.1"
-            assert binding.get("protocol", "tcp") == "tcp"
+            require(
+                set(binding) <= {"mode", "host_ip", "target", "published", "protocol"},
+                "check failed: set(binding) <= {'mode', 'host_ip', 'target', 'published', 'protocol'}",
+            )
+            require(
+                binding.get("mode", "ingress") == "ingress",
+                "check failed: binding.get('mode', 'ingress') == 'ingress'",
+            )
+            require(
+                binding["host_ip"] == "127.0.0.1", "check failed: binding['host_ip'] == '127.0.0.1'"
+            )
+            require(
+                binding.get("protocol", "tcp") == "tcp",
+                "check failed: binding.get('protocol', 'tcp') == 'tcp'",
+            )
             observed[binding["target"]] = int(binding["published"])
-        assert observed == SERVICE_PORTS[name], f"unexpected ports: {name}"
+        require(observed == SERVICE_PORTS[name], f"unexpected ports: {name}")
         mounts = service["volumes"]
-        assert len(mounts) == 1
+        require(len(mounts) == 1, "check failed: len(mounts) == 1")
         mount = mounts[0]
-        assert set(mount) <= {"type", "source", "target", "volume"}
-        assert mount["type"] == "volume"
-        assert mount["source"] == f"{name}-data"
-        assert mount["target"] == MOUNT_TARGETS[name]
-        assert mount.get("volume", {}) in ({}, {"nocopy": True})
+        require(
+            set(mount) <= {"type", "source", "target", "volume"},
+            "check failed: set(mount) <= {'type', 'source', 'target', 'volume'}",
+        )
+        require(mount["type"] == "volume", "check failed: mount['type'] == 'volume'")
+        require(
+            mount["source"] == f"{name}-data", "check failed: mount['source'] == f'{name}-data'"
+        )
+        require(
+            mount["target"] == MOUNT_TARGETS[name],
+            "check failed: mount['target'] == MOUNT_TARGETS[name]",
+        )
+        require(
+            mount.get("volume", {}) in ({}, {"nocopy": True}),
+            "check failed: mount.get('volume', {}) in ({}, {'nocopy': True})",
+        )
 
 
 def validate_container(inspect: dict[str, Any], name: str, image_id: str) -> None:
-    assert inspect["Name"] == f"/{CONTAINERS[name]}"
-    assert inspect["Image"] == image_id
+    require(
+        inspect["Name"] == f"/{CONTAINERS[name]}",
+        "check failed: inspect['Name'] == f'/{CONTAINERS[name]}'",
+    )
+    require(inspect["Image"] == image_id, "check failed: inspect['Image'] == image_id")
     labels = inspect["Config"]["Labels"]
-    assert labels["com.docker.compose.project"] == COMPOSE_PROJECT
-    assert labels["com.docker.compose.service"] == name
+    require(
+        labels["com.docker.compose.project"] == COMPOSE_PROJECT,
+        "check failed: labels['com.docker.compose.project'] == COMPOSE_PROJECT",
+    )
+    require(
+        labels["com.docker.compose.service"] == name,
+        "check failed: labels['com.docker.compose.service'] == name",
+    )
     host = inspect["HostConfig"]
-    assert host["Privileged"] is False
-    assert host.get("Binds") in (None, [], [f"{VOLUMES[name]}:{MOUNT_TARGETS[name]}:rw"])
-    assert not host.get("CapAdd") and not host.get("Devices")
-    assert host.get("PidMode", "") == "" and host.get("IpcMode", "private") == "private"
-    assert host["NetworkMode"] == NETWORK
-    assert set(inspect["NetworkSettings"]["Networks"]) == {NETWORK}
-    assert host["PortBindings"] == {
-        f"{target}/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]
-        for target, port in SERVICE_PORTS[name].items()
-    }
+    require(host["Privileged"] is False, "check failed: host['Privileged'] is False")
+    require(
+        host.get("Binds") in (None, [], [f"{VOLUMES[name]}:{MOUNT_TARGETS[name]}:rw"]),
+        "check failed: host.get('Binds') in (None, [], [f'{VOLUMES[name]}:{MOUNT_TARGETS[name]}:rw'])",
+    )
+    require(
+        not host.get("CapAdd") and not host.get("Devices"),
+        "check failed: not host.get('CapAdd') and (not host.get('Devices'))",
+    )
+    require(
+        host.get("PidMode", "") == "" and host.get("IpcMode", "private") == "private",
+        "check failed: host.get('PidMode', '') == '' and host.get('IpcMode', 'private') == 'private'",
+    )
+    require(host["NetworkMode"] == NETWORK, "check failed: host['NetworkMode'] == NETWORK")
+    require(
+        set(inspect["NetworkSettings"]["Networks"]) == {NETWORK},
+        "check failed: set(inspect['NetworkSettings']['Networks']) == {NETWORK}",
+    )
+    require(
+        host["PortBindings"]
+        == {
+            f"{target}/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]
+            for target, port in SERVICE_PORTS[name].items()
+        },
+        "check failed: host['PortBindings'] == {f'{target}/tcp': [{'HostIp': '127.0.0.1', 'HostPort': str(port)}] for target, port in SERVICE_PORTS[name].items()}",
+    )
     mounts = inspect["Mounts"]
-    assert len(mounts) == 1
-    assert mounts[0]["Type"] == "volume"
-    assert mounts[0]["Name"] == VOLUMES[name]
-    assert mounts[0]["Destination"] == MOUNT_TARGETS[name]
+    require(len(mounts) == 1, "check failed: len(mounts) == 1")
+    require(mounts[0]["Type"] == "volume", "check failed: mounts[0]['Type'] == 'volume'")
+    require(mounts[0]["Name"] == VOLUMES[name], "check failed: mounts[0]['Name'] == VOLUMES[name]")
+    require(
+        mounts[0]["Destination"] == MOUNT_TARGETS[name],
+        "check failed: mounts[0]['Destination'] == MOUNT_TARGETS[name]",
+    )

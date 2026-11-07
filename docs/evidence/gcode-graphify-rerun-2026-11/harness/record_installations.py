@@ -19,7 +19,14 @@ from typing import Any
 
 from prepare_daemon import isolated_environment
 from provision_environment import DEFAULT_RUNTIME_ROOT, GOBBY_SHA
-from runtime_boundary import assert_owned_runtime, file_record, verify_file_record, write_once
+from runtime_boundary import (
+    EvidenceError,
+    assert_owned_runtime,
+    file_record,
+    require,
+    verify_file_record,
+    write_once,
+)
 from validate_environment import (
     GCODE_BINARY,
     GCODE_CONTRACT_VERSION,
@@ -41,10 +48,13 @@ def probe(
     receipt = root / f"receipts/probe-{label}-{attempt}.json"
     if receipt.exists():
         check = json.loads(receipt.read_text())
-        assert check["argv"] == argv and check["cwd"] == str(cwd)
+        require(
+            check["argv"] == argv and check["cwd"] == str(cwd),
+            "check failed: check['argv'] == argv and check['cwd'] == str(cwd)",
+        )
         verify_file_record(root, check["log"])
-        assert check["exit_code"] == 0, (
-            "failed attempt preserved; use a new attempt after diagnosis"
+        require(
+            check["exit_code"] == 0, "failed attempt preserved; use a new attempt after diagnosis"
         )
         return dict(check)
     log = root / f"logs/install/probe-{label}-{attempt}.log"
@@ -68,7 +78,7 @@ def probe(
         "log": file_record(root, log),
     }
     write_once(receipt, json.dumps(check, indent=2) + "\n", 0o600)
-    assert result.returncode == 0, f"{label} failed; see {log}"
+    require(result.returncode == 0, f"{label} failed; see {log}")
     print(f"{label}: passed", flush=True)
     return check
 
@@ -77,7 +87,7 @@ def _pypi_version(root: Path, freeze_log: dict[str, Any]) -> str:
     for line in verify_file_record(root, freeze_log).read_text().splitlines():
         if line.lower().startswith("graphifyy=="):
             return line.split("==", 1)[1].strip()
-    raise AssertionError("graphifyy is absent from the frozen Graphify environment")
+    raise EvidenceError("graphifyy is absent from the frozen Graphify environment")
 
 
 def main() -> int:
@@ -85,11 +95,11 @@ def main() -> int:
     parser.add_argument("--owner-session", required=True)
     parser.add_argument("--attempt", required=True)
     args = parser.parse_args()
-    assert args.attempt.isalnum(), "attempt must be alphanumeric"
+    require(args.attempt.isalnum(), "attempt must be alphanumeric")
     root = DEFAULT_RUNTIME_ROOT
     assert_owned_runtime(root, args.owner_session)
     uv = shutil.which("uv")
-    assert uv
+    require(uv, "check failed: uv")
     graphify_python = str(root / "tools/graphify/venv/bin/python")
     version = probe(
         root,

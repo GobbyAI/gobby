@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from launch_services import assert_no_indexed_rows, prepare, start_services, step_complete
 from provision_environment import COMPOSE_PROJECT, CONTAINERS
-from runtime_boundary import write_once
+from runtime_boundary import EvidenceError, write_once
 
 
 def test_prepare_rejects_a_foreign_owner_task(
@@ -26,7 +26,7 @@ def test_prepare_rejects_a_foreign_owner_task(
         pytest.fail("docker was reached before the owner-task check")
 
     monkeypatch.setattr("launch_services.docker", unreachable)
-    with pytest.raises(AssertionError, match="owner task"):
+    with pytest.raises(EvidenceError, match="owner task"):
         prepare(tmp_path)
 
 
@@ -37,15 +37,15 @@ def test_step_is_skipped_only_when_its_receipt_verifies(tmp_path: Path) -> None:
     assert step_complete(receipt, lambda: None) is True
 
     def changed() -> None:
-        raise AssertionError("artifact hash changed")
+        raise EvidenceError("artifact hash changed")
 
-    with pytest.raises(AssertionError, match="artifact hash changed"):
+    with pytest.raises(EvidenceError, match="artifact hash changed"):
         step_complete(receipt, changed)
 
 
 def test_every_project_must_hold_zero_indexed_rows() -> None:
     assert_no_indexed_rows({"graphify-C0": 0, "gcode-C0": 0})
-    with pytest.raises(AssertionError, match="gcode-C1"):
+    with pytest.raises(EvidenceError, match="gcode-C1"):
         assert_no_indexed_rows({"graphify-C0": 0, "gcode-C1": 2})
 
 

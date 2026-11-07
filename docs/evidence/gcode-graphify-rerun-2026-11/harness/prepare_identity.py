@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import yaml
 from prepare_daemon import isolated_environment
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
-from runtime_boundary import assert_owned_runtime, contained_file
+from runtime_boundary import assert_owned_runtime, contained_file, require
 
 
 def prepare_identity(root: Path) -> None:
@@ -25,16 +25,24 @@ def prepare_identity(root: Path) -> None:
     from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.users import LocalUserManager
 
-    assert Path(gobby.__file__).resolve().is_relative_to(root / "sources/gobby")
+    require(
+        Path(gobby.__file__).resolve().is_relative_to(root / "sources/gobby"),
+        "check failed: Path(gobby.__file__).resolve().is_relative_to(root / 'sources/gobby')",
+    )
     bootstrap = yaml.safe_load(contained_file(root, "gobby-home/bootstrap.yaml").read_text())
     parsed = urlparse(bootstrap["database_url"])
-    assert parsed.hostname == "127.0.0.1" and parsed.port == 61234
-    assert parsed.path == "/gobby_bakeoff_22948"
+    require(
+        parsed.hostname == "127.0.0.1" and parsed.port == 61234,
+        "check failed: parsed.hostname == '127.0.0.1' and parsed.port == 61234",
+    )
+    require(
+        parsed.path == "/gobby_bakeoff_22948", "check failed: parsed.path == '/gobby_bakeoff_22948'"
+    )
     db = PostgresHubDatabase(bootstrap["database_url"])
     try:
         users = LocalUserManager(db)
         existing = users.list()
-        assert len(existing) <= 1, "ambiguous isolated installation identity"
+        require(len(existing) <= 1, "ambiguous isolated installation identity")
         if not existing:
             account_path = root / "config/daemon-account.json"
             if account_path.exists():
@@ -47,14 +55,20 @@ def prepare_identity(root: Path) -> None:
                     "password": secrets.token_urlsafe(32),
                 }
                 _write_json(account_path, account, mode=0o600)
-            assert account["email"] == "bakeoff-22948@example.invalid"
+            require(
+                account["email"] == "bakeoff-22948@example.invalid",
+                "check failed: account['email'] == 'bakeoff-22948@example.invalid'",
+            )
             users.create(
-                name="Wiki bakeoff 21942",
+                name="Wiki bakeoff 22948",
                 email=account["email"],
                 password_hash=hash_password(account["password"]),
             )
         user = ensure_install_identity(db, no_interactive=True)
-        assert user.email == "bakeoff-22948@example.invalid"
+        require(
+            user.email == "bakeoff-22948@example.invalid",
+            "check failed: user.email == 'bakeoff-22948@example.invalid'",
+        )
         _write_json(root / "receipts/daemon-identity.json", {"user_id": user.id})
     finally:
         db.close()

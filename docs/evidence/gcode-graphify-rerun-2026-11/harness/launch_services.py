@@ -28,7 +28,7 @@ from provision_environment import (
     external_state_snapshot,
 )
 from record_installations import probe
-from runtime_boundary import assert_owned_runtime, write_once
+from runtime_boundary import assert_owned_runtime, require, write_once
 from service_safety import validate_container, validate_rendered
 from validate_environment import _load_env_file
 
@@ -46,8 +46,8 @@ def docker(*args: str) -> str:
 
 def prepare(root: Path) -> tuple[list[str], dict[str, str]]:
     ownership = json.loads((root / "ownership.json").read_text())
-    assert ownership["runtime_root"] == str(root), "runtime root mismatch"
-    assert ownership["owner_task"] == TASK_REF, "owner task is not the rerun task"
+    require(ownership["runtime_root"] == str(root), "runtime root mismatch")
+    require(ownership["owner_task"] == TASK_REF, "owner task is not the rerun task")
     command = [
         "compose",
         "--project-name",
@@ -64,8 +64,11 @@ def prepare(root: Path) -> tuple[list[str], dict[str, str]]:
     image_ids = {}
     for service in CONTAINERS:
         identity = json.loads(docker("image", "inspect", images[service]))[0]
-        assert identity["Architecture"] == "arm64" and identity["Os"] == "linux"
-        assert images[service] in identity["RepoDigests"], "configured repository digest mismatch"
+        require(
+            identity["Architecture"] == "arm64" and identity["Os"] == "linux",
+            "check failed: identity['Architecture'] == 'arm64' and identity['Os'] == 'linux'",
+        )
+        require(images[service] in identity["RepoDigests"], "configured repository digest mismatch")
         image_ids[service] = identity["Id"]
     _write_json(root / "receipts/images.json", image_ids)
     return command, image_ids
@@ -77,7 +80,7 @@ def check_fresh() -> None:
         (("volume", "ls", "--format", "{{.Name}}"), set(VOLUMES.values())),
         (("network", "ls", "--format", "{{.Name}}"), {NETWORK}),
     ):
-        assert not set(docker(*args).splitlines()).intersection(names), "owned-name collision"
+        require(not set(docker(*args).splitlines()).intersection(names), "owned-name collision")
     for port in PORTS.values():
         with socket.socket() as port_probe:
             port_probe.bind(("127.0.0.1", port))
@@ -88,7 +91,7 @@ def observe(root: Path, image_ids: dict[str, str]) -> None:
     after = root / "isolation/external-state.after.json"
     if not after.exists():
         _write_json(after, external_state_snapshot(DEFAULT_SOURCE_REPO), mode=0o600)
-    assert healthy, "owned services not healthy; retain logs and ownership"
+    require(healthy, "owned services not healthy; retain logs and ownership")
     print("all three owned services healthy; live containment checks passed")
 
 
@@ -104,10 +107,16 @@ def record_services(root: Path, image_ids: dict[str, str]) -> bool:
             "health": inspected["State"]["Health"]["Status"],
         }
     network = json.loads(docker("network", "inspect", NETWORK))[0]
-    assert network["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT
+    require(
+        network["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT,
+        "check failed: network['Labels']['com.docker.compose.project'] == COMPOSE_PROJECT",
+    )
     for name in VOLUMES.values():
         volume = json.loads(docker("volume", "inspect", name))[0]
-        assert volume["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT
+        require(
+            volume["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT,
+            "check failed: volume['Labels']['com.docker.compose.project'] == COMPOSE_PROJECT",
+        )
     _write_json(
         root / "receipts/ownership-live.json",
         {
@@ -143,7 +152,7 @@ def main() -> None:
         teardown(root)
         return
     if args.action == "provision":
-        assert args.attempt.isalnum(), "provision needs an alphanumeric --attempt"
+        require(args.attempt.isalnum(), "provision needs an alphanumeric --attempt")
         provision(root, args.attempt)
         return
     command, image_ids = prepare(root)
@@ -166,7 +175,7 @@ def step_complete(receipt: Path, verify: Callable[[], object]) -> bool:
 
 def assert_no_indexed_rows(counts: Mapping[str, int]) -> None:
     dirty = {project: count for project, count in counts.items() if count}
-    assert not dirty, f"code_indexed_file_states rows exist before the first index: {dirty}"
+    require(not dirty, f"code_indexed_file_states rows exist before the first index: {dirty}")
 
 
 def start_services(root: Path, command: list[str], image_ids: dict[str, str]) -> None:
@@ -184,23 +193,26 @@ def start_services(root: Path, command: list[str], image_ids: dict[str, str]) ->
     if result.returncode:
         print(f"Docker startup exit {result.returncode}; diagnostic retained under logs/install")
     healthy = record_services(root, image_ids)
-    assert result.returncode == 0, "Docker startup failed"
-    assert healthy, "owned services not healthy; retain logs and ownership"
+    require(result.returncode == 0, "Docker startup failed")
+    require(healthy, "owned services not healthy; retain logs and ownership")
 
 
 def _verify_services(root: Path) -> None:
     services = json.loads((root / "receipts/services.json").read_text())
-    assert services["status"] == "ready", "services receipt is not ready"
-    assert services["compose_sha256"] == _sha256_file(root / "config/compose.yaml"), (
-        "compose file changed since the services receipt"
+    require(services["status"] == "ready", "services receipt is not ready")
+    require(
+        services["compose_sha256"] == _sha256_file(root / "config/compose.yaml"),
+        "compose file changed since the services receipt",
     )
-    assert services["rendered_sha256"] == _sha256_file(root / "receipts/compose.rendered.json"), (
-        "rendered compose changed since the services receipt"
+    require(
+        services["rendered_sha256"] == _sha256_file(root / "receipts/compose.rendered.json"),
+        "rendered compose changed since the services receipt",
     )
     for service, name in CONTAINERS.items():
         inspected = json.loads(docker("inspect", name))[0]
-        assert inspected["Id"] == services["services"][service]["container_id"], (
-            f"owned container changed: {name}"
+        require(
+            inspected["Id"] == services["services"][service]["container_id"],
+            f"owned container changed: {name}",
         )
 
 
@@ -220,7 +232,7 @@ def _assert_daemon_down() -> None:
 
 def _build_environments(root: Path, attempt: str) -> None:
     uv = shutil.which("uv")
-    assert uv, "uv is required to build the bakeoff environments"
+    require(uv, "uv is required to build the bakeoff environments")
     graphify_python = str(root / "tools/graphify/venv/bin/python")
     probe(
         root,
@@ -271,7 +283,7 @@ def _indexed_row_counts(root: Path) -> dict[str, int]:
             row = conn.execute(
                 "SELECT count(*) FROM code_indexed_file_states WHERE project_id = %s", (project,)
             ).fetchone()
-            assert row is not None
+            require(row is not None, "check failed: row is not None")
             counts[name] = int(row[0])
     return counts
 
@@ -300,18 +312,27 @@ def teardown(root: Path) -> None:
     removed: dict[str, Any] = {"containers": [], "network": None, "volumes": []}
     for container_id in live["containers"].values():
         inspected = json.loads(docker("inspect", container_id))[0]
-        assert inspected["Id"] == container_id, "owned container identity changed"
-        assert inspected["Config"]["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT
+        require(inspected["Id"] == container_id, "owned container identity changed")
+        require(
+            inspected["Config"]["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT,
+            "check failed: inspected['Config']['Labels']['com.docker.compose.project'] == COMPOSE_PROJECT",
+        )
         docker("rm", "--force", container_id)
         removed["containers"].append(container_id)
     network = json.loads(docker("network", "inspect", NETWORK))[0]
-    assert network["Id"] == live["network_id"], "owned network identity changed"
-    assert network["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT
+    require(network["Id"] == live["network_id"], "owned network identity changed")
+    require(
+        network["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT,
+        "check failed: network['Labels']['com.docker.compose.project'] == COMPOSE_PROJECT",
+    )
     docker("network", "rm", NETWORK)
     removed["network"] = live["network_id"]
     for name in VOLUMES.values():
         volume = json.loads(docker("volume", "inspect", name))[0]
-        assert volume["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT
+        require(
+            volume["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT,
+            "check failed: volume['Labels']['com.docker.compose.project'] == COMPOSE_PROJECT",
+        )
         docker("volume", "rm", name)
         removed["volumes"].append(name)
     write_once(root / "receipts/teardown.json", json.dumps(removed, indent=2) + "\n", 0o600)

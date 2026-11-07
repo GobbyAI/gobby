@@ -20,7 +20,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from runtime_boundary import assert_owned_runtime, symlink_record, write_once
+from runtime_boundary import (
+    EvidenceError,
+    assert_owned_runtime,
+    require,
+    symlink_record,
+    write_once,
+)
 
 DEFAULT_RUNTIME_ROOT = Path(
     "/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf"
@@ -296,7 +302,7 @@ def _archive(repo: Path, commit: str, destination: Path) -> None:
         cwd=repo,
         stdout=subprocess.PIPE,
     )
-    assert archive.stdout is not None
+    require(archive.stdout is not None, "check failed: archive.stdout is not None")
     extracted = subprocess.run(["tar", "-x", "-C", str(destination)], stdin=archive.stdout)
     archive.stdout.close()
     archive_status = archive.wait()
@@ -540,7 +546,10 @@ networks:
     references = {"postgres": postgres_image, "qdrant": qdrant_image, "falkordb": falkordb_image}
     if image_path.exists():
         recorded = json.loads(image_path.read_text())
-        assert all(recorded[name] == value for name, value in references.items())
+        require(
+            all(recorded[name] == value for name, value in references.items()),
+            "check failed: all((recorded[name] == value for name, value in references.items()))",
+        )
     else:
         _write_json(image_path, references)
 
@@ -581,7 +590,7 @@ def main() -> int:
     elif args.command == "write-compose":
         write_compose(root, args.postgres_image, args.qdrant_image, args.falkordb_image)
     else:  # pragma: no cover - argparse enforces subcommands
-        raise AssertionError(args.command)
+        raise EvidenceError(args.command)
     return 0
 
 

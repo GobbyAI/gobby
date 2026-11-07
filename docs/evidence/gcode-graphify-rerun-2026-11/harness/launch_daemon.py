@@ -11,26 +11,35 @@ from pathlib import Path
 
 from prepare_daemon import isolated_environment
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
-from runtime_boundary import assert_owned_runtime, contained_file
+from runtime_boundary import assert_owned_runtime, contained_file, require
 
 
 def launch(root: Path, attempt: str) -> None:
-    assert attempt and all(char.isalnum() or char in "-_" for char in attempt)
+    require(
+        attempt and all(char.isalnum() or char in "-_" for char in attempt),
+        "check failed: attempt and all((char.isalnum() or char in '-_' for char in attempt))",
+    )
     bootstrap = contained_file(root, "gobby-home/bootstrap.yaml")
     import yaml
 
     config = yaml.safe_load(bootstrap.read_text())
-    assert config["bind_host"] == "127.0.0.1"
-    assert config["daemon_port"] == 59480 and config["websocket_port"] == 59481
+    require(config["bind_host"] == "127.0.0.1", "check failed: config['bind_host'] == '127.0.0.1'")
+    require(
+        config["daemon_port"] == 59480 and config["websocket_port"] == 59481,
+        "check failed: config['daemon_port'] == 59480 and config['websocket_port'] == 59481",
+    )
     env = isolated_environment(root, dict(os.environ))
     for name in ("codex", "qwen", "claude", "droid", "grok", "agy"):
-        assert shutil.which(name, path=env["PATH"]) is None, name
+        require(shutil.which(name, path=env["PATH"]) is None, name)
     for port in (59480, 59481, 59482):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", port))
     log_path = root / f"logs/install/daemon-{attempt}.log"
     receipt = root / f"receipts/daemon-launch-{attempt}.json"
-    assert not log_path.exists() and not receipt.exists()
+    require(
+        not log_path.exists() and not receipt.exists(),
+        "check failed: not log_path.exists() and (not receipt.exists())",
+    )
     argv = [
         str(root / "tools/gobby/venv/bin/python"),
         "-m",
