@@ -386,37 +386,56 @@ def _worktree_metrics(path: str, base: str) -> _WorktreeMetrics:
     root = Path(path)
     counts = _git_text(root, "rev-list", "--left-right", "--count", f"{base}...HEAD").split()
     behind, ahead = int(counts[0]), int(counts[1])
-    dirty, dirty_paths = _dirty_entries(root)
+    dirty, dirty_paths, staged = _dirty_entries(root)
     last_commit = datetime.fromisoformat(_git_text(root, "log", "-1", "--format=%cI"))
     changed = [last_commit, *(_changed_at(root, rel) for rel in dirty_paths)]
+    if staged:
+        # Staging and unstaging rewrite the index, which is itself a change to the tree.
+        changed.append(_changed_at(root, _git_text(root, "rev-parse", "--git-path", "index")))
     return _WorktreeMetrics(behind, ahead, dirty, last_commit, max(changed))
 
 
-def _dirty_entries(root: Path) -> tuple[int, list[str]]:
-    """Count git's dirty records and collect every path they name, including a rename's source."""
-    raw = _git_raw(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+def _dirty_entries(root: Path) -> tuple[int, list[str], bool]:
+    """Count git's dirty records, collect every path they name, and flag any staged change.
+
+    A rename's source path follows as its own NUL-terminated record. Reporting is read-only:
+    `--no-optional-locks` keeps status from refreshing or locking the index under a seat's commit.
+    """
+    raw = _git_raw(
+        root, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"
+    )
     records = iter(record for record in raw.split("\0") if record)
     entries = 0
     paths: list[str] = []
+    staged = False
     for record in records:
         entries += 1
+        if record[0] not in " ?":
+            staged = True
         paths.append(record[3:])
         if "R" in record[:2]:
-            # A rename's source path follows as its own NUL-terminated record.
             paths.append(next(records, ""))
-    return entries, paths
+    return entries, paths, staged
 
 
 def _changed_at(root: Path, rel: str) -> datetime:
-    """When a dirty path last changed: its mtime, or its nearest surviving directory once removed."""
+    """When a path last changed: the later of its mtime and ctime, or its nearest surviving ancestor.
+
+    lstat reads a symlink's own times, not its target's. ctime also moves on chmod and on copies
+    that keep an old mtime, which mtime alone misses.
+    """
     path = root / rel
-    while not path.exists() and path != root:
-        path = path.parent
-    try:
-        mtime = path.stat().st_mtime
-    except OSError as exc:
-        raise _GitUnavailable(f"cannot stat {path}: {exc}") from exc
-    return datetime.fromtimestamp(mtime, tz=UTC)
+    while True:
+        try:
+            info = path.lstat()
+            break
+        except (FileNotFoundError, NotADirectoryError):
+            if path.parent == path:
+                raise _GitUnavailable(f"no surviving ancestor of {root / rel}") from None
+            path = path.parent
+        except OSError as exc:
+            raise _GitUnavailable(f"cannot stat {path}: {exc}") from exc
+    return datetime.fromtimestamp(max(info.st_mtime, info.st_ctime), tz=UTC)
 
 
 def _load_5m(loadavg: Callable[[], tuple[float, float, float]], gaps: list[str]) -> float | None:

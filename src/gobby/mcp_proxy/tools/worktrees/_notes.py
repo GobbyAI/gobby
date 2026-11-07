@@ -6,8 +6,15 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.worktree_notes import WorktreeNoteStore
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import require_machine_id
+from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.agent_resolver import session_agent_definition
+
+WORKTREE_NOTE_CAPABILITY = "manage_worktree_notes"
 
 
 def _text_problem(name: str, value: str, *, required: bool) -> str | None:
@@ -16,6 +23,17 @@ def _text_problem(name: str, value: str, *, required: bool) -> str | None:
     if "\n" in value or "\r" in value:
         return f"{name} must be a single line"
     return None
+
+
+def _caller_may_write_notes(db: HubDatabase, session_id: str | None) -> bool:
+    """The caller's installed definition grants writing worktree notes."""
+    if session_id is None:
+        return False
+    caller = SessionManager(db).get(session_id)
+    if caller is None or caller.machine_id != require_machine_id():
+        return False
+    definition = session_agent_definition(db, caller)
+    return definition is not None and WORKTREE_NOTE_CAPABILITY in definition[0].capabilities
 
 
 def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -57,6 +75,11 @@ def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Returns:
             Dict with success status and the note's timestamp.
         """
+        if not _caller_may_write_notes(ctx.worktree_storage.db, get_current_session_id()):
+            return {
+                "success": False,
+                "error": f"Caller's definition must grant {WORKTREE_NOTE_CAPABILITY}",
+            }
         try:
             worktree_id = ctx.resolve_worktree_id(worktree_id)
         except ValueError as e:
