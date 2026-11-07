@@ -18,6 +18,14 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.skills._batch import (
+    BatchCursor,
+    batch_hash,
+    build_batch_page,
+    marked_body,
+)
+from gobby.mcp_proxy.tools.skills._paging import CursorState, build_content_page, content_hash
+from gobby.skills.sync import get_bundled_skills_path
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -202,21 +210,29 @@ async def test_subagent_cannot_consume_or_stage_the_parent_handoff(
     assert subagent_work.decision == "allow", subagent_work.reason
 
 
-def _skill_load(arguments: dict[str, Any]) -> HookEvent:
+def _skill_load(tool: str, arguments: dict[str, Any]) -> HookEvent:
     return _event(
         HookEventType.BEFORE_TOOL,
         {
             "tool_name": "mcp__gobby__call_tool",
             "mcp_server": "gobby-skills",
-            "mcp_tool": "get_skill",
+            "mcp_tool": tool,
             "tool_input": {
                 "server_name": "gobby-skills",
-                "tool_name": "get_skill",
+                "tool_name": tool,
                 "arguments": arguments,
             },
         },
         subagent=False,
     )
+
+
+HANDOFFS_IDENTITY = "gobby:references/sessions/handoffs.md"
+HANDOFFS_PATH = "references/sessions/handoffs.md"
+
+
+def _handoffs_reference() -> str:
+    return (get_bundled_skills_path() / "gobby" / HANDOFFS_PATH).read_text()
 
 
 @pytest.mark.asyncio
@@ -227,22 +243,70 @@ async def test_context_limit_gate_admits_the_handoff_reference_load(
 
     The handoff-authoring gate tells the seat to load the handoffs reference with
     get_skill; a context gate that blocks that call leaves no way to hand off.
+    Cursors carry no handoff binding, so a continuation of any page stays blocked
+    on both skill tools; the reference fits one page (see the single-page tests).
     """
     engine = _engine(temp_db, _parent_turn_gates())
     at_limit = {
         "context_compact_mid_turn_pressure_band": "block",
         "context_compact_block_message": "Context limit reached.",
     }
-    handoffs = "gobby:references/sessions/handoffs.md"
     other = "gobby:references/memory/overview.md"
 
-    async def decide(arguments: dict[str, Any]) -> str:
+    async def decide(tool: str, arguments: dict[str, Any]) -> str:
         result = await engine.evaluate(
-            _skill_load(arguments), session_id=SESSION_ID, variables=dict(at_limit)
+            _skill_load(tool, arguments), session_id=SESSION_ID, variables=dict(at_limit)
         )
         return str(result.decision)
 
-    assert await decide({"names": [handoffs]}) == "allow"
-    assert await decide({"cursor": "b.next-page"}) == "allow"
-    assert await decide({"names": [other]}) == "block"
-    assert await decide({"names": [handoffs, other]}) == "block"
+    assert await decide("get_skill", {"names": [HANDOFFS_IDENTITY]}) == "allow"
+    assert await decide("get_skill", {"cursor": "b.next-page"}) == "block"
+    assert await decide("get_skill", {"names": [other]}) == "block"
+    assert await decide("get_skill", {"names": [HANDOFFS_IDENTITY, other]}) == "block"
+    assert await decide("get_skill_file", {"name": "gobby", "path": HANDOFFS_PATH}) == "allow"
+    assert await decide("get_skill_file", {"cursor": "next-page"}) == "block"
+    assert (
+        await decide("get_skill_file", {"name": "gobby", "path": "references/memory/overview.md"})
+        == "block"
+    )
+
+
+def test_handoff_reference_loads_in_one_get_skill_page() -> None:
+    """The context-limit gate admits no get_skill cursor, so the reference must fit one page."""
+    pairs = [(HANDOFFS_IDENTITY, marked_body(HANDOFFS_IDENTITY, _handoffs_reference()))]
+    state = BatchCursor(
+        names=(HANDOFFS_IDENTITY,), levels=(), index=0, offset=0, content_hash=batch_hash(pairs)
+    )
+
+    page = build_batch_page(pairs, state, [])["page"]
+
+    assert page == {"completed": [HANDOFFS_IDENTITY], "complete": True, "next_cursor": None}
+
+
+def test_handoff_reference_loads_in_one_get_skill_file_page() -> None:
+    """The context-limit gate admits no get_skill_file cursor, so one brief page must hold it."""
+    content = _handoffs_reference()
+    state = CursorState(
+        kind="file",
+        view="brief",
+        skill_id="gobby",
+        path=HANDOFFS_PATH,
+        level=None,
+        content_hash=content_hash(content),
+        offset=0,
+    )
+
+    def brief_page(
+        page_content: str, _start: int, _end: int, complete: bool, next_cursor: str | None
+    ) -> dict[str, Any]:
+        return {
+            "success": True,
+            "view": "brief",
+            "file": {"skill_name": "gobby", "path": HANDOFFS_PATH, "content": page_content},
+            "page": {"complete": complete, "next_cursor": next_cursor},
+        }
+
+    page = build_content_page(content, state, brief_page)
+
+    assert page["page"] == {"complete": True, "next_cursor": None}
+    assert page["file"]["content"] == content

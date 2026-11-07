@@ -42,22 +42,14 @@ rules:
       and not (
         event.data.get('mcp_server') == 'gobby-skills'
         and event.data.get('mcp_tool') == 'get_skill_file'
-        and (
-          (
-            ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'gobby'
-            and ((tool_input.get('arguments') or tool_input) or {}).get('path') == 'references/sessions/handoffs.md'
-          )
-          or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
-        )
+        and ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'gobby'
+        and ((tool_input.get('arguments') or tool_input) or {}).get('path') == 'references/sessions/handoffs.md'
       )
       and not (
         event.data.get('mcp_server') == 'gobby-skills'
         and event.data.get('mcp_tool') == 'get_skill'
-        and (
-          list(((tool_input.get('arguments') or tool_input) or {}).get('names') or [])
-              == ['gobby:references/sessions/handoffs.md']
-          or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
-        )
+        and list(((tool_input.get('arguments') or tool_input) or {}).get('names') or [])
+            == ['gobby:references/sessions/handoffs.md']
       )
       and event.data.get('mcp_tool') not in ('get_tool_schema', 'list_tools')
       and event.data.get('tool_name') not in (
