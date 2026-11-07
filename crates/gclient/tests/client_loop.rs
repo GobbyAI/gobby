@@ -7736,8 +7736,20 @@ async fn moving_pane_to_new_tab_keeps_its_process_and_closes_placeholder() {
 
 #[tokio::test]
 async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
+    async fn wait_for_order(frames: &mut watch::Receiver<String>, first: &str, second: &str) {
+        timeout(WAIT_BUDGET, frames.wait_for(|frame| {
+            matches!((frame.find(first), frame.find(second)), (Some(a), Some(b)) if a < b)
+        }))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {first} before {second}"))
+        .expect("loop keeps the frame recorder open");
+    }
+
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
+    for terminal in ["terminal-a", "terminal-b", "terminal-c"] {
+        mock.set_attach_backend(terminal, "tmux");
+    }
     for _ in 0..3 {
         mock.enqueue(
             "GET",
@@ -7754,6 +7766,11 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
             (&["terminal-c"], "terminal-c"),
         ],
     );
+    for (tab, title) in seeded.iter().zip(["Reorder-A", "Reorder-B", "Reorder-C"]) {
+        mock.apply_workspace_op(json!({"op": "tab.rename", "tab": tab.0, "title": title}));
+    }
+    // A move may commit after several input events would otherwise be handled.
+    let move_release = mock.hold_ws("workspace_op", |op| op["op"] == "tab.move");
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
@@ -7763,19 +7780,39 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
         .reconcile_subscribe_first()
         .await
         .expect("attach workspace");
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (frames_tx, mut frames_rx) = watch::channel(String::new());
+    let mut terminal = Terminal::new(CountingBackend {
+        inner: TestBackend::new(120, 40),
+        draws: Arc::new(AtomicUsize::new(0)),
+        frames: Some(frames_tx),
+    })
+    .expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         send_chord(&input_tx, KeyCode::Char('2'), KeyModifiers::NONE).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
         send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "workspace_op", 2).await;
+        move_release.notify_one();
+        wait_for_order(&mut frames_rx, "Reorder-B", "Reorder-A").await;
         send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
-        settle_live_event().await;
+        // Input follows the edge key in the channel, proving it was handled
+        // before the rightward move, even though it publishes no workspace op.
+        wait_for_drawn_text(&mut frames_rx, "Focused").await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        assert_eq!(
+            websocket_requests(&mock, "workspace_op")
+                .iter()
+                .filter(|op| op["op"] == "tab.move")
+                .count(),
+            1,
+            "edge key must not send a move"
+        );
         send_chord(&input_tx, KeyCode::Right, KeyModifiers::SHIFT).await;
-        settle_live_event().await;
+        wait_for_order(&mut frames_rx, "Reorder-A", "Reorder-B").await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
