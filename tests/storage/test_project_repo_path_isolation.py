@@ -353,7 +353,9 @@ Validate the same plan through both principals.
             text=True,
             capture_output=True,
             check=False,
-            timeout=30,
+            # A cold `gobby` start takes 17-37 s under host load (claude_agent_sdk import
+            # chain); a 30 s budget flaked at load 57. The bound still catches hangs.
+            timeout=120,
         )
         operator_requests = list(daemon.requests)
         # The reader rejects a GOBBY_PROJECT_ID that differs from the envelope principal,
@@ -371,7 +373,7 @@ Validate the same plan through both principals.
             text=True,
             capture_output=True,
             check=False,
-            timeout=30,
+            timeout=120,
         )
 
     assert operator.returncode == 0, operator.stderr or operator.stdout
