@@ -1,3 +1,4 @@
+use crate::commands::vector::reconcile as vector_reconcile;
 use crate::config::Context;
 use crate::graph::report::hotspot_snapshot;
 use crate::index::api::{
@@ -207,6 +208,7 @@ pub(crate) fn run_index_locked(
     request: IndexRequest,
 ) -> anyhow::Result<RunIndexLockedOutput> {
     let sync_projections = request.sync_projections;
+    let whole_project = request.explicit_files.is_empty() && request.path_filter.is_none();
     let mut index_progress = StderrIndexProgress::new(ctx.quiet);
     let mut outcome = api::index_files(
         request,
@@ -227,6 +229,13 @@ pub(crate) fn run_index_locked(
         sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
         &mut projection_progress,
     );
+    // A whole-project pass resets versions that lost symbol points, so the pending-sync
+    // worker re-embeds them. Per-file runs skip it: the repair scrolls the whole collection.
+    if whole_project {
+        outcome
+            .degraded
+            .extend(vector_reconcile::repair_after_index(ctx));
+    }
     // Refresh the stored hotspot snapshot once the graph is in sync. A failed refresh
     // is a visible degradation; the index itself still succeeds.
     outcome

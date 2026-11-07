@@ -11,10 +11,12 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use anyhow::Context as _;
+use postgres::GenericClient;
 
 use crate::commands::receipt;
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::db;
+use crate::index::api::IndexDegradation;
 use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::models::{CODE_INDEX_UUID_NAMESPACE, Symbol};
 use crate::output::{self, Format};
@@ -439,12 +441,7 @@ pub(crate) fn apply_with_persist(
     let versions = db::id_params(&planned_versions_reset)?;
     let mut writer = db::connect_readwrite(&ctx.database_url)?;
     let mut tx = writer.transaction()?;
-    let rows = tx.query(
-        "UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL \
-         WHERE id = ANY($1) AND vectors_synced RETURNING id::text",
-        &[&versions],
-    )?;
-    let reset: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
+    let reset = reset_synced_versions(&mut tx, versions)?;
     if let Err(error) = tx.commit() {
         return Err(unconfirmed(
             receipt_path,
@@ -556,4 +553,39 @@ fn text_report(collection: &str, report: &Inventory) -> String {
     }));
     lines.push(format!("inventory digest: {}", report.inventory_digest));
     lines.join("\n")
+}
+
+/// Resets the flag on each synced version that lost a symbol point, so the pending-sync
+/// worker re-embeds it. Orphan points are left alone; deletion stays with `apply`.
+pub(crate) fn reset_synced_missing_versions(ctx: &Context) -> anyhow::Result<Vec<String>> {
+    let report = inventory(ctx)?;
+    let versions = db::id_params(&synced_missing_ids(&report.missing))?;
+    let mut writer = db::connect_readwrite(&ctx.database_url)?;
+    reset_synced_versions(&mut writer, versions)
+}
+
+/// Clears `vectors_synced` on each named version that is still synced. The reconcile
+/// apply path and the automatic repair share it, so both reset the same rows.
+fn reset_synced_versions(
+    conn: &mut impl GenericClient,
+    versions: Vec<Uuid>,
+) -> anyhow::Result<Vec<String>> {
+    let rows = conn.query(
+        "UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL \
+         WHERE id = ANY($1) AND vectors_synced RETURNING id::text",
+        &[&versions],
+    )?;
+    Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
+/// Runs the automatic repair after a whole-project index pass. A version whose symbol
+/// points are missing is reset here; the pending-sync worker then re-embeds it.
+pub(crate) fn repair_after_index(ctx: &Context) -> Option<IndexDegradation> {
+    ctx.qdrant.as_ref()?;
+    match reset_synced_missing_versions(ctx) {
+        Ok(_) => None,
+        Err(error) => Some(IndexDegradation::VectorRepairFailed {
+            message: format!("{error:#}"),
+        }),
+    }
 }

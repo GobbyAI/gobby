@@ -219,6 +219,13 @@ pub(crate) fn sync_vector_attempt(
         }
         Err(err) => return Err(err.into()),
     };
+    code_symbols::prune_stale_file_points(
+        lifecycle,
+        conn,
+        overlay_project_id,
+        file_path,
+        &symbols,
+    )?;
     if finish_attempt(conn, Stage::Vector, overlay_project_id, file_path, attempt)? {
         Ok(PinnedVectorSync::Synced(output))
     } else {

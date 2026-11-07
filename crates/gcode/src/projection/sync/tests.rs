@@ -452,19 +452,24 @@ pub(crate) mod serial_db {
         thread::spawn(move || {
             let mut hook = Some(on_upsert);
             let mut requests = Vec::new();
-            while let Some(on_upsert) = hook.take() {
+            let mut pruned = false;
+            while !pruned {
                 let mut stream = accept_with_timeout(&listener, Duration::from_secs(5))
                     .expect("pinned projection request");
                 let request = read_http_request(&mut stream);
                 let line = request.lines().next().unwrap_or_default();
                 let response = if line.starts_with("GET ") {
-                    hook = Some(on_upsert);
                     json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}})
                 } else if line.starts_with("PUT ") && line.contains("/points") {
-                    on_upsert();
+                    if let Some(on_upsert) = hook.take() {
+                        on_upsert();
+                    }
                     json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok"})
+                } else if line.starts_with("POST ") && line.contains("/points/count") {
+                    // The sync prunes stale points after its upsert; this count ends the exchange.
+                    pruned = true;
+                    json!({"result": {"count": 0}})
                 } else if line.starts_with("POST ") && !line.contains("/collections") {
-                    hook = Some(on_upsert);
                     json!({"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]})
                 } else {
                     panic!("unexpected pinned projection request: {line}");
@@ -749,31 +754,36 @@ pub(crate) mod serial_db {
         );
     }
 
-    /// Answers the lifecycle's Qdrant and embedding requests. Before it answers
-    /// the upsert, it runs `on_upsert`, then stops. Returns each request line.
+    /// Answers the lifecycle's Qdrant and embedding requests. It runs `on_upsert` before
+    /// answering the upsert, then answers the prune count that follows the upsert and
+    /// stops. Returns each request line.
     fn serve_until_upsert(listener: &TcpListener, on_upsert: impl FnOnce()) -> Vec<String> {
         let mut on_upsert = Some(on_upsert);
         let mut lines = Vec::new();
-        while let Some(hook) = on_upsert.take() {
+        let mut pruned = false;
+        while !pruned {
             let mut stream =
                 accept_with_timeout(listener, Duration::from_secs(5)).expect("accept request");
             let request = read_http_request(&mut stream);
             let line = request.lines().next().unwrap_or_default().to_string();
             lines.push(line.clone());
             if line.starts_with("GET ") {
-                on_upsert = Some(hook);
                 respond(
                     &mut stream,
                     json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
                 );
             } else if line.starts_with("PUT ") && line.contains("/points") {
-                hook();
+                if let Some(hook) = on_upsert.take() {
+                    hook();
+                }
                 respond(
                     &mut stream,
                     json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok"}),
                 );
+            } else if line.starts_with("POST ") && line.contains("/points/count") {
+                pruned = true;
+                respond(&mut stream, json!({"result": {"count": 0}}));
             } else if line.starts_with("POST ") && !line.contains("/collections") {
-                on_upsert = Some(hook);
                 respond(
                     &mut stream,
                     json!({"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]}),

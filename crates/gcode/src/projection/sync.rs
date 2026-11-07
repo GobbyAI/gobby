@@ -712,6 +712,13 @@ impl VectorProjectionState<'_> {
             return Ok(ProjectionFileSyncOutcome::SkippedSourceChanged);
         }
         sync?;
+        code_symbols::prune_stale_file_points(
+            &self.lifecycle,
+            &mut self.conn,
+            &self.ctx.project_id,
+            file_path,
+            &symbols,
+        )?;
         if db::mark_vectors_synced(
             &mut self.conn,
             &self.ctx.project_id,

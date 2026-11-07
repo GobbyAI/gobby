@@ -522,11 +522,34 @@ async def _refresh_index(
                 )
     except Exception as exc:  # Launch and gateway faults never fail a landed commit.
         logger.warning("Index refresh failed after landing %s: %s", sha, exc)
+        _hand_to_trigger(code_index, main, project_id, paths, sha)
         return
     if not result.success:
         logger.warning(
             "Index refresh exited %s after landing %s: %s", result.returncode, sha, result.stderr
         )
+        _hand_to_trigger(code_index, main, project_id, paths, sha)
+
+
+def _hand_to_trigger(
+    code_index: CodeIndexContext | None,
+    main: Path,
+    project_id: str,
+    paths: set[str],
+    sha: str,
+) -> None:
+    """Queue the landed paths the refresh did not index; the trigger retries them."""
+    trigger = code_index.index_trigger if code_index is not None else None
+    if trigger is None:
+        logger.warning(
+            "Landing %s left %d path(s) unindexed: no code index trigger to retry them",
+            sha,
+            len(paths),
+        )
+        return
+    root = str(main)
+    for path in sorted(paths):
+        trigger.notify_file_changed(str(main / path), project_id, root)
 
 
 async def land_candidate(

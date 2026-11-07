@@ -1,6 +1,6 @@
 use super::super::{
     Inventory, MissingClass, MissingGroup, OrphanClass, ReconcileReceipt, apply,
-    apply_with_persist, inventory, inventory_digest,
+    apply_with_persist, inventory, inventory_digest, reset_synced_missing_versions,
 };
 use super::canonical_tempdir;
 use crate::config::{
@@ -790,6 +790,30 @@ fn apply_records_partial_receipt_on_qdrant_failure() -> anyhow::Result<()> {
     assert!(
         message.contains(&receipt_path.display().to_string()),
         "the error names the receipt: {message}"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn index_repair_resets_synced_missing_versions_without_deleting() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    let (points, reset_version) = seed_reset_and_orphan(&mut fixture)?;
+
+    let (url, handle) = spawn_http_responses(vec![scroll_page(points)]);
+    let reset = reset_synced_missing_versions(&fixture.context(url))?;
+    let requests = handle.join().expect("qdrant test server");
+
+    assert_eq!(reset, vec![reset_version.clone()]);
+    assert!(!fixture.vectors_synced(&reset_version)?);
+    assert_eq!(
+        requests.len(),
+        1,
+        "the automatic repair scrolls once and never deletes"
     );
     Ok(())
 }

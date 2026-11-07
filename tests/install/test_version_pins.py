@@ -64,6 +64,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.107"),
         # gcode: prune help text and dead inventory removal changed in #25799 under installed 1.9.107.
         ("gcode", "1.9.108"),
+        # gcode: vector prune on sync, missing-vector repair and the landing lock wait changed in #25810 under installed 1.9.108.
+        ("gcode", "1.9.109"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
     ],
