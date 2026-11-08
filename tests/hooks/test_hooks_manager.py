@@ -2771,7 +2771,7 @@ _ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
     HookEventType.SUBAGENT_STOP,
 }
 
-# An auto compaction is held until a main-thread event settles it, so it materializes then.
+# A PostCompact and an auto PreCompact wait for a main-thread event, then materialize.
 _HELD_COMPACTION_EVENTS = (HookEventType.PRE_COMPACT, HookEventType.POST_COMPACT)
 _FIRST_HOOK_CASES = tuple(
     (
@@ -2903,6 +2903,38 @@ def test_held_auto_compaction_materializes_when_its_replay_settles(
 
     replayed = activate.call_args_list[0].args[0]
     assert replayed.event_type == event_type
+    assert isinstance(replayed.metadata.get("_platform_session_id"), str)
+
+
+def test_manual_post_compact_materializes_when_its_replay_settles(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    """A manual PostCompact is held like an auto one and materializes when its replay settles."""
+    manager = hook_manager_with_mocks
+    external_id = "manual-post-compact"
+    transcript = temp_dir / f"{external_id}.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    compaction = _compaction_event(
+        HookEventType.POST_COMPACT, temp_dir, external_id, trigger="manual"
+    )
+    settling = _compaction_event(HookEventType.BEFORE_AGENT, temp_dir, external_id)
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+
+    with _materialization_seams(manager, handler) as activate:
+        assert manager.handle(compaction).decision == "allow"
+        assert "_platform_session_id" not in compaction.metadata
+        activate.assert_not_called()
+
+        boundary = {"type": "system", "subtype": "compact_boundary", "uuid": external_id}
+        with transcript.open("a", encoding="utf-8") as lines:
+            lines.write(json.dumps(boundary) + "\n")
+        assert manager.handle(settling).decision == "allow"
+
+    replayed = activate.call_args_list[0].args[0]
+    assert replayed.event_type == HookEventType.POST_COMPACT
+    assert replayed.data["trigger"] == "manual"
     assert isinstance(replayed.metadata.get("_platform_session_id"), str)
 
 
