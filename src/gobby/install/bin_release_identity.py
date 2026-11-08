@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 import shutil
 import subprocess
 import sys
@@ -349,8 +350,29 @@ def _release_version(read: Manifests, crate: str) -> str:
     return version
 
 
+_RELEASE_NUMBERS = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+
+
+def _release_parts(version: str) -> tuple[int, int, int] | None:
+    match = _RELEASE_NUMBERS.fullmatch(version)
+    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
+
+
+def _is_patch_bump(base: str, target: str) -> bool:
+    """A bump raises only PATCH within the base MAJOR.MINOR; any other target is not a bump."""
+    base_parts = _release_parts(base)
+    if base_parts is None:
+        raise BinaryReleaseVersionError(f"base version {base!r} is not MAJOR.MINOR.PATCH")
+    target_parts = _release_parts(target)
+    return (
+        target_parts is not None
+        and target_parts[:2] == base_parts[:2]
+        and target_parts[2] > base_parts[2]
+    )
+
+
 def unbumped_binaries(repo: Path, base: str, target: str, changed: Collection[str]) -> list[str]:
-    """Shipped binaries a landing changes without bumping their version.
+    """Shipped binaries a landing changes without a forward PATCH bump.
 
     Closures come from the base manifests: any target edit that reaches a new crate edits a
     manifest already in the base closure, so the changed paths still reach the binary.
@@ -369,9 +391,9 @@ def unbumped_binaries(repo: Path, base: str, target: str, changed: Collection[st
             if before(f"{crate}/Cargo.toml") is None:
                 continue
             crates = _closure(before, crate)
-            if _touches_closure(changed, crates, before, after) and _release_version(
-                after, crate
-            ) == _release_version(before, crate):
+            if _touches_closure(changed, crates, before, after) and not _is_patch_bump(
+                _release_version(before, crate), _release_version(after, crate)
+            ):
                 unbumped.append(name)
     except (OSError, KeyError, ValueError, subprocess.SubprocessError) as exc:
         raise BinaryReleaseVersionError(f"shipped binary manifests unreadable: {exc}") from exc

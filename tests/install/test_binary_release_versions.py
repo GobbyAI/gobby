@@ -542,3 +542,40 @@ def test_landing_bump_check_follows_crate_closure(
 
     changed = _changed_paths(workspace, base, target)
     assert release.unbumped_binaries(workspace, base, target, changed) == expected
+
+
+@pytest.mark.parametrize(
+    ("target_version", "refused"),
+    [
+        pytest.param("1.0.1", False, id="patch-bump-lands"),
+        pytest.param("1.0.0", True, id="equal-version-refused"),
+        pytest.param("0.9.9", True, id="downgrade-refused"),
+        pytest.param("1.1.0", True, id="minor-only-bump-refused"),
+        pytest.param("1.0.0-rc.1", True, id="prerelease-refused"),
+        pytest.param("1.0.1+build.7", True, id="build-metadata-refused"),
+    ],
+)
+def test_landing_bump_must_be_a_forward_patch_bump(
+    workspace: Path, target_version: str, refused: bool
+) -> None:
+    base = _commit_all(workspace, "base")
+    (workspace / "crates" / "gcore" / "src" / "lib.rs").write_text("pub fn changed() {}\n")
+    _bump(workspace, "gcode", target_version)
+    target = _commit_all(workspace, "candidate")
+
+    changed = _changed_paths(workspace, base, target)
+    expected = (
+        SHIPPED_BINARIES if refused else [name for name in SHIPPED_BINARIES if name != "gcode"]
+    )
+    assert release.unbumped_binaries(workspace, base, target, changed) == expected
+
+
+def test_landing_bump_check_fails_closed_on_unparseable_base_version(workspace: Path) -> None:
+    _bump(workspace, "gcode", "1.0.0-rc.1")
+    base = _commit_all(workspace, "base")
+    (workspace / "crates" / "gcore" / "src" / "lib.rs").write_text("pub fn changed() {}\n")
+    target = _commit_all(workspace, "candidate")
+
+    changed = _changed_paths(workspace, base, target)
+    with pytest.raises(release.BinaryReleaseVersionError, match="not MAJOR.MINOR.PATCH"):
+        release.unbumped_binaries(workspace, base, target, changed)
