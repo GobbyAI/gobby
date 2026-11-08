@@ -149,7 +149,11 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 
 
 @pytest.mark.integration
-@pytest.mark.timeout(1250)
+@pytest.mark.timeout(
+    cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS
+    + cutover_module.CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS
+    + 300
+)
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
     subprocess.run(
@@ -158,7 +162,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
         check=True,
         capture_output=True,
         text=True,
-        timeout=1200,
+        timeout=cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS,
     )
     candidate = cargo_release_dir(repo).parent / "debug/gdaemon"
     assert candidate.is_file(), "the checkout build must produce its routed gdaemon candidate"
@@ -166,7 +170,11 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
 
 
 @pytest.mark.integration
-@pytest.mark.timeout(1250)
+@pytest.mark.timeout(
+    cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS
+    + cutover_module.CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS
+    + 300
+)
 def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
 ) -> None:
@@ -209,7 +217,7 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
         cwd=fixture,
         check=True,
         text=True,
-        timeout=1200,
+        timeout=cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS,
     )
     candidate = cargo_release_dir(fixture).parent / "debug/examples/catalog_candidate_24042"
     assert candidate.is_file(), "the native fixture build must produce its routed catalog candidate"
