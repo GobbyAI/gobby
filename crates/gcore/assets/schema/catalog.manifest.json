@@ -925,6 +925,50 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "code_index_reconcile_receipts.class_counts",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.digest",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.error",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.finished_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.mode",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.outcome",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.retries",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.run_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_index_reconcile_receipts.started_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
       "name": "code_indexed_file_states.content_hash",
       "definition": "text|text|NO||NEVER"
     },
@@ -5991,6 +6035,38 @@
       "definition": "PRIMARY KEY (machine_id, project_id)"
     },
     {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_check",
+      "definition": "CHECK (outcome = 'failed'::text OR error IS NULL)"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_class_counts_check",
+      "definition": "CHECK (jsonb_typeof(class_counts) = 'object'::text)"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_mode_check",
+      "definition": "CHECK (mode = ANY (ARRAY['dry_run'::text, 'apply'::text]))"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_outcome_check",
+      "definition": "CHECK (outcome = ANY (ARRAY['completed'::text, 'failed'::text]))"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_pkey",
+      "definition": "PRIMARY KEY (machine_id, run_id, project_id)"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES code_indexed_projects(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "code_index_reconcile_receipts.code_index_reconcile_receipts_retries_check",
+      "definition": "CHECK (retries >= 0)"
+    },
+    {
       "name": "code_indexed_file_states.code_indexed_file_states_content_fkey",
       "definition": "FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash)"
     },
@@ -7923,6 +7999,10 @@
       "definition": "CREATE UNIQUE INDEX code_index_prune_dirty_projects_pkey ON $schema.code_index_prune_dirty_projects USING btree (machine_id, project_id)"
     },
     {
+      "name": "code_index_reconcile_receipts_pkey",
+      "definition": "CREATE UNIQUE INDEX code_index_reconcile_receipts_pkey ON $schema.code_index_reconcile_receipts USING btree (machine_id, run_id, project_id)"
+    },
+    {
       "name": "code_indexed_file_states_pkey",
       "definition": "CREATE UNIQUE INDEX code_indexed_file_states_pkey ON $schema.code_indexed_file_states USING btree (machine_id, project_id, file_path)"
     },
@@ -8293,6 +8373,10 @@
     {
       "name": "idx_clones_task",
       "definition": "CREATE INDEX idx_clones_task ON $schema.clones USING btree (task_id)"
+    },
+    {
+      "name": "idx_code_index_reconcile_receipts_project",
+      "definition": "CREATE INDEX idx_code_index_reconcile_receipts_project ON $schema.code_index_reconcile_receipts USING btree (machine_id, project_id, finished_at DESC)"
     },
     {
       "name": "idx_comms_attachments_message",
