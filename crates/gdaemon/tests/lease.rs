@@ -232,8 +232,11 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     );
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
     timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(300),
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;

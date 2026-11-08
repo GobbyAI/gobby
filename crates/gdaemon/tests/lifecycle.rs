@@ -92,8 +92,11 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     );
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
     timeout(
-        Duration::from_secs(60),
+        Duration::from_secs(300),
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;
@@ -155,8 +158,11 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// The peer must build its pool, acquire the lease, claim its PID file and start a `uv run`
+/// backend before any file appears. That chain runs under the same host load as the rest of
+/// the suite, so the bound is a hang guard sized for it, and the error names the awaited file.
 async fn wait_for_file(path: &Path) -> Result<String> {
-    timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(60), async {
         loop {
             match tokio::fs::read_to_string(path).await {
                 Ok(value) if !value.is_empty() => return Ok(value),
@@ -168,7 +174,8 @@ async fn wait_for_file(path: &Path) -> Result<String> {
             }
         }
     })
-    .await?
+    .await
+    .with_context(|| format!("waiting for {}", path.display()))?
 }
 
 #[tokio::test]
