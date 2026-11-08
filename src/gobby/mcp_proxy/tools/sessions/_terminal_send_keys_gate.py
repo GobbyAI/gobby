@@ -238,7 +238,7 @@ async def send_keys_target_refusal(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",
             )
-        pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
+        pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry, terminal)
         snapshot = (
             await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi") if pane is not None else None
         )
