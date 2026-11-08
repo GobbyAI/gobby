@@ -130,6 +130,16 @@ def instrument_startup(
             ("HTTPServer._init_mcp_subsystems", "HTTP MCP setup", False),
         ),
         "gobby.servers.app_factory": (("create_app", "HTTP app construction", False),),
+        "gobby.runner_init.services": (
+            ("init_stateful_services", "stateful services", True),
+            ("_init_stateful_dependencies", "stateful dependencies", False),
+            ("_register_stateful_services", "stateful registries", True),
+            ("_apply_stateful_services", "stateful apply", False),
+            ("_init_project_context", "project context", False),
+        ),
+        "gobby.runner_init.orchestration": (
+            ("init_orchestration", "orchestration construction", False),
+        ),
         "gobby.runner_init.servers": (("init_servers", "runtime server construction", False),),
         "gobby.runner_gate": (("acquire_runner_gate", "predecessor gate", True),),
         "gobby.runner_service_readiness": (

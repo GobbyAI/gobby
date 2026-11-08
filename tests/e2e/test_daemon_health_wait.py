@@ -388,6 +388,23 @@ def test_import_phase_module_growth_counts_as_startup_progress(
     assert clock.now >= 90.0 > ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS
 
 
+def test_cold_bytecode_launch_keeps_passing_while_modules_grow_past_stall_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fresh tree without .pyc files imports slowly. Module growth every 15s keeps the
+    # stall window from expiring, so the launch passes well past the flat 75s budget.
+    timings = tmp_path / "startup-timings.jsonl"
+    clock = _StartupClock(_write_records_every(timings, every=15.0, state="progress"))
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr(
+        "tests.e2e.conftest.httpx.Client.get", _starting_probe(clock, healthy_at=200.0)
+    )
+
+    wait_for_daemon_health(find_free_port(), log_file=tmp_path / "daemon.log")
+
+    assert clock.now >= 200.0 > 2 * ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS
+
+
 @pytest.mark.parametrize(
     ("last_progress_at", "expected_failure_at"),
     [(None, 75.0), (30.0, 105.0)],

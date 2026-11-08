@@ -65,6 +65,20 @@ def test_startup_instrumentation_does_not_profile_runtime_calls() -> None:
             "    return 'ready'",
             "managed readiness",
         ),
+        (
+            "gobby.runner_init.services",
+            "_register_stateful_services",
+            "async def _register_stateful_services():\n"
+            "    await asyncio.sleep(0)\n"
+            "    return 'ready'",
+            "stateful registries",
+        ),
+        (
+            "gobby.runner_init.orchestration",
+            "init_orchestration",
+            "def init_orchestration(): return 'ready'",
+            "orchestration construction",
+        ),
     ],
 )
 async def test_later_module_execution_retains_startup_timing(

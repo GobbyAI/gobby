@@ -10,7 +10,7 @@ from contextlib import AbstractContextManager, ExitStack, nullcontext
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -605,6 +605,62 @@ async def test_backend_ports_behind_front_door(
     # request.client is the front door's observed peer, trusted only from loopback.
     assert uvicorn_config.call_args.kwargs["proxy_headers"] is True
     assert uvicorn_config.call_args.kwargs["forwarded_allow_ips"] == "127.0.0.1,::1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("datastore_mode", "hub", "scheduled"),
+    [("remote", False, False), ("local", True, True)],
+    ids=["node", "hub"],
+)
+async def test_scoped_tool_backfill_follows_run_mode(
+    mock_config: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    datastore_mode: Literal["local", "remote"],
+    hub: bool,
+    scheduled: bool,
+) -> None:
+    """Only a hub schedules the hub-only scoped backfill; a node skips it and logs why."""
+    from gobby.ai import build_daemon_text_generation_service
+    from gobby.runner_init.servers import init_servers
+
+    bootstrap = BootstrapConfig(
+        datastore_mode=datastore_mode,
+        hub=hub,
+        hub_daemon_url="https://hub.example.test:60887",
+        bind_host="127.0.0.1",
+        daemon_port=60887,
+        websocket_port=60888,
+        front_door=FrontDoorConfig(enabled=False),
+    )
+    config = DaemonConfig(websocket={"enabled": True})
+    runner = cast(
+        GobbyRunner,
+        _init_servers_runner(config, bootstrap, build_daemon_text_generation_service(config)),
+    )
+    with (
+        patch("gobby.runner_init.servers.HTTPServer"),
+        patch("gobby.runner_init.mcp_stack.schedule_scoped_embedding_backfill") as backfill,
+        patch("gobby.runner_init.servers.WebSocketServer"),
+        patch("gobby.runner_init.servers.WebChatRuntimeManager"),
+        patch("gobby.runner_init.servers.ModelMetadataCoverageAuditor"),
+        patch("gobby.runner_init.servers.CapabilityRefreshCoordinator"),
+        patch("gobby.runner_init.servers.ProviderCapacityService.create_default"),
+        patch("gobby.runner_init.servers.LocalContextStore"),
+        patch("gobby.runner_init.servers.LocalContextService"),
+        patch("gobby.runner_init.servers.configured_local_routes", return_value=()),
+        patch("gobby.runner_init.servers.set_app_context"),
+        patch(
+            "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
+            return_value=False,
+        ),
+        caplog.at_level(logging.INFO, logger="gobby.runner_init.servers"),
+    ):
+        init_servers(runner)
+
+    skipped = "skipping hub-only scoped tool backfill in node mode" in caplog.messages
+    assert backfill.called is scheduled
+    assert skipped is not scheduled
 
 
 class TestInitSubsystems:
