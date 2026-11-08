@@ -1,9 +1,10 @@
 //! Golden wire corpus for gterm frame (bincode) and control (JSON) protocols.
 
 use gobby_terminal::protocol::{
-    write_message, CellData, ClientMessage, CursorState, FrameData, PaneLocator, RenderEncoding,
-    ServerMessage, SnapshotMode, TerminalFrame, TmuxClientIdentity, MAX_CELLS, MAX_COLS,
-    MAX_FRAME_SIZE, MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION, WORST_CELL_BYTES,
+    encode_control_json, write_message, CellData, ClientMessage, CursorState, FrameData,
+    PaneLocator, RenderEncoding, ServerMessage, SnapshotMode, TerminalFrame, TmuxClientIdentity,
+    MAX_CELLS, MAX_COLS, MAX_FRAME_SIZE, MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION,
+    WORST_CELL_BYTES,
 };
 use gobby_terminal::terminal_theme::{RgbColor, ThemeDeclaration};
 use std::fs;
@@ -27,8 +28,8 @@ fn write_bin(name: &str, msg: &impl serde::Serialize) -> Vec<u8> {
     buf
 }
 
-fn write_json(name: &str, value: serde_json::Value) {
-    let mut bytes = serde_json::to_vec(&value).unwrap();
+fn write_json(name: &str, mut value: serde_json::Value) {
+    let mut bytes = encode_control_json(&mut value).into_bytes();
     bytes.push(b'\n');
     let path = dir().join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -9,7 +9,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, Notify};
 use tokio::time::timeout;
 
-use crate::protocol::{write_message, ServerMessage};
+use crate::protocol::{encode_control_json, write_message, ServerMessage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlClose {
@@ -35,18 +35,18 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
     deadline: Duration,
 ) -> ControlClose {
     while let Some(outbound) = rx.recv().await {
-        let (value, is_reply) = match outbound {
+        let (mut value, is_reply) = match outbound {
             ControlOutbound::Reply(value) => (value, true),
             ControlOutbound::Bounded(value) => (value, false),
         };
-        let mut line = value.to_string();
+        let mut line = encode_control_json(&mut value);
         if line.len() >= 2 * 1024 * 1024 {
             let id = value.get("id").cloned();
             let mut too_large = serde_json::json!({"ok": false, "error": "response_too_large"});
             if let (Some(id), Some(object)) = (id, too_large.as_object_mut()) {
                 object.insert("id".into(), id);
             }
-            line = too_large.to_string();
+            line = encode_control_json(&mut too_large);
         }
         line.push('\n');
         let write = async {

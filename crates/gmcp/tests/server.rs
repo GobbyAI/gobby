@@ -1,7 +1,6 @@
 //! `gmcp` over stdio, checked against the Python wrapper's captured fixtures.
 
-mod stub_daemon;
-
+use crate::stub_daemon::{Response, StubDaemon};
 use anyhow::{Context, Result, bail};
 use gobby_mcp::contract::WRAPPER_CONTRACT;
 use serde_json::{Value, json};
@@ -13,7 +12,6 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use stub_daemon::{Response, StubDaemon};
 
 const TOOLS_LIST: &str = include_str!("../contracts/tools_list.v1.json");
 const WIRE_CASES: &str = include_str!("../contracts/wire_cases.v1.json");

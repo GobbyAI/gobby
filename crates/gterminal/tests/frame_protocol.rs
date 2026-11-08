@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-mod host_support;
+use crate::host_support;
 
 use gobby_terminal::protocol::{
     read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_CELLS,

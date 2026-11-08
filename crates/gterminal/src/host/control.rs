@@ -46,7 +46,9 @@ pub struct ControlRequest {
 }
 
 enum RequestRead {
-    Request(ControlRequest),
+    // Boxed: serde_json's `preserve_order`, unified in from other workspace crates,
+    // grows `Value` and `Map` enough to trip clippy's large_enum_variant.
+    Request(Box<ControlRequest>),
     InvalidJson,
     Overflow,
     Closed,
@@ -80,7 +82,7 @@ async fn read_request(
         }
     }
     match serde_json::from_slice(&line) {
-        Ok(request) => Ok(RequestRead::Request(request)),
+        Ok(request) => Ok(RequestRead::Request(Box::new(request))),
         Err(_) => Ok(RequestRead::InvalidJson),
     }
 }
@@ -134,7 +136,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
 
     loop {
         let request = match read_request(&mut reader, &mut request_buffer).await {
-            Ok(RequestRead::Request(request)) => request,
+            Ok(RequestRead::Request(request)) => *request,
             Ok(RequestRead::InvalidJson) => {
                 if enqueue_control(&outbound_tx, json!({"ok": false, "error": "invalid_json"}))
                     .is_err()

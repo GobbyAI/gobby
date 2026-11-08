@@ -444,6 +444,29 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_eq!(check_expression, "false");
         }
     }
+    // Migration 490 lets db-mode plan coverage read the caller project's tasks and,
+    // through that RLS-scoped tasks lookup, their dependency edges; nothing else.
+    for table in ["tasks", "task_dependencies"] {
+        let policies = actual
+            .remove(table)
+            .expect("plan coverage tables must carry the gcode read policy");
+        let [(name, command, using_expression, check_expression)] = policies.as_slice() else {
+            panic!("{table} must carry exactly one gcode policy: {policies:?}");
+        };
+        assert_eq!(
+            (name.as_str(), command.as_str()),
+            ("gobby_gcode_project_read", "SELECT")
+        );
+        assert!(check_expression.is_empty());
+        // The whole predicate is pinned, so a widened USING clause fails here.
+        let expected_using = if table == "tasks" {
+            "(project_id = gobby_agent_auth.current_project_id())"
+        } else {
+            "(EXISTS ( SELECT 1 FROM tasks t WHERE (t.id = task_dependencies.task_id)))"
+        };
+        let using_expression = using_expression.split_whitespace().collect::<Vec<_>>();
+        assert_eq!(using_expression.join(" "), expected_using);
+    }
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"

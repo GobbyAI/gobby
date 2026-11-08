@@ -2,7 +2,14 @@
 //!
 //! Each top-level test file is one module of this program, so the crate builds a
 //! single integration test binary. A module that needs a feature carries its `cfg`
-//! here, where its former `required-features` gated a separate binary.
+//! here, where its former `required-features` gated a separate binary. Shared
+//! helpers are declared once here, so each module imports them from `crate`.
+
+#[cfg(all(unix, feature = "vt-engine"))]
+mod embed_support;
+
+#[cfg(all(unix, feature = "vt-engine"))]
+mod host_support;
 
 #[path = "batch_paste.rs"]
 mod batch_paste;

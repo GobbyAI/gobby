@@ -176,6 +176,16 @@ pub async fn write_message_async<W: AsyncWrite + Unpin, M: Serialize>(
     Ok(())
 }
 
+/// Encodes one control-channel message as compact JSON with object keys
+/// sorted at every depth, without the trailing newline: the canonical form
+/// Python's `encode_control_line` also emits. Sorting here keeps the bytes
+/// independent of serde_json's `preserve_order` feature, which Cargo unifies
+/// into this crate whenever one build includes a crate that enables it.
+pub fn encode_control_json(value: &mut serde_json::Value) -> String {
+    value.sort_all_objects();
+    value.to_string()
+}
+
 /// Reads and deserializes a length-prefixed frame from a reader.
 ///
 /// Reassembles partial reads correctly. Rejects frames whose declared

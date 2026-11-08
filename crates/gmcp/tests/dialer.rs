@@ -1,9 +1,7 @@
-mod stub_daemon;
-
+use crate::stub_daemon::{Response, StubDaemon};
 use gobby_mcp::daemon::{Dialer, RequestOptions};
 use serde_json::json;
 use std::fs;
-use stub_daemon::{Response, StubDaemon};
 
 fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
