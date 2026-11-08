@@ -149,6 +149,7 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(1250)
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
     subprocess.run(
