@@ -68,9 +68,9 @@ const PREFIX_INDICATOR: &str = "prefix";
 /// selected workspace card left that column blank.
 const SELECTED_MARK: &str = "▸";
 
-/// gclient gives every roster state a distinct glyph: an attached, quiet
-/// terminal shows the idle `○`; herdr's fresh workspace showed `·`.
-const IDLE_DOT: &str = "○";
+/// gclient's blank roster state draws no glyph: a quiet, unassigned workspace
+/// leaves its state cell empty; herdr's fresh workspace showed `·`.
+const BLANK_DOT: &str = " ";
 
 /// gclient joins multiple chords with `", "`; herdr's help used `" / "`.
 const CHORD_SEPARATOR: &str = ", ";
@@ -667,7 +667,7 @@ parity_tests! {
             let line2 = buffer_row_text(&terminal, card, card.y + 1);
 
             assert!(
-                line1.starts_with(&format!("{SELECTED_MARK}{IDLE_DOT} one (main)")),
+                line1.starts_with(&format!("{SELECTED_MARK}{BLANK_DOT} one (main)")),
                 "{line1}"
             );
             assert!(!line1.contains("1 one"));
@@ -1243,12 +1243,13 @@ switch_project = "ctrl+1..9"
                     // active tab its selection fill, and the unfocused pane
                     // its own fill, its scrollbar lane included (#23416), then
                     // the menu bar stepped off that fill onto its own bar
-                    // (#23626 C): 4.1.3
+                    // (#23626 C), then blank states drew no glyph and pane
+                    // titles kept their state cell (#25790): 4.1.3
                     // requires a glyph change to fail here, so this digest
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "fc3f69e1f8d5f469b2b6e5d21cbfbb051f0128da3fa844bf141e2c22b2a7c352",
+                        "134ecd40175b891d2d7493a9100df78fe848b8d36147d3d4c51f2faa4cf8e20e",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );

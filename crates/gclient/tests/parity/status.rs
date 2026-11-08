@@ -53,20 +53,18 @@ parity_tests! {
     "src/ui/status.rs" => {
         fn state_dots_use_aligned_static_workspace_marks() {
             let palette = palette();
-            // herdr (AgentState, seen) pairs map onto gclient RowState:
-            // Blocked -> Attention, Working -> Working, Idle unseen -> Unseen,
-            // Idle seen -> Idle, Unknown -> Unknown. herdr's `●` in three
+            // herdr (AgentState) pairs map onto gclient RowState:
+            // Blocked -> Attention, Working -> Working, Idle (seen or
+            // unseen) -> Blank, orphaned -> NoLive. herdr's `●` in three
             // colours is gclient's one distinct glyph per state: `⍾` needs
-            // you (warning), `▶` working (accent), `◆` unseen (info), `○`
-            // idle, `·` unknown, `◌` orphaned (destructive).
+            // you (warning), `▶` active (accent), `‖` paused (overlay1),
+            // `✕` no live agents (destructive), and blank otherwise.
             for (state, symbol, color) in [
                 (RowState::Attention, "⍾", palette.peach),
                 (RowState::Working, "▶", palette.accent),
-                (RowState::Unseen, "◆", palette.teal),
-                (RowState::Idle, "○", palette.overlay0),
-                (RowState::Unknown, "·", palette.overlay0),
-                (RowState::Orphaned, "◌", palette.red),
                 (RowState::Paused, "‖", palette.overlay1),
+                (RowState::NoLive, "✕", palette.red),
+                (RowState::Blank, " ", palette.overlay0),
             ] {
                 let (actual_symbol, actual_color) = state_dot(state, &palette);
                 assert_eq!(actual_symbol, symbol);
@@ -174,7 +172,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     let line = &rect_rows(&healthy, Rect::new(0, 0, 100, 1))[0];
     // The defaults: this machine's agents by class, then the prefix and the
     // mode. The context, token and sandbox segments are opt-in.
-    assert!(line.starts_with(" ⍾ 1 needs you │ 1 idle  "), "{line:?}");
+    assert!(line.starts_with(" ⍾ 1 needs you │ 1 blank  "), "{line:?}");
     assert!(!line.contains("gpt"), "{line:?}");
     assert!(line.ends_with("  prefix ctrl+b │ navigate "), "{line:?}");
     let count = count.expect("attention count hit area");
@@ -217,7 +215,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     let line = &rect_rows(&visible, Rect::new(0, 0, 100, 1))[0];
     // The count is machine-wide, so attention on the active tab stays in
     // it. Segments the focused pane has no value for draw nothing.
-    assert!(line.starts_with(" ⍾ 1 needs you │ 1 idle  "), "{line:?}");
+    assert!(line.starts_with(" ⍾ 1 needs you │ 1 blank  "), "{line:?}");
     assert!(!line.contains('—'), "no placeholder: {line:?}");
     assert!(
         line.ends_with("  prefix ctrl+b │ navigate "),
@@ -349,15 +347,17 @@ fn status_counts_every_agent_on_this_machine_by_class() {
     chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
 
     // Attention on the active tab and human waits count too; held agents
-    // count as idle; the run on another machine is not counted.
+    // count as paused and a run with no lifecycle as blank; the run on
+    // another machine is not counted.
     let counts = agent_counts(&ws);
     assert_eq!(
         counts,
         AgentCounts {
             need_you: 3,
-            idle: 2,
+            paused: 1,
+            blank: 1,
             active: 1,
-            gone: 1,
+            no_live: 1,
         }
     );
     let local = ws
@@ -368,7 +368,7 @@ fn status_counts_every_agent_on_this_machine_by_class() {
         .count();
     assert_eq!(local, 7, "the remote run is still a sidebar agent");
     assert_eq!(
-        counts.need_you + counts.idle + counts.active + counts.gone,
+        counts.need_you + counts.paused + counts.blank + counts.active + counts.no_live,
         local,
         "the counts sum to the agents on this machine"
     );
@@ -378,19 +378,20 @@ fn status_counts_every_agent_on_this_machine_by_class() {
     });
     let line = &rect_rows(&status, Rect::new(0, 0, 120, 1))[0];
     assert!(
-        line.starts_with(" ⍾ 3 need you │ 2 idle │ 1 active │ ◌ 1 gone  "),
+        line.starts_with(" ⍾ 3 need you │ 1 active │ 1 paused │ ✕ 1 no live agents │ 1 blank  "),
         "{line:?}"
     );
-    let gone = line
-        .find('◌')
+    let no_live = line
+        .find('✕')
         .map(|byte| line[..byte].chars().count())
-        .expect("gone count");
-    let gone = u16::try_from(gone).expect("gone column");
-    for x in gone..gone + 8 {
+        .expect("no live count");
+    let no_live = u16::try_from(no_live).expect("no live column");
+    let width = u16::try_from("✕ 1 no live agents".chars().count()).expect("no live width");
+    for x in no_live..no_live + width {
         assert_eq!(
             cell(&status, x, 0).fg,
             chrome.palette.red,
-            "gone count, x={x}"
+            "no live count, x={x}"
         );
     }
     assert_eq!(

@@ -400,7 +400,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(screen.contains("#12217: Claude"), "rendered UI: {screen:?}");
-    assert!(screen.contains("○ Unknown"), "rendered UI: {screen:?}");
+    assert!(screen.contains("  Unknown"), "rendered UI: {screen:?}");
     let sidebar: String = terminal
         .backend()
         .buffer()

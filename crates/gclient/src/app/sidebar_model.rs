@@ -61,6 +61,10 @@ pub struct ProjectEntry {
     pub behind: Option<u32>,
     pub worktrees: Vec<WorktreeEntry>,
     pub state: RowState,
+    /// Agents under this project that need the operator.
+    pub needs_you: usize,
+    /// Agents under this project with no live process.
+    pub no_live: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -69,10 +73,12 @@ pub struct WorktreeEntry {
     pub branch: Option<String>,
     pub path: PathBuf,
     pub task_ref: Option<String>,
+    /// The task the worktree was made for; an unbound agent on it is bound here.
+    pub task_id: Option<String>,
     pub role: String,
-    /// The rolled-up state of the agents bound to it; none with no agent,
+    /// The rolled-up state of the agents bound to it; blank with no agent,
     /// since a worktree has no state of its own.
-    pub state: Option<RowState>,
+    pub state: RowState,
 }
 
 impl WorktreeEntry {
@@ -103,6 +109,9 @@ pub struct AgentEntry {
     pub name: String,
     /// The run's agent definition; no rung of `name`.
     pub agent_definition_name: Option<String>,
+    /// The seat's definition identity, the one the needs-you log names; a missing
+    /// identity is the default definition.
+    pub definition_name: Option<String>,
     /// The session's manual or definition title without its ref prefix; it takes the
     /// definition's place in the row's line 1 and the pane header.
     pub identity_title: Option<String>,
@@ -112,6 +121,8 @@ pub struct AgentEntry {
     /// shows `model` when the daemon knew no better.
     pub model_display_name: Option<String>,
     pub task_ref: Option<String>,
+    /// The roster task's daemon id, which an epic's integration tree matches.
+    pub task_id: Option<String>,
     /// The roster task's title: a run's task, or the open task a session holds.
     pub task_title: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
@@ -251,7 +262,8 @@ pub struct SidebarInputs<'a> {
 }
 
 pub fn build(inputs: &SidebarInputs) -> SidebarModel {
-    let agents = build_agents(inputs);
+    let mut agents = build_agents(inputs);
+    with_child_activity(&mut agents);
     let mut projects: Vec<ProjectEntry> = inputs
         .rows
         .projects
@@ -294,7 +306,20 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
         .roster
         .iter()
         .filter_map(|entry| {
-            let terminal = entry.terminal.as_ref()?;
+            // An ended assignment keeps its row without a terminal: the daemon drops the
+            // terminal with the session, and the row must still roll up as no-live. Its
+            // empty terminal id matches no pane and gives focus nothing to open.
+            let (terminal_id, backend, terminal_state) = match entry.terminal.as_ref() {
+                Some(terminal) => (
+                    terminal.terminal_id.as_str(),
+                    terminal.backend,
+                    terminal.state.clone(),
+                ),
+                None if entry.lifecycle_status.as_deref() == Some("dead") => {
+                    ("", Backend::default(), None)
+                }
+                None => return None,
+            };
             let session = entry.session_id.as_deref().and_then(|id| {
                 rows.sessions.iter().find_map(|(project, sessions)| {
                     let session = sessions.iter().find(|session| session.id == id)?;
@@ -311,7 +336,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .panes
                 .iter()
                 .copied()
-                .find(|pane| pane.terminal_id == terminal.terminal_id);
+                .find(|pane| pane.terminal_id == terminal_id);
             // The roster places every entry on the hub; the fetched rows only
             // cover the local windows, so they are the fallback.
             let project_id = entry
@@ -345,6 +370,23 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     run.and_then(|(_, run)| run.agent_name.clone())
                         .filter(|name| !name.trim().is_empty())
                 });
+            let definition_name = entry
+                .definition_name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .or_else(|| {
+                    run.and_then(|(_, run)| run.agent_name.clone())
+                        .filter(|name| !name.trim().is_empty())
+                });
+            let anchor = if terminal_id.is_empty() {
+                entry
+                    .session_id
+                    .as_deref()
+                    .or(entry.run_id.as_deref())
+                    .unwrap_or(&entry.entry_id)
+            } else {
+                terminal_id
+            };
             let name = session_title
                 .or_else(|| agent_definition_name.clone())
                 .or_else(|| {
@@ -354,7 +396,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                         .filter(|name| !name.is_empty())
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
-                .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
+                .unwrap_or_else(|| short_terminal_id(anchor).to_string());
             let identity_title = session
                 .and_then(|(project, session)| {
                     let name = rows
@@ -380,10 +422,11 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 entry_id: entry.entry_id.clone(),
                 project_id: project_id.to_string(),
                 machine_id,
-                terminal_id: terminal.terminal_id.clone(),
-                backend: terminal.backend,
+                terminal_id: terminal_id.to_string(),
+                backend,
                 name,
                 agent_definition_name,
+                definition_name,
                 identity_title,
                 provider: provider.unwrap_or_default(),
                 model: concrete_model(entry.model.as_deref())
@@ -393,6 +436,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     }),
                 model_display_name: concrete_model(entry.model_display_name.as_deref()),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
+                task_id: entry.task.as_ref().map(|task| task.id.clone()),
                 task_title: entry.task.as_ref().and_then(|task| task.title.clone()),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 session_id: entry
@@ -415,8 +459,8 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     .and_then(|(_, run)| run.worktree_id.clone())
                     .or_else(|| session.and_then(|(_, session)| session.worktree_id.clone())),
                 lifecycle_status: entry.lifecycle_status.clone(),
-                terminal_state: terminal.state.clone(),
-                state: agent_state(entry, pane),
+                terminal_state,
+                state: agent_state(entry),
                 attention: entry.attention.clone(),
                 last_activity_at: entry.last_activity_at.clone(),
                 sandbox: SandboxState::resolve(
@@ -427,6 +471,85 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             })
         })
         .collect()
+}
+
+/// A blank agent waiting on a child run it started stays active while that
+/// run works; a chain of waiting parents follows its working leaf. Other
+/// states hold, so an operator pause or a needs-you prompt is not overridden.
+fn with_child_activity(agents: &mut [AgentEntry]) {
+    loop {
+        let parents_of_working: BTreeSet<String> = agents
+            .iter()
+            .filter(|agent| agent.state == RowState::Working)
+            .filter_map(|agent| agent.parent_session_id.clone())
+            .collect();
+        let mut changed = false;
+        for agent in agents.iter_mut() {
+            let waiting = agent
+                .session_id
+                .as_ref()
+                .is_some_and(|id| parents_of_working.contains(id));
+            if agent.state == RowState::Blank && waiting {
+                agent.state = RowState::Working;
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+    }
+}
+
+/// Whether `agent` works in the worktree: bound by its worktree id, or, when
+/// it has none, running the worktree's task. An epic's integration tree has no
+/// session of its own, so its team lead is the unbound agent on its task.
+fn is_bound_to(agent: &AgentEntry, worktree_id: &str, task_id: Option<&str>) -> bool {
+    match agent.worktree_id.as_deref() {
+        Some(id) => id == worktree_id,
+        None => task_id.is_some() && agent.task_id.as_deref() == task_id,
+    }
+}
+
+/// A dead agent bound to a tree only by its task is a previous lead once
+/// another such agent runs: the tree shows its live lead's state.
+fn superseded_lead(agent: &AgentEntry, bound: &[&AgentEntry]) -> bool {
+    agent.worktree_id.is_none()
+        && agent.state == RowState::NoLive
+        && bound
+            .iter()
+            .any(|other| other.worktree_id.is_none() && other.state != RowState::NoLive)
+}
+
+/// Logs each agent that just came to need the operator when its definition is
+/// not the default one, so a non-default seat asking for attention shows in the
+/// log. An agent that needed you in `previous` is not logged again.
+pub fn log_needs_you_transitions(previous: &SidebarModel, current: &SidebarModel) {
+    for agent in current
+        .agents
+        .iter()
+        .filter(|agent| agent.state == RowState::Attention)
+    {
+        let already = previous
+            .agents
+            .iter()
+            .any(|old| old.entry_id == agent.entry_id && old.state == RowState::Attention);
+        let definition = agent.definition_name.as_deref().unwrap_or("default");
+        if already || definition == "default" {
+            continue;
+        }
+        // A roster-only session has no fetched ref; its id still names it.
+        let session = agent
+            .session_ref
+            .as_deref()
+            .or(agent.session_id.as_deref())
+            .unwrap_or("");
+        tracing::warn!(
+            entry_id = %agent.entry_id,
+            session_ref = session,
+            agent_definition = definition,
+            "agent needs you"
+        );
+    }
 }
 
 fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]) -> ProjectEntry {
@@ -444,7 +567,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
             let bound: Vec<&AgentEntry> = own
                 .iter()
                 .copied()
-                .filter(|agent| agent.worktree_id.as_deref() == Some(worktree.id.as_str()))
+                .filter(|agent| is_bound_to(agent, &worktree.id, worktree.task_id.as_deref()))
                 .collect();
             WorktreeEntry {
                 worktree_id: worktree.id.clone(),
@@ -454,8 +577,14 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
                     .iter()
                     .find_map(|agent| agent.task_ref.clone())
                     .or_else(|| worktree.task_id.clone()),
+                task_id: worktree.task_id.clone(),
                 role: worktree.workspace_role.clone(),
-                state: (!bound.is_empty()).then(|| rollup(bound.iter().map(|agent| agent.state))),
+                state: rollup(
+                    bound
+                        .iter()
+                        .filter(|agent| !superseded_lead(agent, &bound))
+                        .map(|agent| agent.state),
+                ),
             }
         })
         .collect();
@@ -475,6 +604,14 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
         behind: status.and_then(|status| status.behind),
         worktrees,
         state: rollup(own.iter().map(|agent| agent.state)),
+        needs_you: own
+            .iter()
+            .filter(|agent| agent.state == RowState::Attention)
+            .count(),
+        no_live: own
+            .iter()
+            .filter(|agent| agent.state == RowState::NoLive)
+            .count(),
     }
 }
 
@@ -484,57 +621,41 @@ pub fn worktree_focus_target<'a>(
     model: &'a SidebarModel,
     worktree_id: &str,
 ) -> Option<&'a AgentEntry> {
+    let task_id = model
+        .projects
+        .iter()
+        .flat_map(|project| project.worktrees.iter())
+        .find(|worktree| worktree.worktree_id == worktree_id)
+        .and_then(|worktree| worktree.task_id.as_deref());
     model
         .agents
         .iter()
-        .filter(|agent| agent.worktree_id.as_deref() == Some(worktree_id))
-        .min_by_key(|agent| Reverse(urgency(rollup_class(agent.state))))
+        // An assignment with no terminal has no pane to focus; the row opens the worktree.
+        .filter(|agent| !agent.terminal_id.is_empty() && is_bound_to(agent, worktree_id, task_id))
+        .min_by_key(|agent| Reverse(urgency(agent.state)))
 }
 
-/// herdr `status_priority`: blocked over unseen over working over idle.
+/// Needs you over active over paused over no live agents over blank.
 pub fn urgency(state: RowState) -> u8 {
     match state {
-        RowState::Attention => 6,
-        RowState::Orphaned => 5,
-        RowState::Paused => 4,
-        RowState::Unseen => 3,
-        RowState::Working => 2,
-        RowState::Idle => 1,
-        RowState::Unknown => 0,
+        RowState::Attention => 4,
+        RowState::Working => 3,
+        RowState::Paused => 2,
+        RowState::NoLive => 1,
+        RowState::Blank => 0,
     }
 }
 
-/// The attention legend's class for a state: needs you, gone and active
-/// keep their own; output unseen, held and no state yet count as idle.
-pub fn state_class(state: RowState) -> RowState {
-    match state {
-        RowState::Attention | RowState::Orphaned | RowState::Working => state,
-        RowState::Paused | RowState::Unseen | RowState::Idle | RowState::Unknown => RowState::Idle,
-    }
-}
-
-/// A container's state: the most urgent class among its members, needs
-/// you over gone over held over active over idle, and idle with no members.
-/// A held agent still waits on someone, so it outranks work; output unseen
-/// and no state yet count as idle.
+/// A container's state: the most urgent member, and blank with no members.
 pub fn rollup(states: impl IntoIterator<Item = RowState>) -> RowState {
     states
         .into_iter()
-        .map(rollup_class)
         .max_by_key(|state| urgency(*state))
-        .unwrap_or(RowState::Idle)
+        .unwrap_or(RowState::Blank)
 }
 
-/// The class `rollup` ranks a member by: held keeps its own state.
-fn rollup_class(state: RowState) -> RowState {
-    match state {
-        RowState::Paused => state,
-        other => state_class(other),
-    }
-}
-
-/// herdr's `AgentState` for one roster entry, given the pane that shows it.
-pub fn agent_state(entry: &RosterEntry, pane: Option<&Pane>) -> RowState {
+/// The state of one roster entry. Output in its pane does not make it active.
+pub fn agent_state(entry: &RosterEntry) -> RowState {
     let terminal_state = entry
         .terminal
         .as_ref()
@@ -546,7 +667,6 @@ pub fn agent_state(entry: &RosterEntry, pane: Option<&Pane>) -> RowState {
             .is_some_and(|attention| attention.kind.as_deref() == Some("actionable")),
         is_orphaned(terminal_state),
         entry.lifecycle_status.as_deref(),
-        pane,
     )
 }
 
@@ -555,26 +675,11 @@ pub fn is_orphaned(terminal_state: Option<&str>) -> bool {
     terminal_state == Some("orphaned")
 }
 
-/// `agent_state` for a built agent row and the pane the chrome found for it,
-/// so `row_state` tracks pane flags that changed after the last rebuild.
-pub fn agent_row_state(agent: &AgentEntry, pane: Option<&Pane>) -> RowState {
-    resolve_state(
-        agent
-            .attention
-            .as_ref()
-            .is_some_and(|attention| attention.kind.as_deref() == Some("actionable")),
-        is_orphaned(agent.terminal_state.as_deref()),
-        agent.lifecycle_status.as_deref(),
-        pane,
-    )
-}
-
-fn resolve_state(
-    blocked: bool,
-    orphaned: bool,
-    lifecycle_status: Option<&str>,
-    pane: Option<&Pane>,
-) -> RowState {
+fn resolve_state(blocked: bool, orphaned: bool, lifecycle_status: Option<&str>) -> RowState {
+    // An ended assignment holds no live work, whatever attention it still carries.
+    if lifecycle_status == Some("dead") {
+        return RowState::NoLive;
+    }
     if blocked
         || lifecycle_status
             .is_some_and(|status| matches!(status, "awaiting_input" | "awaiting_approval"))
@@ -582,10 +687,10 @@ fn resolve_state(
         return RowState::Attention;
     }
     if orphaned {
-        return RowState::Orphaned;
+        return RowState::NoLive;
     }
     // Held: an operator pause or a user interrupt only. A routine turn end, with or
-    // without an armed wait, is "idle" or "waiting" and draws as idle. Human input and
+    // without an armed wait, is "idle" or "waiting" and draws as blank. Human input and
     // approval above are attention even before a screen detector finds a prompt.
     if matches!(lifecycle_status, Some("paused" | "interrupted")) {
         return RowState::Paused;
@@ -593,25 +698,7 @@ fn resolve_state(
     if lifecycle_status.is_some_and(|status| matches!(status, "running" | "active")) {
         return RowState::Working;
     }
-    let Some(pane) = pane else {
-        return RowState::Idle;
-    };
-    if pane.new_output {
-        RowState::Unseen
-    } else {
-        RowState::Idle
-    }
-}
-
-/// The pane-only half of `agent_state`, for a terminal no roster entry names.
-pub fn pane_state(pane: &Pane) -> RowState {
-    if pane.new_output && pane.live {
-        RowState::Working
-    } else if pane.new_output {
-        RowState::Unseen
-    } else {
-        RowState::Idle
-    }
+    RowState::Blank
 }
 
 /// Roster and attention reads a live event asks for. Applying the event only
@@ -719,7 +806,7 @@ impl<D: Daemon> Workspace<D> {
         self.attention
             .entries
             .iter()
-            .filter(|entry| agent_state(entry, None) == RowState::Attention)
+            .filter(|entry| agent_state(entry) == RowState::Attention)
             .map(|entry| entry.entry_id.clone())
             .collect()
     }
@@ -730,7 +817,9 @@ impl<D: Daemon> Workspace<D> {
     }
 
     pub(super) fn rebuild_sidebar(&mut self) {
+        let previous = std::mem::take(&mut self.sidebar);
         self.sidebar = self.build_sidebar();
+        log_needs_you_transitions(&previous, &self.sidebar);
     }
 
     fn build_sidebar(&self) -> SidebarModel {

@@ -1,4 +1,4 @@
-version: "1.7.1"
+version: "1.9.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -84,10 +84,25 @@ rules:
               "src/gobby/install/shared/workflows/rules/tool-hygiene/workflow-cli-authority.yaml",
               "src/gobby/install/shared/workflows/rules/tool-hygiene/agent-activation-authority.yaml",
               "src/gobby/workflows/condition_helpers_spawn.py",
-              "src/gobby/install/shared/workflows/rules/tool-hygiene/spawn-capability-authority.yaml"
+              "src/gobby/install/shared/workflows/rules/tool-hygiene/spawn-capability-authority.yaml",
+              "crates/gdaemon/src/nodes/agents/removal_lock.rs",
+              "src/gobby/worktrees/removal_lock.py",
+              "src/gobby/agents/team_tree_provisioning.py",
+              "src/gobby/agents/isolation_repair.py",
+              "src/gobby/utils/project_context.py",
+              "crates/gcode/src/commands/pin.rs",
+              "src/gobby/servers/websocket/terminal_ws.py",
+              "src/gobby/terminals/leases.py",
+              "crates/gclient/src/app/attach.rs",
+              "crates/gclient/src/frame_source/proxy.rs",
+              "crates/gterminal/src/host/mod.rs",
+              "src/gobby/worktrees/deletion.py",
+              "src/gobby/worktrees/git/_status.py",
+              "src/gobby/worktrees/creation.py",
+              "src/gobby/servers/routes/source_control_worktrees.py"
             ],
             "operator_channel": "gobby-telegram",
-            "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
+            "quiet_hours": "04:00–06:30 America/Chicago daily",
             "operator_timezone": "America/Chicago",
             "report_cadence_seconds": 1800,
             "full_report_minutes": "00-29 UTC",

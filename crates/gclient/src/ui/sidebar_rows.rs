@@ -87,6 +87,12 @@ pub struct SidebarRow {
     /// An agent row's sandbox lock, resolved from its session's sandbox state
     /// and the nerd-glyph pref; `None` for an unrestricted agent.
     pub sandbox_mark: Option<&'static str>,
+    /// A project or machine row's agents that need the operator, drawn beside
+    /// its glyph as `⍾N`; zero draws nothing.
+    pub needs_you: usize,
+    /// A project or machine row's agents with no live process, drawn beside
+    /// its glyph as `✕N`; zero draws nothing.
+    pub no_live: usize,
 }
 
 impl SidebarRow {
@@ -135,6 +141,8 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                 .unwrap_or_else(|| project.name.clone()),
             kind: RowKind::Project,
             state: project.state,
+            needs_you: project.needs_you,
+            no_live: project.no_live,
             branch: Some(project.branch.clone().unwrap_or_else(|| "~".to_string())),
             ahead: project.ahead.unwrap_or(0),
             behind: project.behind.unwrap_or(0),
@@ -160,7 +168,7 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                     kind: RowKind::Worktree,
                     // Rollups never yield Unknown, so here it marks a
                     // worktree with no agent bound, drawn without a glyph.
-                    state: worktree.state.unwrap_or(RowState::Unknown),
+                    state: worktree.state,
                     detail: worktree.task_ref.clone().unwrap_or_default(),
                     nested: true,
                     last_child: index + 1 == count,
@@ -350,7 +358,14 @@ pub(crate) fn row_line_with_scrolling<'a>(
         RowKind::Project => {
             let toggle = row.group.map(|expanded| if expanded { "▾" } else { "▸" });
             let name_budget = budget.saturating_sub(if toggle.is_some() { 2 } else { 0 });
-            spans.extend(card_spans(row, glyph, project_style, p, name_budget));
+            let counted = counted_glyph(glyph.0, row);
+            spans.extend(card_spans(
+                row,
+                (counted.as_str(), glyph.1),
+                project_style,
+                p,
+                name_budget,
+            ));
             if let Some(toggle) = toggle {
                 let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
                 let pad = usize::from(width).saturating_sub(used + 1);
@@ -363,7 +378,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
             // No agent bound, no state: a blank keeps the branch aligned.
-            let glyph = if row.state == RowState::Unknown {
+            let glyph = if row.state == RowState::Blank {
                 (" ", glyph.1)
             } else {
                 glyph
@@ -401,8 +416,9 @@ pub(crate) fn row_line_with_scrolling<'a>(
             let prefix = nest_prefix(row);
             let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
+            let counted = counted_glyph(glyph.0, row);
             spans.extend(fitted_spans(
-                glyph,
+                (counted.as_str(), glyph.1),
                 (&row.label, title_style),
                 &[(row.detail.as_str(), secondary_style)],
                 p,
@@ -475,6 +491,18 @@ pub(crate) fn row_line_with_scrolling<'a>(
         }
     }
     Line::from(spans)
+}
+
+/// A project or machine glyph with its counts beside it, each left off at
+/// zero: one active agent beside two dead ones reads `▶ ✕2`.
+fn counted_glyph(glyph: &str, row: &SidebarRow) -> String {
+    let mut text = glyph.to_string();
+    for (count, mark) in [(row.needs_you, "⍾"), (row.no_live, "✕")] {
+        if count > 0 {
+            text = format!("{text} {mark}{count}");
+        }
+    }
+    text
 }
 
 /// A project card's glyph, name and `(branch ↑a ↓b)`: the parenthetical

@@ -253,6 +253,8 @@ async fn agent_pane(
         .find(|agent| agent.entry_id == entry_id)
         .map(|agent| (agent.project_id.clone(), agent.terminal_id.clone()));
     let terminal_id = match agent {
+        // An ended assignment has no terminal, so there is no pane to reveal.
+        Some((_, terminal_id)) if terminal_id.is_empty() => return Ok(None),
         Some((project, terminal_id)) => {
             if workspace.project_id() != Some(project.as_str()) {
                 focus_project(workspace, chrome, &project).await?;

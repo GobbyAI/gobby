@@ -16,7 +16,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.servers.conftest import create_http_server
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
 
@@ -388,3 +390,73 @@ def test_http_setter_enforces_real_caller_authority(
     else:
         assert "[native-variable-authority]" in response.json()["error"]
         assert "candidate_sent" not in stored
+
+
+@pytest.mark.parametrize("caller_granted", [True, False])
+def test_step_scope_write_is_authorized_by_the_caller_not_the_target(
+    temp_db: HubDatabase,
+    caller_granted: bool,
+) -> None:
+    """An agentless caller writes a foreign running step on its own grant only.
+
+    The target's definition holds write_session_variables in both cases, so a refusal
+    proves the check keys on the caller, and the refusal names the caller.
+    """
+    temp_db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP)",
+        (_PROJECT, "variable-step-authority"),
+    )
+    for session_id in (_OWN_SESSION, _OTHER_SESSION):
+        temp_db.execute(
+            "INSERT INTO sessions "
+            "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (session_id, session_id, "21000000-0000-4000-8000-000000000001", "codex", _PROJECT),
+        )
+    definitions = AgentDefinitionManager(temp_db)
+    for name, granted in (("caller-definition", caller_granted), ("target-definition", True)):
+        definitions.create(
+            name,
+            {
+                "name": name,
+                "prompts": {"agent": "Maintain assigned session state."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": ["write_session_variables"] if granted else [],
+            },
+            project_id=_PROJECT,
+            enabled=True,
+        )
+    variables = SessionVariableManager(temp_db)
+    variables.set_variable(_OWN_SESSION, "_agent_type", "caller-definition")
+    variables.set_variable(_OTHER_SESSION, "_agent_type", "target-definition")
+    instances = AgentStepInstanceManager(temp_db)
+    instances.save(
+        make_step_instance(
+            _OTHER_SESSION,
+            agent_name="target-definition",
+            current_step="implement",
+            variables={"candidate_sent": True},
+        )
+    )
+    server = create_http_server(
+        config=DaemonConfig(),
+        database=temp_db,
+        session_manager=SessionManager(temp_db),
+    )
+    response = TestClient(server.app).post(
+        f"/api/sessions/{_OTHER_SESSION}/variables/set",
+        headers={"X-Gobby-Session-Id": _OWN_SESSION, "X-Gobby-Project-Id": _PROJECT},
+        json={"name": "candidate_sent", "value": False, "scope": "step"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is caller_granted, body
+    stored = instances.get_for_session(_OTHER_SESSION)
+    assert stored is not None
+    if caller_granted:
+        assert stored.variables["candidate_sent"] is False
+    else:
+        assert "[native-variable-authority]" in body["error"]
+        assert _OWN_SESSION in body["error"]
+        assert _OTHER_SESSION not in body["error"]
+        assert stored.variables["candidate_sent"] is True

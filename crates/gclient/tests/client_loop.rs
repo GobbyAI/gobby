@@ -7244,6 +7244,28 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
                 })
         })
         .await;
+        // The placement that focuses the new pane lands after its viewport is
+        // sent. Close input only once the focus hint names that pane.
+        let focus_hinted = || {
+            let next_pane = mock
+                .published_workspace_events()
+                .iter()
+                .flat_map(|event| event["panes"].as_array().cloned().unwrap_or_default())
+                .find(|pane| pane["terminal_id"] == json!(NEXT_OWNED))
+                .and_then(|pane| pane["id"].as_str().map(str::to_owned));
+            next_pane.is_some_and(|pane| {
+                workspace_ops(&mock, "workspace.set_focus_hints")
+                    .iter()
+                    .any(|op| op["pane"] == json!(pane))
+            })
+        };
+        timeout(Duration::from_secs(10), async {
+            while !focus_hinted() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("focus hint names NEXT_OWNED's pane once its terminal resolves");
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;

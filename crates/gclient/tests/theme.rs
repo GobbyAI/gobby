@@ -206,11 +206,16 @@ fn tokens_match_design_contract_and_survive_monochrome() {
 
         // Every rendered indicator carries a glyph plus a label; colour is
         // the fourth signal, so the (glyph, label) pairs must be distinct.
+        // Blank draws no glyph by design, so its label alone names it.
         let mut cues = HashSet::new();
         for state in RowState::ALL {
             let (dot, _) = state_dot(state, &palette);
             let label = state_label(state);
-            assert!(!dot.trim().is_empty() && !label.is_empty(), "{state:?}");
+            assert!(!label.is_empty(), "{state:?}");
+            assert!(
+                state == RowState::Blank || !dot.trim().is_empty(),
+                "{state:?} needs a glyph"
+            );
             cues.insert((dot, label));
         }
         assert_eq!(

@@ -90,10 +90,6 @@ fn awaiting_pane(
         return true;
     };
     !workspace.open_failed(terminal_id)
-        && viewer
-            .unresolved
-            .iter()
-            .any(|id| id.as_str() == terminal_id)
 }
 
 /// Project the workspace model onto the focused project's tab bar when it

@@ -586,7 +586,7 @@ async fn help_reopened_from_the_legend_row_drops_the_old_search() {
     .await;
     assert_eq!(fixture.chrome.mode, Mode::KeybindHelp);
     assert!(
-        screen(&terminal).contains("running a turn"),
+        screen(&terminal).contains("waiting on a child run"),
         "Help opens on the legend"
     );
     for ch in "/split".chars() {
@@ -598,7 +598,7 @@ async fn help_reopened_from_the_legend_row_drops_the_old_search() {
     }
     draw(&mut terminal, &mut fixture);
     assert!(
-        !screen(&terminal).contains("running a turn"),
+        !screen(&terminal).contains("waiting on a child run"),
         "the search hides the legend"
     );
     route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Esc));
@@ -608,7 +608,7 @@ async fn help_reopened_from_the_legend_row_drops_the_old_search() {
     pick_menu_row(&mut terminal, &mut fixture, MenuBarMenu::Help, legend).await;
     assert_eq!(fixture.chrome.keybind_help.query, "");
     assert!(
-        screen(&terminal).contains("running a turn"),
+        screen(&terminal).contains("waiting on a child run"),
         "the legend is back"
     );
     fixture.mock.shutdown().await;

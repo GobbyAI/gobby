@@ -142,6 +142,40 @@ BUNDLED_PIPELINES = [_load(path) for path in sorted(get_bundled_pipelines_path()
 TASK_RUNBOOKS = [pipeline for pipeline in BUNDLED_PIPELINES if pipeline.get("claim_flow")]
 
 
+def _guard_tab_titles(node: object) -> list[str]:
+    """Every literal ``tab_title`` a pipeline passes to the seat guard, at any depth."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        arguments = node.get("arguments")
+        if node.get("tool") == "check_runbook_seats" and isinstance(arguments, dict):
+            if isinstance(arguments.get("tab_title"), str):
+                found.append(arguments["tab_title"])
+        for value in node.values():
+            found.extend(_guard_tab_titles(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_guard_tab_titles(item))
+    return found
+
+
+GUARD_TAB_TITLES = {
+    str(pipeline.get("name")): _guard_tab_titles(pipeline) for pipeline in BUNDLED_PIPELINES
+}
+GUARDED_RUNBOOKS = sorted(name for name, titles in GUARD_TAB_TITLES.items() if titles)
+
+
+def test_guarded_runbooks_are_discovered() -> None:
+    assert GUARDED_RUNBOOKS
+
+
+@pytest.mark.parametrize("name", GUARDED_RUNBOOKS)
+def test_guard_tab_title_is_a_bare_runbook_name(name: str) -> None:
+    """The guard appends ' - #<seq>' itself, so a runbook passes only its bare name."""
+    for tab_title in GUARD_TAB_TITLES[name]:
+        assert "#" not in tab_title, f"{name} passes a task ref in tab_title: {tab_title!r}"
+        assert "inputs.task" not in tab_title, f"{name} passes the task in tab_title: {tab_title!r}"
+
+
 def _named_agents(node: object) -> set[str]:
     """Every literal ``agent`` a pipeline names, in seat catalogues and spawn steps."""
     found: set[str] = set()
@@ -213,7 +247,10 @@ def _review_stage_agents() -> set[str]:
         steps = {step["id"]: step for step in pipeline.get("steps") or []}
         for stage in pipeline["claim_flow"].values():
             if stage.get("on_rejected"):
-                agents |= _named_agents(steps[stage["seat"]])
+                if "seat" in stage:
+                    agents |= _named_agents(steps[stage["seat"]])
+                else:
+                    agents.add(stage["agent"])
     return agents
 
 

@@ -30,6 +30,7 @@ PYTEST_ISOLATION_DIR=""
 PYTEST_FALKORDB_HOST=""
 PYTEST_FALKORDB_PORT=""
 PYTEST_FALKORDB_PASSWORD=""
+PYTEST_QDRANT_URL="${GOBBY_TEST_QDRANT_URL:-http://127.0.0.1:${GOBBY_QDRANT_TEST_HTTP_PORT:-26333}}"
 UV_EXTRA_FLAGS=()
 if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then
     UV_EXTRA_FLAGS=(--all-extras)
@@ -50,6 +51,8 @@ PYTEST_FORBIDDEN_SKIP_REASONS=(
     "set GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR"
     "awaiting #14098"
     "set GOBBY_OTEL_COLLECTOR_SMOKE=1"
+    "GOBBY_TEST_FALKOR_PASSWORD is unset"
+    "GOBBY_TEST_QDRANT_URL is unset"
 )
 PYTEST_SELECTION_ARGS=()
 PYTEST_AGY_PROBE=1
@@ -118,9 +121,10 @@ docker_compose() {
     fi
 }
 
-read_managed_falkordb_settings() {
-    # CI owns an isolated service and has no installed Gobby config or SecretStore.
-    # Partial overrides must not mix test and managed settings.
+read_test_falkordb_settings() {
+    # The isolated test stack (docker-compose.test.yml) supplies these settings. The
+    # daemon's managed FalkorDB is never read. Partial GOBBY_TEST_FALKOR_* overrides
+    # fail closed rather than mixing test and managed values.
     if [ -n "${GOBBY_TEST_FALKOR_HOST:-}${GOBBY_TEST_FALKOR_PORT:-}${GOBBY_TEST_FALKOR_PASSWORD:-}" ]; then
         if [ -z "${GOBBY_TEST_FALKOR_HOST:-}" ] ||
             [ -z "${GOBBY_TEST_FALKOR_PORT:-}" ] ||
@@ -131,22 +135,7 @@ read_managed_falkordb_settings() {
         printf '%s\n' "$GOBBY_TEST_FALKOR_HOST" "$GOBBY_TEST_FALKOR_PORT" "$GOBBY_TEST_FALKOR_PASSWORD"
         return 0
     fi
-    uv_run python - <<'PY'
-from pathlib import Path
-
-from gobby.cli.installers.compose_env import resolve_compose_runtime
-
-runtime = resolve_compose_runtime(
-    Path.home() / ".gobby",
-    profiles=("falkordb",),
-)
-for name in (
-    "GOBBY_FALKORDB_HOST",
-    "GOBBY_FALKORDB_PORT",
-    "GOBBY_FALKORDB_PASSWORD",
-):
-    print(runtime.environment[name])
-PY
+    printf '%s\n' "127.0.0.1" "${GOBBY_FALKORDB_TEST_PORT:-26379}" "${GOBBY_FALKORDB_TEST_PASSWORD:-gobby_test}"
 }
 
 load_pytest_falkordb_settings() {
@@ -154,10 +143,64 @@ load_pytest_falkordb_settings() {
         IFS= read -r PYTEST_FALKORDB_HOST &&
             IFS= read -r PYTEST_FALKORDB_PORT &&
             IFS= read -r PYTEST_FALKORDB_PASSWORD
-    } < <(read_managed_falkordb_settings)
+    } < <(read_test_falkordb_settings)
     [ -n "$PYTEST_FALKORDB_HOST" ] &&
         [ -n "$PYTEST_FALKORDB_PORT" ] &&
         [ -n "$PYTEST_FALKORDB_PASSWORD" ]
+}
+
+test_falkordb_is_ready() {
+    uv_run python - "$PYTEST_FALKORDB_HOST" "$PYTEST_FALKORDB_PORT" "$PYTEST_FALKORDB_PASSWORD" <<'PY' >/dev/null 2>&1
+import sys
+
+import redis
+
+host, port, password = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+try:
+    redis.Redis(host=host, port=port, password=password, socket_timeout=2).ping()
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
+test_qdrant_is_ready() {
+    uv_run python - "$PYTEST_QDRANT_URL" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+try:
+    with urllib.request.urlopen(f"{sys.argv[1]}/healthz", timeout=2) as response:
+        raise SystemExit(0 if response.status == 200 else 1)
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
+# Starts falkordb-test and qdrant-test only when they do not already answer, then
+# waits for both. Managed services are never started, read, or stopped here.
+ensure_test_stack_services() {
+    if test_falkordb_is_ready && test_qdrant_is_ready; then
+        return 0
+    fi
+    if ! docker_compose version >/dev/null 2>&1; then
+        echo "Docker Compose is required to start falkordb-test and qdrant-test." >&2
+        return 1
+    fi
+    echo "Starting falkordb-test and qdrant-test from docker-compose.test.yml..." >&2
+    if ! docker_compose -f docker-compose.test.yml up -d falkordb-test qdrant-test >&2; then
+        echo "Failed to start falkordb-test and qdrant-test from docker-compose.test.yml." >&2
+        return 1
+    fi
+    local attempt=1
+    while [ "$attempt" -le 30 ]; do
+        if test_falkordb_is_ready && test_qdrant_is_ready; then
+            return 0
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    echo "Timed out waiting for falkordb-test and qdrant-test to answer." >&2
+    return 1
 }
 
 # bash 3.2 + set -u: empty "${arr[@]}" is unbound; "$@" is not.
@@ -522,8 +565,13 @@ elif ! mkdir -p \
     FAILED=1
 elif ! load_pytest_falkordb_settings; then
     PYTEST_EXIT=1
-    echo "✗ Failed to resolve managed FalkorDB settings for pytest"
-    echo "  Run gobby install to configure the managed FalkorDB host, port, and password."
+    echo "✗ Failed to resolve isolated FalkorDB test settings for pytest"
+    echo "  Set all of GOBBY_TEST_FALKOR_HOST, GOBBY_TEST_FALKOR_PORT, and GOBBY_TEST_FALKOR_PASSWORD, or none."
+    FAILED=1
+elif ! ensure_test_stack_services; then
+    PYTEST_EXIT=1
+    echo "✗ FalkorDB and Qdrant test services are not reachable"
+    echo "  Start them: docker compose -f docker-compose.test.yml up -d falkordb-test qdrant-test"
     FAILED=1
 elif [ "$PYTEST_AGY_PROBE" -eq 1 ] && ! command -v agy >/dev/null 2>&1; then
     PYTEST_EXIT=1
@@ -537,6 +585,7 @@ elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_TEST_FALKOR_HOST="$PYTEST_FALKORDB_HOST" \
     GOBBY_TEST_FALKOR_PORT="$PYTEST_FALKORDB_PORT" \
     GOBBY_TEST_FALKOR_PASSWORD="$PYTEST_FALKORDB_PASSWORD" \
+    GOBBY_TEST_QDRANT_URL="$PYTEST_QDRANT_URL" \
     GOBBY_RUN_AGY_PROBE="$PYTEST_AGY_PROBE" \
     GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1 \
     GOBBY_OTEL_COLLECTOR_SMOKE=1 \

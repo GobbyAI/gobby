@@ -643,6 +643,23 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_pane_title_keeps_the_blank_state_cell() {
+        let mut pane = pane();
+        pane.command = Some("terminal".into());
+        let workspace = crate::app::Workspace::scripted();
+        let chrome = crate::ui::chrome::Chrome::dark();
+
+        assert_eq!(
+            crate::ui::pane_chrome::pane_corners(&workspace, &chrome, &pane, true).title,
+            "  terminal · Focused"
+        );
+        assert_eq!(
+            crate::ui::pane_chrome::pane_corners(&workspace, &chrome, &pane, false).title,
+            "  terminal"
+        );
+    }
+
+    #[test]
     fn pending_input_cap_resets_when_the_queue_is_cleared() {
         let mut pane = pane();
         let full = vec![b'x'; MAX_PENDING_INPUT_BYTES];

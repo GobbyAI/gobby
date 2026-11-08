@@ -79,17 +79,17 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
 
     // The session ref, not the task: the task title lives on the Agents row.
     let focused = pane_corners(&ws, &chrome, ws.pane(pane_id), true);
-    assert_eq!(focused.title, "○ #1742: Codex · Focused");
+    assert_eq!(focused.title, "  #1742: Codex · Focused");
     assert_eq!(focused.address, "0:0:1:2");
     let unfocused = pane_corners(&ws, &chrome, ws.pane(pane_id), false);
-    assert_eq!(unfocused.title, "○ #1742: Codex");
+    assert_eq!(unfocused.title, "  #1742: Codex");
 
     // The project leads the ref only where every project's rows mix.
     chrome.sidebar.all_sessions = true;
     chrome.prefs.agent_sort = AgentSort::Priority;
     assert_eq!(
         pane_corners(&ws, &chrome, ws.pane(pane_id), false).title,
-        "○ gobby#1742: Codex"
+        "  gobby#1742: Codex"
     );
     chrome.sidebar.all_sessions = false;
 
@@ -117,18 +117,18 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
     ws.reconcile_subscribe_first().unwrap();
     assert_eq!(
         pane_corners(&ws, &chrome, ws.pane(pane_id), false).title,
-        "○ Codex"
+        "  Codex"
     );
 
     let mut fallback = Pane::new(PaneId(99), "term-fallback", Backend::Native, "epoch");
     fallback.label = Some("renamed pane".to_owned());
     assert_eq!(
         pane_corners(&ws, &chrome, &fallback, false).title,
-        "○ renamed pane"
+        "  renamed pane"
     );
     fallback.label = None;
     fallback.command = Some("nvim".to_owned());
-    assert_eq!(pane_corners(&ws, &chrome, &fallback, false).title, "○ nvim");
+    assert_eq!(pane_corners(&ws, &chrome, &fallback, false).title, "  nvim");
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn a_seat_without_a_definition_names_its_provider() {
     let pane = ws.open_terminal("term-orphan", "native", "epoch").unwrap();
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "○ Claude Code · Focused"
+        "  Claude Code · Focused"
     );
 }
 
@@ -217,14 +217,14 @@ fn a_manual_session_title_names_the_seat_in_place_of_its_provider() {
     let (ws, pane) = titled_seat("gobby#14069: Assistant", "manual");
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "○ #14069: Assistant · Focused",
+        "  #14069: Assistant · Focused",
         "the manual title drops the ref prefix the header already leads with"
     );
 
     let (ws, pane) = titled_seat("gobby#14069: Task #22974 - fix titles", "task");
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "○ #14069: Claude · Focused",
+        "  #14069: Claude · Focused",
         "an automatic title keeps the provider"
     );
 }
@@ -251,12 +251,12 @@ fn seat_identity_title_precedes_the_run_definition_in_the_pane_header() {
             // A defined seat's header is its definition name alone: no ref, counter or slug.
             assert_eq!(
                 pane_corners(&ws, &chrome, ws.pane(pane), true).title,
-                format!("○ {expected} · Focused"),
+                format!("  {expected} · Focused"),
                 "title={title:?}, source={source:?}"
             );
             assert_eq!(
                 pane_corners(&ws, &chrome, ws.pane(pane), false).title,
-                format!("○ {expected}"),
+                format!("  {expected}"),
                 "title={title:?}, source={source:?}"
             );
         }
@@ -281,7 +281,7 @@ fn bare_shell_title_uses_its_command_instead_of_unknown_agent_identity() {
     assert_eq!(ws.sidebar().agents.len(), 1);
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), &pane, true).title,
-        "○ zsh · Focused"
+        "  zsh · Focused"
     );
 }
 
@@ -325,10 +325,10 @@ fn corners_map_focus_per_backend() {
             (corners.title, corners.address, corners.tone)
         };
         let expect = |title: &str, tone| (title.to_owned(), name.to_owned(), tone);
-        assert_eq!(reads(&pane, false), expect("○ zsh", MetadataTone::Ordinary));
+        assert_eq!(reads(&pane, false), expect("  zsh", MetadataTone::Ordinary));
         assert_eq!(
             reads(&pane, true),
-            expect("○ zsh · Focused", MetadataTone::Focused)
+            expect("  zsh · Focused", MetadataTone::Focused)
         );
     }
 }
@@ -336,7 +336,7 @@ fn corners_map_focus_per_backend() {
 #[test]
 fn the_address_takes_the_bottom_right_corner_alone() {
     let rect = Rect::new(10, 2, 50, 8);
-    let text = corners("○ zsh · Focused", "0:0:1:2");
+    let text = corners("  zsh · Focused", "0:0:1:2");
     let bordered = info(rect, Borders::ALL, true);
     let address = address_rect(&bordered, &text).unwrap();
     assert_eq!(address.right(), rect.right() - 1);
@@ -359,7 +359,7 @@ fn the_address_takes_the_bottom_right_corner_alone() {
 
 #[test]
 fn shared_divider_moves_upper_address_beside_title() {
-    let text = corners("○ #42: Codex · Focused", "0:0:1:2");
+    let text = corners("  #42: Codex · Focused", "0:0:1:2");
     let upper = info(
         Rect::new(10, 2, 100, 8),
         Borders::TOP | Borders::LEFT | Borders::RIGHT,
@@ -387,7 +387,7 @@ fn title_travel_measures_each_header_window() {
     ws.reconcile_subscribe_first().unwrap();
     let chrome = Chrome::dark();
     let mut pane = Pane::new(PaneId(1), "term", Backend::Native, "epoch");
-    // "○ " plus 28 cells: a 30-cell title unfocused, 40 with " · Focused".
+    // "  " plus 28 cells: a 30-cell title unfocused, 40 with " · Focused".
     pane.label = Some("a-title-of-twenty-eight-cell".to_owned());
     let bordered = info(Rect::new(0, 0, 20, 6), Borders::ALL, false);
     assert_eq!(title_travel(&ws, &chrome, &pane, &bordered), 30 - 16);
@@ -419,7 +419,7 @@ fn only_a_sandboxed_pane_leads_its_address_with_a_mark() {
         );
     }
 
-    let mut text = corners("○ zsh", "0:0:1:2");
+    let mut text = corners("  zsh", "0:0:1:2");
     assert_eq!(text.address_label(), "\u{f023} · 0:0:1:2");
     text.sandbox_mark = sandbox_mark(SandboxState::Sandboxed, false);
     text.backend = Some("tmux");

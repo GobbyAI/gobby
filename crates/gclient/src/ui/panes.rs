@@ -51,7 +51,8 @@ fn header_title(
     chrome: &Chrome,
     max_travel: usize,
 ) -> Option<String> {
-    let label = label.trim();
+    // The leading state cell stays even when blank: the header draws it.
+    let label = label.trim_end();
     if label.is_empty() || info.rect.width <= 4 {
         return None;
     }
@@ -347,9 +348,7 @@ fn frame_state<W: WorkspaceView>(ws: &W, pane: &Pane) -> FrameState {
         .find(|agent| agent.terminal_id == pane.terminal_id);
     if exited(pane, agent) {
         FrameState::Exited
-    } else if agent.is_some_and(|agent| {
-        crate::app::sidebar_model::agent_row_state(agent, Some(pane)) == RowState::Attention
-    }) {
+    } else if agent.is_some_and(|agent| agent.state == RowState::Attention) {
         FrameState::Attention
     } else {
         FrameState::Ordinary

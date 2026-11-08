@@ -78,6 +78,12 @@ def _assert_stable_hooks_feature(config_data: dict[str, Any]) -> None:
     assert "codex_hooks" not in features
 
 
+def _assert_worktrees_disabled(config_data: dict[str, Any]) -> None:
+    features = config_data["features"]
+    assert isinstance(features, dict)
+    assert features["worktrees"] is False
+
+
 def _assert_gobby_trust_state(config_data: dict[str, Any], hooks_path: Path) -> None:
     hooks = config_data["hooks"]
     assert isinstance(hooks, dict)
@@ -449,6 +455,7 @@ class TestInstallCodex:
         assert config_path.exists()
         config_data = _load_toml_file(config_path)
         _assert_stable_hooks_feature(config_data)
+        _assert_worktrees_disabled(config_data)
         _assert_gobby_trust_state(config_data, hooks_path)
         assert config_data["projects"][os.environ["GOBBY_HOME"]]["trust_level"] == "trusted"
 
@@ -578,6 +585,9 @@ class TestInstallCodex:
         parsed = tomllib.loads(config_content)
         assert parsed["features"]["fast_mode"] is True
         _assert_stable_hooks_feature(parsed)
+        _assert_worktrees_disabled(parsed)
+        worktrees_pos = config_content.index("worktrees = false")
+        assert features_pos < worktrees_pos < mcp_pos
 
     def test_install_replaces_legacy_flag_in_existing_features_section(
         self,
@@ -601,6 +611,58 @@ class TestInstallCodex:
         parsed = tomllib.loads(config_content)
         _assert_stable_hooks_feature(parsed)
         assert parsed["features"]["fast_mode"] is True
+
+    def test_install_overrides_operator_native_worktrees_true(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
+    ) -> None:
+        """An operator's worktrees = true is overwritten: install disables native worktrees."""
+        from gobby.cli.installers.codex import install_codex
+
+        codex_dir = mock_home / ".codex"
+        codex_dir.mkdir(parents=True)
+        config_path = codex_dir / "config.toml"
+        config_path.write_text("[features]\nworktrees = true\nfast_mode = true\n")
+
+        result = install_codex(mock_home)
+
+        assert result["success"] is True
+        parsed = _load_toml_file(config_path)
+        _assert_worktrees_disabled(parsed)
+        _assert_stable_hooks_feature(parsed)
+        assert parsed["features"]["fast_mode"] is True
+
+    def test_second_install_leaves_config_bytes_unchanged(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
+    ) -> None:
+        """A repeat install writes the same config.toml bytes and reports no config change."""
+        from gobby.cli.installers.codex import install_codex
+
+        codex_dir = mock_home / ".codex"
+        codex_dir.mkdir(parents=True)
+        config_path = codex_dir / "config.toml"
+        config_path.write_text("[features]\nworktrees = true\n")
+
+        first = install_codex(mock_home)
+        assert first["success"] is True
+        _assert_worktrees_disabled(_load_toml_file(config_path))
+        settled = config_path.read_bytes()
+        backup_path = config_path.with_suffix(".toml.bak")
+        backup_path.unlink()
+
+        second = install_codex(mock_home)
+
+        assert second["success"] is True
+        assert config_path.read_bytes() == settled
+        assert second["config_updated"] is False
+        assert not backup_path.exists()
 
     def test_install_merges_into_existing_hooks_json(
         self,
@@ -1129,6 +1191,31 @@ class TestInstallCodexProjectHooks:
         assert config_data["model_providers"]["local"]["name"] == "local"
         assert config_data["projects"][str(project_a)]["trust_level"] == "trusted"
         assert config_data["projects"][str(project_b)]["trust_level"] == "trusted"
+
+    def test_repeat_project_install_for_same_worktree_changes_nothing(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """Reinstalling project hooks for an already-trusted worktree rewrites no config."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        project_path = mock_home / "worktree"
+        project_path.mkdir()
+        config_path = mock_home / ".codex" / "config.toml"
+        backup_path = config_path.with_suffix(".toml.bak")
+
+        with patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]):
+            first = install_codex_project_hooks(project_path)
+            settled = config_path.read_bytes()
+            backup_path.unlink(missing_ok=True)
+            second = install_codex_project_hooks(project_path)
+
+        assert first["success"] is True
+        assert second["success"] is True
+        assert second["config_updated"] is False
+        assert config_path.read_bytes() == settled
+        assert not backup_path.exists()
 
     def test_project_install_prunes_stale_generated_project_trust(
         self,

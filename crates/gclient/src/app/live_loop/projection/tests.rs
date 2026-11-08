@@ -124,6 +124,21 @@ async fn a_focused_reserved_pane_with_no_terminal_yet_keeps_focus() {
 }
 
 #[tokio::test]
+async fn a_model_backed_pane_keeps_focus_after_leaving_the_unresolved_set() {
+    let mut workspace = split_tab(Some("terminal-b"));
+    let mut chrome = Chrome::dark();
+    bind_pane_a(&mut workspace, &mut chrome);
+    sync_live_chrome(&mut workspace, &mut chrome);
+    let pending = chrome.viewer.panes.intern("pane-b");
+    chrome.viewer.unresolved.clear();
+
+    assert!(
+        super::awaiting_pane(&workspace, &chrome.viewer, pending),
+        "the model still holds this pane and its open has not failed; resolving the terminal must not make its focus stale"
+    );
+}
+
+#[tokio::test]
 async fn a_focused_split_whose_terminal_open_failed_gives_up_focus() {
     let mut workspace = split_tab(Some("terminal-b"));
     let mut chrome = Chrome::dark();
