@@ -210,10 +210,18 @@ class LocalPlanManager:
         )
         return [PlanRecord.from_row(row) for row in rows]
 
-    def update_plan_hash(self, plan_id: str, *, project_id: str | None = None) -> PlanRecord:
-        record, changed = self.update_plan_hash_record(plan_id, project_id=project_id)
+    def update_plan_hash(
+        self,
+        plan_id: str,
+        *,
+        project_id: str | None = None,
+        checkout_root: Path | None = None,
+    ) -> PlanRecord:
+        record, changed = self.update_plan_hash_record(
+            plan_id, project_id=project_id, checkout_root=checkout_root
+        )
         if changed and _plan_carries_coverage_manifest(record.plan_kind):
-            self.generate_coverage_manifest(record)
+            self.generate_coverage_manifest(record, checkout_root=checkout_root)
         return record
 
     def update_plan_hash_record(
@@ -221,11 +229,12 @@ class LocalPlanManager:
         plan_id: str,
         *,
         project_id: str | None = None,
+        checkout_root: Path | None = None,
     ) -> tuple[PlanRecord, bool]:
         record = self.get_plan(plan_id, project_id=project_id)
-        project_root = self._project_root(record.project_id)
+        plan_checkout = self._plan_checkout(record, checkout_root)
         doc = parse_plan(
-            project_root / record.plan_path,
+            plan_checkout / record.plan_path,
             plan_kind=PlanKind(record.plan_kind),
             parse_mode="draft",
         )
@@ -250,20 +259,23 @@ class LocalPlanManager:
         plan_id: str,
         *,
         project_id: str | None = None,
+        checkout_root: Path | None = None,
     ) -> Path:
         record = self.get_plan(plan_id, project_id=project_id)
         if not _plan_carries_coverage_manifest(record.plan_kind):
             raise ValueError(
                 f"{record.plan_kind} plan {record.plan_id!r} does not carry a coverage manifest"
             )
-        return self.generate_coverage_manifest(record)
+        return self.generate_coverage_manifest(record, checkout_root=checkout_root)
 
-    def generate_coverage_manifest(self, record: PlanRecord) -> Path:
+    def generate_coverage_manifest(
+        self, record: PlanRecord, *, checkout_root: Path | None = None
+    ) -> Path:
         if not _plan_carries_coverage_manifest(record.plan_kind):
             raise ValueError(
                 f"{record.plan_kind} plan {record.plan_id!r} does not carry a coverage manifest"
             )
-        project_root = self._project_root(record.project_id)
+        project_root = self._plan_checkout(record, checkout_root)
         report = evaluate(
             plan=project_root / record.plan_path,
             plan_id=record.plan_id,
@@ -365,6 +377,12 @@ class LocalPlanManager:
             """,  # nosec B608 # project_clause is fixed text.
             tuple(params),
         )
+
+    def _plan_checkout(self, record: PlanRecord, checkout_root: Path | None) -> Path:
+        """Return the checkout whose plan file and coverage manifest a call operates on."""
+        if checkout_root is not None:
+            return checkout_root
+        return self._project_root(record.project_id)
 
     def _project_root(self, project_id: str) -> Path:
         project = LocalProjectManager(self.db).get(project_id)

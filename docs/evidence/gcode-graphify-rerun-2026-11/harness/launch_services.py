@@ -30,7 +30,7 @@ from provision_environment import (
     external_state_snapshot,
 )
 from record_installations import probe
-from runtime_boundary import assert_owned_runtime, require, write_once
+from runtime_boundary import EvidenceError, assert_owned_runtime, require, write_once
 from service_safety import validate_container, validate_rendered
 from validate_environment import _load_env_file
 from violation_copy import copy_attempt_violations
@@ -87,7 +87,10 @@ def check_fresh() -> None:
         require(not set(docker(*args).splitlines()).intersection(names), "owned-name collision")
     for port in PORTS.values():
         with socket.socket() as port_probe:
-            port_probe.bind(("127.0.0.1", port))
+            try:
+                port_probe.bind(("127.0.0.1", port))
+            except OSError as error:
+                raise EvidenceError(f"port {port} is already in use on 127.0.0.1") from error
 
 
 def _shared_monitor_dir() -> Path | None:

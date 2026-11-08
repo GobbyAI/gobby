@@ -28,7 +28,7 @@ pub enum NavigatorStateFilter {
     All,
     Attention,
     Working,
-    Idle,
+    Blank,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -110,15 +110,13 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
         .collect()
 }
 
-/// `Unseen` (done) and `Unknown` (detached) rows count as idle.
+/// Blank rows, with nothing assigned or being worked, match the blank filter.
 fn matches_filter(state: RowState, filter: NavigatorStateFilter) -> bool {
     match filter {
         NavigatorStateFilter::All => true,
         NavigatorStateFilter::Attention => state == RowState::Attention,
         NavigatorStateFilter::Working => state == RowState::Working,
-        NavigatorStateFilter::Idle => {
-            matches!(state, RowState::Idle | RowState::Unseen | RowState::Unknown)
-        }
+        NavigatorStateFilter::Blank => state == RowState::Blank,
     }
 }
 
@@ -231,7 +229,7 @@ fn render_search<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W, chrome
     match chrome.navigator.filter {
         NavigatorStateFilter::Attention => push_state_chip(&mut spans, RowState::Attention, chrome),
         NavigatorStateFilter::Working => push_state_chip(&mut spans, RowState::Working, chrome),
-        NavigatorStateFilter::Idle => push_state_chip(&mut spans, RowState::Idle, chrome),
+        NavigatorStateFilter::Blank => push_state_chip(&mut spans, RowState::Blank, chrome),
         NavigatorStateFilter::All if query.is_empty() => spans.push(Span::styled(
             "search terminals",
             Style::default().fg(p.overlay0),
@@ -515,13 +513,13 @@ mod tests {
         let rows = navigator_rows(&ws, &Chrome::dark());
         assert_eq!(titles(&rows), ["term-alpha", "term-beta", "term-alpha"]);
         assert_eq!(rows[0].state, RowState::Attention);
-        assert_eq!(rows[1].state, RowState::Idle);
+        assert_eq!(rows[1].state, RowState::Blank);
         assert_eq!(
             rows[2].target,
             NavigatorTarget::Attention("run:term-alpha".into())
         );
         assert_eq!(rows[2].detail, "needs you · run");
-        assert!(rows[1].detail.starts_with("idle · gclient"));
+        assert!(rows[1].detail.starts_with("blank · gclient"));
     }
 
     #[test]
@@ -537,7 +535,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.state == RowState::Attention));
 
-        chrome.navigator.filter = NavigatorStateFilter::Idle;
+        chrome.navigator.filter = NavigatorStateFilter::Blank;
         assert_eq!(titles(&navigator_rows(&ws, &chrome)), ["term-beta"]);
     }
 
@@ -568,7 +566,7 @@ mod tests {
             "term-alpha",
             "term-beta",
             "needs you",
-            "idle · gclient",
+            "blank · gclient",
         ] {
             assert!(text.contains(needle), "missing {needle:?}:\n{text}");
         }

@@ -21,7 +21,9 @@ _STATIC_TOOL_CALL_RE = re.compile(r"\btools(?:\.[$A-Za-z_][$\w]*)+\s*\(")
 # does not read: a regex literal, division, an unmatched quote, or an escape.
 _AMBIGUOUS_RE = re.compile(r"[/\\\"'`]")
 # An empty poll only reads a running session's output. A poll that types input can run a
-# command in that shell, so only a literal object whose one chars key is "" is blanked.
+# command in that shell, so only a literal object with no chars key, or whose one chars key
+# is "", is blanked (or, for may_type_input, a literal write to a shell an attributed
+# execution owns).
 _INERT_POLL_RE = re.compile(
     r"""\btools\.write_stdin\s*\(\s*(\{(?:[^{}"]|"(?:\\.|[^"\\])*")*\})\s*\)"""
 )
@@ -32,6 +34,8 @@ _LITERAL_PAIR = rf"{_LITERAL_KEY}\s*:\s*{_LITERAL_VALUE}"
 _LITERAL_OBJECT_RE = re.compile(rf"\{{\s*(?:{_LITERAL_PAIR}(?:\s*,\s*{_LITERAL_PAIR})*)?\s*\}}")
 _CHARS_WORD_RE = re.compile(r"\bchars\b")
 _EMPTY_CHARS_RE = re.compile(r"""(?:^|[{,])\s*"?chars"?\s*:\s*""\s*(?=[,}])""")
+# One literal session ID pair; within a literal object no expression can follow the value.
+_SESSION_PAIR_RE = re.compile(r"""(?:^|[{,])\s*"?session_id"?\s*:\s*("[^"\\]*"|-?\d+)\s*(?=[,}])""")
 
 
 def static_code(source: str) -> str | None:
@@ -44,13 +48,34 @@ def static_code(source: str) -> str | None:
     return None if _AMBIGUOUS_RE.search(code) else code
 
 
-def _blank_inert_poll(match: re.Match[str]) -> str:
-    """Replace one write_stdin call that cannot type input with a non-primitive call."""
+def _blank_inert_poll(match: re.Match[str], owned_session: str | None) -> str:
+    """Replace one write_stdin call that cannot type into an unowned shell with a plain call.
+
+    Its object must be literal, and either it has no chars key (the tool reads that as a
+    poll), its one chars key is "", or its one session ID is ``owned_session``, a shell an
+    attributed execution owns.
+    """
     body = match.group(1)
-    literal = _LITERAL_OBJECT_RE.fullmatch(body) is not None
-    if literal and len(_CHARS_WORD_RE.findall(body)) == 1 and _EMPTY_CHARS_RE.search(body):
+    if _LITERAL_OBJECT_RE.fullmatch(body) is None:
+        return match.group(0)
+    chars = len(_CHARS_WORD_RE.findall(body))
+    if chars == 0 or (chars == 1 and _EMPTY_CHARS_RE.search(body)):
+        return "tools.idle_poll()"
+    sessions = [value.strip('"') for value in _SESSION_PAIR_RE.findall(body)]
+    if owned_session is not None and sessions == [owned_session]:
         return "tools.idle_poll()"
     return match.group(0)
+
+
+def _may_run(arguments: Any, harmless: frozenset[str], owned_session: str | None) -> bool:
+    """Read cell code statically; any primitive outside ``harmless`` fails closed."""
+    if not isinstance(arguments, str) or "${" in arguments:
+        return True
+    arguments = _INERT_POLL_RE.sub(lambda call: _blank_inert_poll(call, owned_session), arguments)
+    code = static_code(arguments)
+    if code is None or any(word not in harmless for word in _PRIMITIVE_RE.findall(code)):
+        return True
+    return len(_TOOLS_RE.findall(code)) != len(_STATIC_TOOL_CALL_RE.findall(code))
 
 
 def may_reach_shell(arguments: Any) -> bool:
@@ -60,10 +85,15 @@ def may_reach_shell(arguments: Any) -> bool:
     eval-like primitives, template substitutions, ambiguous lexical syntax, and non-text
     arguments.
     """
-    if not isinstance(arguments, str) or "${" in arguments:
-        return True
-    arguments = _INERT_POLL_RE.sub(_blank_inert_poll, arguments)
-    code = static_code(arguments)
-    if code is None or _PRIMITIVE_RE.search(code):
-        return True
-    return len(_TOOLS_RE.findall(code)) != len(_STATIC_TOOL_CALL_RE.findall(code))
+    return _may_run(arguments, frozenset(), None)
+
+
+def may_type_input(arguments: Any, owned_session: str | None = None) -> bool:
+    """Return whether a cell could type into a shell that no attributed execution owns.
+
+    A static exec_command call starts a new shell, so it types nothing. A literal empty poll
+    (chars omitted or ""), or a literal write to ``owned_session``, is attributed. Everything
+    else fails closed as in may_reach_shell, so a computed session ID or chars value counts as
+    typing.
+    """
+    return _may_run(arguments, frozenset({"exec_command"}), owned_session)

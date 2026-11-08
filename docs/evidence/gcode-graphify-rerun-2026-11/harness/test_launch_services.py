@@ -3,17 +3,33 @@
 from __future__ import annotations
 
 import json
+import socket
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import launch_services
 import pytest
 from launch_services import assert_no_indexed_rows, prepare, start_services, step_complete
 from provision_environment import COMPOSE_PROJECT, CONTAINERS
 from runtime_boundary import EvidenceError, write_once
 
 HARNESS = Path(__file__).parent
+
+
+def test_a_port_already_in_use_is_named_in_the_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        monkeypatch.setattr(launch_services, "PORTS", {"probe": port})
+        monkeypatch.setattr(launch_services, "docker", lambda *_args: "")
+        with pytest.raises(EvidenceError, match=rf"port {port} is already in use"):
+            launch_services.check_fresh()
+    finally:
+        listener.close()
 
 
 def test_step_three_modules_load_no_gobby_at_import() -> None:
