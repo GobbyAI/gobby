@@ -7,7 +7,6 @@ import logging
 import re
 from contextlib import nullcontext
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.events import (
@@ -22,9 +21,9 @@ from gobby.hooks.events import (
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
-    apply_acknowledged_receipt,
     worker_staging_scope,
 )
+from gobby.hooks.replay_decision import commit_staged_effects
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
 from gobby.utils.machine_id import get_machine_id
@@ -433,10 +432,20 @@ class ChatLifecycleMixin:
                 payload = response.metadata.get(STAGED_EFFECTS_FIELD)
 
                 def acknowledge_prompt() -> None:
-                    apply_acknowledged_receipt(
-                        SimpleNamespace(session_id=db_session_id, staged_payload=payload),
-                        variable_manager=workflow_handler._session_var_manager,
-                    )
+                    variable_manager = workflow_handler._session_var_manager
+                    if payload and variable_manager is not None:
+                        commit_staged_effects(
+                            variable_manager.db,
+                            session_id=db_session_id,
+                            staged=payload,
+                            variable_manager=variable_manager,
+                        )
+                    elif payload:
+                        logger.warning(
+                            "acknowledge_prompt: no session variable manager; staged effects "
+                            "not applied for %s",
+                            db_session_id,
+                        )
                     self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
                 if session._on_prompt_delivered is pending_prompt_delivery:

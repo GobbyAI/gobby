@@ -4,11 +4,12 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from gobby.hooks.grok_pending_context import decide_pending_inbox_envelope
 from gobby.hooks.replay_fence import archive_superseded_hook
 from gobby.hooks.runtime_compat import envelope_has_hook_response_capability
-from gobby.storage.hook_receipts import HookReceipt
+from gobby.storage.hook_receipts import HookReceipt, prepare_receipt
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -32,6 +33,31 @@ def acknowledge_and_apply_receipt(
             committed, message_manager=message_manager, variable_manager=variable_manager
         )
     return committed
+
+
+def commit_staged_effects(
+    db: HubDatabase,
+    *,
+    session_id: str,
+    staged: dict[str, Any] | None,
+    variable_manager: Any,
+) -> None:
+    """Persist a shipped output's staged effects as a receipt; apply them only on the CAS win."""
+    if not staged:
+        return
+    receipt = prepare_receipt(
+        db,
+        session_id=session_id,
+        envelope_id=f"chat-hook:{uuid4()}",
+        staged_payload=staged,
+    )
+    acknowledge_and_apply_receipt(
+        db,
+        receipt_id=receipt.receipt_id,
+        delivery_generation=receipt.delivery_generation,
+        message_manager=None,
+        variable_manager=variable_manager,
+    )
 
 
 logger = logging.getLogger(__name__)

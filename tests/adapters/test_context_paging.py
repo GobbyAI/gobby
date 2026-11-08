@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -24,8 +25,9 @@ from gobby.adapters.degradation import (
     page_context_for_adapter,
 )
 from gobby.adapters.droid import DroidAdapter
-from gobby.hooks.events import HookResponse, SessionSource
+from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
     apply_acknowledged_receipt,
     take_worker_staging,
     worker_staging_scope,
@@ -37,6 +39,7 @@ from gobby.servers.chat_session_helpers import (
     _response_to_stop_output,
 )
 from gobby.servers.chat_session_hooks import ChatSessionHooksMixin
+from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -498,6 +501,79 @@ def test_a_chat_commit_that_loses_the_receipt_cas_applies_no_effects(
     chat._commit_staged_context({"session_variables": {"chat_probe": "shipped"}})
 
     assert "chat_probe" not in SessionVariableManager(temp_db).get_variables(session_id)
+
+
+class _ChatLifecycleHost(ChatMixin):
+    """The websocket chat host that _fire_lifecycle reads, with its optional sinks unset."""
+
+    def __init__(self) -> None:
+        self.clients: dict[Any, Any] = {}
+        self._chat_sessions: dict[str, Any] = {}
+        self._active_chat_tasks: dict[str, Any] = {}
+        self.workflow_handler: Any = None
+        self.event_handlers: Any = None
+        self.webhook_dispatcher: Any = None
+        self.hook_broadcaster: Any = None
+        self.inter_session_msg_manager: Any = None
+        self.mcp_manager: Any = None
+        self.internal_manager: Any = None
+
+
+def _prompt_host(
+    temp_db: HubDatabase, session_id: str, staged: dict[str, Any]
+) -> tuple[_ChatLifecycleHost, SimpleNamespace]:
+    """A chat host whose BEFORE_AGENT rules stage ``staged`` for the prompt about to ship."""
+    workflow_handler = MagicMock()
+    workflow_handler.evaluate.return_value = HookResponse(
+        decision="allow", metadata={STAGED_EFFECTS_FIELD: staged}
+    )
+    workflow_handler._session_var_manager = SessionVariableManager(temp_db)
+    host = _ChatLifecycleHost()
+    host.workflow_handler = workflow_handler
+    session = SimpleNamespace(
+        db_session_id=session_id,
+        seq_num=7,
+        session_ref="gobby#7",
+        project_path=None,
+        project_id=None,
+        provider="claude",
+        chat_mode="default",
+        _on_prompt_delivered=None,
+    )
+    host._chat_sessions["conv-1"] = session
+    return host, session
+
+
+async def test_a_prompt_delivery_commits_its_staged_effects_through_an_acknowledged_receipt(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000d")
+    host, session = _prompt_host(
+        temp_db, session_id, {"session_variables": {"lifecycle_probe": "delivered"}}
+    )
+
+    await host._fire_lifecycle("conv-1", HookEventType.BEFORE_AGENT, {"prompt": "hello"})
+    session._on_prompt_delivered()
+
+    assert _receipt_states(temp_db, session_id) == ["acknowledged"]
+    assert SessionVariableManager(temp_db).get_variables(session_id)["lifecycle_probe"] == (
+        "delivered"
+    )
+
+
+async def test_a_prompt_delivery_that_loses_the_receipt_cas_applies_no_effects(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000e")
+    host, session = _prompt_host(
+        temp_db, session_id, {"session_variables": {"lifecycle_probe": "delivered"}}
+    )
+    monkeypatch.setattr("gobby.storage.hook_receipts.acknowledge_receipt", lambda *_a, **_k: None)
+
+    await host._fire_lifecycle("conv-1", HookEventType.BEFORE_AGENT, {"prompt": "hello"})
+    session._on_prompt_delivered()
+
+    assert "lifecycle_probe" not in SessionVariableManager(temp_db).get_variables(session_id)
 
 
 async def test_a_blocked_stop_delivers_no_context_and_commits_no_queue(

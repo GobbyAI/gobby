@@ -18,7 +18,7 @@ from gobby.hooks.receipt_effects import (
     take_worker_staging,
     worker_staging_scope,
 )
-from gobby.hooks.replay_decision import acknowledge_and_apply_receipt
+from gobby.hooks.replay_decision import commit_staged_effects
 from gobby.servers.chat_session_helpers import (
     _PLAN_FILE_PATTERN,
     _response_to_compact_output,
@@ -28,7 +28,6 @@ from gobby.servers.chat_session_helpers import (
     _response_to_stop_output,
     _response_to_subagent_output,
 )
-from gobby.storage.hook_receipts import prepare_receipt
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
@@ -105,17 +104,10 @@ class ChatSessionHooksMixin:
         db = getattr(self._additional_context_persist()["store"], "db", None)
         if not staged or db is None or not self.db_session_id:
             return
-        receipt = prepare_receipt(
+        commit_staged_effects(
             db,
             session_id=self.db_session_id,
-            envelope_id=f"chat-hook:{uuid4()}",
-            staged_payload=staged,
-        )
-        acknowledge_and_apply_receipt(
-            db,
-            receipt_id=receipt.receipt_id,
-            delivery_generation=receipt.delivery_generation,
-            message_manager=None,
+            staged=staged,
             variable_manager=SessionVariableManager(db),
         )
 
