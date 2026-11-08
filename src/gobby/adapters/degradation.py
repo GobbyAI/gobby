@@ -16,7 +16,7 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import record_worker_staging
-from gobby.llm.sdk_utils import deliver_context
+from gobby.llm.sdk_utils import ContextPiece, deliver_context
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
 
@@ -186,13 +186,17 @@ def page_context_for_adapter(
     variable = _carried_variable(destination_channel)
     stored = _carried_context(store, session_id, variable) if session_id and variable else None
     pending = stored or []
-    # A fresh copy of a queued part is the same context; the queued copy ships in its place.
-    pending_pairs = set(pending)
-    queue = [*pending, *(part for part in parts if tuple(part) not in pending_pairs)]
-    aggregate_len = len("\n\n".join(text for _, text in queue if text))
+    # A fresh copy of a queued whole part is the same context; the queued copy ships instead.
+    queued_wholes = {(piece.part, piece.body) for piece in pending if not piece.number}
+    fresh = [
+        ContextPiece(label, text) for label, text in parts if (label, text) not in queued_wholes
+    ]
+    queue = [*pending, *fresh]
+    aggregate_len = len("\n\n".join(piece.text for piece in queue if piece.body))
     delivery = deliver_context(queue, limit=ship_limit)
     if delivery.remaining and not (stored is not None and session_id and variable):
-        labels = [label for label, _ in [*delivery.shipped, *delivery.remaining]]
+        labels = [label for label, _ in delivery.shipped]
+        labels.extend(piece.label for piece in delivery.remaining)
         raise ContextQueueUnavailableError(labels)
     if aggregate_len > ship_limit:
         record_adapter_degradation(
@@ -223,8 +227,8 @@ def _carried_variable(destination_channel: ContextChannel | str) -> str | None:
 
 def _carried_context(
     store: object | None, session_id: str, variable: str
-) -> list[ContextPart] | None:
-    """Read a channel's waiting parts; ``None`` when the queue cannot be read."""
+) -> list[ContextPiece] | None:
+    """Read a channel's waiting pieces; ``None`` when the queue cannot be read."""
     db = getattr(store, "db", None)
     if db is None:
         return None
@@ -237,24 +241,38 @@ def _carried_context(
         return None
     if not isinstance(raw, list):
         return []
-    return [
-        (item[0], item[1])
-        for item in raw
-        if isinstance(item, list | tuple)
-        and len(item) == 2
-        and isinstance(item[0], str)
-        and isinstance(item[1], str)
-        and item[1]
-    ]
+    return [piece for piece in map(_carried_piece, raw) if piece is not None]
 
 
-def _stage_carried_context(session_id: str, variable: str, waiting: list[ContextPart]) -> None:
+def _carried_piece(item: object) -> ContextPiece | None:
+    """Parse one stored row: a whole part is ``[label, text]``, a page ``[label, body, n, total]``."""
+    if not isinstance(item, list | tuple) or len(item) not in (2, 4):
+        return None
+    part, body = item[0], item[1]
+    if not (isinstance(part, str) and isinstance(body, str) and body):
+        return None
+    if len(item) == 2:
+        return ContextPiece(part, body)
+    number, total = item[2], item[3]
+    if isinstance(number, int) and isinstance(total, int) and 1 <= number <= total:
+        return ContextPiece(part, body, number, total)
+    return None
+
+
+def _carried_row(piece: ContextPiece) -> list[object]:
+    """A piece's stored row; a whole part keeps the two-field shape it has always had."""
+    if not piece.number:
+        return [piece.part, piece.body]
+    return [piece.part, piece.body, piece.number, piece.total]
+
+
+def _stage_carried_context(session_id: str, variable: str, waiting: list[ContextPiece]) -> None:
     """Stage, on receipt, the whole queue still waiting; an empty queue clears it."""
     record_worker_staging(
         {
             "session_id": session_id,
             "session_variables": {
-                variable: [[label, text] for label, text in waiting] or None,
+                variable: [_carried_row(piece) for piece in waiting] or None,
             },
         }
     )

@@ -652,3 +652,55 @@ async def test_a_denied_tool_call_commits_no_staged_queue(
     hook = cast(dict[str, Any], output["hookSpecificOutput"])
     assert hook["permissionDecision"] == "deny"
     assert _queue(temp_db, session_id) is None
+
+
+def _rebuild_labeled_part(label: str, texts: list[str]) -> str:
+    """Rebuild one labeled part from its serialized deliveries, matching its label literally.
+
+    Page numbers across all deliveries must run 1, 2, 3 with no repeat or gap, so a header
+    nested inside another page's body fails even though its text matches the label.
+    """
+    header = re.compile(r"\[" + re.escape(label) + r" \(page (\d+)/\d+\)\]\n")
+    bodies = [_BREADCRUMB.sub("", text) for text in texts]
+    numbers = [int(number) for body in bodies for number in header.findall(body)]
+    assert numbers == list(range(1, len(numbers) + 1)), numbers
+    return "".join(header.sub("", body) for body in bodies)
+
+
+@pytest.mark.parametrize("path", ["claude", "codex", "chat"])
+@pytest.mark.parametrize("label", ["rule:fixture]", "rule:fixture (page 2/3)"])
+async def test_a_queued_page_with_an_unusual_label_rebuilds_on_every_delivery_path(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, path: str, label: str
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000d")
+    big = "\n\n".join(f"section {index} " + "s" * 780 for index in range(40))
+    assert len(big) > 3 * ADDITIONAL_CONTEXT_LIMIT
+    claude = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+    codex = CodexHooksAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+    chat = _ChatHooks(temp_db, session_id)
+
+    async def turn(parts: list[tuple[str, str]]) -> str:
+        if path == "chat":
+            result = await chat.prompt("allow", parts)
+            return str(result["hookSpecificOutput"]["additionalContext"])
+        response = HookResponse(decision="allow", metadata={"session_id": session_id})
+        if parts:
+            response.add_context(*parts)
+        if path == "claude":
+            return _claude_context(claude, temp_db, response)
+        result = _deliver(
+            temp_db,
+            lambda: codex.translate_from_hook_response(response, hook_type="UserPromptSubmit"),
+        )
+        return str(result["hookSpecificOutput"]["additionalContext"])
+
+    texts = [await turn([(label, big)])]
+    for _ in range(40):
+        if not _queue(temp_db, session_id):
+            break
+        texts.append(await turn([]))
+    else:
+        pytest.fail("the queue must drain")
+
+    assert len(texts) > 1
+    assert _rebuild_labeled_part(label, texts) == big

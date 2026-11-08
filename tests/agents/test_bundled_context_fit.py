@@ -17,7 +17,7 @@ drain whatever overflows, in order, with no stall.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -27,7 +27,12 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, ContextPart, deliver_context
+from gobby.llm.sdk_utils import (
+    ADDITIONAL_CONTEXT_LIMIT,
+    ContextPart,
+    ContextPiece,
+    deliver_context,
+)
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.templating import build_rule_condition_helpers
@@ -204,7 +209,7 @@ def test_bundled_definitions_fit_against_a_synthetic_project_policy(
 
     assert not delivery.remaining, (
         f"{agent.name} ({surface}) bundled context against the synthetic policy is "
-        f"{_size(parts)} characters; waiting: {[label for label, _ in delivery.remaining]}"
+        f"{_size(parts)} characters; waiting: {[piece.label for piece in delivery.remaining]}"
     )
 
 
@@ -227,19 +232,20 @@ def test_bundled_owned_context_fits_the_limit_on_its_own(
     assert not delivery.remaining, (
         f"{agent.name} ({surface}) bundled-owned context is {total} characters, "
         f"{total - ADDITIONAL_CONTEXT_LIMIT} over the limit; "
-        f"waiting: {[label for label, _ in delivery.remaining]}"
+        f"waiting: {[piece.label for piece in delivery.remaining]}"
     )
 
 
-def _size(parts: list[ContextPart]) -> int:
-    return len("\n\n".join(text for _, text in parts if text))
+def _size(parts: Sequence[ContextPart | ContextPiece]) -> int:
+    texts = [part.text if isinstance(part, ContextPiece) else part[1] for part in parts]
+    return len("\n\n".join(text for text in texts if text))
 
 
 def test_installed_policy_overflow_drains_in_consecutive_deliveries() -> None:
     """The operator-owned share is measured, not gated: whatever overflows must still drain."""
     for case in _CASES:
         agent, surface, rows, policy = case.values
-        queue: list[ContextPart] = [
+        queue: list[ContextPart | ContextPiece] = [
             ("agent_prompt", _prompt(agent, surface, policy)),
             *_turn_start_parts(agent, rows, policy),
         ]

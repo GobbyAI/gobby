@@ -6,10 +6,10 @@ chat_session_helpers.py to eliminate duplication across SDK consumers.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
+from typing import NamedTuple
 
 
 def sanitize_error(e: Exception) -> str:
@@ -50,19 +50,40 @@ CONTINUATION_LABEL_BUDGET = 400
 _CONTINUATION_PREFIX = "context continues on the next delivery: "
 # Finest boundary first: a page cuts at a paragraph, else a line, else a word.
 _PAGE_SEPARATORS = ("\n\n", "\n", " ")
-_PAGE_NUMBER = re.compile(r" \(page (\d+)/(\d+)\)$")
-_PAGE_HEADER = re.compile(r"\A\[[^\]\n]* \(page \d+/\d+\)\]\n")
 
 ContextPart = tuple[str, str]
 
 
+class ContextPiece(NamedTuple):
+    """One queued piece: a whole part (``number`` 0) or one numbered page of a part.
+
+    ``part`` is the part's label and ``body`` its text, or a page's raw text without its header.
+    Page state lives in ``number`` and ``total``; no label or text is parsed to recover it.
+    """
+
+    part: str
+    body: str
+    number: int = 0
+    total: int = 0
+
+    @property
+    def label(self) -> str:
+        """The label a delivery names this piece by."""
+        return f"{self.part} (page {self.number}/{self.total})" if self.number else self.part
+
+    @property
+    def text(self) -> str:
+        """The text a delivery ships for this piece, with the header a page carries."""
+        return f"[{self.label}]\n{self.body}" if self.number else self.body
+
+
 @dataclass(frozen=True)
 class ContextDelivery:
-    """One delivery: the rendered text, the parts it ships, and the ordered parts that wait."""
+    """One delivery: the rendered text, the parts it ships, and the ordered pieces that wait."""
 
     text: str
     shipped: list[ContextPart]
-    remaining: list[ContextPart]
+    remaining: list[ContextPiece]
 
 
 class UnpageableContextError(ValueError):
@@ -96,26 +117,26 @@ def minimum_additional_context_limit() -> int:
 
 
 def deliver_context(
-    parts: Sequence[ContextPart],
+    parts: Sequence[ContextPart | ContextPiece],
     *,
     limit: int | None = None,
 ) -> ContextDelivery:
     """Ship the longest in-order run of whole parts that fits ``limit``; queue the rest.
 
-    ``parts`` is an ordered sequence of ``(label, text)`` pairs; empty texts are skipped.
-    Nothing is dropped or reordered: the first part that does not fit ends the delivery,
-    and it and everything behind it wait for the next one. A part too large to ship alone
-    pages at paragraph boundaries into ``<label> (page i/n)`` parts, each with its own header,
-    and those pages ship consecutively. The text ends with a breadcrumb naming the
-    labels that continue on the next delivery.
+    ``parts`` is an ordered sequence of ``(label, text)`` pairs, or queued pieces from an
+    earlier delivery; empty texts are skipped. Nothing is dropped or reordered: the first part
+    that does not fit ends the delivery, and it and everything behind it wait for the next one.
+    A part too large to ship alone pages at paragraph boundaries into ``<label> (page i/n)``
+    pieces, each with its own header, and those pages ship consecutively. The text ends with a
+    breadcrumb naming the labels that continue on the next delivery.
     """
     ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
-    queue = [(label, text) for label, text in parts if text]
-    shipped: list[ContextPart] = []
+    queue = [piece for piece in map(_piece, parts) if piece.body]
+    shipped: list[ContextPiece] = []
     while queue:
         head = queue[0]
         rest = queue[1:]
-        candidate = _render([*shipped, head], [label for label, _ in rest], ship_limit)
+        candidate = _render([*shipped, head], [piece.label for piece in rest], ship_limit)
         if len(candidate) <= ship_limit:
             shipped.append(queue.pop(0))
             continue
@@ -123,11 +144,19 @@ def deliver_context(
             break
         count, part, first = _remainder(queue)
         queue[:count] = _page(part, ship_limit, first)
-    waiting = [label for label, _ in queue]
-    return ContextDelivery(_render(shipped, waiting, ship_limit), shipped, queue)
+    waiting = [piece.label for piece in queue]
+    rendered = [(piece.label, piece.text) for piece in shipped]
+    return ContextDelivery(_render(shipped, waiting, ship_limit), rendered, queue)
 
 
-def _render(parts: Sequence[ContextPart], waiting: Sequence[str], limit: int) -> str:
+def _piece(part: ContextPart | ContextPiece) -> ContextPiece:
+    """A caller's ``(label, text)`` part, or a piece queued by an earlier delivery."""
+    if isinstance(part, ContextPiece):
+        return part
+    return ContextPiece(part[0], part[1])
+
+
+def _render(parts: Sequence[ContextPiece], waiting: Sequence[str], limit: int) -> str:
     body = _join(parts)
     breadcrumb = _continuation(waiting, limit)
     if not breadcrumb:
@@ -135,19 +164,15 @@ def _render(parts: Sequence[ContextPart], waiting: Sequence[str], limit: int) ->
     return f"{body}\n\n{breadcrumb}" if body else breadcrumb
 
 
-def _join(parts: Sequence[ContextPart]) -> str:
-    """Whole parts join on a blank line; a page joins the page before it directly."""
+def _join(parts: Sequence[ContextPiece]) -> str:
+    """Whole parts join on a blank line; a page after the first joins its predecessor directly."""
     text = ""
-    for index, (label, body) in enumerate(parts):
-        if index and not _is_continuation(label):
+    for index, piece in enumerate(parts):
+        continues_page = piece.number > 1
+        if index and not continues_page:
             text += "\n\n"
-        text += body
+        text += piece.text
     return text
-
-
-def _is_continuation(label: str) -> bool:
-    match = _PAGE_NUMBER.search(label)
-    return match is not None and int(match.group(1)) > 1
 
 
 def _label_budget(limit: int) -> int:
@@ -187,52 +212,51 @@ def _continuation(waiting: Sequence[str], limit: int) -> str:
     return _CONTINUATION_PREFIX + names
 
 
-def _remainder(queue: Sequence[ContextPart]) -> tuple[int, ContextPart, int]:
-    """The head part's unshipped rest as ``(queue entries, raw part, first page number)``.
+def _remainder(queue: Sequence[ContextPiece]) -> tuple[int, ContextPiece, int]:
+    """The head piece's unshipped rest as ``(queue entries, raw part, first page number)``.
 
-    A page run is the consecutive queue entries that number the head part's remaining
-    pages. Those pages may have been cut at a larger limit than the current one, so the run
-    is joined back to its raw text and cut again, numbering on from the head page.
+    A page run is the consecutive queue entries that carry the head part's remaining pages,
+    matched by their metadata. Those pages may have been cut at a larger limit than the
+    current one, so the run is joined back to its raw text and cut again, numbering on from
+    the head page.
     """
-    head_label, head_text = queue[0]
-    match = _PAGE_NUMBER.search(head_label)
-    if match is None:
-        return 1, (head_label, head_text), 1
-    first, last = int(match.group(1)), int(match.group(2))
-    base = head_label[: match.start()]
+    head = queue[0]
+    if not head.number:
+        return 1, head, 1
     raw: list[str] = []
-    for number in range(first, last + 1):
-        if number - first >= len(queue):
+    for number in range(head.number, head.total + 1):
+        index = number - head.number
+        if index >= len(queue):
             break
-        label, text = queue[number - first]
-        if label != f"{base} (page {number}/{last})":
+        entry = queue[index]
+        if (entry.part, entry.number, entry.total) != (head.part, number, head.total):
             break
-        raw.append(_PAGE_HEADER.sub("", text, count=1))
-    return len(raw), (base, "".join(raw)), first
+        raw.append(entry.body)
+    return len(raw), ContextPiece(head.part, "".join(raw)), head.number
 
 
-def _page(part: ContextPart, limit: int, first: int = 1) -> list[ContextPart]:
-    """Split one part into numbered pages that each fit ``limit`` beside any breadcrumb.
+def _page(part: ContextPiece, limit: int, first: int = 1) -> list[ContextPiece]:
+    """Split one whole part into numbered pages that each fit ``limit`` beside any breadcrumb.
 
     Pages number from ``first``. Each page leaves room for the longest breadcrumb a queue can
     produce, so a queued page never outgrows its delivery when later parts join the queue.
-    Pages are cut from raw text, so no page ever carries another page's header.
+    Pages are cut from raw text and carry their numbers as metadata, so no page is ever cut
+    from another page's header.
     """
-    label, text = part
     room = _page_room(limit)
     budget = room
     while budget > 0:
-        bodies = _split_to_budget(text, budget)
+        bodies = _split_to_budget(part.body, budget)
         last = first + len(bodies) - 1
-        pages: list[ContextPart] = []
-        for number, body in enumerate(bodies, start=first):
-            page_label = f"{label} (page {number}/{last})"
-            pages.append((page_label, f"[{page_label}]\n{body}"))
-        excess = max(len(page_text) - room for _, page_text in pages)
+        pages = [
+            ContextPiece(part.part, body, number, last)
+            for number, body in enumerate(bodies, start=first)
+        ]
+        excess = max(len(page.text) - room for page in pages)
         if excess <= 0:
             return pages
         budget -= excess
-    raise ValueError(f"additionalContext limit {limit} is too small to page {label}")
+    raise ValueError(f"additionalContext limit {limit} is too small to page {part.part}")
 
 
 def _split_to_budget(
