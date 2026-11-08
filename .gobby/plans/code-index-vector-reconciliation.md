@@ -1263,28 +1263,56 @@ and a read-through against the shipped `gcode vector reconcile --help`.
 - 4.1.3 - The prune text states path-keyed, eligibility-gated history
   retention. behavior: "its own path" in `docs/guides/gcode-user-guide.md`.
 
-## D1 Hourly reconcile apply (depends: 2.2)
+## D1 Nightly reconcile apply (depends: 2.2)
 `kind: deferred`
 
-The daemon's hourly prune (`src/gobby/code_index/prune.py`, through
-`gcode_gateway.py`) runs `vector reconcile` and applies with the digest it
-just observed. This waits until the Live Maintenance Procedure has run once
-and its receipt has been reviewed, because the first apply removes a
-historical backlog that needs human review. Automating it also needs a
-decision on receipt storage for unattended runs.
+Operator rulings, 2026-11-06 (Josh via the Assistant gobby#19874), verbatim
+where quoted. Vectors self-heal on pull, and a nightly reconcile is the
+backstop that catches what slips through. The pull-path gaps found while
+checking that model are bugs owned by #25810, not by this section. "Give it a
+dry run, test it, then flip a switch and make it live."
+
+- Schedule: the existing nightly code-index job
+  (`src/gobby/code_index/nightly_repair.py`, cron `0 2 * * *`) runs
+  `gcode vector reconcile` for each project after `gcode repair`. No hourly
+  run.
+- Apply switch: one key in Gobby's config store ("Config store like
+  everything else config"), default off. With it off, the run is a dry run
+  that records its counts. With it on, the run applies with the digest it just
+  observed. Flipping the key needs no deploy.
+- No volume cap ("lose the cap and re-run on failure"). A failed run (read
+  error, digest race, apply error) is retried, and the failure is recorded.
+- Inputs that are empty or unreadable replace the cap as the safety guard
+  ("Yes"):
+  - empty vector collection: regenerate, by re-embedding every symbol;
+  - empty symbol table: rebuild it from the code first (full index), then
+    reconcile, so the run never deletes every vector only to re-embed them;
+  - failed or partial read (connection drop, timeout, zero rows from an
+    errored read): a failure to retry, never treated as empty. A failed read
+    never deletes.
+- Receipts: a hub database table ("Database. Good rule of thumb is database
+  over local storage."). One row per run: project, mode (dry run or apply),
+  digest, per-class counts, outcome, retry count and timestamps.
+- Rollout: ship with the switch off, check the nightly dry-run counts, then
+  turn the switch on. Go-live also waits for the Live Maintenance Procedure's
+  first reviewed apply (#25766), so the historical backlog is deleted under
+  review and not by the first unattended run.
 
 ```yaml
 deferral:
-  task_ref: "created-at-expansion"
-  reason: "Unattended apply is gated on the first reviewed live apply and its receipt; receipt storage for unattended runs needs its own decision."
+  task_ref: "#23584"
+  reason: "Built after this epic lands on 0.5.0; go-live follows the dry-run check and the #25766 first reviewed apply."
   owner: "orchestrator"
   original_acceptance_items:
     - D1.1
 ```
 
-- D1.1 - The hourly prune runs reconcile for each project. It applies only
-  orphan deletion and flag reset, with a receipt under the daemon's private
-  state directory, and reports counts in the prune result.
+- D1.1 - The nightly code-index job runs `vector reconcile` for each project.
+  It is a dry run while the config-store apply key is off and applies when the
+  key is on, with no volume cap. It retries failed runs; regenerates an empty
+  collection; rebuilds an empty symbol table before reconciling; treats a
+  failed or partial read as a retryable failure, never as empty; and writes
+  one receipt row per run to a hub table.
 
 ## Live Maintenance Procedure
 `kind: framing`
