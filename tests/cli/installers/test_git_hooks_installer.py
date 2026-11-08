@@ -683,7 +683,7 @@ class TestInstallGitHooks:
         for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
             assert hook_name in result["installed"]
             content = (hooks_dir / hook_name).read_text()
-            assert 'xargs -0 "$GCODE" index --quiet >/dev/null 2>&1' in content
+            assert 'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in content
             assert "/api/code-index/codewiki/refresh" not in content
             assert "GOBBY HOOK START" in content
 
@@ -806,6 +806,8 @@ class TestInstallGitHooks:
         assert stdout == "indexed\n"
         args = args_file.read_text().splitlines()
         assert "--skip-if-locked" not in args
+        assert "--lock-wait-seconds" in args, "the background run must bound its lock wait"
+        assert args[args.index("--lock-wait-seconds") + 1] == "300"
         assert "--files=tracked.txt" in args
         assert not curl_file.exists()
 
@@ -1095,7 +1097,7 @@ class TestHookTemplates:
         content = HOOK_TEMPLATES["post-commit"]
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
-        assert 'xargs -0 "$GCODE" index --quiet >/dev/null 2>&1' in content
+        assert 'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in content
         assert "/api/code-index/codewiki/refresh" not in content
 
         git_dir = tmp_path / ".git"
@@ -1109,7 +1111,7 @@ class TestHookTemplates:
         installed = (hooks_dir / "post-commit").read_text()
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
-        assert 'xargs -0 "$GCODE" index --quiet >/dev/null 2>&1' in installed
+        assert 'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in installed
         assert "/api/code-index/codewiki/refresh" not in installed
 
     def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:
@@ -1119,7 +1121,7 @@ class TestHookTemplates:
             'GCODE="${GOBBY_HOME:-$HOME/.gobby}/bin/gcode"',
             "sed 's/^/--files=/'",
             r"tr '\n' '\0'",
-            'xargs -0 "$GCODE" index --quiet >/dev/null 2>&1',
+            'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1',
         )
 
         for snippet in shared_snippets:

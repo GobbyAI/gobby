@@ -1,6 +1,7 @@
 use super::super::{
     Inventory, MissingClass, MissingGroup, OrphanClass, ReconcileReceipt, apply,
-    apply_with_persist, inventory, inventory_digest, reset_synced_missing_versions,
+    apply_with_persist, inventory, inventory_digest, repair_missing_pins,
+    reset_synced_missing_versions,
 };
 use super::canonical_tempdir;
 use crate::config::{
@@ -863,6 +864,29 @@ fn explicit_file_repair_scopes_scroll_and_reset_to_its_files() -> anyhow::Result
     assert!(
         delete_requests(&requests).is_empty(),
         "an explicit-file repair never deletes"
+    );
+    Ok(())
+}
+
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires isolated PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+#[test]
+fn pin_repair_without_pins_never_scrolls_the_overlay() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    // Nothing listens on this port, so any Qdrant request fails the repair. Ok proves
+    // the overlay was never scrolled for a project that has no pins.
+    let ctx = fixture.context("http://127.0.0.1:9".to_string());
+
+    let result = repair_missing_pins(&ctx, None, || {
+        unreachable!("a project without pins never builds the vector lifecycle")
+    });
+
+    assert!(
+        result.is_ok(),
+        "a project with no pins must not scroll Qdrant: {result:?}"
     );
     Ok(())
 }

@@ -923,6 +923,7 @@ fn overlay_index_cli_missing_parent_refusal(explicit_path: bool) -> crate::cli_e
                 false,
                 false,
                 false,
+                None,
                 crate::output::Format::Json,
             )
             .expect_err("managed overlay grant cannot index its missing parent");

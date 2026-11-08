@@ -336,6 +336,7 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
                 false,
                 false,
                 false,
+                None,
                 Format::Json,
             )
             .expect_err("sibling writes remain refused");

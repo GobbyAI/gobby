@@ -119,9 +119,9 @@ pub struct PointIdentity {
     pub byte_start: Option<usize>,
 }
 
-/// Scrolls every point in the project's collection. A missing collection is empty.
 /// Scrolls point identities for one project. `file_paths` limits the scroll to points
-/// whose `file_path` payload is in the list; `None` scrolls the whole collection.
+/// whose `file_path` payload is in the list; `None` scrolls the whole collection. An
+/// empty list returns no points without a request, and a missing collection is empty.
 pub fn scroll_point_identities(
     qdrant: &QdrantConfig,
     project_id: &str,

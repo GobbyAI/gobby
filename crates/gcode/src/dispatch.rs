@@ -446,6 +446,7 @@ fn run() -> anyhow::Result<()> {
             require_cpp_semantics,
             sync_projections,
             skip_if_locked,
+            lock_wait_seconds,
         } => commands::index::run(
             &ctx,
             &cwd,
@@ -455,6 +456,7 @@ fn run() -> anyhow::Result<()> {
             require_cpp_semantics,
             sync_projections,
             skip_if_locked,
+            lock_wait_seconds,
             format,
         ),
         Command::Repair => commands::repair::run(&ctx, format),

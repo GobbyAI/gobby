@@ -15,10 +15,25 @@ use serde::Serialize;
 use serde_json::Value;
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub(crate) enum RunIndexLockedOutput {
     IndexOnly(IndexOutcome),
     Projections(IndexSyncProjectionsOutput),
+}
+
+/// Lock policy for an index run: `skip_if_locked` yields at once, `lock_wait_seconds`
+/// bounds the wait, and an unbounded run keeps the default wait.
+fn index_lock_policy(skip_if_locked: bool, lock_wait_seconds: Option<u64>) -> IndexLockPolicy {
+    if skip_if_locked {
+        IndexLockPolicy::brief_index_flush_try()
+    } else if let Some(seconds) = lock_wait_seconds {
+        IndexLockPolicy::Wait {
+            max_wait: Duration::from_secs(seconds),
+        }
+    } else {
+        IndexLockPolicy::wait()
+    }
 }
 
 // Args map 1:1 to the `gcode index` CLI flags; a wrapper struct would only add
@@ -33,6 +48,7 @@ pub fn run(
     require_cpp_semantics: bool,
     sync_projections: bool,
     skip_if_locked: bool,
+    lock_wait_seconds: Option<u64>,
     format: Format,
 ) -> anyhow::Result<()> {
     let mut timings = crate::index::indexer::IndexTimings::new("command.context");
@@ -62,11 +78,7 @@ pub fn run(
         sync_projections,
     };
 
-    let lock_policy = if skip_if_locked {
-        IndexLockPolicy::brief_index_flush_try()
-    } else {
-        IndexLockPolicy::wait()
-    };
+    let lock_policy = index_lock_policy(skip_if_locked, lock_wait_seconds);
     let explicit_request = !request.explicit_files.is_empty();
     timings.phase("command.locks");
     let (run_output, completed_files, busy_files) = if explicit_request {
@@ -493,6 +505,10 @@ fn path_filter_for(
 #[cfg(test)]
 #[path = "index/explicit_run_tests.rs"]
 mod explicit_run_tests;
+
+#[cfg(test)]
+#[path = "index/lock_policy_tests.rs"]
+mod lock_policy_tests;
 
 #[cfg(test)]
 mod tests {

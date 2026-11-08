@@ -110,6 +110,10 @@ pub(crate) enum Command {
         /// concurrent reindex does not cause a blocking-waiter pileup (#17701).
         #[arg(long)]
         skip_if_locked: bool,
+        /// Give up on a busy index lock after this many seconds instead of waiting the
+        /// full default. Background hook runs use it so waiters cannot pile up.
+        #[arg(long, value_name = "SECONDS", conflicts_with = "skip_if_locked")]
+        lock_wait_seconds: Option<u64>,
     },
     /// Reconcile stranded index state and graph projection drift
     Repair,
