@@ -296,7 +296,7 @@ async def test_publisher_binds_and_publishes_encoded_frames(
 ) -> None:
     daemon = _Daemon()
     publisher = _publisher(daemon)
-    await asyncio.wait_for(publisher.start(), timeout=2.0)
+    await asyncio.wait_for(publisher.start(), timeout=60.0)
     try:
         assert publisher.generation == GEN1
         [bind] = daemon.binds
@@ -660,7 +660,7 @@ async def test_native_mode_from_environment_and_bind_waits_for_token(
         assert set(polls) == {None}
         assert daemon.binds == []
         runner_backend._token.feed(f"{TOKEN}\n".encode())
-        await asyncio.wait_for(start, 2.0)
+        await asyncio.wait_for(start, 30.0)
         assert publisher.generation == GEN1
         [bind] = daemon.binds
         assert bind.url == httpx.URL("http://127.0.0.1:60887/_gobby/ws/bind")
@@ -689,14 +689,14 @@ async def test_native_mode_from_environment_and_bind_waits_for_token(
             CONFIG, bootstrap, transport=httpx.MockTransport(late.handle)
         )
         assert publisher is not None
-        await asyncio.wait_for(publisher.start(), 1.0)
+        await asyncio.wait_for(publisher.start(), 30.0)
         assert publisher.generation is None
         await _until(lambda: len(polls) >= 3)
         assert set(polls) == {None}
         assert publisher.generation is None
         assert late.binds == []
         runner_backend._token.feed(f"{TOKEN}\n".encode())
-        await _until(lambda: publisher.generation == GEN1, timeout=1.0)
+        await _until(lambda: publisher.generation == GEN1, timeout=30.0)
         await publisher.stop()
     finally:
         runner_backend._token.reset()
@@ -781,7 +781,7 @@ async def test_production_client_ignores_proxy_environment(
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.start(), 60.0)
             assert publisher.generation == GEN1
             await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 2.0)
             assert publisher.generation == GEN1
@@ -818,7 +818,7 @@ async def test_a_bind_held_past_the_deadline_is_retried_until_the_front_door_ans
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.start(), 60.0)
             # Hang guards only. Host load can stretch each attempt, so the held attempts are
             # asserted by count below, never by elapsed time.
             await _until(lambda: publisher.generation == GEN1, timeout=5.0)
@@ -860,7 +860,9 @@ async def test_a_stalled_loop_is_reported_while_the_publisher_runs(
     ("bind_delay", "deadline", "outcome", "first_byte_seen"),
     [
         (1.0, 0.3, "bind failed after", False),
-        (0.6, 2.0, "bind answered after", True),
+        # 30 s of deadline over the 0.6 s delay. A 2.0 s deadline has 1.4 s
+        # of margin, so a longer loop stall records a failure.
+        (0.6, 30.0, "bind answered after", True),
     ],
 )
 async def test_a_slow_bind_names_the_phase_it_reached(
@@ -884,8 +886,8 @@ async def test_a_slow_bind_names_the_phase_it_reached(
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
-            await _until(lambda: publisher.generation == GEN1)
+            await asyncio.wait_for(publisher.start(), 60.0)
+            await _until(lambda: publisher.generation == GEN1, timeout=30.0)
         finally:
             await publisher.stop()
     line = next(r.getMessage() for r in caplog.records if outcome in r.getMessage())
@@ -898,7 +900,7 @@ async def test_a_slow_bind_names_the_phase_it_reached(
     ("publish_delay", "deadline", "outcome", "first_byte_seen"),
     [
         (1.0, 0.3, "publish failed for generation", False),
-        (0.6, 2.0, "publish answered after", True),
+        (0.6, 30.0, "publish answered after", True),
     ],
 )
 async def test_a_slow_publish_names_the_phase_it_reached(
@@ -922,8 +924,8 @@ async def test_a_slow_publish_names_the_phase_it_reached(
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
-            await _until(lambda: publisher.generation == GEN1)
+            await asyncio.wait_for(publisher.start(), 60.0)
+            await _until(lambda: publisher.generation == GEN1, timeout=30.0)
             publisher.publish({"type": "agent_event"})
             await _until(lambda: any(outcome in r.getMessage() for r in caplog.records), 5.0)
         finally:
@@ -950,7 +952,7 @@ async def test_a_held_rebind_is_logged_as_a_rebind(
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.start(), 60.0)
             await _until(lambda: publisher.generation == GEN1, 5.0)
         finally:
             await publisher.stop()
@@ -976,7 +978,7 @@ async def test_the_probe_wrapper_serves_a_rebind_and_records_its_generation(
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.start(), 60.0)
             await _until(lambda: publisher.generation == GEN1, 5.0)
         finally:
             await publisher.stop()
@@ -1002,7 +1004,7 @@ async def test_a_publish_slower_than_httpx_default_stays_bound_inside_the_deadli
         )
         assert publisher is not None
         try:
-            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.start(), 60.0)
             await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 15.0)
             assert publisher.generation == GEN1
         finally:
@@ -1121,7 +1123,7 @@ async def test_wait_bound_returns_once_a_rebind_lands(
     await publisher.start()
     try:
         assert publisher.generation is None
-        assert await publisher.wait_bound(1.0) is True
+        assert await publisher.wait_bound(30.0) is True
         assert publisher.generation == GEN1
     finally:
         await publisher.stop()

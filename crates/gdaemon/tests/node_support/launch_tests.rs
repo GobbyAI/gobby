@@ -933,6 +933,12 @@ async fn reconcile_after_restart() -> Result<()> {
 
 #[tokio::test]
 async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
+    // prepare_launch runs git, a debug policy compile and codesign before the
+    // second subscribe. Measured about 9 s alone near load 25, 18 s in a full
+    // crate run near load 30, and 27 s with extra CPU-bound processes. At load
+    // 43 the 30 s guard elapsed. A yield spin also burns a core for that whole
+    // wait. The settled exit below is the assertion; this bound stops a hang.
+    let prepare_guard = Duration::from_secs(120);
     let fixture = LaunchFixture::new().await?;
     let mut watcher = tokio::spawn({
         let agents = Arc::clone(&fixture.agents);
@@ -945,10 +951,10 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
             .iter()
             .any(|r| r["method"] == "list")
         {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     };
-    tokio::time::timeout(Duration::from_secs(30), ready)
+    tokio::time::timeout(prepare_guard, ready)
         .await
         .context("exit watcher did not finish its initial subscription/inventory request")?;
     // Serialize behind the watcher's initial inventory request before spawning.
@@ -970,13 +976,13 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
             if subscriptions == 2 {
                 break;
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     };
     let barrier = tokio::select! {
         result = &mut launch => anyhow::bail!("commit reply gate was bypassed: {result:?}"),
         result = &mut watcher => anyhow::bail!("exit watcher stopped: {result:?}"),
-        result = tokio::time::timeout(Duration::from_secs(30), consumed) => result,
+        result = tokio::time::timeout(prepare_guard, consumed) => result,
     };
     // The fake host closes the event stream only after sending the exit. A second
     // subscription proves the watcher consumed that stream before launch resumes.

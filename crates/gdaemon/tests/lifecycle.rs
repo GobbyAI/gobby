@@ -37,6 +37,15 @@ fn repo_venv() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv")
 }
 
+fn backend_argv(script: &str) -> Result<String> {
+    // `uv run` is another process plus project discovery on every start. That
+    // startup, with the interpreter and the gobby import, is what stretches
+    // under host load. The synced venv interpreter imports gobby on its own.
+    let python = repo_venv().join("bin").join("python");
+    let python = python.to_str().context("venv python path is not utf-8")?;
+    serde_json::to_string(&[python, "-c", script]).context("encode backend argv")
+}
+
 fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
     let mut config = BackendConfig::from_command_json(home, Some(argv))?;
     config.environment.insert(
@@ -44,6 +53,24 @@ fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
         repo_venv().into_os_string(),
     );
     Ok(config)
+}
+
+#[test]
+fn backend_argv_execs_the_venv_python() -> Result<()> {
+    let parsed: Vec<String> = serde_json::from_str(&backend_argv("pass")?)?;
+    let python = repo_venv().join("bin").join("python");
+    assert_eq!(
+        parsed,
+        vec![
+            python
+                .to_str()
+                .context("venv python path is not utf-8")?
+                .to_owned(),
+            "-c".into(),
+            "pass".into(),
+        ]
+    );
+    Ok(())
 }
 
 struct TestDb {
@@ -70,7 +97,7 @@ impl TestDb {
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
-        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
+        let argv = backend_argv(script)?;
         let mut config = backend_config(home, &argv)?;
         config
             .environment
@@ -736,7 +763,11 @@ raise SystemExit(0 if n!=2 else 1)
         let mut supervisor=db.supervisor(home.path(),script).await?;
         let (_tx,rx)=watch::channel(false);
         let started=Instant::now();
-        assert_eq!(timeout(Duration::from_secs(10),supervisor.run(rx)).await??,SupervisorExit::Stopped);
+        // Hang guard for three interpreter starts plus the 1 s crash backoff.
+        // Measured supervisor transitions stay under 0.3 s. The run was about
+        // 4 s near load 30 and the 10 s guard elapsed at load 43. The
+        // assertions below are the behavior.
+        assert_eq!(timeout(Duration::from_secs(60),supervisor.run(rx)).await??,SupervisorExit::Stopped);
         assert!(started.elapsed()>=Duration::from_secs(1), "consumed restart must back off second crash");
         assert_eq!(fs::read_to_string(home.path().join("starts"))?,"aaa");
         let epoch:i64=db.admin.query_one(&format!("SELECT fencing_epoch FROM {}.deployment_runtime WHERE deployment_token='lifecycle-test'",db.schema),&[]).await?.get(0);
