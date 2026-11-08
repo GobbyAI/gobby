@@ -764,10 +764,10 @@ raise SystemExit(0 if n!=2 else 1)
         let (_tx,rx)=watch::channel(false);
         let started=Instant::now();
         // Hang guard for three interpreter starts plus the 1 s crash backoff.
-        // Measured supervisor transitions stay under 0.3 s. The run was about
-        // 4 s near load 30 and the 10 s guard elapsed at load 43. The
-        // assertions below are the behavior.
-        assert_eq!(timeout(Duration::from_secs(60),supervisor.run(rx)).await??,SupervisorExit::Stopped);
+        // The whole test finished in 6.5 s at 1-minute load about 50. Import
+        // time grew with load; supervisor transitions stayed under 0.3 s.
+        // 15 s is 8.5 s over that completion.
+        assert_eq!(timeout(Duration::from_secs(15),supervisor.run(rx)).await??,SupervisorExit::Stopped);
         assert!(started.elapsed()>=Duration::from_secs(1), "consumed restart must back off second crash");
         assert_eq!(fs::read_to_string(home.path().join("starts"))?,"aaa");
         let epoch:i64=db.admin.query_one(&format!("SELECT fencing_epoch FROM {}.deployment_runtime WHERE deployment_token='lifecycle-test'",db.schema),&[]).await?.get(0);

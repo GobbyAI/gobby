@@ -933,12 +933,12 @@ async fn reconcile_after_restart() -> Result<()> {
 
 #[tokio::test]
 async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
-    // prepare_launch runs git, a debug policy compile and codesign before the
-    // second subscribe. Measured about 9 s alone near load 25, 18 s in a full
-    // crate run near load 30, and 27 s with extra CPU-bound processes. At load
-    // 43 the 30 s guard elapsed. A yield spin also burns a core for that whole
-    // wait. The settled exit below is the assertion; this bound stops a hang.
-    let prepare_guard = Duration::from_secs(120);
+    // The second subscribe_events lands after prepare_launch: git rev-parse,
+    // policy compile, the ps shim, codesign, the monitor, and settings. The
+    // test finished in 11.2 s at 1-minute load about 39, then in 12.2 s. At load 43 the 30 s
+    // guard expired and the test wall was 33.4 s. 45 s is 15 s over that.
+    // The 5 ms sleep is the poll interval, so the wait does not spin a core.
+    let prepare_guard = Duration::from_secs(45);
     let fixture = LaunchFixture::new().await?;
     let mut watcher = tokio::spawn({
         let agents = Arc::clone(&fixture.agents);
