@@ -44,8 +44,8 @@ task tree; the lead stays in main. admit_team chooses single-task or epic mode.
 The bundled file is dev-team.yaml; there is no separate epic pipeline.
 
 claim_flow is declared in the pipeline and applied atomically by record_attestation:
-implement requires test-before, implementation, test-after, self-review and
-validation; review requires independent-review and validation; a rejection returns
+implement requires test-before, implementation and test-after; review requires
+independent-review and validation; a rejection returns
 the claim to implement; completed review moves it to the lead's validate stage.
 Each stage validates against task.validation_criteria with stage and a per-criterion
 [{criterion, met, how}] list. Results follow each kind's allowed_results and guidance.
@@ -119,6 +119,6 @@ not reach seats once the pipeline child has ended.
 Guides: [runbooks](../../../../../../../../docs/guides/runbooks.md) and
 [pipelines](../../../../../../../../docs/guides/pipelines.md#runbooks).
 
-_Version: 5.0.0_
+_Version: 6.0.0_
 
 _Last verified: 2026-11-05_

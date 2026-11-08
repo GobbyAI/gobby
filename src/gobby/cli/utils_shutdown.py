@@ -12,8 +12,12 @@ import click
 import psutil
 
 from gobby.cli.utils_runtime import facade
+from gobby.shutdown_budget import DAEMON_STOP_ESCALATION_SECONDS
 from gobby.shutdown_intent import shutdown_marker_details
 from gobby.utils.env import E2E_ISOLATED_HOME_ENV, is_test_protect_enabled
+
+# Interval between liveness polls while the daemon winds down.
+_STOP_POLL_SECONDS = 0.1
 
 
 def _report_lock_survivor(deps: Any, quiet: bool) -> None:
@@ -150,6 +154,8 @@ def stop_daemon(
             ),
         )
 
+    # Every wait below polls the same window the CLI gives the daemon before SIGKILL.
+    escalation_polls = round(DAEMON_STOP_ESCALATION_SECONDS / _STOP_POLL_SECONDS)
     stop_start = time.time()
 
     from gobby.cli.installers.service import get_service_status, service_stop
@@ -161,8 +167,8 @@ def stop_daemon(
             shutdown_source=shutdown_source,
         )
         if result.get("success"):
-            for _ in range(200):
-                time.sleep(0.1)
+            for _ in range(escalation_polls):
+                time.sleep(_STOP_POLL_SECONDS)
                 if not bool(deps._is_process_alive(pid)):
                     break
             sweep_orphans()
@@ -186,9 +192,9 @@ def stop_daemon(
         if not quiet:
             deps._stop_step(f"Sent shutdown signal (PID: {pid})")
 
-        max_wait = 30
-        for _ in range(max_wait * 10):
-            time.sleep(0.1)
+        max_wait = DAEMON_STOP_ESCALATION_SECONDS
+        for _ in range(escalation_polls):
+            time.sleep(_STOP_POLL_SECONDS)
             if not bool(deps._is_process_alive(pid)):
                 elapsed = time.time() - stop_start
                 if not quiet:
@@ -199,7 +205,7 @@ def stop_daemon(
                 return True
 
         if not quiet:
-            deps._stop_step(f"Did not stop within {max_wait}s, force killing...", error=True)
+            deps._stop_step(f"Did not stop within {max_wait:g}s, force killing...", error=True)
 
         try:
             os.kill(pid, signal.SIGKILL)
