@@ -1,7 +1,7 @@
 //! An explicit-file index run repairs vectors through `run_index_locked`, the entry point the
 //! CLI and trigger paths share. The repair stays scoped to the files the run names.
 
-use super::{run_index_locked, run_with_lock_policy};
+use super::{IndexRunStatus, run_index_locked, run_with_lock_policy};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope, QdrantConfig};
 use crate::db;
 use crate::index::indexer::{IndexOptions, IndexRequest, IndexTimings, index_files};
@@ -26,6 +26,21 @@ const OTHER: &str = "src/other.rs";
 )]
 #[serial_test::serial(serial_db)]
 fn explicit_file_run_repairs_only_the_files_it_names() {
+    explicit_run_repairs_only_the_files_it_names(true);
+}
+
+// The default request (`sync_projections: false`) is what the git hook and the trigger send.
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn default_request_repairs_the_files_it_names() {
+    explicit_run_repairs_only_the_files_it_names(false);
+}
+
+fn explicit_run_repairs_only_the_files_it_names(sync_projections: bool) {
     let (mut conn, database_url) = connect_test_db();
     let project_root = project_tempdir();
     let project_id = unique_test_project_id("gcode-explicit-run-repair");
@@ -79,7 +94,7 @@ fn explicit_file_run_repairs_only_the_files_it_names() {
             explicit_files: vec![project_root.path().join(KEPT)],
             full: false,
             require_cpp_semantics: false,
-            sync_projections: true,
+            sync_projections,
         },
     )
     .expect("explicit-file index run");
@@ -176,15 +191,15 @@ fn timed_out_explicit_paths_are_indexed_by_the_next_run() {
         assert_eq!(
             queued
                 .iter()
-                .map(|batch| batch.paths.clone())
+                .map(|batch| batch.paths().to_vec())
                 .collect::<Vec<_>>(),
             vec![vec![PathBuf::from(KEPT)]],
             "the timed-out run must queue exactly the path it could not lock"
         );
-        let error = timed_out.expect_err("a timed-out bounded wait fails the run");
-        assert!(
-            error.is::<index_lock::LockWaitTimeout>(),
-            "the failure must be the lock timeout: {error:#}"
+        assert_eq!(
+            timed_out.expect("a queued bounded wait yields without an error"),
+            IndexRunStatus::Skipped,
+            "a timed-out bounded wait yields with exit status 3, the same as a busy lock"
         );
 
         run_with_lock_policy(
@@ -211,6 +226,105 @@ fn timed_out_explicit_paths_are_indexed_by_the_next_run() {
                 .expect("take after the next run")
                 .is_empty(),
             "the drained batch must be settled once its paths are indexed"
+        );
+    });
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn timed_out_whole_tree_run_is_drained_by_the_next_run() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_root = project_tempdir();
+    let gobby_home = project_tempdir();
+    let project_id = unique_test_project_id("gcode-whole-tree-queue");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    write_file(project_root.path(), KEPT, b"pub fn kept() -> u8 { 1 }\n");
+    write_file(project_root.path(), OTHER, b"pub fn other() -> u8 { 2 }\n");
+    let ctx = test_context(
+        database_url,
+        project_root.path().to_path_buf(),
+        project_id.clone(),
+    );
+    let whole_tree_run = IndexRequest {
+        project_root: project_root.path().to_path_buf(),
+        path_filter: None,
+        explicit_files: Vec::new(),
+        full: false,
+        require_cpp_semantics: false,
+        sync_projections: false,
+    };
+    let explicit_run = IndexRequest {
+        project_root: project_root.path().to_path_buf(),
+        path_filter: None,
+        explicit_files: vec![project_root.path().join(OTHER)],
+        full: false,
+        require_cpp_semantics: false,
+        sync_projections: false,
+    };
+
+    temp_env::with_var("GOBBY_HOME", Some(gobby_home.path()), || {
+        let queue_dir = index_pending::pending_dir(&project_id).expect("queue dir");
+        // A shared project holder blocks the whole-tree run's exclusive project lock.
+        let holder = index_lock::lock_project_files(
+            &ctx,
+            &[PathBuf::from(KEPT)],
+            IndexLockPolicy::maintenance_try(),
+        )
+        .expect("hold the project lock shared");
+        assert_eq!(holder.acquired_files, vec![PathBuf::from(KEPT)]);
+
+        let timed_out = run_with_lock_policy(
+            &ctx,
+            whole_tree_run,
+            IndexLockPolicy::Wait {
+                max_wait: Duration::from_millis(200),
+            },
+            false,
+            Format::Text,
+            &mut IndexTimings::new("command.context"),
+        );
+        drop(holder);
+
+        assert_eq!(
+            timed_out.expect("a queued bounded wait yields without an error"),
+            IndexRunStatus::Skipped,
+        );
+        let queued = index_pending::take(&queue_dir).expect("take queued batches");
+        assert_eq!(
+            queued.len(),
+            1,
+            "the timed-out whole-tree run must queue one whole-tree marker"
+        );
+
+        // The next run names only OTHER, so KEPT is indexed only by the drained marker.
+        run_with_lock_policy(
+            &ctx,
+            explicit_run,
+            IndexLockPolicy::Wait {
+                max_wait: Duration::from_secs(30),
+            },
+            false,
+            Format::Text,
+            &mut IndexTimings::new("command.context"),
+        )
+        .expect("the next index run");
+        assert!(
+            file_indexed(&mut conn, &project_id, KEPT),
+            "the next run must drain the whole-tree marker the timed-out run queued"
+        );
+        assert!(
+            index_pending::take(&queue_dir)
+                .expect("take after the next run")
+                .is_empty(),
+            "the drained whole-tree marker must be settled once its run succeeds"
         );
     });
 }

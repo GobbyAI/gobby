@@ -683,7 +683,9 @@ class TestInstallGitHooks:
         for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
             assert hook_name in result["installed"]
             content = (hooks_dir / hook_name).read_text()
-            assert 'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in content
+            assert (
+                'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in content
+            )
             assert "/api/code-index/codewiki/refresh" not in content
             assert "GOBBY HOOK START" in content
 
@@ -1111,7 +1113,9 @@ class TestHookTemplates:
         installed = (hooks_dir / "post-commit").read_text()
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
-        assert 'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in installed
+        assert (
+            'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in installed
+        )
         assert "/api/code-index/codewiki/refresh" not in installed
 
     def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:

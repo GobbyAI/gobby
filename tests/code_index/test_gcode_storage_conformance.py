@@ -28,7 +28,6 @@ from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.machine_id import get_machine_id
-from gobby.utils.native_bin import resolve_native_bin
 
 pytestmark = pytest.mark.integration
 
@@ -101,13 +100,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _gcode_bin() -> str:
-    debug = ROOT / "target" / "debug" / "gcode"
-    if debug.is_file():
-        return str(debug)
-    found = resolve_native_bin("gcode")
-    if found is None:
-        pytest.skip("gcode binary is not installed")
-    return found
+    # The checkout's build is the writer under test. Gobby redirects Cargo output through
+    # CARGO_TARGET_DIR, so that location wins over ROOT/target. An installed binary is another
+    # release with another schema identity, so it is never substituted.
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
+    debug = target / "debug" / "gcode"
+    if not debug.is_file():
+        pytest.skip(f"checkout gcode build missing at {debug}; run cargo build -p gobby-code")
+    return str(debug)
 
 
 def _run_gcode(gcode_bin: str, root: Path, env: dict[str, str], *args: str) -> None:

@@ -76,8 +76,9 @@ gcode vector rebuild --format json
 
 Migration points in the Python daemon:
 
-- `CodeIndexTrigger` calls `gcode index --sync-projections` for daemon-triggered
-  indexing.
+- `CodeIndexTrigger` should call `gcode index --sync-projections` for daemon-triggered
+  indexing. Today no Python caller passes that flag; default requests still repair
+  missing vectors, and projection sync stays opt-in.
 - `sync_worker.py` stops rebuilding graph and vector projections directly and
   delegates clear/rebuild work to Rust.
 - `CodeIndexContext` drops projection lifecycle methods once callers route

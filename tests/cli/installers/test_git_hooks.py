@@ -71,7 +71,14 @@ def test_hook_body_reindexes_changed_files(tmp_path: Path) -> None:
     # A changed file named like an option still reaches gcode as a --files value.
     args = _run_hook_body(tmp_path, changed_files="changed.py\n-l")
 
-    assert args == ["index", "--quiet", "--files=changed.py", "--files=-l"]
+    assert args == [
+        "index",
+        "--quiet",
+        "--lock-wait-seconds",
+        "300",
+        "--files=changed.py",
+        "--files=-l",
+    ]
 
 
 def test_hook_body_skips_when_gcode_missing(tmp_path: Path) -> None:
@@ -90,7 +97,13 @@ def test_hook_body_survives_set_u(tmp_path: Path) -> None:
     """Chained user hooks run under set -u; the body must not abort."""
     args = _run_hook_body(tmp_path, strict_unset=True)
 
-    assert args == ["index", "--quiet", "--files=changed.py"]
+    assert args == [
+        "index",
+        "--quiet",
+        "--lock-wait-seconds",
+        "300",
+        "--files=changed.py",
+    ]
 
 
 def _write_fake_precommit(bin_dir: Path) -> None:

@@ -642,7 +642,7 @@ pub fn contract() -> CliContract {
             },
             ExitCodeContract {
                 code: 3,
-                meaning: "`index --skip-if-locked` yielded to a concurrent indexer",
+                meaning: "`index` yielded without indexing: the index lock stayed busy past its wait, or a timed-out wait queued its work for the next index run",
             },
             ExitCodeContract {
                 code: 10,
