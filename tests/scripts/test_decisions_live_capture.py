@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from gobby.ai import decisions
 from scripts import decisions_live_capture
 from tests.scripts.conftest import (
     ALIAS_MODEL,
@@ -64,8 +66,10 @@ def _capture(
     return code, out.read_text(encoding="utf-8")
 
 
-BOX_BASE = "https://box.example/api"
+BOX_HOST = "box.example"
+BOX_BASE = f"https://{BOX_HOST}/api"
 BOX_MODEL = "typesafe-box"
+BOX_RESPONSE_MODEL = "typesafe-box-20261101"
 
 
 def _parse_flags(argv: list[str]) -> argparse.Namespace:
@@ -118,6 +122,105 @@ def test_capture_sends_box_to_its_own_endpoint(
     assert shapes["choice"]["request_model"] == REQUEST_MODEL
     assert shapes["box"]["api_base"] == BOX_BASE
     assert shapes["box"]["request_model"] == BOX_MODEL
+
+
+@pytest.fixture
+def split_wires(
+    openrouter_wire: OpenRouterWire, monkeypatch: pytest.MonkeyPatch
+) -> tuple[OpenRouterWire, OpenRouterWire]:
+    """The default endpoint's wire, and a separate wire that answers only the Box host."""
+    box_wire = OpenRouterWire()
+    box_wire.response_model = lambda _sent: BOX_RESPONSE_MODEL
+    default_handle = openrouter_wire.handle
+
+    def route(request: httpx.Request) -> httpx.Response:
+        if request.url.host == BOX_HOST:
+            return box_wire.handle(request)
+        return default_handle(request)
+
+    monkeypatch.setattr(openrouter_wire, "handle", route)
+    return openrouter_wire, box_wire
+
+
+def test_capture_box_runs_through_registered_evaluate_tool(
+    tmp_path: Path, split_wires: tuple[OpenRouterWire, OpenRouterWire]
+) -> None:
+    default, box_wire = split_wires
+    cache_before = decisions._service_cache
+
+    code, section = _capture(
+        tmp_path,
+        "openrouter-decisions",
+        "--box-wire-api",
+        "openrouter-decisions",
+        "--box-api-base",
+        BOX_BASE,
+        "--box-model",
+        BOX_MODEL,
+    )
+
+    assert code == 0
+    assert decisions._service_cache is cache_before
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    box = next(shape for shape in capture["shapes"] if shape["shape"] == "box")
+    assert box["consumer"] == "gobby-decisions:evaluate"
+    assert box["questions"] == {
+        "square": {
+            "type": "box",
+            "instructions": "Locate the red square.",
+            "image_path": str((tmp_path / "box.png").resolve()),
+        }
+    }
+    assert box["image_sha256"] == hashlib.sha256(png()).hexdigest()
+    assert box["tool_output"]["success"] is True
+    answer = box["tool_output"]["answers"]["square"]
+    assert answer["type"] == "box"
+    assert answer["success"] is True
+    assert answer["answer"] == {
+        "box": {"top": 0.1, "bottom": 0.9, "left": 0.2, "right": 0.8},
+        "confidence": 0.9,
+    }
+    assert answer["response_model"] == BOX_RESPONSE_MODEL
+    assert answer["backend_identity"] == f"response:{BOX_RESPONSE_MODEL}"
+    assert [exchange["status"] for exchange in box["exchanges"]] == [200]
+    # One Box request reaches the Box endpoint's wire; the default wire never sees a Box question.
+    assert box_wire.kinds_sent() == {"box"}
+    assert len(box_wire.posts()) == 1
+    assert "box" not in default.kinds_sent()
+    assert {"choice", "noul", "score"} <= default.kinds_sent()
+
+
+def test_capture_box_rejects_unsupported_image_through_the_tool(
+    tmp_path: Path, split_wires: tuple[OpenRouterWire, OpenRouterWire]
+) -> None:
+    default, box_wire = split_wires
+    gif = tmp_path / "box.gif"
+    gif.write_bytes(b"GIF89a" + bytes(64))
+
+    code, section = _capture(
+        tmp_path,
+        "openrouter-decisions",
+        "--box-wire-api",
+        "openrouter-decisions",
+        "--box-api-base",
+        BOX_BASE,
+        "--box-model",
+        BOX_MODEL,
+        "--box-image",
+        str(gif),
+    )
+
+    assert code == 0
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    box = next(shape for shape in capture["shapes"] if shape["shape"] == "box")
+    assert box["finding"] == {
+        "reason": "invalid_request",
+        "detail": "image must be a PNG or JPEG file",
+    }
+    assert box_wire.posts() == []
+    assert "box" not in default.kinds_sent()
+    probe_requests = [body for body in default.posts() if "probe" in body["questions"]]
+    assert len(probe_requests) == 6
 
 
 def test_box_flags_refuse_a_wire_that_cannot_serve_box() -> None:
