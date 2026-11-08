@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
 
+from gobby.sessions.background_notices import BackgroundReceipt, resolve_background_notice
 from gobby.storage.definitions.revisions import (
     get_definitions_revision,
     register_revision_listener,
@@ -33,7 +34,6 @@ from gobby.workflows.variable_defaults import (
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     WorktreeShellCallRegistry,
-    background_output_state,
     overlapped_worktree_paths,
 )
 
@@ -422,20 +422,24 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry, GitOp
             session_id, mutate, keys=("claimed_shell_snapshots",), apply_defaults=False
         )
 
-    def settle_pending_shell_calls(self, session_id: str) -> None:
-        """Settle background shell calls whose output file shows the process ended or is gone.
+    def settle_pending_shell_calls(self, session_id: str, transcript_path: str | None) -> None:
+        """Adopt the content of background shell calls whose owner transcript holds their notice.
 
-        A finished call adopts the content it left. A call whose output file is gone drops
-        without adopting, so its paths stay unowned and need approval. A running call stays.
+        A call without a resolved notice row stays pending whatever its output shows.
         """
         for call_id, entry in self._pending_shell_calls(session_id).items():
-            if not isinstance(entry, dict) or not entry.get("output_path"):
+            if not isinstance(entry, dict) or not isinstance(entry.get("output_path"), str):
                 continue
-            state = background_output_state(str(entry["output_path"]))
-            if state == "finished":
+            job_id = entry.get("job_id")
+            receipt = BackgroundReceipt(
+                job_id=job_id if isinstance(job_id, str) else None,
+                output_path=str(entry["output_path"]),
+            )
+            notice = resolve_background_notice(
+                transcript_path, tool_use_id=call_id, receipt=receipt
+            )
+            if notice is not None:
                 self.adopt_claimed_shell_edits(session_id, call_id)
-            elif state == "missing":
-                self._drop_shell_call(session_id, call_id)
 
     def _pending_shell_calls(self, session_id: str) -> dict[str, Any]:
         value = self.get_variable_subset(session_id, ("claimed_shell_snapshots",)).get(
@@ -443,25 +447,20 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry, GitOp
         )
         return value if isinstance(value, dict) else {}
 
-    def _drop_shell_call(self, session_id: str, call_id: str) -> None:
-        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
-            entries = dict(variables.get("claimed_shell_snapshots") or {})
-            entries.pop(call_id, None)
-            variables["claimed_shell_snapshots"] = entries or None
-            return None, True
-
-        self._mutate_variables(
-            session_id, mutate, keys=("claimed_shell_snapshots",), apply_defaults=False
-        )
-
     def adopt_claimed_shell_edits(
-        self, session_id: str, call_id: str, *, output_path: str | None = None
+        self,
+        session_id: str,
+        call_id: str,
+        *,
+        output_path: str | None = None,
+        job_id: str | None = None,
+        job_tree: Mapping[str, Any] | None = None,
     ) -> None:
         """Let the claimed tasks own the content one claimant shell call left in its paths.
 
         A snapshotted path changed by the call is recorded as that task's newest Gobby action.
         A path the call left alone, or one written outside the call, stays as it was. A call
-        with an output path stays pending until its output shows the process ended.
+        with an output path stays pending until its owner's transcript notice settles it.
         """
         from gobby.workflows.task_claim_state import record_task_content_hashes
 
@@ -486,7 +485,13 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry, GitOp
             if output_path is None:
                 entries.pop(call_id, None)
             else:
-                entries[call_id] = {**entry, "owned": kept, "output_path": output_path}
+                entries[call_id] = {
+                    **entry,
+                    "owned": kept,
+                    "output_path": output_path,
+                    "job_id": job_id,
+                    "job_tree": job_tree,
+                }
             variables["claimed_shell_snapshots"] = entries or None
             # A path an overlapping call changed stays foreign, so the task does not adopt it.
             overlapped = overlapped_worktree_paths(variables, root)

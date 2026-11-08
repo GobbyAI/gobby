@@ -520,6 +520,23 @@ class AttestationShape(BaseModel):
         return self
 
 
+class AttestationAuthorship(BaseModel):
+    """Which kinds make an author the task's implementer, and which kinds are its makers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Recording this kind makes its author the task's implementer.
+    implementation_kind: str = Field(min_length=1)
+    # Kinds the implementer may record; every other kind is review.
+    maker_kinds: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _implementation_is_a_maker(self) -> AttestationAuthorship:
+        if self.implementation_kind not in self.maker_kinds:
+            raise ValueError("attestation_authorship maker_kinds must include implementation_kind")
+        return self
+
+
 ATTESTATION_SHAPE_FUNCTIONS: dict[str, Callable[..., Any]] = {"len": len, "any": any, "all": all}
 
 
@@ -544,16 +561,20 @@ class RuleDefinitionBody(BaseModel):
     retry_limit: bool = False
     # Closure rules only: record_attestation refuses evidence this shape can never accept.
     attestation_shape: AttestationShape | None = None
+    # Closure rules only: no author of the task's implementation may record its review.
+    attestation_authorship: AttestationAuthorship | None = None
 
     @model_validator(mode="after")
     def _validate_effects(self) -> RuleDefinitionBody:
         if not self.effects or len(self.effects) == 0:
             raise ValueError("'effects' is required and must be non-empty")
-        if self.attestation_shape is not None and self.event not in {
-            RuleTriggerEvent.TASK_CLOSE,
-            RuleTriggerEvent.TASK_LAND,
-        }:
+        closure_only = {RuleTriggerEvent.TASK_CLOSE, RuleTriggerEvent.TASK_LAND}
+        if self.attestation_shape is not None and self.event not in closure_only:
             raise ValueError("attestation_shape is restricted to task_close and task_land rules")
+        if self.attestation_authorship is not None and self.event not in closure_only:
+            raise ValueError(
+                "attestation_authorship is restricted to task_close and task_land rules"
+            )
         if self.retry_limit and self.event != RuleTriggerEvent.BEFORE_TOOL:
             raise ValueError("retry_limit is restricted to before_tool rules")
         block_count = sum(e.type == "block" for e in self.effects)

@@ -3,9 +3,12 @@
 import asyncio
 import builtins
 import faulthandler
+import io
+import json
 import os
 import runpy
 import sys
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -61,6 +64,20 @@ def test_startup_instrumentation_does_not_profile_runtime_calls() -> None:
             "    await asyncio.sleep(0)\n"
             "    return 'ready'",
             "managed readiness",
+        ),
+        (
+            "gobby.runner_init.services",
+            "_register_stateful_services",
+            "async def _register_stateful_services():\n"
+            "    await asyncio.sleep(0)\n"
+            "    return 'ready'",
+            "stateful registries",
+        ),
+        (
+            "gobby.runner_init.orchestration",
+            "init_orchestration",
+            "def init_orchestration(): return 'ready'",
+            "orchestration construction",
         ),
     ],
 )
@@ -142,3 +159,34 @@ def test_runner_exit_retains_thread_stacks(
     thread_stacks = (log_dir / "startup-threads.log").read_text()
     assert "runner execution ended" in thread_stacks
     assert "test_runner_exit_retains_thread_stacks" in thread_stacks
+
+
+class _ProgressSignalingStream(io.StringIO):
+    """Stream that signals once a progress record reaches it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.progress_written = threading.Event()
+
+    def write(self, s: str) -> int:
+        written = super().write(s)
+        if '"progress"' in s:
+            self.progress_written.set()
+        return written
+
+
+def test_stage_timings_records_module_growth_as_progress() -> None:
+    stream = _ProgressSignalingStream()
+    module_name = "readiness_bootstrap_progress_probe"
+    with readiness_bootstrap.stage_timings(stream):
+        sys.modules[module_name] = ModuleType(module_name)
+        try:
+            assert stream.progress_written.wait(timeout=5.0), "no progress record was written"
+        finally:
+            del sys.modules[module_name]
+
+    records = [json.loads(line) for line in stream.getvalue().splitlines()]
+    progress = [record for record in records if record["state"] == "progress"]
+    assert progress, "module growth during startup must leave a progress record"
+    assert progress[-1]["stage"] == "module imports"
+    assert progress[-1]["modules"] >= 1

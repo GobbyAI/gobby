@@ -23,6 +23,8 @@ async def start_background_services(tracker: StartupTracker | None) -> None:
 
 def shutdown_background_services() -> None:
     """Stop workers within the caller's existing shutdown ordering and error boundary."""
+    from gobby.runner_init.embedding_lease import dispose_active_embedding_leases
     from gobby.tasks.transcript_evidence_pool import shutdown_transcript_evidence_pool
 
+    dispose_active_embedding_leases()
     shutdown_transcript_evidence_pool()

@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,7 +16,7 @@ from uuid import uuid4
 import psutil
 import pytest
 
-from gobby.terminals.host_protocol import control_token_path
+from gobby.terminals.host_protocol import control_socket_path, control_token_path
 from tests.e2e.conftest import prepare_daemon_env
 from tests.fixtures.e2e_run_cleanup import RUN_ID_ENV, cleanup_run
 from tests.native_binary_selection import select_native_binary
@@ -27,10 +28,14 @@ _ROOT = Path(__file__).resolve().parents[2]
 _RUNNER = """
 import json
 import os
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from tests.e2e.conftest import find_free_port
+
+# Imported before daemon-ready: _stop_runner gives the shutdown POST 3s. Measured 17-24s for this
+# import under host load (load average 30-36), so an import inside the handler always exceeds it.
 from tests.workflows.placed_runbook_live_support import start_fixture_host
 
 home = Path(os.environ["GOBBY_HOME"])
@@ -43,14 +48,19 @@ class Handler(BaseHTTPRequestHandler):
                 or self.headers.get("Authorization") != "Bearer probe-key"):
             self.send_error(403)
             return
-        host = start_fixture_host(binary, socket_dir, os.environ)
-        (home / "late.json").write_text(json.dumps({"pid": host.pid}))
+        # Written before the host starts and before any terminating signal, so the record
+        # exists even if the POST times out and the stub is terminated.
+        started = time.monotonic()
+        print(f"shutdown POST received at {time.time():.3f}", file=sys.stderr, flush=True)
         (home / "shutdown").write_text(self.path)
+        host = start_fixture_host(binary, socket_dir, os.environ)
+        print(f"host ready after {time.monotonic() - started:.2f}s", file=sys.stderr, flush=True)
+        (home / "late.json").write_text(json.dumps({"pid": host.pid}))
         self.send_response(200)
         self.end_headers()
         threading.Thread(target=server.shutdown).start()
 
-server = HTTPServer(("127.0.0.1", find_free_port()), Handler)
+server = HTTPServer(("127.0.0.1", 0), Handler)
 (home / "bootstrap.yaml").write_text(
     f"daemon_port: {server.server_port}\\napi_key: probe-key\\n")
 (home / "daemon-ready").write_text(str(os.getpid()))
@@ -88,10 +98,14 @@ def pending(request):
                PROBE_LATE_SOCKET=str(late))
     (home / "config.yaml").write_text("test_mode: true\\n")
     host = start_fixture_host(Path(env["PROBE_GTERM"]), initial, env)
-    daemon = subprocess.Popen(
-        [sys.executable, str(root / "readiness_bootstrap.py"), "gobby.runner"],
-        env=env, start_new_session=True)
-    deadline = time.monotonic() + 30
+    with (home / "stub.stderr").open("wb") as stub_output:
+        daemon = subprocess.Popen(
+            [sys.executable, str(root / "readiness_bootstrap.py"), "gobby.runner"],
+            env=env, start_new_session=True, stdout=stub_output, stderr=stub_output)
+    # Measured 2026-11-07. Two concurrent module-level starts reached daemon-ready in 21.70 s
+    # and 26.59 s (load average 32-36), 11.35 s and 12.10 s, and 13.97 s and 14.21 s. One start
+    # alone took 40.36 s at load average 44. 120 s is 3x that worst observed start.
+    deadline = time.monotonic() + 120
     while not (home / "daemon-ready").exists():
         assert daemon.poll() is None
         assert time.monotonic() < deadline
@@ -109,8 +123,28 @@ def test_pending(pending, case):
 """
 
 
+# gterm refuses a control socket path longer than the AF_UNIX sun_path limit (103 usable bytes here).
+_SUN_PATH_LIMIT = 103
+_SUN_PATH_HEADROOM = 8
+
+
+def _assert_socket_headroom(sockets: Path) -> None:
+    """Fail before launch if a worker's control socket path is within the headroom of the limit."""
+    names = [f"gw{index}{suffix}" for index in range(2) for suffix in ("", "-late")]
+    paths = [control_socket_path(sockets / name) for name in names]
+    longest = max(paths, key=lambda path: len(os.fsencode(path)))
+    length = len(os.fsencode(longest))
+    assert length <= _SUN_PATH_LIMIT - _SUN_PATH_HEADROOM, (
+        f"control socket path {longest} is {length} bytes; the AF_UNIX limit is "
+        f"{_SUN_PATH_LIMIT} bytes and this test needs {_SUN_PATH_HEADROOM} bytes of headroom. "
+        "Shorten the socket root."
+    )
+
+
 def _await_ready(root: Path, process: subprocess.Popen[bytes]) -> list[Path]:
-    deadline = time.monotonic() + 60
+    # Each worker imports the harness (about 20s warm under host load 40) before its
+    # fixture starts a host and the daemon stub, so the budget covers both workers' imports.
+    deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         ready = sorted(root.glob("gw*/ready.json"))
         if len(ready) == 2:
@@ -131,7 +165,12 @@ def test_sigint_drains_daemons_and_late_hosts_preserving_another_run(tmp_path: P
     foreign_home.mkdir()
     foreign_env = prepare_daemon_env(home_dir=foreign_home)
     foreign_env[RUN_ID_ENV] = uuid4().hex
-    with host_socket_dir() as sockets, host_socket_dir() as foreign_socket:
+    with (
+        tempfile.TemporaryDirectory(prefix="gsig-", dir="/tmp", ignore_cleanup_errors=True) as root,
+        host_socket_dir(Path(root)) as sockets,
+        host_socket_dir(Path(root)) as foreign_socket,
+    ):
+        _assert_socket_headroom(sockets)
         control_token_path(foreign_socket).write_text("foreign-host-key")
         with fixture_host(binary, foreign_socket, foreign_env) as foreign:
             env = os.environ.copy()

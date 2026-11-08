@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.code_index.gcode_gateway import GcodeGateway
+from gobby.code_index import gcode_gateway
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.mcp_proxy.services.argument_validation import check_arguments
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
@@ -21,6 +22,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import WorktreeGitManager
 
 STORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+REAL_PIN_PROJECT = GcodeGateway.pin_project
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +31,18 @@ def stub_index_pin(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     pin = AsyncMock()
     monkeypatch.setattr(GcodeGateway, "pin_project", pin)
     return pin
+
+
+@pytest.fixture
+def real_index_pin(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Run the real pin_project; the gcode command reports a missing parent index."""
+    monkeypatch.setattr(GcodeGateway, "pin_project", REAL_PIN_PROJECT)
+    monkeypatch.setattr(GcodeGateway, "_ensure_version", AsyncMock(return_value="gcode"))
+    run_command = AsyncMock(
+        side_effect=GcodeGatewayError("parent code index missing for /tmp/repo (00000000)")
+    )
+    monkeypatch.setattr(GcodeGateway, "_run_command", run_command)
+    return run_command
 
 
 @pytest.fixture(autouse=True)
@@ -847,3 +861,45 @@ async def test_create_worktree_merge_and_delete_succeeds_with_one_committed_file
     deleted = await registry.call("delete_worktree", {"worktree_id": worktree.id})
     assert deleted["success"] is True, deleted
     assert not worktree_path.exists()
+
+
+@pytest.mark.parametrize(("code_indexing", "success"), [(False, True), (True, False)])
+async def test_create_worktree_pins_parent_index_only_when_code_indexing_is_on(
+    registry: Any,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    real_index_pin: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+    code_indexing: bool,
+    success: bool,
+) -> None:
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", lambda: code_indexing)
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="wt-123",
+        project_id="11111111-1111-4111-8111-111111110001",
+        task_id=None,
+        branch_name="feature/test",
+        worktree_path="/tmp/wt/feature-test",
+        base_branch="main",
+        agent_session_id=None,
+        status="active",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
+        merged_at=None,
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event",
+        return_value={"event_type": "worktree_created", "worktree_id": "wt-123"},
+    ):
+        result = await registry.call(
+            "create_worktree",
+            {"branch_name": "feature/test", "worktree_path": "/tmp/wt/feature-test"},
+        )
+    assert result["success"] is success, result
+    if success:
+        real_index_pin.assert_not_awaited()
+    else:
+        assert result["error_code"] == "code_index_pin_failed"
+        assert "parent code index missing" in result["error"]
