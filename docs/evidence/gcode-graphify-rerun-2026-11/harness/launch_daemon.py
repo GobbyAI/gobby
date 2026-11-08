@@ -64,7 +64,7 @@ HEALTH_ATTEMPTS = 120
 HEALTH_POLL_SECONDS = 1
 
 
-def daemon_argv(root: Path, bootstrap: Path) -> list[str]:
+def daemon_argv(root: Path) -> list[str]:
     """The product's supervised entry: gdaemon takes the lease and spawns the Python backend."""
     return [str(root / "gobby-home/bin/gdaemon"), "serve"]
 
@@ -331,6 +331,19 @@ def _unwind_failed_launch(
     )
 
 
+def _active_launch_refusal(root: Path, active: Path) -> str:
+    """Name the kept launch record, its recorded process group, and the step that clears it."""
+    daemon_record = json.loads(active.read_text())["daemon"]
+    receipt = root / daemon_record["path"]
+    pgid = json.loads(receipt.read_text())["process_group"]["observed_pgid"]
+    return (
+        f"an active launch is recorded at {active} (daemon receipt {receipt}, process group "
+        f"{pgid}, the srt wrapper's group). The backend's process group is not recorded. "
+        "Confirm that no gdaemon or backend process remains with `ps -axo pid,pgid,comm`, "
+        f"then clear the record with `rm -- {active} {receipt}` before launching again."
+    )
+
+
 def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None) -> None:
     require(
         attempt and all(char.isalnum() or char in "-_" for char in attempt),
@@ -359,11 +372,13 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
     log_path = root / f"logs/install/daemon-{attempt}.log"
     receipt = root / f"receipts/daemon-launch-{attempt}.json"
     active = root / "receipts/active-launches.json"
+    if active.exists():
+        raise EvidenceError(_active_launch_refusal(root, active))
     require(
-        not log_path.exists() and not receipt.exists() and not active.exists(),
-        "check failed: not log_path.exists() and (not receipt.exists()) and (not active.exists())",
+        not log_path.exists() and not receipt.exists(),
+        "check failed: not log_path.exists() and (not receipt.exists())",
     )
-    daemon = daemon_argv(root, bootstrap)
+    daemon = daemon_argv(root)
     policy_path = root / f"srt/settings-{attempt}.json"
     violations_path = root / f"logs/violations-{attempt}.jsonl"
     argv = srt_wrapped_argv(daemon, policy=policy_path, violations=violations_path, srt=srt)

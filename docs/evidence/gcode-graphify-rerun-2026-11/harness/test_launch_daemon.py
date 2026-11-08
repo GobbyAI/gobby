@@ -43,7 +43,7 @@ OPERATOR_DENY_READS = [
 
 
 def test_daemon_argv_is_the_supervised_gdaemon_serve_under_the_runtime_home() -> None:
-    assert daemon_argv(ROOT, BOOTSTRAP) == ["/runtime/root/gobby-home/bin/gdaemon", "serve"]
+    assert daemon_argv(ROOT) == ["/runtime/root/gobby-home/bin/gdaemon", "serve"]
 
 
 def test_gdaemon_runs_the_venv_gobby_runner_as_its_backend_on_the_bootstrap_config() -> None:
@@ -132,7 +132,7 @@ def test_srt_policy_permits_loopback_network_only() -> None:
 
 def test_srt_wrapped_argv_follows_the_runtime_wrap_shape() -> None:
     wrapped = srt_wrapped_argv(
-        daemon_argv(ROOT, BOOTSTRAP),
+        daemon_argv(ROOT),
         policy=ROOT / "srt/settings.json",
         violations=ROOT / "logs/violations.jsonl",
         srt=SRT,
@@ -316,7 +316,7 @@ def test_launch_runs_the_daemon_wrapped_by_srt_and_records_that_argv(
         str(staged_root / "logs/violations-attempt-1.jsonl"),
         "--",
     ]
-    assert argv[7:] == daemon_argv(staged_root, staged_root / "gobby-home/bootstrap.yaml")
+    assert argv[7:] == daemon_argv(staged_root)
     receipt = json.loads((staged_root / "receipts/daemon-launch-attempt-1.json").read_text())
     assert receipt["argv"] == argv
     assert receipt["daemon_argv"] == argv[7:]
@@ -380,8 +380,16 @@ def test_launch_refuses_a_root_with_an_active_launch_before_starting_a_daemon(
 ) -> None:
     launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
-    with pytest.raises(EvidenceError):
+    with pytest.raises(EvidenceError) as caught:
         launch(staged_root, "attempt-2", SRT, home=tmp_path / "home")
+
+    active = staged_root / "receipts/active-launches.json"
+    receipt = staged_root / "receipts/daemon-launch-attempt-1.json"
+    message = str(caught.value)
+    assert str(active) in message
+    assert str(receipt) in message
+    assert "process group 4242" in message
+    assert f"rm -- {active} {receipt}" in message
     assert len(spawned) == 1
 
 
