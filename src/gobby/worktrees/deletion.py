@@ -112,7 +112,7 @@ async def delete_worktree_transaction(
                     error="Worktree is no longer eligible",
                     error_code="worktree_not_eligible",
                 )
-            return await _delete_worktree(
+            return await _delete_and_report(
                 boundary,
                 request,
                 worktree,
@@ -129,9 +129,34 @@ async def delete_worktree_transaction(
     )
     if worktree is None:
         return WorktreeDeletionResult(success=True, found=False)
-    return await _delete_worktree(
+    return await _delete_and_report(
         boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager, context
     )
+
+
+async def _delete_and_report(
+    boundary: DestructiveBoundary,
+    request: WorktreeDeletionRequest,
+    worktree: Worktree,
+    worktree_storage: LocalWorktreeManager,
+    resolve_git_manager: GitManagerResolver,
+    task_manager: LocalTaskManager | None,
+    context: contextvars.Context,
+) -> WorktreeDeletionResult:
+    """Run one deletion; a refusal that leaves the record deleting is logged with its reason."""
+    result = await _delete_worktree(
+        boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager, context
+    )
+    if not result.success:
+        current = await run_thread_to_completion(context.run, worktree_storage.get, worktree.id)
+        if current is not None and current.status == WorktreeStatus.DELETING.value:
+            logger.warning(
+                "Worktree %s at %s stays deleting, retried at next startup: %s",
+                worktree.id,
+                worktree.worktree_path,
+                result.error_code or result.error or "unknown",
+            )
+    return result
 
 
 async def _delete_worktree(
@@ -321,12 +346,6 @@ async def _daemon_precheck(
         if recovering and all(line[:2] in _TRACKED_DELETION_CODES for line in blocking):
             # An interrupted delete already removed these tracked files; only git's refusal is left.
             return True
-        if recovering:
-            logger.warning(
-                "Worktree %s recovery refused: uncommitted changes beyond tracked deletions; "
-                "the record stays deleting",
-                worktree.id,
-            )
         return WorktreeDeletionResult(
             success=False,
             git_deleted=False,

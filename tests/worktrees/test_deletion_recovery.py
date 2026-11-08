@@ -258,7 +258,8 @@ async def test_one_row_raising_does_not_hold_back_the_rest(
     assert [result.success for result in results] == [False, True]
     assert "wt-1" not in rows.rows
     assert rows.rows["wt-broken"].status == "deleting"
-    assert "Worktree wt-broken recovery raised" in caplog.text
+    assert "wt-broken" in caplog.text
+    assert str(worktree.parent / "gone") in caplog.text
 
 
 async def test_recovery_refuses_a_modified_tracked_file_and_logs_the_worktree(
@@ -277,7 +278,8 @@ async def test_recovery_refuses_a_modified_tracked_file_and_logs_the_worktree(
     assert (worktree / "tracked.txt").read_text() == "edited\n"
     assert rows.rows["wt-1"].status == "deleting"
     assert "wt-1" in caplog.text
-    assert "recovery refused" in caplog.text
+    assert str(worktree) in caplog.text
+    assert "uncommitted changes" in caplog.text
 
 
 async def test_cancelled_before_mutation_restores_the_prior_status(
@@ -311,7 +313,7 @@ async def test_missing_checkout_probe_refusal_restores_the_prior_status(
 
 
 async def test_git_failure_after_the_git_call_keeps_the_record_deleting(
-    landed: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    landed: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     repo, worktree = landed
     git = WorktreeGitManager(repo)
@@ -319,11 +321,57 @@ async def test_git_failure_after_the_git_call_keeps_the_record_deleting(
     monkeypatch.setattr(git, "delete_worktree", AsyncMock(return_value=refused))
     rows = _Rows(_row("wt-1", worktree, status="merged"))
 
-    result = await _transaction(git, rows, _request(DeletionSurface.TEARDOWN))
+    with caplog.at_level(logging.WARNING):
+        result = await _transaction(git, rows, _request(DeletionSurface.TEARDOWN))
 
     assert result.success is False
     assert worktree.exists()
     assert rows.rows["wt-1"].status == "deleting"
+    assert "wt-1" in caplog.text
+    assert str(worktree) in caplog.text
+    assert "git_refused" in caplog.text
+
+
+async def test_interrupted_force_delete_of_an_unmerged_branch_is_refused_and_logged_each_start(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Residual (3): an interrupted force-delete left the tree removed and the branch unmerged.
+
+    Recovery carries no force intent, so the stored-base merge proof refuses the branch. The
+    commits survive, the row stays deleting, and every start logs the worktree, path and reason.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "tracked.txt").write_text("base\n")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "initial")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "task-branch", str(worktree), "main")
+    (worktree / "unlanded.txt").write_text("unlanded\n")
+    _git(worktree, "add", "unlanded.txt")
+    _git(worktree, "commit", "-m", "unlanded work")
+    _git(repo, "worktree", "remove", "--force", str(worktree))
+    git = WorktreeGitManager(repo)
+    rows = _Rows(_row("wt-1", worktree, status="deleting"))
+
+    with caplog.at_level(logging.WARNING):
+        first = await _recover(git, rows)
+        second = await _recover(git, rows)
+
+    for results in (first, second):
+        assert [result.success for result in results] == [False]
+        assert results[0].error_code == "branch_not_merged_into_target"
+    assert rows.rows["wt-1"].status == "deleting"
+    _git(repo, "rev-parse", "--verify", "refs/heads/task-branch")
+    stuck = [r.getMessage() for r in caplog.records if "stays deleting" in r.getMessage()]
+    assert len(stuck) == 2
+    assert all(
+        "wt-1" in line and str(worktree) in line and "branch_not_merged_into_target" in line
+        for line in stuck
+    )
 
 
 async def test_recovery_is_stop_aware_idempotent_and_leaves_active_rows_alone(

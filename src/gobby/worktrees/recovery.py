@@ -52,6 +52,8 @@ async def recover_deleting_worktrees(
     for row in rows:
         if should_stop():
             break
+        # No force intent survives a restart, so force_delete_branch stays False: the stored-base
+        # merge proof refuses an unmerged branch and the row stays deleting with its branch intact.
         request = WorktreeDeletionRequest(
             row.id, DeletionSurface.RECOVERY, merged_into=row.base_branch
         )
@@ -68,7 +70,12 @@ async def recover_deleting_worktrees(
             )
         except Exception as exc:
             # One row's failure must not hold back the rest; its marker and tree wait for a later pass.
-            logger.exception("Worktree %s recovery raised; the record stays deleting", row.id)
+            logger.exception(
+                "Worktree %s at %s recovery raised: %s; the record stays deleting",
+                row.id,
+                row.worktree_path,
+                exc,
+            )
             result = WorktreeDeletionResult(success=False, git_deleted=False, error=str(exc))
         results.append(result)
     return results

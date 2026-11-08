@@ -2192,6 +2192,7 @@ def test_delete_client_worktree_refuses_live_terminals(
         base_branch="main",
         task_id=None,
         workspace_role="client",
+        status="active",
     )
     terminal = SimpleNamespace(
         id="terminal-1",
