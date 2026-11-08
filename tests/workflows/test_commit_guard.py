@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -13,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
@@ -1514,6 +1515,50 @@ async def test_claimant_edit_after_its_commit_stays_owned(guard_harness: GuardHa
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
     assert decision.decision == "allow", decision.reason
+
+
+def _record_apply_patch_without_binding(h: GuardHarness, path: str) -> None:
+    """Record an apply_patch write as the edit hook does when no tool-start binding proves a task."""
+    manager = MagicMock()
+    manager.db = h.db
+    handlers = EventHandlers(
+        session_manager=manager,
+        workflow_handler=MagicMock(),
+        session_storage=manager,
+        message_processor_resolver=lambda: MagicMock(),
+        task_manager=MagicMock(),
+        worktree_manager=MagicMock(),
+        session_coordinator=MagicMock(),
+        logger=logging.getLogger(__name__),
+    )
+    patch_text = f"*** Begin Patch\n*** Update File: {path}\n@@\n-base\n+edited\n*** End Patch\n"
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=h.current_session.external_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd=str(h.repo),
+        project_id=h.project.id,
+        data={"tool_name": "apply_patch", "tool_input": {"patch": patch_text}},
+        metadata={"_platform_session_id": h.current_session.id, "project_path": str(h.repo)},
+    )
+    normalize_tool_fields(event.data)
+    handlers._record_successful_file_mutation(event, h.current_session.id, is_canonical_edit=True)
+
+
+@pytest.mark.asyncio
+async def test_unbound_apply_patch_stays_owned_by_its_author_through_restore(
+    guard_harness: GuardHarness,
+) -> None:
+    """An apply_patch with no tool-start binding is recorded unattributed; its author may restore it."""
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("edited\n", encoding="utf-8")
+    _record_apply_patch_without_binding(h, "tracked.txt")
+
+    response = await h.handler._evaluate_rules(h.event("git restore tracked.txt"))
+
+    assert response.decision == "allow", response.reason
 
 
 @pytest.mark.asyncio
