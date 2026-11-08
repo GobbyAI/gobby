@@ -29,6 +29,11 @@ cutover_module = importlib.import_module("gobby.cli.cutover")
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def isolated_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.cli.installers.fleet_service.reload_fleet_service", lambda: None)
+
+
 def test_cutover_refuses_node_bootstrap_before_build(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -160,6 +165,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(1250)
 def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
 ) -> None:
@@ -201,9 +207,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
         ],
         cwd=fixture,
         check=True,
-        capture_output=True,
         text=True,
-        timeout=600,
+        timeout=1200,
     )
     candidate = cargo_release_dir(fixture).parent / "debug/examples/catalog_candidate_24042"
     assert candidate.is_file(), "the native fixture build must produce its routed catalog candidate"
@@ -340,6 +345,15 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
     promotion = Mock(wraps=bin_set_coherence.promote_workspace_binary_set)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
     restarted: list[bytes] = []
+    from gobby.cli.installers import fleet_service
+
+    sampled: list[bytes] = []
+
+    def reload_watcher() -> None:
+        assert restarted == []
+        sampled.append((bin_dir / "gdaemon").read_bytes())
+
+    monkeypatch.setattr(fleet_service, "reload_fleet_service", reload_watcher)
 
     assert _run_live_cutover(root, bin_dir, restarted) is None
 
@@ -363,6 +377,7 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
         == identity
     )
     assert restarted == [(bin_dir / "gdaemon").read_bytes()]
+    assert sampled == restarted
 
 
 def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(

@@ -319,6 +319,9 @@ def run_cutover(
                 ),
             )
             _verify_restart_target(bin_dir)
+            from gobby.cli.installers.fleet_service import reload_fleet_service
+
+            reload_fleet_service()
         start_daemon()
     except Exception as exc:
         # After confirmed shutdown, every failed phase needs operator recovery
