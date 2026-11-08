@@ -520,7 +520,7 @@ class TestTranslateToHookEvent:
                 {
                     "session_id": "sess-expand",
                     "expansion_type": "skill",
-                    "command_name": "review",
+                    "command_name": "fixture-command",
                     "command_args": "--strict",
                     "command_source": "project",
                     "prompt": "Expanded prompt",
@@ -1087,7 +1087,7 @@ class TestTranslateFromHookResponse:
         response = HookResponse(decision="allow")
         response.add_context(
             ("rule:fixture-seat-context", "s" * 2_166),
-            ("rule:project-operating-policy", "o" * 4_094),
+            ("rule:fixture-policy", "o" * 4_094),
             ("mcp:gobby-memory/surface_memories", "m" * 1_628),
         )
         response.add_context(("agent_prompt", "p" * 5_914), prepend=True)
@@ -1098,7 +1098,7 @@ class TestTranslateFromHookResponse:
             [
                 "p" * 5_914,
                 "s" * 2_166,
-                "context not carried, no session queue: rule:project-operating-policy, "
+                "context not carried, no session queue: rule:fixture-policy, "
                 "mcp:gobby-memory/surface_memories",
             ]
         )
