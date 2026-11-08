@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import pytest
 
 from gobby.agents import srt_monitor
 from gobby.agents.cargo_environment import REMOVED_CARGO_ENV_KEYS
+from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
@@ -102,35 +104,52 @@ def reviewer_launch(
         )
     environment = dict(os.environ)
     environment["GOBBY_DAEMON_URL"] = "http://127.0.0.1:1"
-    before = len(srt_monitor._children)
+    existing = set(srt_monitor._children)
     try:
         with tempfile.TemporaryDirectory(prefix="gsrt-proof-") as monitor_directory:
-            monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: Path(monitor_directory))
-            launch = asyncio.run(
-                prepare_sandbox_launch(
-                    config=config,
-                    provider="claude",
-                    workspace_path=str(workspace),
-                    run_id="reviewer-host-proof",
-                    resolver=None,
-                    daemon_port=1,
-                    websocket_port=2,
-                    api_base=None,
-                    env=environment,
-                    prewarm_pre_commit_store=False,
-                )
-            )
-            _, environment = launch.compose_subprocess([], environment)
-            yield launch, workspace, environment
-    finally:
-        for monitor in srt_monitor._children[before:]:
-            monitor.terminate()
             try:
-                monitor.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                monitor.kill()
-                monitor.wait(timeout=5)
+                monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: Path(monitor_directory))
+                launch = asyncio.run(
+                    prepare_sandbox_launch(
+                        config=config,
+                        provider="claude",
+                        workspace_path=str(workspace),
+                        run_id="reviewer-host-proof",
+                        resolver=None,
+                        daemon_port=1,
+                        websocket_port=2,
+                        api_base=None,
+                        env=environment,
+                        prewarm_pre_commit_store=False,
+                    )
+                )
+                _, environment = launch.compose_subprocess([], environment)
+                yield launch, workspace, environment
+            finally:
+                _stop_monitors(existing, Path(monitor_directory))
+    finally:
         _make_writable(runtime)
+
+
+def _stop_monitors(existing: set[subprocess.Popen[bytes]], directory: Path) -> None:
+    """Stop this proof's brokers, then print their diagnostics before the directory goes."""
+    # ensure_srt_monitor prunes _children in place, so an index taken earlier goes stale.
+    for monitor in [child for child in srt_monitor._children if child not in existing]:
+        print(f"monitor {monitor.pid} exit status before teardown: {monitor.poll()}")
+        monitor.terminate()
+        try:
+            monitor.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            monitor.kill()
+            monitor.wait(timeout=5)
+    # pytest reports teardown output with a failed proof.
+    for path in sorted(directory.iterdir()):
+        if path.is_file() and not path.is_symlink():
+            print(f"--- {path.name}\n{path.read_bytes()[-16384:].decode(errors='replace')}")
+
+
+def _decoded(output: bytes | str | None) -> str:
+    return output.decode(errors="replace") if isinstance(output, bytes) else output or ""
 
 
 def _run(
@@ -143,15 +162,25 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     argv = launch.wrap(command)
     argv[argv.index("--") + 1] = command[0]
-    return subprocess.run(
-        argv,
-        cwd=workspace,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    started = time.monotonic()
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=workspace,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # run() keeps the output it read before the deadline; the bare exception hides it.
+        pytest.fail(
+            f"runner timed out after {timeout}s\nstdout:\n{_decoded(exc.stdout)}\n"
+            f"stderr:\n{_decoded(exc.stderr)}"
+        )
+    print(f"runner exited {result.returncode} after {time.monotonic() - started:.1f}s")
+    return result
 
 
 def test_workspace_read_boundary_beneath_shell_expansion(
@@ -238,8 +267,26 @@ def test_reviewer_cached_settings_and_python_environment(
     settings.write_text("{}")
     uv = shutil.which("uv")
     assert uv is not None
+    # #25645: seats use the checkout's .venv, which spawn seeds before launch. This
+    # proof launches directly, so it seeds the same way, outside the sandbox.
+    if not (workspace / "uv.lock").exists():
+        lock = subprocess.run(
+            [uv, "lock", "--offline"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        assert lock.returncode == 0, lock.stderr
+    seeded = asyncio.run(preseed_isolated_python_environment(str(workspace)))
+    assert seeded.success, seeded
+    assert environment["UV_PROJECT_ENVIRONMENT"] == ""
     script = (
-        "import json, os, subprocess, sys; from pathlib import Path; "
+        "import atexit, json, os, subprocess, sys, time; from pathlib import Path; "
+        "t0=time.monotonic(); "
+        "atexit.register(lambda: print(f'child elapsed {time.monotonic()-t0:.1f}s', "
+        "file=sys.stderr)); "
         "p=Path(os.environ['XDG_CACHE_HOME'])/'claude'/'settings.json'; "
         "t=p.with_suffix('.tmp'); t.write_text('{\"updated\":true}'); t.replace(p); "
         "assert json.loads(p.read_text())['updated']; p.unlink(); "
@@ -254,16 +301,20 @@ def test_reviewer_cached_settings_and_python_environment(
         "    assert 'database_url' in str(error), str(error)\n"
         "else:\n"
         "    raise AssertionError('hook config silently fell back')\n"
-        "r=subprocess.run([sys.argv[1], 'run', '--no-sync', '--python', sys.executable, "
+        "assert os.environ['UV_PROJECT_ENVIRONMENT'] == ''; "
+        "r=subprocess.run([sys.argv[1], 'run', '--no-sync', "
         "'python', '-c', 'import sys; print(sys.prefix)'], capture_output=True, text=True); "
         "assert r.returncode == 0, r.stderr; "
-        "assert r.stdout.strip() == os.environ['UV_PROJECT_ENVIRONMENT'], r.stdout; "
+        "assert os.path.realpath(r.stdout.strip()) == os.path.realpath('.venv'), r.stdout; "
         "print('cached-settings-and-endpoint-and-uv-ok')"
     )
-    result = _run(launch, workspace, environment, [sys.executable, "-c", script, uv])
+    # The provider runs at niceness 19 and this import alone takes about 30 s on a
+    # loaded host, so the default budget leaves no margin. The child's own elapsed
+    # time, set against the runner's, shows how much the runner adds.
+    result = _run(launch, workspace, environment, [sys.executable, "-c", script, uv], timeout=180)
+    print(result.stderr)
     assert result.returncode == 0, result.stderr
     assert "cached-settings-and-endpoint-and-uv-ok" in result.stdout
-    assert Path(environment["UV_PROJECT_ENVIRONMENT"]).is_dir()
 
 
 @pytest.mark.parametrize("reviewer_launch", ["task-worktree"], indirect=True)
