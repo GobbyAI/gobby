@@ -232,6 +232,35 @@ async def test_recovery_finishes_a_tree_with_only_tracked_deletions(
     assert _git(repo, "branch", "--list", "task-branch") == ""
 
 
+async def test_one_row_raising_does_not_hold_back_the_rest(
+    landed: tuple[Path, Path], caplog: pytest.LogCaptureFixture
+) -> None:
+    repo, worktree = landed
+    git = WorktreeGitManager(repo)
+    rows = _Rows(
+        _row("wt-broken", worktree.parent / "gone", status="deleting", branch=None),
+        _row("wt-1", worktree, status="deleting"),
+    )
+
+    def resolve(row: Worktree) -> WorktreeGitManager:
+        if row.id == "wt-broken":
+            raise RuntimeError("no project root")
+        return git
+
+    results = await recover_deleting_worktrees(
+        worktree_storage=cast(LocalWorktreeManager, rows),
+        resolve_git_manager=resolve,
+        task_manager=None,
+        executor=None,
+        should_stop=lambda: False,
+    )
+
+    assert [result.success for result in results] == [False, True]
+    assert "wt-1" not in rows.rows
+    assert rows.rows["wt-broken"].status == "deleting"
+    assert "Worktree wt-broken recovery raised" in caplog.text
+
+
 async def test_recovery_refuses_a_modified_tracked_file_and_logs_the_worktree(
     landed: tuple[Path, Path], caplog: pytest.LogCaptureFixture
 ) -> None:

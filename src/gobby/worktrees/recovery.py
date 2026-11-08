@@ -9,6 +9,7 @@ the marked rows are the whole input.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.worktrees.executor import WorktreeDeleteExecutor
+
+logger = logging.getLogger(__name__)
 
 
 async def recover_deleting_worktrees(
@@ -52,8 +55,8 @@ async def recover_deleting_worktrees(
         request = WorktreeDeletionRequest(
             row.id, DeletionSurface.RECOVERY, merged_into=row.base_branch
         )
-        results.append(
-            await run_worktree_delete(
+        try:
+            result = await run_worktree_delete(
                 executor,
                 partial(
                     delete_worktree_transaction,
@@ -63,5 +66,9 @@ async def recover_deleting_worktrees(
                     task_manager=task_manager,
                 ),
             )
-        )
+        except Exception as exc:
+            # One row's failure must not hold back the rest; its marker and tree wait for a later pass.
+            logger.exception("Worktree %s recovery raised; the record stays deleting", row.id)
+            result = WorktreeDeletionResult(success=False, git_deleted=False, error=str(exc))
+        results.append(result)
     return results
