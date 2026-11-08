@@ -46,6 +46,9 @@ class WorktreeStatus(str, Enum):
     STALE = "stale"
     MERGED = "merged"
     ABANDONED = "abandoned"
+    # Set before a tree deletion's first destructive step; the record is then unclaimable and
+    # hidden from task lookups until the deletion finishes or the startup recovery pass does.
+    DELETING = "deleting"
 
 
 @normalize_datetime_model(
@@ -356,6 +359,7 @@ class LocalWorktreeManager:
             SELECT * FROM worktrees
             WHERE task_id = %s
               AND machine_id = %s
+              AND status IS DISTINCT FROM 'deleting'  -- WorktreeStatus.DELETING
             ORDER BY
                 CASE status
                     WHEN %s THEN 0
@@ -598,7 +602,12 @@ class LocalWorktreeManager:
         if not session_is_local(self.db, session_id, current_machine_id=machine_id):
             return None
         allowed = [value for value in allowed_existing_session_ids if value]
-        conditions = ["id = %s", "machine_id = %s", "(agent_session_id IS NULL"]
+        conditions = [
+            "id = %s",
+            "machine_id = %s",
+            "status IS DISTINCT FROM 'deleting'",  # WorktreeStatus.DELETING
+            "(agent_session_id IS NULL",
+        ]
         now = utc_now()
         params: list[Any] = [session_id, now, now, worktree_id, machine_id]
         if allowed:

@@ -240,7 +240,6 @@ async def test_shutdown_during_recovery_cancels_before_storage_close(
         "_run_async_shutdown_cleanup",
         "_run_terminal_delivery_finalizers",
         "_shutdown_database_concurrency_under_cancellation",
-        "_drain_worktree_deletes_under_cancellation",
         "force_terminate_uvicorn_http_server_under_cancellation",
     ):
         monkeypatch.setattr(shutdown, name, AsyncMock(return_value=None))
