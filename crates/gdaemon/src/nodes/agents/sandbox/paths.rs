@@ -200,16 +200,63 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
 
 /// `credential_roots`: install credentials and the daemon's startup files. The oracle
 /// denies the bootstrap the daemon bound at startup. `PolicyInputs` carries no bound
-/// path, so the default `gobby_home/bootstrap.yaml` stands in for it.
+/// path, so the default `gobby_home/bootstrap.yaml` stands in for it. The operator's
+/// canonical bootstrap is denied too: a daemon under a `GOBBY_HOME` override keeps its
+/// bound file elsewhere, and the canonical file is still the operator's credential.
 fn credential_roots(gobby: &Path) -> Vec<PathBuf> {
-    vec![
+    let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
         gobby.join("grants"),
         gobby.join("tools").join("srt"),
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
-    ]
+    ];
+    roots.extend(operator_bootstrap_path());
+    roots
+}
+
+/// The operator's canonical bootstrap at the passwd entry's home. Only the account database
+/// selects it, never `GOBBY_HOME` or `HOME`, so an override cannot redirect the credential
+/// that activation trusts. `None` when the account has no passwd entry.
+#[cfg(unix)]
+fn operator_bootstrap_path() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    // SAFETY: sysconf has no memory effects; a negative limit is indeterminate and falls back.
+    let limit = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let size = usize::try_from(limit).unwrap_or(0).max(16_384);
+    // SAFETY: an all-zero passwd is a valid placeholder that getpwuid_r overwrites on success.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0_u8; size];
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: getuid has no preconditions. entry, buffer and found are valid for writes, and
+    // buffer.len() bounds every string getpwuid_r writes into buffer.
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    if status != 0 || found.is_null() {
+        return None;
+    }
+    // SAFETY: found is non-null and points at entry, whose pw_dir is a NUL-terminated string
+    // stored in buffer, which outlives this read.
+    let home = unsafe { std::ffi::CStr::from_ptr(entry.pw_dir) };
+    Some(
+        PathBuf::from(std::ffi::OsStr::from_bytes(home.to_bytes()))
+            .join(".gobby")
+            .join("bootstrap.yaml"),
+    )
+}
+
+#[cfg(not(unix))]
+fn operator_bootstrap_path() -> Option<PathBuf> {
+    None
 }
 
 /// `private_srt_socket_roots`: the private SRT socket roots, including this UID's `/tmp` root.
@@ -931,3 +978,7 @@ pub(super) fn compute(
         provider: provider.to_string(),
     })
 }
+
+#[cfg(all(test, unix))]
+#[path = "paths/tests.rs"]
+mod tests;
