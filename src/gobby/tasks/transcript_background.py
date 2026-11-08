@@ -7,8 +7,7 @@ import shlex
 from dataclasses import replace
 from datetime import datetime
 
-from defusedxml import ElementTree
-
+from gobby.sessions.background_notices import notice_fields
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_evidence_snapshots import PendingTool
@@ -170,19 +169,9 @@ def _notice_fields(message: ParsedMessage, fields: tuple[str, ...]) -> dict[str,
     if message.role != "user" or message.content_type != "text":
         return None
     content = message.content
-    if not isinstance(content, str) or not content.strip().startswith("<task-notification>"):
+    if not isinstance(content, str):
         return None
-    if len(content) > 16_000 or "<!" in content:
-        return None
-    try:
-        root = ElementTree.fromstring(content.strip())
-    except ElementTree.ParseError:
-        return None
-    if root.tag != "task-notification":
-        return None
-    if any(len(root.findall(field)) != 1 for field in fields):
-        return None
-    return {field: root.findtext(field, "").strip() for field in fields}
+    return notice_fields(content, fields)
 
 
 def _recover_monitor_receipt(

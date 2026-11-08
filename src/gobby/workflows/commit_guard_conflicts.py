@@ -112,7 +112,7 @@ def format_dirty_edit_reason(
             *[f"- {path} — no live session owns it" for path in sorted(unowned)],
             *[
                 f"- {path} — overlapped with another session's Bash call in this worktree; "
-                "it stays foreign"
+                "it stays foreign while that call is in flight"
                 for path in sorted(overlapped)
             ],
             *(
@@ -123,8 +123,8 @@ def format_dirty_edit_reason(
             *(
                 [
                     "Unowned paths may come from an opaque write, such as an interpreter script "
-                    "run outside a task worktree. Do not revert or approve them: send Triage "
-                    "the path and the command that wrote it.",
+                    "run outside a task worktree. Do not revert or approve them: send to your "
+                    "report target the path and the command that wrote it.",
                 ]
                 if unowned
                 else []
@@ -132,7 +132,10 @@ def format_dirty_edit_reason(
             *(
                 [
                     "Overlapped paths were changed while another session's Bash call ran in this "
-                    "worktree. Retry once that call has finished.",
+                    "worktree. Once no Bash call here is still in flight, edit each path with the "
+                    "native Edit or Write tool: that edit reclaims the path for this session. "
+                    "If that call is still in flight after its session ended, send the path to "
+                    "your report target; the operator releases it.",
                 ]
                 if overlapped
                 else []

@@ -5,20 +5,14 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from qdrant_client.models import (
-    Filter,
-    FilterSelector,
-    HasIdCondition,
-    PointIdsList,
-    PointStruct,
-    QueryRequest,
-)
-
 from gobby.memory.vectorstore_client import (
     QDRANT_CLIENT_TIMEOUT_SECONDS,
     QdrantClientLike,
 )
 from gobby.memory.vectorstore_filters import payload_filter
+
+if TYPE_CHECKING:
+    from qdrant_client.models import Filter, FilterSelector, PointIdsList
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -40,6 +34,8 @@ class VectorStoreQueries:
         collection_name: str | None = None,
     ) -> None:
         """Insert or update a single point."""
+        from qdrant_client.models import PointStruct
+
         store = self._store
         client = await store._ensure_initialized()
         point = PointStruct(id=memory_id, vector=embedding, payload=payload or {})
@@ -96,6 +92,8 @@ class VectorStoreQueries:
         replaced by a fabricated one (#20858). Ids the collection holds no vector
         for are simply absent from the result.
         """
+        from qdrant_client.models import Filter, HasIdCondition
+
         if not ids:
             return {}
         store = self._store
@@ -181,6 +179,8 @@ class VectorStoreQueries:
         timeout: float | None = None,
     ) -> dict[str, list[tuple[str, float]]]:
         """Batch-search using vectors already stored for IDs."""
+        from qdrant_client.models import QueryRequest
+
         if not ids:
             return {}
         store = self._store
@@ -265,6 +265,8 @@ class VectorStoreQueries:
         collection_name: str | None = None,
     ) -> None:
         """Delete a point by memory ID or filter."""
+        from qdrant_client.models import FilterSelector, PointIdsList
+
         store = self._store
         client = await store._ensure_initialized()
         selector: PointIdsList | FilterSelector
@@ -294,6 +296,8 @@ class VectorStoreQueries:
         collection_name: str | None = None,
     ) -> None:
         """Delete multiple points by memory ID in a single batch call."""
+        from qdrant_client.models import PointIdsList
+
         if not memory_ids:
             return
         store = self._store
@@ -318,6 +322,8 @@ class VectorStoreQueries:
         client: QdrantClientLike | None = None,
     ) -> None:
         """Insert or update multiple points at once."""
+        from qdrant_client.models import PointStruct
+
         if not items:
             return
         store = self._store

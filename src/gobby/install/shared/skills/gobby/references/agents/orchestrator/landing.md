@@ -20,15 +20,20 @@ a restart or cutover, pushing, or closing your own live fix.
 
 ## Land and close your own live fix
 
+You never review, validate or close a live fix you implemented: the rule refuses you
+every review kind on a task where you recorded `implementation`. An independent seat
+supplies that evidence.
+
 In order (details in `gobby:references/tasks/closing.md`):
 
-1. `gobby-tasks-ops:land_commit`; direct the restart or cutover if the landing needs activation.
-2. Record the closing attestation with the full integrated SHA.
-3. `release_task_claim` if a claim is still held.
-4. `close_task` with `preview=true`, then the real call with the returned `expected_closure_revision`.
-5. `stop_agent` on each remaining seat of the task, with the full run UUID.
-6. `delete_worktree` with `merged_into` set to the tree's stored base branch.
-7. `review_task_memories` for the closed task.
+1. Record `test-before`, `implementation` and `test-after` on the full candidate SHA. Send that SHA to an independent `code-reviewer`, and wait for its approved `independent-review` and `validation` on that SHA.
+2. `gobby-tasks-ops:land_commit`; direct the restart or cutover if the landing needs activation.
+3. Hand the closing attestation for the full integrated SHA to an independent closer: a seat that did not implement the fix and holds `closing`. Do not record it yourself.
+4. `release_task_claim` if a claim is still held.
+5. `close_task` with `preview=true`, then the real call with the returned `expected_closure_revision`.
+6. `stop_agent` on each remaining seat of the task, with the full run UUID.
+7. `delete_worktree` with `merged_into` set to the tree's stored base branch.
+8. `review_task_memories` for the closed task.
 
 ## Security boundary policy
 
@@ -40,6 +45,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 1.0.0_
+_Version: 2.0.0_
 
 _Last verified: 2026-11-05_

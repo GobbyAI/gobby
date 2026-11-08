@@ -1458,10 +1458,12 @@ class TestExpiryBackstopSubprocess:
             text=True,
         )
         try:
-            # Import cost under load is unrelated to the process-exit contract.
+            # Import cost under load is unrelated to the process-exit contract. Importing
+            # gobby.runner took about 124s at load average 40, so the readiness allowance
+            # must cover that; the exit contract is still asserted below.
             wait_for_condition(
                 lambda: ready.exists() or process.poll() is not None,
-                timeout=60.0,
+                timeout=240.0,
                 description="isolated expiry backstop reached shutdown",
             )
             stdout, stderr = process.communicate(timeout=20.0)
