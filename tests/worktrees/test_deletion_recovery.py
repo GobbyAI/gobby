@@ -174,10 +174,11 @@ async def test_interrupt_after_git_removal_leaves_record_deleting_for_recovery(
     repo, worktree = landed
     git = WorktreeGitManager(repo)
     rows = _Rows(_row("wt-1", worktree))
-    monkeypatch.setattr("gobby.worktrees.deletion.cleanup_checkout_cargo_target_dir", _interrupt)
 
-    with pytest.raises(_Interrupted):
-        await _transaction(git, rows, _request(DeletionSurface.TEARDOWN))
+    with monkeypatch.context() as scoped:
+        scoped.setattr("gobby.worktrees.deletion.cleanup_checkout_cargo_target_dir", _interrupt)
+        with pytest.raises(_Interrupted):
+            await _transaction(git, rows, _request(DeletionSurface.TEARDOWN))
 
     assert not worktree.exists()
     assert rows.rows["wt-1"].status == "deleting"

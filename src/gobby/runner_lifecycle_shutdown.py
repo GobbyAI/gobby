@@ -228,7 +228,12 @@ async def stop_restart_recovery(runner: GobbyRunner) -> None:
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.shutdown_in_progress = True
-    for attr in ("_subsystem_init_task", "_startup_recovery_task", "_hook_inbox_task"):
+    for attr in (
+        "_subsystem_init_task",
+        "_startup_recovery_task",
+        "_worktree_recovery_task",
+        "_hook_inbox_task",
+    ):
 
         async def cancel_owned_task(attr: str = attr) -> None:
             await _cancel_runner_task(runner, attr)

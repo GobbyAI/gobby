@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_git_hygiene import blocking_status_lines
+from gobby.storage.worktrees import WorktreeStatus
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
@@ -37,10 +38,16 @@ class DeletionSurface(Enum):
     HTTP = "http"
     MAINTENANCE = "maintenance"
     TEARDOWN = "teardown"
+    # The startup pass that finishes a deletion a shutdown interrupted (#25838).
+    RECOVERY = "recovery"
 
 
 # Daemon-owned deletions lock the row and prove the tree's branch before Git runs.
-_DAEMON_SURFACES = frozenset({DeletionSurface.MAINTENANCE, DeletionSurface.TEARDOWN})
+_DAEMON_SURFACES = frozenset(
+    {DeletionSurface.MAINTENANCE, DeletionSurface.TEARDOWN, DeletionSurface.RECOVERY}
+)
+# Porcelain XY codes of tracked files an interrupted delete already removed from disk.
+_TRACKED_DELETION_CODES = frozenset({" D", "D "})
 
 
 @dataclass(frozen=True)
@@ -175,10 +182,34 @@ async def _delete_worktree(
         if precheck is not None:
             return precheck
 
+    # Read-only proof first: a refusal here writes nothing, so no status needs restoring.
+    git_already_deleted = False
+    if git_manager is not None:
+        git_already_deleted, probe_error = await probe_missing_worktree_git_state(
+            git_manager,
+            worktree_path=worktree.worktree_path,
+            branch_name=worktree.branch_name,
+            merged_into=request.merged_into if not request.force_delete_branch else None,
+        )
+        if probe_error is not None:
+            return WorktreeDeletionResult(success=False, git_deleted=False, error=probe_error)
+
+    # The marker lands before the first destructive step, so an interrupted delete leaves it
+    # for the startup recovery pass. Git, cargo, and the record delete keep it; a cancelled
+    # start restores the status it found.
+    prior_status = worktree.status
+    await run_thread_to_completion(
+        context.run, _set_status, worktree_storage, worktree.id, WorktreeStatus.DELETING.value
+    )
     if not boundary.begin_mutation():
+        await run_thread_to_completion(
+            context.run, _set_status, worktree_storage, worktree.id, prior_status
+        )
         return WorktreeDeletionResult(success=False, abandoned=True)
 
-    git_failure = await _delete_git_worktree(request, worktree, git_manager, force=force)
+    git_failure = await _delete_git_worktree(
+        request, worktree, git_manager, force=force, git_already_deleted=git_already_deleted
+    )
     if git_failure is not None:
         return git_failure
 
@@ -215,6 +246,10 @@ def _remove_empty_shell(path: Path) -> bool:
         return False
     shutil.rmtree(path)
     return True
+
+
+def _set_status(worktree_storage: LocalWorktreeManager, worktree_id: str, status: str) -> None:
+    worktree_storage.update(worktree_id, status=status)
 
 
 def _finish_storage_deletion(
@@ -280,7 +315,18 @@ async def _daemon_precheck(
             error_code="worktree_status_unavailable",
         )
     path = Path(worktree.worktree_path)
-    if blocking_status_lines(porcelain.stdout, path, git_manager.repo_path):
+    blocking = blocking_status_lines(porcelain.stdout, path, git_manager.repo_path)
+    if blocking:
+        recovering = request.surface is DeletionSurface.RECOVERY
+        if recovering and all(line[:2] in _TRACKED_DELETION_CODES for line in blocking):
+            # An interrupted delete already removed these tracked files; only git's refusal is left.
+            return True
+        if recovering:
+            logger.warning(
+                "Worktree %s recovery refused: uncommitted changes beyond tracked deletions; "
+                "the record stays deleting",
+                worktree.id,
+            )
         return WorktreeDeletionResult(
             success=False,
             git_deleted=False,
@@ -327,6 +373,7 @@ async def _delete_git_worktree(
     git_manager: WorktreeGitManager | None,
     *,
     force: bool,
+    git_already_deleted: bool,
 ) -> WorktreeDeletionResult | None:
     if git_manager is None:
         logger.info(
@@ -334,15 +381,6 @@ async def _delete_git_worktree(
             worktree.worktree_path,
         )
         return None
-
-    git_already_deleted, retry_error = await probe_missing_worktree_git_state(
-        git_manager,
-        worktree_path=worktree.worktree_path,
-        branch_name=worktree.branch_name,
-        merged_into=request.merged_into if not request.force_delete_branch else None,
-    )
-    if retry_error is not None:
-        return WorktreeDeletionResult(success=False, git_deleted=False, error=retry_error)
     if git_already_deleted:
         return None
 

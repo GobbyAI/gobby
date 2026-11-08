@@ -25,6 +25,7 @@ from gobby.runner_lifecycle_agents import (
 from gobby.runner_lifecycle_callbacks import reconcile_agent_lifecycle_state
 from gobby.runner_lifecycle_reconcile import _reconcile_agent_runs_after_restart
 from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
+from gobby.runner_maintenance.isolation import deleting_worktree_recovery
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
@@ -766,6 +767,32 @@ def _observe_restart_recovery(task: asyncio.Task[None]) -> None:
         logger.exception("Restart recovery failed; lifecycle admission remains closed")
 
 
+WORKTREE_DELETE_RECOVERY_DELAY_SECONDS = 5.0
+
+
+async def _recover_deleting_worktrees_after_start(runner: GobbyRunner) -> None:
+    """Finish worktree deletes a shutdown interrupted, off the readiness path (#25838)."""
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+
+    def stopping() -> bool:
+        return services is not None and bool(services.shutdown_in_progress)
+
+    await asyncio.sleep(WORKTREE_DELETE_RECOVERY_DELAY_SECONDS)
+    if stopping():
+        return
+    recover = deleting_worktree_recovery(runner.database, runner.worktree_delete_executor, stopping)
+    try:
+        results = await recover()
+    except Exception:
+        # Admission closes at shutdown start; a pass cut short there is the next start's to finish.
+        if not stopping():
+            logger.exception("Worktree delete recovery failed")
+        return
+    refused = sum(1 for result in results if not result.success)
+    if refused:
+        logger.warning("Worktree delete recovery refused %d record(s); they stay deleting", refused)
+
+
 async def init_subsystems(
     runner: GobbyRunner,
     rebuild_vector_store: Any,
@@ -855,6 +882,10 @@ async def init_subsystems(
         name="restart-recovery",
     )
     runner._startup_recovery_task.add_done_callback(_observe_restart_recovery)
+    runner._worktree_recovery_task = asyncio.create_task(
+        _recover_deleting_worktrees_after_start(runner),
+        name="worktree-delete-recovery",
+    )
     _schedule_workflow_skill_prewarm(runner)
     if tracker:
         tracker.finish()
