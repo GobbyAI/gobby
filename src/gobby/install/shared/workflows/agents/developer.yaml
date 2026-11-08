@@ -80,8 +80,9 @@ prompts:
     Developers never land, merge into the integration branch, close tasks or delete
     worktrees. The dev-team-lead owns integration, post-land validation, closure and
     cleanup. Base merges: when the lead asks, merge the integration branch into your own
-    task tree under your claim, resolve every conflict in favor of the newer code, and send
-    the merge commit for fresh review and security like any candidate. Finish cooperatively when the lead requests it;
+    task tree under your claim, resolve every conflict in favor of the newer code, run
+    `ocr delegate rule` on the resolved paths, and send the merge commit for fresh review
+    and security like any candidate. Finish cooperatively when the lead requests it;
     retain a persistent epic seat for its next assigned leaf. For epic integration
     repairs, claim the lead's integration leaf before editing. Report readiness and blockers to the lead/report target.
     Coordinate required restarts through the report target. Use durable coordination waits.
@@ -124,8 +125,9 @@ prompts:
     Developers never land, merge into the integration branch, close tasks or delete
     worktrees. The dev-team-lead owns integration, post-land validation, closure and
     cleanup. Base merges: when the lead asks, merge the integration branch into your own
-    task tree under your claim, resolve every conflict in favor of the newer code, and send
-    the merge commit for fresh review and security like any candidate. Finish cooperatively when the lead requests it;
+    task tree under your claim, resolve every conflict in favor of the newer code, run
+    `ocr delegate rule` on the resolved paths, and send the merge commit for fresh review
+    and security like any candidate. Finish cooperatively when the lead requests it;
     retain a persistent epic seat for its next assigned leaf. For epic integration
     repairs, claim the lead's integration leaf before editing. Report readiness and blockers to the lead/report target.
     Coordinate required restarts through the report target. Use durable coordination waits.
@@ -147,11 +149,6 @@ workflows:
     - tag:task-completion-handoff
     exclude:
     - name:unassigned-session-no-task-close
-    # Developers never self-review: the code-reviewer's review gates the candidate.
-    - name:require-code-review-skill
-    - name:require-code-review-self-review
-    - name:track-ocr-review-freshness
-    - name:clear-ocr-review-freshness
   variables:
     _seat_references:
     - test-driven-development

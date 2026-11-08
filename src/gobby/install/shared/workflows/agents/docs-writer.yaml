@@ -93,11 +93,6 @@ workflows:
       - "name:no-send-keys"
     exclude:
       - "tag:task-skill-gates"
-      # Docs writers never self-review: the independent code-reviewer's review gates the candidate.
-      - "name:require-code-review-skill"
-      - "name:require-code-review-self-review"
-      - "name:track-ocr-review-freshness"
-      - "name:clear-ocr-review-freshness"
 
 step_workflow:
   variables:
