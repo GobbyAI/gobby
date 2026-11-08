@@ -791,12 +791,12 @@ mod tests {
         let chrome = crate::ui::chrome::Chrome::dark();
         let reads =
             |pane: &Pane| crate::ui::pane_chrome::pane_corners(&ws, &chrome, pane, true).title;
-        assert_eq!(reads(&pane), "○ terminal · Focused");
+        assert_eq!(reads(&pane), "  terminal · Focused");
         pane.control = ControlState::LeaseLost;
         pane.take_back = true;
-        assert_eq!(reads(&pane), "○ terminal · Focused");
+        assert_eq!(reads(&pane), "  terminal · Focused");
         pane.control_request = None;
-        assert_eq!(reads(&pane), "○ terminal · Read-only");
+        assert_eq!(reads(&pane), "  terminal · Read-only");
     }
 
     #[test]

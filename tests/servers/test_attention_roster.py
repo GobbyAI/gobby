@@ -33,6 +33,7 @@ from gobby.storage.attention import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._transitions import release_task_claim_if_owned
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -1178,3 +1179,237 @@ def test_roster_exposes_provider_error_before_attention_blocks(
     assert run_entries[0]["entry_id"] == "run:provider-error-run"
     assert run_entries[0]["attention"]["reason"] == "provider_error"
     assert run_entries[0]["provider_error"]["attempts"] == 4
+
+
+def _roster_by_id(temp_db: HubDatabase) -> dict[str, dict[str, Any]]:
+    with _client(_server(temp_db, AttentionStateManager(temp_db))) as client:
+        response = client.get("/api/attention/roster")
+    assert response.status_code == 200
+    return {entry["entry_id"]: entry for entry in response.json()["entries"]}
+
+
+def _claim_open_task(temp_db: HubDatabase, project_id: str, session_id: str) -> Any:
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=project_id,
+        title="Assigned to a team member",
+        validation_criteria="The assignment stays on the roster while the task is open.",
+    )
+    tasks.claim_task(task.id, session_id)
+    return task
+
+
+def test_ended_session_holding_an_open_claim_stays_on_the_roster_as_dead(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    session = session_manager.register(
+        external_id="roster-ended-claimed-session",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    SessionVariableManager(temp_db).set_variable(session.id, "_agent_type", "fixture-seat")
+    task = _claim_open_task(temp_db, sample_project["id"], session.id)
+    session_manager.update_session_status(session.id, "completed")
+
+    entry = _roster_by_id(temp_db)[f"session:{session.id}"]
+
+    assert entry["lifecycle_status"] == "dead"
+    assert entry["terminal"] is None
+    assert entry["definition_name"] == "fixture-seat"
+    assert entry["task"]["id"] == task.id
+
+
+def test_ended_session_without_an_open_claim_leaves_the_roster(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    session = session_manager.register(
+        external_id="roster-ended-unclaimed-session",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    session_manager.update_session_status(session.id, "completed")
+
+    assert f"session:{session.id}" not in _roster_by_id(temp_db)
+
+
+def test_ended_session_whose_claimed_task_closed_leaves_the_roster(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    session = session_manager.register(
+        external_id="roster-ended-closed-claim-session",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = _claim_open_task(temp_db, sample_project["id"], session.id)
+    LocalTaskManager(temp_db).close_task(task.id, closed_in_session_id=session.id)
+    session_manager.update_session_status(session.id, "completed")
+
+    assert f"session:{session.id}" not in _roster_by_id(temp_db)
+
+
+def test_ended_run_whose_child_still_holds_a_claim_is_a_dead_entry(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    child = session_manager.register(
+        external_id="roster-ended-run-child",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    SessionVariableManager(temp_db).set_variable(child.id, "_agent_type", "fixture-seat")
+    task = _claim_open_task(temp_db, sample_project["id"], child.id)
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+    )
+    manager.start(run.id)
+    manager.complete(run.id)
+    session_manager.update_session_status(child.id, "completed")
+
+    entry = _roster_by_id(temp_db)[f"run:{run.id}"]
+
+    assert entry["lifecycle_status"] == "dead"
+    assert entry["definition_name"] == "fixture-seat"
+    assert entry["task"]["id"] == task.id
+
+
+@pytest.mark.parametrize("ended", [False, True], ids=["running", "ended"])
+def test_task_linked_run_without_child_uses_its_own_lifecycle(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    ended: bool,
+) -> None:
+    parent = session_manager.register(
+        external_id="roster-run-without-child",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Assigned run without a child session",
+        validation_criteria="The run stays visible while its assigned task is open.",
+    )
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="test",
+        task_id=task.id,
+    )
+    manager.start(run.id)
+    if ended:
+        manager.complete(run.id)
+
+    entry = _roster_by_id(temp_db)[f"run:{run.id}"]
+
+    assert entry["session_id"] is None
+    assert entry["task"]["id"] == task.id
+    assert entry["lifecycle_status"] == ("dead" if ended else "running")
+
+
+def test_ended_run_with_released_claim_stays_until_its_linked_task_closes(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    child = session_manager.register(
+        external_id="roster-ended-run-released-claim",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = _claim_open_task(temp_db, sample_project["id"], child.id)
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+        task_id=task.id,
+    )
+    manager.start(run.id)
+    manager.complete(run.id)
+    session_manager.update_session_status(child.id, "completed")
+    released = release_task_claim_if_owned(temp_db, task.id, expected_owner=child.id)
+    assert released is not None
+    assert released.claimed_by_session_id is None
+
+    roster = _roster_by_id(temp_db)
+    entry = roster[f"run:{run.id}"]
+    assert entry["lifecycle_status"] == "dead"
+    assert entry["task"]["id"] == task.id
+    assert f"session:{child.id}" not in roster
+
+    LocalTaskManager(temp_db).close_task(task.id, closed_in_session_id=child.id)
+
+    assert f"run:{run.id}" not in _roster_by_id(temp_db)
+
+
+def test_ended_run_under_a_live_child_is_not_a_second_row(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    child = session_manager.register(
+        external_id="roster-ended-run-live-child",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    _claim_open_task(temp_db, sample_project["id"], child.id)
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+    )
+    manager.start(run.id)
+    manager.complete(run.id)
+    session_manager.update_session_status(child.id, "active")
+
+    roster = _roster_by_id(temp_db)
+
+    assert f"run:{run.id}" not in roster
+    assert roster[f"session:{child.id}"]["lifecycle_status"] == "active"
+
+
+def test_roster_names_the_definition_apart_from_its_display_title(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    session = session_manager.register(
+        external_id="roster-definition-identity",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    variables = SessionVariableManager(temp_db)
+    variables.set_variable(session.id, "_agent_type", "fixture-seat")
+    variables.set_variable(session.id, "_definition_title", "default")
+    _claim_open_task(temp_db, sample_project["id"], session.id)
+
+    entry = _live_roster_entry(temp_db, f"session:{session.id}")
+
+    assert entry["definition_name"] == "fixture-seat"
+    assert entry["definition_title"] == "default"

@@ -7,11 +7,10 @@
 
 use std::sync::OnceLock;
 
-use super::agents::agent_state;
 use super::{render_band, render_section_rows, SidebarHits, ALL_MACHINES};
 use crate::app::short_terminal_id;
 use crate::app::sidebar_model::rollup;
-use crate::ui::chrome::{Chrome, WorkspaceView};
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::sidebar_rows::{RowKind, SidebarRow};
 use ratatui::layout::Rect;
@@ -88,13 +87,19 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
         )
         .map(|(machine, nested)| {
             let is_local = machine == local;
-            let state = rollup(
+            let on_machine = || {
                 model
                     .agents
                     .iter()
-                    .filter(|agent| agent.machine_id == machine)
-                    .map(|agent| agent_state(ws, agent)),
-            );
+                    .filter(move |agent| agent.machine_id == machine)
+            };
+            // An unreachable local daemon is a machine with no live agents. A
+            // remote machine has no reachability signal here, so its agents speak.
+            let state = if is_local && !ws.daemon_ready() {
+                RowState::NoLive
+            } else {
+                rollup(on_machine().map(|agent| agent.state))
+            };
             let label = if is_local {
                 local_hostname().unwrap_or_else(|| short_terminal_id(machine))
             } else {
@@ -110,6 +115,12 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                 label: label.to_string(),
                 kind: RowKind::Machine,
                 state,
+                needs_you: on_machine()
+                    .filter(|agent| agent.state == RowState::Attention)
+                    .count(),
+                no_live: on_machine()
+                    .filter(|agent| agent.state == RowState::NoLive)
+                    .count(),
                 nested: nested.is_some(),
                 last_child: nested.unwrap_or(false),
                 active,

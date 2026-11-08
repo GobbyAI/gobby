@@ -6,7 +6,6 @@ process, and the inner run must not load this suite's conftest or database.
 
 from __future__ import annotations
 
-import faulthandler
 import gc
 import os
 import subprocess
@@ -15,8 +14,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-from tests.fixtures import hang_guard
 
 pytestmark = pytest.mark.integration
 
@@ -102,15 +99,7 @@ def test_run_that_never_exits_dumps_its_threads(
     assert "_leaked_worker" in output
 
 
-def test_unconfigure_freezes_the_live_heap_before_interpreter_exit(
-    pytestconfig: pytest.Config,
-) -> None:
-    # Interpreter finalization runs full collections over every surviving object. Freezing
-    # the heap at unconfigure keeps those collections from rescanning it (#25840).
-    frozen_before = gc.get_freeze_count()
-    try:
-        hang_guard.pytest_unconfigure(pytestconfig)
-        assert gc.get_freeze_count() > frozen_before
-    finally:
-        faulthandler.cancel_dump_traceback_later()
-        gc.unfreeze()
+def test_import_heap_is_frozen_before_tests_run() -> None:
+    # Exit forces full GC passes over every tracked object. The import-time heap is
+    # ~370k objects, so under load five such passes overran the exit watchdog (#25804).
+    assert gc.get_freeze_count() > 0

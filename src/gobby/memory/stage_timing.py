@@ -19,10 +19,11 @@ from dataclasses import dataclass, field
 
 @dataclass
 class StageTimings:
-    """Accumulated seconds and call counts per stage for one recall."""
+    """Inclusive stage durations and counts for one recall, including pending waits."""
 
     seconds: dict[str, float] = field(default_factory=dict)
     calls: dict[str, int] = field(default_factory=dict)
+    pending: dict[object, tuple[str, float]] = field(default_factory=dict)
 
     def add(self, stage: str, seconds: float) -> None:
         self.seconds[stage] = self.seconds.get(stage, 0.0) + seconds
@@ -30,10 +31,19 @@ class StageTimings:
 
     def render(self) -> str:
         """Compact ``stage=<ms>ms/<calls>`` list, sorted by stage name."""
-        return " ".join(
-            f"{stage}={self.seconds[stage] * 1000:.0f}ms/{self.calls[stage]}"
-            for stage in sorted(self.seconds)
+        seconds = self.seconds.copy()
+        calls = self.calls.copy()
+        now = time.perf_counter()
+        pending = list(self.pending.values())
+        for stage, started in pending:
+            seconds[stage] = seconds.get(stage, 0.0) + now - started
+            calls[stage] = calls.get(stage, 0) + 1
+        rendered = " ".join(
+            f"{stage}={seconds[stage] * 1000:.0f}ms/{calls[stage]}" for stage in sorted(seconds)
         )
+        if pending:
+            rendered += " active=" + ",".join(sorted({stage for stage, _started in pending}))
+        return rendered
 
 
 _current: contextvars.ContextVar[StageTimings | None] = contextvars.ContextVar(
@@ -42,9 +52,9 @@ _current: contextvars.ContextVar[StageTimings | None] = contextvars.ContextVar(
 
 
 @contextmanager
-def recording() -> Iterator[StageTimings]:
+def recording(timings: StageTimings | None = None) -> Iterator[StageTimings]:
     """Open a recording scope for the current recall and yield its timings."""
-    timings = StageTimings()
+    timings = timings if timings is not None else (_current.get() or StageTimings())
     token = _current.set(timings)
     try:
         yield timings
@@ -63,10 +73,16 @@ def record(stage: str, seconds: float) -> None:
 def timed(stage: str) -> Iterator[None]:
     """Time the enclosed block into ``stage``, including when it raises."""
     start = time.perf_counter()
+    timings = _current.get()
+    marker = object()
+    if timings is not None:
+        timings.pending[marker] = (stage, start)
     try:
         yield
     finally:
-        record(stage, time.perf_counter() - start)
+        if timings is not None:
+            timings.pending.pop(marker, None)
+            timings.add(stage, time.perf_counter() - start)
 
 
 async def timed_await[T](stage: str, awaitable: Awaitable[T]) -> T:
