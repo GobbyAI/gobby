@@ -1657,6 +1657,7 @@ class TestUpdateDefinitionNestedFields:
             "reviews",
             "send_message_targets",
             "spawnable_agents",
+            "spawner_capabilities",
             "supplemental_review",
             "task_close_reasons",
             "task_close_scope",

@@ -17,6 +17,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.hooks.compaction_ownership import REPLAY_FLAG
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import (
     ContextPart,
@@ -2801,6 +2802,11 @@ def test_first_hook_materialization_matrix(
         timestamp=datetime.now(UTC),
         data={"cwd": str(temp_dir)},
         machine_id=LOCAL_MACHINE_ID,
+        # This matrix exercises session lookup after compaction ownership settles.
+        # Raw automatic compact hooks are held; their routing has dedicated tests.
+        metadata={REPLAY_FLAG: True}
+        if event_type in {HookEventType.PRE_COMPACT, HookEventType.POST_COMPACT}
+        else {},
     )
     handler = MagicMock(return_value=HookResponse(decision="allow"))
 

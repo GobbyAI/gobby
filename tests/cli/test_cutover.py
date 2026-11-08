@@ -144,6 +144,7 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(1260)  # Two 600s Cargo children plus fixture/assertion margin.
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
     subprocess.run(
@@ -160,6 +161,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(1260)  # Fixture build and freshness proof each allow 600s.
 def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
 ) -> None:
