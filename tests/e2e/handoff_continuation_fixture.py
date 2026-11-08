@@ -34,6 +34,7 @@ from tests.e2e.composer_proof_trace import ProofTrace
 from tests.e2e.conftest import (
     DaemonInstance,
     copy_daemon_api_key,
+    native_daemon_command,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -159,9 +160,11 @@ async def handoff_fixture(
     if scenario == "restart_hold":
         env["GOBBY_HANDOFF_BARRIER_SOCKET"] = str(barrier.socket)
     readback: list[dict[str, object]] = []
-    log = home / "logs" / "composer-daemon.log"
-    errors = home / "logs" / "composer-daemon-error.log"
-    command = [sys.executable, "-m", "tests.e2e.handoff_continuation_runner"]
+    log = home / "logs" / "daemon.log"
+    errors = home / "logs" / "daemon_error.log"
+    command = native_daemon_command(
+        env, [sys.executable, "-m", "tests.e2e.handoff_continuation_runner"]
+    )
     process: subprocess.Popen[bytes] | None = None
     proof: LiveProof | None = None
     clean = False
@@ -232,6 +235,17 @@ async def handoff_fixture(
                 await asyncio.to_thread(terminate_process_tree, process.pid)
             if spec.artifact_dir is not None:
                 artifact = spec.artifact_dir / f"handoff-proof-{uuid4()}.json"
+                retained_logs = artifact.with_suffix(".logs")
+                retained_logs.mkdir(mode=0o700)
+                # Preserve diagnostics before the parent fixture deletes HOME. Never
+                # copy state/configuration or follow a link out of the log directory.
+                for source in log.parent.glob("*.log"):
+                    if source.is_file() and not source.is_symlink():
+                        target = retained_logs / source.name
+                        with target.open("xb") as stream:
+                            target.chmod(0o600)
+                            with source.open("rb") as original:
+                                shutil.copyfileobj(original, stream)
                 payload = {
                     "reviewed_commit": spec.reviewed_commit,
                     "reviewed_tree": spec.reviewed_tree,
@@ -251,12 +265,11 @@ async def handoff_fixture(
                     "created_terminal_ids": [] if proof is None else proof.created_terminal_ids,
                     "evidence": [] if proof is None else proof.evidence,
                     "writes_and_attempts": trace.events,
+                    "retained_logs": str(retained_logs),
                     "isolated_state_retained": None
                     if clean
                     else {
                         "socket_root": str(root),
-                        "home": str(home),
-                        "project": str(e2e_project_dir),
                         "daemon_pid": None if process is None else process.pid,
                     },
                 }
