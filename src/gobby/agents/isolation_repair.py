@@ -251,17 +251,16 @@ def _merge_droid_isolation_hooks(
 
 def _replace_mcp_config(path: Path, config: dict[str, Any]) -> None:
     """Replace the directory entry so a selected symlink's target stays untouched."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=path.parent, delete=False
-    ) as f:
-        temporary = Path(f.name)
-        try:
+    descriptor, name = tempfile.mkstemp(dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
             f.write(json.dumps(config, indent=2) + "\n")
             f.flush()
             os.fsync(f.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 async def _patch_mcp_config_for_isolation(

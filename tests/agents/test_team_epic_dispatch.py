@@ -384,6 +384,16 @@ async def test_admitted_leaf_tree_serves_its_edit_through_built_gcode(
     dsn = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
     grant = interactive_grant(project_id=world.case.project_id, machine_id=machine, dsn=dsn)
     cache_interactive_grant(home, daemon_url, grant)
+    cache_interactive_grant(
+        home,
+        daemon_url,
+        interactive_grant(
+            project_id=world.case.project_id,
+            machine_id=machine,
+            dsn=dsn,
+            code_overlay_project_id=code_index_id_for_root(path),
+        ),
+    )
     env = os.environ.copy()
     env.pop("GOBBY_AGENT_RUN_ID", None)
     env.pop("GOBBY_MANAGED_EXECUTION_ID", None)
