@@ -634,12 +634,15 @@ class GcodeGateway(GcodeReconcileMixin):
         self,
         project_root: Path,
         *,
+        full: bool = False,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
+        # --full skips the incremental hash check, which keeps unchanged file records.
+        flags = ["--full"] if full else []
         return await self._run_command_result(
-            [binary, "index", "--project", str(project_root), "--skip-if-locked"],
+            [binary, "index", "--project", str(project_root), "--skip-if-locked", *flags],
             timeout=timeout,
             env=env,
         )

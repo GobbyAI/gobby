@@ -42,6 +42,7 @@ class ReconcileGateway(Protocol):
         self,
         project_root: Path,
         *,
+        full: bool = False,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult: ...
@@ -156,7 +157,9 @@ async def _observe(
     if not guarded:
         return observed
     if observed.pg_symbols == 0:
-        _check_result(await gateway.maintenance_index(root, timeout=timeout, env=env), "index")
+        # Forced full: an incremental pass keeps unchanged file records after symbol loss.
+        result = await gateway.maintenance_index(root, full=True, timeout=timeout, env=env)
+        _check_result(result, "index")
         observed = await _dry_run(gateway, root, timeout=timeout, env=env)
     if observed.points_scanned == 0:
         _check_rebuild(await gateway.vector_rebuild(root, timeout=timeout, env=env))
