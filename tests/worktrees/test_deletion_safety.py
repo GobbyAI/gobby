@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,6 +27,8 @@ from gobby.worktrees.deletion import (
 )
 from gobby.worktrees.executor import DestructiveBoundary
 from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git._lifecycle import delete_worktree
+from gobby.worktrees.git._runner import GitRunner
 
 pytestmark = pytest.mark.unit
 
@@ -393,3 +396,29 @@ async def test_unreaped_git_child_holds_the_claim_until_it_exits(tmp_path: Path)
     assert retried.success is True
     assert not tree.exists()
     assert WORKTREE_ID not in storage.rows
+
+
+@pytest.mark.unit
+async def test_remove_stall_reports_its_command_and_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `git worktree remove` that outlives its budget is named by its argv and pid.
+
+    The refusal keeps the tree, so a stall that ends a test run is attributable from the
+    refusal text alone rather than from a thread dump.
+    """
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    argv = ("git", "worktree", "remove", str(tree))
+    stalled = daemon_git.GitTimeout(
+        "timeout", argv, 240.0, stderr="Git timed out: phase=running pid=4242 elapsed_seconds=240"
+    )
+    monkeypatch.setattr(daemon_git.daemon_git, "run", AsyncMock(return_value=stalled))
+
+    result = await delete_worktree(GitRunner(str(tmp_path)), tree)
+
+    assert result.success is False
+    assert result.error is not None
+    assert "worktree remove" in result.error
+    assert "pid=4242" in result.error
+    assert tree.is_dir()
