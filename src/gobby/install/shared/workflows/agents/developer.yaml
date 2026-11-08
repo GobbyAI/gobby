@@ -1,5 +1,5 @@
 name: developer
-version: "4.0.0"
+version: "4.1.0"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
