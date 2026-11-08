@@ -615,18 +615,46 @@ def ensure_images(images: Mapping[str, str], run: ImageRunner) -> None:
             raise EvidenceError(f"docker pull failed for {name} image {reference}: {detail}")
 
 
-CargoRunner = Callable[[list[str], Path], subprocess.CompletedProcess[bytes]]
+CommandRunner = Callable[[list[str], Path], subprocess.CompletedProcess[bytes]]
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
 
-def _cargo_run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+def _command_run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(argv, cwd=cwd, check=False, capture_output=True)
 
 
-def build_probe(root: Path, probe_source: Path, run: CargoRunner) -> dict[str, Any]:
+def _stderr_text(done: subprocess.CompletedProcess[bytes]) -> str:
+    return done.stderr.decode("utf-8", errors="replace").strip()
+
+
+def _candidate_blob(run: CommandRunner, gobby_repo: Path, candidate: str) -> bytes:
+    """Read-only git checks that the candidate changes exactly the example; returns its blob."""
+    crates = run(["git", "diff", "--name-only", GOBBY_SHA, candidate, "--", "crates"], gobby_repo)
+    require(crates.returncode == 0, f"git could not compare crates: {_stderr_text(crates)}")
+    changed = crates.stdout.decode("utf-8").splitlines()
+    require(
+        changed == [PROBE_SOURCE],
+        f"candidate must change exactly {PROBE_SOURCE} under crates, not {changed}",
+    )
+    lock = run(["git", "diff", "--quiet", GOBBY_SHA, candidate, "--", "Cargo.lock"], gobby_repo)
+    require(
+        lock.returncode == 0,
+        f"Cargo.lock differs from the pin or cannot be compared (git exit {lock.returncode})",
+    )
+    blob = run(["git", "show", f"{candidate}:{PROBE_SOURCE}"], gobby_repo)
+    require(blob.returncode == 0, f"git could not read {PROBE_SOURCE}: {_stderr_text(blob)}")
+    return blob.stdout
+
+
+def build_probe(
+    root: Path, probe_source: Path, candidate: str, gobby_repo: Path, run: CommandRunner
+) -> dict[str, Any]:
     """Build the bearer probe from the pinned tree plus its one recorded example overlay.
 
     The pin predates the example, and gobby-core is identical between the pin and the candidate,
-    so the overlay is the only source delta. Cargo writes only under the runtime root's target dir.
+    so the overlay is the only source delta. The overlay must be the candidate's own blob, and the
+    candidate must change nothing else under crates or in Cargo.lock. Cargo writes only under the
+    runtime root's target dir.
     """
     archived = root / "sources" / "gobby" / PROBE_SOURCE
     binary = root / PROBE_BINARY
@@ -636,8 +664,15 @@ def build_probe(root: Path, probe_source: Path, run: CargoRunner) -> dict[str, A
         probe_source.is_file() and not probe_source.is_symlink(),
         f"probe source is not a plain file: {probe_source}",
     )
+    require(FULL_SHA.fullmatch(candidate) is not None, "candidate must be a full commit SHA")
+    probe_bytes = probe_source.read_bytes()
+    blob = _candidate_blob(run, gobby_repo, candidate)
+    require(
+        _sha256_bytes(blob) == _sha256_bytes(probe_bytes),
+        f"probe source differs from the candidate blob {PROBE_SOURCE}@{candidate}",
+    )
     archived.parent.mkdir(parents=True, exist_ok=True)
-    archived.write_bytes(probe_source.read_bytes())
+    archived.write_bytes(probe_bytes)
     argv = [
         "cargo",
         "build",
@@ -658,10 +693,14 @@ def build_probe(root: Path, probe_source: Path, run: CargoRunner) -> dict[str, A
     binary.parent.mkdir(parents=True, exist_ok=True)
     binary.write_bytes(artifact.read_bytes())
     binary.chmod(0o700)
+    example_source = file_record(root, archived)
     manifest = {
         "pinned_commit": GOBBY_SHA,
         "example_in_pin": False,
-        "example_source": file_record(root, archived),
+        "candidate_commit": candidate,
+        "candidate_blob_sha256": _sha256_bytes(blob),
+        "archived_copy_sha256": example_source["sha256"],
+        "example_source": example_source,
         "binary": file_record(root, binary),
         "cargo_argv": argv,
     }
@@ -689,6 +728,7 @@ def _parse_args() -> argparse.Namespace:
     probe = subparsers.add_parser("build-probe")
     probe.add_argument("--owner-session", required=True)
     probe.add_argument("--probe-source", type=Path, required=True)
+    probe.add_argument("--candidate", required=True)
     return parser.parse_args()
 
 
@@ -716,7 +756,13 @@ def main() -> int:
             _docker_command,
         )
     elif args.command == "build-probe":
-        build_probe(root, args.probe_source.resolve(), _cargo_run)
+        build_probe(
+            root,
+            args.probe_source.resolve(),
+            args.candidate,
+            args.gobby_repo.resolve(),
+            _command_run,
+        )
     else:  # pragma: no cover - argparse enforces subcommands
         raise EvidenceError(args.command)
     return 0

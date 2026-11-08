@@ -637,7 +637,17 @@ def test_bearer_verdicts_refuse_a_tampered_grant_that_the_daemon_accepts() -> No
         bearer_verdicts(valid, tampered, 7)
 
 
-def _fake_cargo(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+CANDIDATE = "a" * 40
+
+
+def _fake_run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    """Passes the read-only candidate checks and writes the artifact cargo would build."""
+    if argv[:3] == ["git", "diff", "--name-only"]:
+        return subprocess.CompletedProcess(argv, 0, stdout=f"{PROBE_SOURCE}\n".encode(), stderr=b"")
+    if argv[:3] == ["git", "diff", "--quiet"]:
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+    if argv[:2] == ["git", "show"]:
+        return subprocess.CompletedProcess(argv, 0, stdout=b"fn main() {}\n", stderr=b"")
     artifact = Path(argv[argv.index("--target-dir") + 1]) / "debug/examples/managed_bearer_probe"
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_bytes(b"\x7fELF bearer probe")
@@ -650,7 +660,7 @@ def _built_probe(tmp_path: Path) -> Path:
     (root / "manifests").mkdir(parents=True)
     source = tmp_path / "candidate.rs"
     source.write_bytes(b"fn main() {}\n")
-    build_probe(root, source, _fake_cargo)
+    build_probe(root, source, CANDIDATE, Path("/operator/gobby-repo"), _fake_run)
     return root
 
 

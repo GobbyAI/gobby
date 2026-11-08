@@ -95,10 +95,95 @@ def test_srt_wrapped_argv_follows_the_runtime_wrap_shape() -> None:
 
 
 class _FakeProcess:
+    """A srt wrapper (pid 4242) and one same-group descendant, as killpg and the wrapper see them.
+
+    Each process exits when it receives a signal in its set. The group id is the wrapper's pid.
+    """
+
     pid = 4242
 
+    def __init__(
+        self,
+        *,
+        wrapper_exits_on: frozenset[int] = frozenset({signal.SIGTERM}),
+        descendant_exits_on: frozenset[int] = frozenset({signal.SIGTERM}),
+        group_errors: dict[int, OSError] | None = None,
+    ) -> None:
+        self.wrapper_exits_on = wrapper_exits_on
+        self.descendant_exits_on = descendant_exits_on
+        self.group_errors: dict[int, OSError] = group_errors or {}
+        self.returncode: int | None = None
+        self.descendant_alive = True
+        self.group_signals: list[tuple[int, int]] = []
+        self.pid_signals: list[int] = []
+
+    def killpg(self, pgid: int, number: int) -> None:
+        if number == 0:
+            if self.returncode is not None and not self.descendant_alive:
+                raise ProcessLookupError(3, "No such process")
+            return
+        self.group_signals.append((pgid, number))
+        error = self.group_errors.get(number)
+        if error is not None:
+            if isinstance(error, ProcessLookupError):
+                self._vanish()
+            raise error
+        if number in self.wrapper_exits_on:
+            self._exit_wrapper(number)
+        if number in self.descendant_exits_on:
+            self.descendant_alive = False
+
+    def send_signal(self, number: int) -> None:
+        self.pid_signals.append(number)
+        if number in self.wrapper_exits_on:
+            self._exit_wrapper(number)
+
+    def kill(self) -> None:
+        self.send_signal(signal.SIGKILL)
+
+    def poll(self) -> int | None:
+        return self.returncode
+
     def wait(self, timeout: float | None = None) -> int:
-        return 0
+        if self.returncode is None:
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(cmd="daemon", timeout=timeout)
+            self._exit_wrapper(signal.SIGKILL)
+        assert self.returncode is not None
+        return self.returncode
+
+    def _exit_wrapper(self, number: int) -> None:
+        if self.returncode is None:
+            self.returncode = -number
+
+    def _vanish(self) -> None:
+        self.descendant_alive = False
+        self._exit_wrapper(signal.SIGKILL)
+
+
+def _patch_launch(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) -> None:
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kwargs: process)
+    monkeypatch.setattr(os, "killpg", process.killpg)
+    monkeypatch.setattr(socket, "socket", _FakeSocket)
+
+
+def _fail_after_writing(monkeypatch: pytest.MonkeyPatch, record: str) -> None:
+    """Write the named record in full, then fail as a disk error after the write would."""
+    real_write = provision_environment._write_json
+
+    def write_then_fail(path: Path, value: Any, *, mode: int = 0o644) -> None:
+        real_write(path, value, mode=mode)
+        if path.name == record:
+            raise OSError(f"disk full after {record} was written")
+
+    monkeypatch.setattr(launch_daemon, "_write_json", write_then_fail)
+
+
+@pytest.fixture(autouse=True)
+def wrapper_leads_its_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launches lead their own group unless a test says otherwise; stop polls do not sleep."""
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(launch_daemon, "_pause", lambda seconds: None)
 
 
 class _FakeSocket:
@@ -410,58 +495,127 @@ def test_a_non_python_package_file_on_one_side_only_fails_naming_it(tmp_path: Pa
 
 @pytest.mark.parametrize("failing_record", ["daemon-launch-attempt-1.json", "active-launches.json"])
 def test_launch_stops_an_unrecorded_daemon_and_removes_its_partial_records(
-    staged_root: Path,
-    tmp_path: Path,
-    spawned: list[list[str]],
-    monkeypatch: pytest.MonkeyPatch,
-    failing_record: str,
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_record: str
 ) -> None:
-    signals: list[tuple[int, int]] = []
-    monkeypatch.setattr(os, "killpg", lambda pid, number: signals.append((pid, number)))
-    real_write = provision_environment._write_json
-
-    def write_then_fail(path: Path, value: Any, *, mode: int = 0o644) -> None:
-        real_write(path, value, mode=mode)
-        if path.name == failing_record:
-            raise OSError("disk full after the record was partly written")
-
-    monkeypatch.setattr(launch_daemon, "_write_json", write_then_fail)
+    process = _FakeProcess()
+    _patch_launch(monkeypatch, process)
+    _fail_after_writing(monkeypatch, failing_record)
 
     with pytest.raises(OSError, match="disk full"):
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
-    assert signals == [(4242, signal.SIGTERM)]
+    assert process.group_signals == [(4242, signal.SIGTERM)]
     assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
     assert not (staged_root / "receipts/active-launches.json").exists()
 
 
 def test_launch_kills_a_daemon_that_ignores_sigterm(
-    staged_root: Path,
-    tmp_path: Path,
-    spawned: list[list[str]],
-    monkeypatch: pytest.MonkeyPatch,
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _StubbornProcess:
-        pid = 4242
+    process = _FakeProcess(
+        wrapper_exits_on=frozenset({signal.SIGKILL}),
+        descendant_exits_on=frozenset({signal.SIGKILL}),
+    )
+    _patch_launch(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "daemon-launch-attempt-1.json")
 
-        def wait(self, timeout: float | None = None) -> int:
-            if timeout is not None:
-                raise subprocess.TimeoutExpired(cmd="daemon", timeout=timeout)
-            return -9
-
-    signals: list[tuple[int, int]] = []
-    monkeypatch.setattr(os, "killpg", lambda pid, number: signals.append((pid, number)))
-    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kwargs: _StubbornProcess())
-    real_write = provision_environment._write_json
-
-    def fail_on_receipt(path: Path, value: Any, *, mode: int = 0o644) -> None:
-        if path.name == "daemon-launch-attempt-1.json":
-            raise OSError("receipt write failed")
-        real_write(path, value, mode=mode)
-
-    monkeypatch.setattr(launch_daemon, "_write_json", fail_on_receipt)
-
-    with pytest.raises(OSError, match="receipt write failed"):
+    with pytest.raises(OSError, match="disk full"):
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
-    assert signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+    assert process.group_signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+
+
+def test_launch_sigkills_a_group_member_that_outlives_its_wrapper(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess(descendant_exits_on=frozenset({signal.SIGKILL}))
+    _patch_launch(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "active-launches.json")
+
+    with pytest.raises(OSError, match="disk full"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert process.group_signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert not (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_a_sigkill_that_finds_the_group_gone_keeps_the_original_error(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess(
+        wrapper_exits_on=frozenset({signal.SIGKILL}),
+        descendant_exits_on=frozenset({signal.SIGKILL}),
+        group_errors={signal.SIGKILL: ProcessLookupError(3, "No such process")},
+    )
+    _patch_launch(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "daemon-launch-attempt-1.json")
+
+    with pytest.raises(OSError, match="disk full"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert process.group_signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+
+
+def test_a_refused_group_signal_keeps_the_records_and_names_both_failures(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess(
+        group_errors={signal.SIGTERM: PermissionError(1, "Operation not permitted")}
+    )
+    _patch_launch(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "active-launches.json")
+
+    with pytest.raises(EvidenceError) as caught:
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert "disk full" in str(caught.value)
+    assert "Operation not permitted" in str(caught.value)
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_a_group_that_survives_sigkill_is_not_reported_as_cleaned_up(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess(wrapper_exits_on=frozenset(), descendant_exits_on=frozenset())
+    _patch_launch(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "active-launches.json")
+
+    with pytest.raises(EvidenceError, match="survived SIGKILL"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+
+
+def test_launch_refuses_a_wrapper_that_does_not_lead_its_own_group(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    _patch_launch(monkeypatch, process)
+    monkeypatch.setattr(os, "getpgid", lambda pid: 999)
+
+    with pytest.raises(EvidenceError, match="does not lead"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert process.group_signals == []
+    assert process.pid_signals == [signal.SIGTERM]
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert not (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_launch_receipt_records_the_observed_group_and_that_the_wrapper_leads_it(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_launch(monkeypatch, _FakeProcess())
+
+    launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    receipt = json.loads((staged_root / "receipts/daemon-launch-attempt-1.json").read_text())
+    assert receipt["process_group"] == {
+        "wrapper_pid": 4242,
+        "observed_pgid": 4242,
+        "leads_own_group": True,
+    }

@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -194,18 +195,86 @@ def resolve_srt_runner(root: Path, attempt: str) -> SrtRunner:
 
 
 STOP_GRACE_SECONDS = 10
+STOP_POLL_SECONDS = 0.1
 
 
-def _stop_unrecorded_launch(process: subprocess.Popen[bytes]) -> None:
-    """Stop a daemon no receipt indexes. The srt wrapper leads its own session group."""
+def _pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _signal_group(group: int, number: int) -> None:
+    """Signal the launch's process group. A group that is already gone needs no signal."""
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=STOP_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
+        os.killpg(group, number)
     except ProcessLookupError:
-        process.wait()
+        return
+
+
+def _group_gone(group: int) -> bool:
+    """True when no process remains in the group; signal 0 only probes for members."""
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _await_group_gone(process: subprocess.Popen[bytes], group: int) -> bool:
+    """Poll for the group to empty, reaping the wrapper so its zombie does not hold the group."""
+    for _ in range(round(STOP_GRACE_SECONDS / STOP_POLL_SECONDS)):
+        process.poll()
+        if _group_gone(group):
+            return True
+        _pause(STOP_POLL_SECONDS)
+    process.poll()
+    return _group_gone(group)
+
+
+def _stop_unrecorded_launch(process: subprocess.Popen[bytes], group: int | None) -> None:
+    """Stop a failed launch's processes. Return only once its process group is proven gone.
+
+    A verified group (the wrapper's own pid) gets group signals, with SIGKILL when the group
+    outlives SIGTERM, even after the wrapper has exited. An unverified group gets no group
+    signal: only the wrapper pid is stopped, and the cleanup is reported as unproven.
+    """
+    if group is None:
+        process.send_signal(signal.SIGTERM)
+        try:
+            process.wait(timeout=STOP_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        raise EvidenceError(
+            "the srt wrapper's process group is unverified; only its pid was signalled"
+        )
+    _signal_group(group, signal.SIGTERM)
+    if _await_group_gone(process, group):
+        return
+    _signal_group(group, signal.SIGKILL)
+    if _await_group_gone(process, group):
+        return
+    raise EvidenceError(f"process group {group} survived SIGKILL")
+
+
+def _unwind_failed_launch(
+    process: subprocess.Popen[bytes],
+    group: int | None,
+    records: Sequence[Path],
+    cause: BaseException,
+) -> None:
+    """Stop a failed launch, then drop its records only once its processes are proven gone.
+
+    Returns normally when the cleanup is proven, so the caller re-raises the original error.
+    Otherwise the records stay, as the only evidence of a live group, and the error names both.
+    """
+    try:
+        _stop_unrecorded_launch(process, group)
+    except (OSError, EvidenceError) as stop_error:
+        raise EvidenceError(
+            f"launch failed ({cause}); its processes were not proven stopped ({stop_error})"
+        ) from cause
+    for record in records:
+        record.unlink(missing_ok=True)
 
 
 def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None) -> None:
@@ -257,11 +326,20 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+    verified: int | None = None
     try:
+        observed = os.getpgid(process.pid)
+        require(observed == process.pid, "the srt wrapper does not lead its own process group")
+        verified = observed
         _write_json(
             receipt,
             {
                 "pid": process.pid,
+                "process_group": {
+                    "wrapper_pid": process.pid,
+                    "observed_pgid": observed,
+                    "leads_own_group": True,
+                },
                 "argv": argv,
                 "daemon_argv": daemon,
                 "sandbox": {
@@ -283,11 +361,9 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
             mode=0o600,
         )
         _write_json(active, {"daemon": file_record(root, receipt)}, mode=0o600)
-    except BaseException:
-        # A daemon that no index names must not outlive the failed launch; drop partial records too.
-        _stop_unrecorded_launch(process)
-        receipt.unlink(missing_ok=True)
-        active.unlink(missing_ok=True)
+    except BaseException as error:
+        # A daemon that no index names must not outlive the failed launch; partial records go with it.
+        _unwind_failed_launch(process, verified, (receipt, active), error)
         raise
     print(f"owned daemon PID {process.pid}; launch receipt {receipt}")
 
