@@ -73,8 +73,9 @@ copy, any byte difference, or any difference in the file set. Both copies' hashe
 aggregate digests and the file count go to `receipts/gobby-module-identity-<attempt>.json`.
 
 Each direct-import module must hash equal in both copies. The gobby package is compared as a
-whole: every `.py` file under `gobby/` except `__pycache__`, hashed with sha256, then folded into
-one digest per side from the sorted `path sha256` lines.
+whole: every file under `gobby/` except `__pycache__` directories and `*.pyc`, hashed with sha256,
+then folded into one digest per side from the sorted `path sha256` lines. Non-`.py` files count:
+step 8 reads `gobby/storage/schema_expected_identity.json` from this package.
 
 Expected values. The `tools/gobby/venv` column is the `GOBBY_SHA` blob that `sources/gobby` is
 archived from. The table states what each copy must hash to; the live check measures both copies
@@ -89,8 +90,8 @@ on each run.
 
 Gobby package aggregate, expected:
 
-- File count: 2190 `.py` files in each copy, with the same set of paths.
-- Aggregate digest: `96428c556b4be07743fa2ccb2fd969b5c5df1b96766852a986b9fe117486aa45` in each copy.
+- File count: 3031 files in each copy (2190 `.py`, 841 other), with the same set of paths.
+- Aggregate digest: `1614095779db8bc81a8727af6020c227a2b298b549197e193009101cb781694a` in each copy.
 
 Residual: third-party packages that gobby imports are not hashed.
 

@@ -272,9 +272,11 @@ def _origin_path(name: str) -> str:
 
 
 def _package_tree(base: Path) -> Path:
-    """A gobby package: its init, the four step modules, and one module outside the step set."""
+    """A gobby package: its init, the four step modules, one module outside the step set, and the
+    schema identity file that step 8 reads from the package."""
     for name in [*launch_daemon.GOBBY_STEP_MODULES, "gobby", "gobby.utils.text"]:
         _module_copy(base / _origin_path(name), b"same bytes")
+    _module_copy(base / "gobby/storage/schema_expected_identity.json", b"same bytes")
     return base
 
 
@@ -309,7 +311,7 @@ def test_module_identity_receipt_records_both_hashes_and_the_package_for_the_att
     for name in launch_daemon.GOBBY_STEP_MODULES:
         module = receipt["modules"][name]
         assert module["epic_tree"]["sha256"] == module["runtime_venv"]["sha256"]
-    assert receipt["package"]["files"] == 6
+    assert receipt["package"]["files"] == 7
     assert receipt["package"]["epic_tree_digest"] == receipt["package"]["runtime_venv_digest"]
 
 
@@ -345,3 +347,35 @@ def test_matching_package_copies_record_both_digests_and_the_file_count() -> Non
         "epic_tree_digest": runtime_gobby.package_digest(files),
         "runtime_venv_digest": runtime_gobby.package_digest(files),
     }
+
+
+def test_one_changed_byte_in_the_schema_identity_file_fails_the_aggregate_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    epic = _package_tree(tmp_path / "epic")
+    venv = _package_tree(tmp_path / "venv")
+    (venv / "gobby/storage/schema_expected_identity.json").write_bytes(b"same bytez")
+    _patch_copies(monkeypatch, epic, venv)
+    root = tmp_path / "root"
+    (root / "receipts").mkdir(parents=True)
+
+    with pytest.raises(
+        EvidenceError,
+        match=r"^gobby/storage/schema_expected_identity\.json: epic-tree and tools",
+    ):
+        launch_daemon.verify_gobby_modules(root, "attempt-1", {})
+    assert not (root / "receipts/gobby-module-identity-attempt-1.json").exists()
+
+
+def test_a_non_python_package_file_on_one_side_only_fails_naming_it(tmp_path: Path) -> None:
+    epic = _package_tree(tmp_path / "epic")
+    venv = _package_tree(tmp_path / "venv")
+    _module_copy(epic / "gobby/install/shared/rule.yaml", b"rule")
+
+    with pytest.raises(
+        EvidenceError, match=r"^gobby/install/shared/rule\.yaml: only in the epic-tree"
+    ):
+        launch_daemon.compare_package_copies(
+            runtime_gobby.hash_package_files(epic / "gobby"),
+            runtime_gobby.hash_package_files(venv / "gobby"),
+        )

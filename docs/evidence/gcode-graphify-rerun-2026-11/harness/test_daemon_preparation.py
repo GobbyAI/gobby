@@ -315,6 +315,9 @@ def test_package_files_are_hashed_by_the_runtime_interpreter(
     (package / "__pycache__").mkdir()
     (package / "__init__.py").write_bytes(b"init")
     (package / "utils/text.py").write_bytes(b"text")
+    (package / "storage").mkdir()
+    (package / "storage/schema_expected_identity.json").write_bytes(b"identity")
+    (package / "utils/stray.pyc").write_bytes(b"stray")
     (package / "__pycache__/text.cpython-313.pyc").write_bytes(b"compiled")
     monkeypatch.setattr(
         runtime_gobby, "verify_gobby", lambda _root: {"gobby": str(package / "__init__.py")}
@@ -325,6 +328,7 @@ def test_package_files_are_hashed_by_the_runtime_interpreter(
     assert result == {
         "files": {
             "gobby/__init__.py": hashlib.sha256(b"init").hexdigest(),
+            "gobby/storage/schema_expected_identity.json": hashlib.sha256(b"identity").hexdigest(),
             "gobby/utils/text.py": hashlib.sha256(b"text").hexdigest(),
         }
     }

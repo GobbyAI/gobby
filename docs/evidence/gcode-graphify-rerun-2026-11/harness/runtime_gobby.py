@@ -85,10 +85,12 @@ def module_origins(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def hash_package_files(package_dir: Path) -> dict[str, str]:
-    """Each .py file under the package, keyed by its path from the package's parent, with its sha256."""
+    """Each file under the package except __pycache__ and .pyc, keyed by its path from the package's
+    parent, with its sha256. Non-.py files count: step 8 reads schema_expected_identity.json from here."""
     files: dict[str, str] = {}
-    for path in sorted(package_dir.rglob("*.py")):
-        if "__pycache__" in path.relative_to(package_dir).parts:
+    for path in sorted(package_dir.rglob("*")):
+        relative = path.relative_to(package_dir)
+        if not path.is_file() or "__pycache__" in relative.parts or path.suffix == ".pyc":
             continue
         files[path.relative_to(package_dir.parent).as_posix()] = hashlib.sha256(
             path.read_bytes()
