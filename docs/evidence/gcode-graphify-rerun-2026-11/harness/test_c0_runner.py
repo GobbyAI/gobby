@@ -34,7 +34,7 @@ from c0_runner import (
 from runtime_boundary import EvidenceError
 
 SYMBOLS = PROBE_SYMBOLS
-ARCHIVED_GCODE = "1.9.104"
+ARCHIVED_GCODE = "1.9.105"
 SYMBOL_FILES = {
     "load_policy": "platform/settings.py",
     "repository_root": "platform/settings.py",
@@ -685,7 +685,7 @@ def test_the_gcode_pin_is_the_archived_crate_version_frozen_into_the_manifest(
 
 def test_the_gcode_pin_check_compares_with_the_frozen_manifest_pin() -> None:
     manifest = _manifest()
-    manifest["pins"]["gcode"] = "1.9.105"
+    manifest["pins"]["gcode"] = "1.9.104"
 
     checks = {
         check["check"]: check["passed"]

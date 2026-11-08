@@ -27,10 +27,10 @@ from runtime_boundary import (
     verify_file_record,
     write_once,
 )
+from schema_head import read_archived_gcode_version
 from validate_environment import (
     GCODE_BINARY,
     GCODE_CONTRACT_VERSION,
-    GCODE_VERSION,
     GRAPHIFY_ENTRYPOINT,
     validate_gcode_receipt,
     validate_graphify_receipt,
@@ -137,7 +137,7 @@ def main() -> int:
     contract = probe(root, args.attempt, "gcode-contract", [str(binary), "contract"], root)
     gcode = {
         "source_commit": GOBBY_SHA,
-        "version": GCODE_VERSION,
+        "version": read_archived_gcode_version(root),
         "contract_version": GCODE_CONTRACT_VERSION,
         "executable": file_record(root, binary),
         "gdaemon": file_record(root, "gobby-home/bin/gdaemon"),

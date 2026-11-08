@@ -44,13 +44,12 @@ from runtime_boundary import (
     verify_symlink_record,
     write_once,
 )
-from schema_head import schema_head_proof
+from schema_head import read_archived_gcode_version, schema_head_proof
 from service_safety import validate_rendered
 from verify_corpora import compare_manifests, verify_corpora
 
 GRAPHIFY_ENTRYPOINT = "tools/graphify/venv/bin/graphify"
 GCODE_BINARY = "tools/gcode/bin/gcode"
-GCODE_VERSION = "1.9.104"
 GCODE_CONTRACT_VERSION = 12
 SEPTEMBER_ROOT = Path("/Users/josh/Projects/wiki-bakeoff-code-2026-09")
 BINARY_SET_DIR = "gobby-home/bin"
@@ -439,7 +438,8 @@ def validate_graphify_receipt(root: Path, graphify: dict[str, Any]) -> None:
 
 def validate_gcode_receipt(root: Path, gcode: dict[str, Any]) -> None:
     require(gcode["source_commit"] == GOBBY_SHA, "gcode source_commit is not the gobby pin")
-    require(gcode["version"] == GCODE_VERSION, "gcode version is not pinned")
+    gcode_version = read_archived_gcode_version(root)
+    require(gcode["version"] == gcode_version, "gcode version is not pinned")
     require(
         gcode["contract_version"] == GCODE_CONTRACT_VERSION, "gcode contract_version is not pinned"
     )
@@ -450,7 +450,7 @@ def validate_gcode_receipt(root: Path, gcode: dict[str, Any]) -> None:
     _validate_source_manifest(root, "gobby", GOBBY_SHA, gcode["source_manifest"])
     _validate_installation_checks(root, gcode["checks"])
     version_log = verify_file_record(root, gcode["version_log"]).read_text()
-    require(version_log.strip() == f"gcode {GCODE_VERSION}", "gcode version log mismatch")
+    require(version_log.strip() == f"gcode {gcode_version}", "gcode version log mismatch")
     contract = _load_json(verify_file_record(root, gcode["contract_log"]))
     require(contract["tool"] == "gcode", "contract log is not from gcode")
     require(contract["contract_version"] == GCODE_CONTRACT_VERSION, "contract log version mismatch")

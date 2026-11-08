@@ -8,12 +8,14 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+import record_installations
 from provision_environment import GOBBY_SHA, external_state_snapshot
 from runtime_boundary import EvidenceError, file_record, write_once
 from validate_environment import (
@@ -416,11 +418,16 @@ def gcode_receipt(tmp_path: Path) -> dict[str, Any]:
     write_once(binary, "gcode-binary\n", 0o755)
     write_once(tmp_path / "gobby-home/bin/gdaemon", "gdaemon-binary\n", 0o755)
     write_once(tmp_path / "sources/gobby/Cargo.lock", "# lock\n", 0o644)
+    write_once(
+        tmp_path / "sources/gobby/crates/gcode/Cargo.toml",
+        '[package]\nname = "gcode"\nversion = "1.9.105"\n',
+        0o644,
+    )
     manifest = _write_source_manifest(
         tmp_path, [_file_item(tmp_path, "Cargo.lock")], commit=GOBBY_SHA
     )
     version = _passed_check(
-        tmp_path, [str(binary), "--version"], "probe-gcode-version", "gcode 1.9.104\n"
+        tmp_path, [str(binary), "--version"], "probe-gcode-version", "gcode 1.9.105\n"
     )
     contract = _passed_check(
         tmp_path,
@@ -430,7 +437,7 @@ def gcode_receipt(tmp_path: Path) -> dict[str, Any]:
     )
     return {
         "source_commit": GOBBY_SHA,
-        "version": "1.9.104",
+        "version": "1.9.105",
         "contract_version": GCODE_CONTRACT,
         "executable": file_record(tmp_path, binary),
         "gdaemon": file_record(tmp_path, "gobby-home/bin/gdaemon"),
@@ -454,6 +461,62 @@ def test_gcode_receipt_rejects_contract_version_drift(
     gcode_receipt["contract_version"] = 7
     with pytest.raises(EvidenceError, match="contract"):
         validate_gcode_receipt(tmp_path, gcode_receipt)
+
+
+def test_gcode_receipt_rejects_the_previous_pin_as_its_version(
+    tmp_path: Path, gcode_receipt: dict[str, Any]
+) -> None:
+    gcode_receipt["version"] = "1.9.104"
+    with pytest.raises(EvidenceError, match="gcode version is not pinned"):
+        validate_gcode_receipt(tmp_path, gcode_receipt)
+
+
+def test_gcode_receipt_rejects_a_version_probe_from_the_previous_pin(
+    tmp_path: Path, gcode_receipt: dict[str, Any]
+) -> None:
+    binary = tmp_path / "tools/gcode/bin/gcode"
+    old_probe = _passed_check(
+        tmp_path, [str(binary), "--version"], "probe-gcode-version-old", "gcode 1.9.104\n"
+    )
+    gcode_receipt["checks"] = [old_probe, gcode_receipt["checks"][1]]
+    gcode_receipt["version_log"] = old_probe["log"]
+    with pytest.raises(EvidenceError, match="gcode version log mismatch"):
+        validate_gcode_receipt(tmp_path, gcode_receipt)
+
+
+def test_recorded_gcode_version_is_the_archived_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_once(
+        tmp_path / "sources/gobby/crates/gcode/Cargo.toml",
+        '[package]\nname = "gcode"\nversion = "1.9.105"\n',
+        0o644,
+    )
+    recorded: dict[str, Any] = {}
+
+    def fake_probe(
+        root: Path, attempt: str, label: str, argv: list[str], cwd: Path, env: Any = None
+    ) -> dict[str, Any]:
+        return {"argv": argv, "cwd": str(cwd), "exit_code": 0, "log": {"label": label}}
+
+    def capture_gcode(root: Path, gcode: dict[str, Any]) -> None:
+        recorded.update(gcode)
+
+    monkeypatch.setattr(record_installations, "DEFAULT_RUNTIME_ROOT", tmp_path)
+    monkeypatch.setattr(record_installations, "assert_owned_runtime", lambda *_args: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/uv")
+    monkeypatch.setattr(record_installations, "probe", fake_probe)
+    monkeypatch.setattr(record_installations, "_pypi_version", lambda *_args: "0.9.103")
+    monkeypatch.setattr(
+        record_installations, "file_record", lambda _root, path: {"path": str(path)}
+    )
+    monkeypatch.setattr(record_installations, "validate_graphify_receipt", lambda *_args: None)
+    monkeypatch.setattr(record_installations, "validate_gcode_receipt", capture_gcode)
+    monkeypatch.setattr(
+        sys, "argv", ["record_installations", "--owner-session", "owner", "--attempt", "rerun1"]
+    )
+    assert record_installations.main() == 0
+    assert recorded["version"] == "1.9.105"
 
 
 def test_graphify_rejection_survives_python_optimize(
