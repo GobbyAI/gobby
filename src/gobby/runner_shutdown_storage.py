@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _DATABASE_EXECUTOR_JOIN_SECONDS = 6.0
+# Worktree deletes that outlive this bound are logged and left in place for the next start.
+_WORKTREE_DELETE_JOIN_SECONDS = 1.0
 
 
 async def _shutdown_database_executor(
