@@ -25,6 +25,11 @@ from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME
 
 cutover_module = importlib.import_module("gobby.cli.cutover")
+_CATALOG_TEST_TIMEOUT_SECONDS: int = (
+    cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS
+    + cutover_module.CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS
+    + 300
+)
 
 pytestmark = pytest.mark.unit
 
@@ -149,11 +154,7 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 
 
 @pytest.mark.integration
-@pytest.mark.timeout(
-    cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS
-    + cutover_module.CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS
-    + 300
-)
+@pytest.mark.timeout(_CATALOG_TEST_TIMEOUT_SECONDS)
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
     subprocess.run(
@@ -170,11 +171,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
 
 
 @pytest.mark.integration
-@pytest.mark.timeout(
-    cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS
-    + cutover_module.CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS
-    + 300
-)
+@pytest.mark.timeout(_CATALOG_TEST_TIMEOUT_SECONDS)
 def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
 ) -> None:
