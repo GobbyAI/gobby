@@ -18,7 +18,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.attestations import AttestationSubmission, list_attestations, record_attestation
+from gobby.tasks.attestations import (
+    AttestationError,
+    AttestationSubmission,
+    list_attestations,
+    record_attestation,
+)
 from gobby.tasks.closure_policy import ClosureSnapshot, evaluate_closure_policy
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -302,10 +307,10 @@ def test_bundled_implementation_stage_advances_on_its_maker_kinds_alone(
         ] == ["sign-off"]
 
 
-def _install_bundled_closure_rules(db: HubDatabase, project_id: str) -> None:
-    """Store the bundled authorship rules the way sync does: row keys beside the body."""
+def _install_rules(db: HubDatabase, project_id: str, documents: list[dict[str, Any]]) -> None:
+    """Store rule documents the way sync does: row keys beside the body."""
     manager = RuleDefinitionManager(db)
-    for document in _authorship_documents():
+    for document in documents:
         for name, body in (document.get("rules") or {}).items():
             manager.create(
                 name,
@@ -315,6 +320,10 @@ def _install_bundled_closure_rules(db: HubDatabase, project_id: str) -> None:
                 priority=body.get("priority", 100),
                 tags=document["tags"],
             )
+
+
+def _install_bundled_closure_rules(db: HubDatabase, project_id: str) -> None:
+    _install_rules(db, project_id, _authorship_documents())
 
 
 def _closing_definition() -> AgentDefinitionBody:
@@ -382,3 +391,179 @@ def test_bundled_closure_gate_blocks_an_implementers_review_and_passes_an_indepe
         _snapshot(temp_db, task.id, event), agent=_closing_definition(), rules=rules
     )
     assert decision.allowed
+
+
+@pytest.mark.parametrize("event", ["task_close", "task_land"])
+def test_legacy_self_review_never_blocks_closure_or_landing(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    event: Literal["task_close", "task_land"],
+) -> None:
+    project_id = sample_project["id"]
+    _install_bundled_closure_rules(temp_db, project_id)
+    implementation_kind, _makers = _declared_authorship()
+    seats = AgentSessions(temp_db, project_id)
+    # Recorded before enforcement: this implementer's definition does not select the rule.
+    implementer = seats.add(
+        "synthetic-implementer", definition_fields={"task_attestation_writes": ["*"]}
+    )
+    reviewer = seats.add(
+        "synthetic-reviewer",
+        definition_fields={
+            "task_attestation_writes": ["*"],
+            "workflows": {"rule_selectors": {"include": _authorship_selectors()}},
+        },
+    )
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    _submit(temp_db, implementer, task.id, implementation_kind)
+    _submit(temp_db, implementer, task.id, "self-review")
+    _submit(temp_db, reviewer, task.id, "sign-off")
+    rules = RuleDefinitionManager(temp_db).list_effective(project_id)
+
+    decision = evaluate_closure_policy(
+        _snapshot(temp_db, task.id, event), agent=_closing_definition(), rules=rules
+    )
+
+    assert decision.allowed, decision.blockers
+
+
+def test_selecting_implementer_is_refused_a_new_self_review(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    _install_bundled_closure_rules(temp_db, project_id)
+    implementation_kind, _makers = _declared_authorship()
+    seats = AgentSessions(temp_db, project_id)
+    implementer = seats.add(
+        "synthetic-implementer",
+        definition_fields={
+            "task_attestation_writes": ["*"],
+            "workflows": {"rule_selectors": {"include": _authorship_selectors()}},
+        },
+    )
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    _submit(temp_db, implementer, task.id, implementation_kind)
+
+    with pytest.raises(AttestationError, match="independent seat"):
+        _submit(temp_db, implementer, task.id, "self-review")
+
+    assert [record.kind for record in list_attestations(temp_db, task.id)] == [implementation_kind]
+
+
+# The review kind the independent-review gate reads. Naming it here is the one kind literal
+# this regression needs; the rest of the spike path comes from bundled YAML.
+_INDEPENDENT_REVIEW = "independent-review"
+
+
+def _research_spike_definition() -> dict[str, Any]:
+    """The one bundled definition that writes only implementation, scoped to task types."""
+    implementation_kind, _makers = _declared_authorship()
+    matches = [
+        definition
+        for definition in _definitions()
+        if set(definition.get("task_attestation_writes") or []) == {implementation_kind}
+        and (definition.get("task_attestation_scope") or {}).get("task_types")
+    ]
+    assert len(matches) == 1, (
+        "expected one bundled spike definition that writes only implementation"
+    )
+    return matches[0]
+
+
+def _closure_documents_selected_by(definition: dict[str, Any]) -> list[dict[str, Any]]:
+    """Closure rule documents that the definition selects by tag."""
+    selected = {
+        selector.removeprefix("tag:")
+        for selector in definition["workflows"]["rule_selectors"]["include"]
+        if selector.startswith("tag:")
+    }
+    return [
+        document
+        for document in _yaml_files("rules")
+        if selected & set(document.get("tags") or [])
+        and any(
+            body.get("event") in ("task_close", "task_land")
+            for body in (document.get("rules") or {}).values()
+        )
+    ]
+
+
+def test_research_spike_closes_on_its_implementation_and_an_independent_review(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    spike = _research_spike_definition()
+    implementation_kind, _makers = _declared_authorship()
+    _install_rules(temp_db, project_id, _closure_documents_selected_by(spike))
+    seats = AgentSessions(temp_db, project_id)
+    author = seats.add(
+        spike["name"],
+        definition_fields={
+            "task_attestation_writes": spike["task_attestation_writes"],
+            "task_attestation_kinds": spike.get("task_attestation_kinds") or {},
+            "task_attestation_scope": spike["task_attestation_scope"],
+            "workflows": {"rule_selectors": spike["workflows"]["rule_selectors"]},
+        },
+    )
+    reviewer = seats.add("synthetic-reviewer", definition_fields={"task_attestation_writes": ["*"]})
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id,
+        "Survey the options",
+        task_type=spike["task_attestation_scope"]["task_types"][0],
+        category=spike["task_close_scope"]["categories"][0],
+        validation_criteria="Criteria hold.",
+    )
+    tasks.claim_task(task.id, author)
+    candidate_sha = "b" * 40
+    candidate = {"scheme": "git", "value": candidate_sha}
+    record_attestation(
+        temp_db,
+        task_id=task.id,
+        session_id=author,
+        submission=AttestationSubmission(
+            kind=implementation_kind, result="approved", summary="Observed.", reference=candidate
+        ),
+    )
+    rules = RuleDefinitionManager(temp_db).list_effective(project_id)
+    closer = AgentDefinitionBody.model_validate(
+        {
+            "name": spike["name"],
+            "prompts": {"agent": "Close the task."},
+            "workflows": {
+                "rule_selectors": {"include": spike["workflows"]["rule_selectors"]["include"]}
+            },
+        }
+    )
+
+    def closing_snapshot() -> ClosureSnapshot:
+        return ClosureSnapshot(
+            event="task_close",
+            task={"id": task.id},
+            attestations=tuple(list_attestations(temp_db, task.id)),
+            # Provenance the daemon supplies for a candidate under a trusted project policy.
+            # The candidate touches no security path, so no security approval is required.
+            facts={
+                "candidate_commit_sha": candidate_sha,
+                "project_policy_available": True,
+                "candidate_paths_available": True,
+                "candidate_paths": [".gobby/plans/research/report.md"],
+                "project_policy": {"security_paths": []},
+            },
+        )
+
+    before = evaluate_closure_policy(closing_snapshot(), agent=closer, rules=rules)
+    assert not before.allowed
+    assert any("candidate review" in reason for reason in before.blockers)
+
+    record_attestation(
+        temp_db,
+        task_id=task.id,
+        session_id=reviewer,
+        submission=AttestationSubmission(
+            kind=_INDEPENDENT_REVIEW, result="approved", summary="Observed.", reference=candidate
+        ),
+    )
+    after = evaluate_closure_policy(closing_snapshot(), agent=closer, rules=rules)
+
+    assert after.allowed, after.blockers

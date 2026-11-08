@@ -1,11 +1,12 @@
-version: "1.0.0"
+version: "2.0.0"
 tags: [task-closure-implementer-review]
 
 # No implementer of a task may attest review of that task's work. The default definition
 # does not select these rules, so it stays exempt. Each rule's `attestation_authorship`
 # is enforced at record time; its `when` is the closure and landing gate. The gate reads
 # the latest record of each review kind, so a later independent review supersedes an
-# earlier implementer review.
+# earlier implementer review. The gate does not read self-review: record time still refuses
+# a new self-review from an implementer, but a legacy self-review never blocks closure.
 rules:
   closure-review-by-implementer-refused:
     description: A review an implementer of this task recorded cannot satisfy closure.
@@ -15,7 +16,7 @@ rules:
       reason == 'done' and facts.get('closure_intent', 'explicit') != 'ancestor' and
       any(latest_attestation(a.get('kind')).get('session_id') in
           [i.get('session_id') for i in all_attestations if i.get('kind') == 'implementation']
-          for a in attestations if a.get('kind') not in ['test-before', 'implementation', 'test-after'])
+          for a in attestations if a.get('kind') not in ['test-before', 'implementation', 'test-after', 'self-review'])
     attestation_authorship:
       implementation_kind: implementation
       maker_kinds: [test-before, implementation, test-after]
