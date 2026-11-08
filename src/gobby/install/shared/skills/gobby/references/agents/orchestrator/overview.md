@@ -29,9 +29,9 @@ Load a topic with `gobby-skills:get_skill_file(name="gobby", path="references/ag
 | [teams](teams.md) | Launching or relaunching a DevTeam, plan team or research team; epic admission; review, sign-off and disposition closes |
 | [landing](landing.md) | Landing, security approval, evidence, restarts and cutovers, the landing ledger, pushes, closing your own live fix |
 | [recovery](recovery.md) | A stalled, held or usage-limited seat; a failed spawn; a seat restart |
-| [worktrees](worktrees.md) | Cleaning up, correcting or staffing an existing worktree |
+| [worktrees](worktrees.md) | Cleaning up, correcting or staffing an existing worktree; approving a seat's dirty paths |
 | [self-reflection](self-reflection.md) | The daily standing-directives pass, or writing a new standing directive |
 
-_Version: 1.0.1_
+_Version: 1.1.0_
 
 _Last verified: 2026-11-05_
