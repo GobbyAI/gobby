@@ -27,7 +27,7 @@ from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.unit
 
-_TAG = "implementer-review"
+_TAG = "synthetic-authorship"
 _SELECTED = "synthetic-selected"
 _EXEMPT = "synthetic-exempt"
 _RULE = "implementer-may-not-review"
@@ -65,9 +65,9 @@ def _rules(db: HubDatabase, project_id: str) -> None:
     )
 
 
-def _author(db: HubDatabase, project_id: str, definition: str) -> str:
+def _author(seats: AgentSessions, definition: str) -> str:
     include = [f"tag:{_TAG}"] if definition == _SELECTED else []
-    return AgentSessions(db, project_id).add(
+    return seats.add(
         definition,
         ["draft", "build", "polish", "sign-off"],
         definition_fields={"workflows": {"rule_selectors": {"include": include}}},
@@ -101,7 +101,8 @@ def test_implementer_is_refused_a_review_kind_of_its_own_work(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    implementer = _author(temp_db, project_id, _SELECTED)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _SELECTED)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, "build")
 
@@ -119,7 +120,8 @@ def test_superseded_implementation_still_makes_its_author_an_implementer(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    implementer = _author(temp_db, project_id, _SELECTED)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _SELECTED)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     first = _submit(temp_db, implementer, task.id, "build")
     _submit(temp_db, implementer, task.id, "build", supersedes_id=first.id)
@@ -133,8 +135,9 @@ def test_another_session_of_the_same_definition_may_review(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    implementer = _author(temp_db, project_id, _SELECTED)
-    reviewer = _author(temp_db, project_id, _SELECTED)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _SELECTED)
+    reviewer = _author(seats, _SELECTED)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, "build")
 
@@ -151,7 +154,8 @@ def test_definition_that_does_not_select_the_rule_may_record_both_kinds(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    author = _author(temp_db, project_id, _EXEMPT)
+    seats = AgentSessions(temp_db, project_id)
+    author = _author(seats, _EXEMPT)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
 
     _submit(temp_db, author, task.id, "build")
@@ -168,7 +172,8 @@ def test_reviewer_is_refused_implementation_after_recording_review(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    author = _author(temp_db, project_id, _SELECTED)
+    seats = AgentSessions(temp_db, project_id)
+    author = _author(seats, _SELECTED)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, author, task.id, "draft")
     _submit(temp_db, author, task.id, "sign-off")
@@ -206,7 +211,8 @@ def test_review_authored_by_an_implementer_blocks_closure_and_landing(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    implementer = _author(temp_db, project_id, _EXEMPT)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _EXEMPT)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, "build")
     _submit(temp_db, implementer, task.id, "sign-off")
@@ -228,8 +234,9 @@ def test_independent_review_in_place_of_implementer_review_passes(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    implementer = _author(temp_db, project_id, _EXEMPT)
-    reviewer = _author(temp_db, project_id, _SELECTED)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _EXEMPT)
+    reviewer = _author(seats, _SELECTED)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, "build")
     _submit(temp_db, implementer, task.id, "sign-off")
@@ -248,7 +255,8 @@ def test_closer_that_does_not_select_the_rule_is_not_constrained(
 ) -> None:
     project_id = sample_project["id"]
     _rules(temp_db, project_id)
-    implementer = _author(temp_db, project_id, _EXEMPT)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _EXEMPT)
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, "build")
     _submit(temp_db, implementer, task.id, "sign-off")
