@@ -12,6 +12,9 @@ use gobby_daemon::{
     },
 };
 use gobby_terminals::write_api::WriteRefused;
+
+#[path = "common/hub_lock.rs"]
+mod hub_lock;
 use serde_json::json;
 use std::fs;
 use std::{
@@ -66,7 +69,7 @@ impl TestDb {
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
         let mut config = backend_config(home, &argv)?;
         config
             .environment
@@ -100,6 +103,8 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lifecycle_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
@@ -216,7 +221,7 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         let healthy_home=TempDir::new()?;
         let claim=claim_pid_file(&healthy_home.path().join("gobby.pid"),Role::Daemon)?.context("standby PID claim")?;
         let script="import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('healthy'); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
-        let argv=serde_json::to_string(&["uv","run","python","-c",script])?;
+        let argv=serde_json::to_string(&["uv","run","--no-sync","python","-c",script])?;
         let mut config=backend_config(healthy_home.path(), &argv)?;
         config.drain_timeout=Duration::from_millis(100);
         let mut healthy=BackendSupervisor::new(standby,claim,config);
@@ -310,7 +315,7 @@ os.read(fd,1)
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
             .context("fixture PID claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
         let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let slot = config.write_token.clone();
@@ -389,7 +394,7 @@ control.sendall(b'ready')
 control.recv(1)
 raise SystemExit(1)
 "#;
-    let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
     let mut config = backend_config(home.path(), &argv)?;
     config.drain_timeout = Duration::from_millis(100);
     let claim =
@@ -447,7 +452,7 @@ if {code}==0:
 raise SystemExit({code})
 "#
         );
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", &script])?;
         let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
@@ -518,6 +523,7 @@ async fn standby_does_not_spawn_a_backend() -> Result<()> {
         let command = serde_json::to_string(&[
             "uv",
             "run",
+            "--no-sync",
             "python",
             "-c",
             "raise RuntimeError('standby spawned')",
@@ -612,7 +618,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         let application = lease.application_name().to_string();
         let claim =
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", IGNORE_TERM])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", IGNORE_TERM])?;
         let mut config = backend_config(home.path(), &argv)?;
         config
             .environment
@@ -663,7 +669,8 @@ assert os.read(fd,1)==b''
 async fn supervisor_death_gives_backend_eof() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;
-        let command = serde_json::to_string(&["uv", "run", "python", "-c", EOF_BACKEND])?;
+        let command =
+            serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", EOF_BACKEND])?;
         let executable = std::env::current_exe()?;
         let peer_path = executable
             .parent()
@@ -906,7 +913,7 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
     let home = TempDir::new()?;
     let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
         .context("fixture PID claim")?;
-    let argv = serde_json::to_string(&["uv", "run", "python", "-c", SECRET_BACKEND])?;
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", SECRET_BACKEND])?;
     let mut config = backend_config(home.path(), &argv)?;
     config.front_door_secret = Some(FRONT_DOOR_SECRET.into());
     config.drain_timeout = Duration::from_millis(100);

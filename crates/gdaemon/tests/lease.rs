@@ -8,6 +8,9 @@ use tokio::time::timeout;
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+#[path = "common/hub_lock.rs"]
+mod hub_lock;
+
 struct TestDb {
     admin: Client,
     pool: Arc<Pool>,
@@ -240,6 +243,8 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lease_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
