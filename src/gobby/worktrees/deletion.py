@@ -69,6 +69,8 @@ _PRE_REMOVAL_REFUSALS = frozenset(
         "merge_state_unresolvable",
     }
 )
+# Merge proofs Git could not run: the row restores, and one warning says why the tree was kept.
+_UNVERIFIED_MERGE_STATE = frozenset({"merge_target_unresolvable", "merge_state_unresolvable"})
 
 
 @dataclass(frozen=True)
@@ -302,9 +304,18 @@ async def _delete_worktree(
         request, worktree, git_manager, force=force, git_already_deleted=git_already_deleted
     )
     if git_failure is not None:
-        if (git_failure.error_code or git_failure.error) in _PRE_REMOVAL_REFUSALS:
+        refusal = git_failure.error_code or git_failure.error
+        if refusal in _PRE_REMOVAL_REFUSALS:
             await run_thread_to_completion(
                 context.run, _set_status, worktree_storage, worktree.id, prior_status
+            )
+        if refusal in _UNVERIFIED_MERGE_STATE:
+            logger.warning(
+                "Worktree %s at %s kept: its merge state could not be verified, so its "
+                "prior status was restored: %s",
+                worktree.id,
+                worktree.worktree_path,
+                git_failure.message or refusal,
             )
         return git_failure
 

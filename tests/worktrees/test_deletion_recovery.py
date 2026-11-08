@@ -438,3 +438,45 @@ async def test_recovery_is_stop_aware_idempotent_and_leaves_active_rows_alone(
     assert [result.success for result in results] == [True]
     assert set(rows.rows) == {"wt-2"}
     assert await _recover(git, rows) == []
+
+
+async def test_unverifiable_merge_state_refusal_restores_the_prior_status_and_names_the_row(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A merge proof Git cannot run is a pre-removal refusal: the row returns to its status.
+
+    The stored base is unknown, so the merge-base lookup fails with stderr text. That text is not
+    a refusal code, so the row must still restore, and one warning must name the row, path and
+    reason.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "tracked.txt").write_text("base\n")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "initial")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "task-branch", str(worktree), "main")
+    (worktree / "unlanded.txt").write_text("unlanded\n")
+    _git(worktree, "add", "unlanded.txt")
+    _git(worktree, "commit", "-m", "unlanded work")
+    git = WorktreeGitManager(repo)
+    rows = _Rows(replace(_row("wt-1", worktree, status="merged"), base_branch="gone"))
+
+    with caplog.at_level(logging.WARNING):
+        result = await _transaction(
+            git, rows, _request(DeletionSurface.MAINTENANCE, merged_into=None)
+        )
+
+    assert result.success is False
+    assert result.error_code == "merge_state_unresolvable"
+    assert rows.rows["wt-1"].status == "merged"
+    assert worktree.exists()
+    _git(repo, "rev-parse", "--verify", "refs/heads/task-branch")
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "wt-1" in warnings[0]
+    assert str(worktree) in warnings[0]
+    assert "could not be verified" in warnings[0]
