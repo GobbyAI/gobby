@@ -9,7 +9,6 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 from functools import cache
 
 
@@ -48,17 +47,7 @@ INLINE_CONTEXT_HEADROOM = 450
 CONTINUATION_LABEL_BUDGET = 400
 
 
-class Carry(StrEnum):
-    """Whether this delivery's waiting parts can be queued for the next delivery."""
-
-    QUEUED = "queued"
-    UNQUEUED = "unqueued"
-
-
-_CONTINUATION_PREFIX = {
-    Carry.QUEUED: "context continues on the next delivery: ",
-    Carry.UNQUEUED: "context not carried, no session queue: ",
-}
+_CONTINUATION_PREFIX = "context continues on the next delivery: "
 # Finest boundary first: a page cuts at a paragraph, else a line, else a word.
 _PAGE_SEPARATORS = ("\n\n", "\n", " ")
 _PAGE_NUMBER = re.compile(r" \(page (\d+)/(\d+)\)$")
@@ -110,7 +99,6 @@ def deliver_context(
     parts: Sequence[ContextPart],
     *,
     limit: int | None = None,
-    carry: Carry = Carry.QUEUED,
 ) -> ContextDelivery:
     """Ship the longest in-order run of whole parts that fits ``limit``; queue the rest.
 
@@ -118,8 +106,8 @@ def deliver_context(
     Nothing is dropped or reordered: the first part that does not fit ends the delivery,
     and it and everything behind it wait for the next one. A part too large to ship alone
     pages at paragraph boundaries into ``<label> (page i/n)`` parts, each with its own header,
-    and those pages ship consecutively. The text joins the waiting labels in a breadcrumb
-    that says whether they are queued for the next delivery or could not be carried.
+    and those pages ship consecutively. The text ends with a breadcrumb naming the
+    labels that continue on the next delivery.
     """
     ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
     queue = [(label, text) for label, text in parts if text]
@@ -127,7 +115,7 @@ def deliver_context(
     while queue:
         head = queue[0]
         rest = queue[1:]
-        candidate = _render([*shipped, head], [label for label, _ in rest], ship_limit, carry)
+        candidate = _render([*shipped, head], [label for label, _ in rest], ship_limit)
         if len(candidate) <= ship_limit:
             shipped.append(queue.pop(0))
             continue
@@ -136,12 +124,12 @@ def deliver_context(
         count, part, first = _remainder(queue)
         queue[:count] = _page(part, ship_limit, first)
     waiting = [label for label, _ in queue]
-    return ContextDelivery(_render(shipped, waiting, ship_limit, carry), shipped, queue)
+    return ContextDelivery(_render(shipped, waiting, ship_limit), shipped, queue)
 
 
-def _render(parts: Sequence[ContextPart], waiting: Sequence[str], limit: int, carry: Carry) -> str:
+def _render(parts: Sequence[ContextPart], waiting: Sequence[str], limit: int) -> str:
     body = _join(parts)
-    breadcrumb = _continuation(waiting, limit, carry)
+    breadcrumb = _continuation(waiting, limit)
     if not breadcrumb:
         return body
     return f"{body}\n\n{breadcrumb}" if body else breadcrumb
@@ -174,12 +162,12 @@ def _breadcrumb_reserve(limit: int) -> int:
     of up to six digits. A page leaves this room, so it still fits beside its breadcrumb
     after later parts join the queue and lengthen it.
     """
-    longest_prefix = max(len(prefix) for prefix in _CONTINUATION_PREFIX.values())
+    longest_prefix = len(_CONTINUATION_PREFIX)
     return longest_prefix + _label_budget(limit) + len(" (+999999 more)")
 
 
-def _continuation(waiting: Sequence[str], limit: int, carry: Carry) -> str:
-    """Name what continues on the next delivery, or what could not be carried."""
+def _continuation(waiting: Sequence[str], limit: int) -> str:
+    """Name what continues on the next delivery."""
     if not waiting:
         return ""
     budget = _label_budget(limit)
@@ -196,7 +184,7 @@ def _continuation(waiting: Sequence[str], limit: int, carry: Carry) -> str:
     if more:
         suffix = f"(+{more} more)"
         names = f"{names} {suffix}" if named else suffix
-    return _CONTINUATION_PREFIX[carry] + names
+    return _CONTINUATION_PREFIX + names
 
 
 def _remainder(queue: Sequence[ContextPart]) -> tuple[int, ContextPart, int]:

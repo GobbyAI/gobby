@@ -16,7 +16,7 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import record_worker_staging
-from gobby.llm.sdk_utils import Carry, deliver_context
+from gobby.llm.sdk_utils import deliver_context
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
 
@@ -190,13 +190,10 @@ def page_context_for_adapter(
     pending_pairs = set(pending)
     queue = [*pending, *(part for part in parts if tuple(part) not in pending_pairs)]
     aggregate_len = len("\n\n".join(text for _, text in queue if text))
-    delivery = deliver_context(
-        queue,
-        limit=ship_limit,
-        carry=Carry.QUEUED if stored is not None else Carry.UNQUEUED,
-    )
+    delivery = deliver_context(queue, limit=ship_limit)
     if delivery.remaining and not (stored is not None and session_id and variable):
-        raise ContextQueueUnavailableError([label for label, _ in delivery.remaining])
+        labels = [label for label, _ in [*delivery.shipped, *delivery.remaining]]
+        raise ContextQueueUnavailableError(labels)
     if aggregate_len > ship_limit:
         record_adapter_degradation(
             provider=provider,
