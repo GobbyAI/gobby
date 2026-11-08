@@ -1,4 +1,4 @@
-version: "1.9.0"
+version: "1.10.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -101,6 +101,7 @@ rules:
               "src/gobby/worktrees/creation.py",
               "src/gobby/servers/routes/source_control_worktrees.py"
             ],
+            "fleet_health": {"probe_degraded_ms": 1000, "probe_unstable_ms": 3000, "severe_unstable_window_seconds": 120, "window_seconds": 300, "warning_lines_degraded": 10, "load_per_core_degraded": 2.5, "load_consecutive_samples": 2, "memory_free_degraded_percent": 15.0, "fseventsd_cpu_degraded_percent": 50.0, "fseventsd_consecutive_samples": 3, "max_new_seats": 3, "ramp_window_seconds": 900},
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–06:30 America/Chicago daily",
             "operator_timezone": "America/Chicago",
@@ -192,7 +193,7 @@ rules:
           - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.
           - The operator retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
           - Close preview is deterministic only; the configured authorized closer closes after landing.
-          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need the operator via Assistant. Report load only if breaching.
+          - Threshold/admission/escalation changes need the operator via Assistant.
           - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
           - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.

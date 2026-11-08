@@ -14,7 +14,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.pipelines import _batch_load_cron_info, create_pipelines_router
-from gobby.workflows.pipeline_state import ExecutionStatus, PipelineStepError, StepStatus
+from gobby.workflows.pipeline_state import (
+    ExecutionStatus,
+    PipelineStepError,
+    PipelineStepRefusal,
+    StepStatus,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -247,13 +252,13 @@ class TestRunPipeline:
 
         mock_pipeline = MagicMock()
         mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
-        error = "Step 'triage' failed: Unsupported spawn provider: pipeline"
+        error = "Step 'fixture-step' failed: Unsupported spawn provider: pipeline"
         executor = mock_server.services.get_pipeline_executor.return_value
         executor.execute = AsyncMock(side_effect=PipelineStepError(error))
 
         response = client.post(
             "/api/pipelines/run",
-            json={"name": "support", "project_id": "proj-1"},
+            json={"name": "fixture-pipeline", "project_id": "proj-1"},
         )
 
         assert response.status_code == 422
@@ -412,6 +417,25 @@ class TestRunPipeline:
             json={"name": "test-pipeline", "project_id": "proj-1", "background": True},
         )
         assert response.status_code == 500
+
+    def test_run_pipeline_background_refusal_is_422(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """A refused detached start is the caller's error: a step refusal maps to 422, not 500."""
+        mock_pipeline = MagicMock()
+        mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
+
+        executor = mock_server.services.get_pipeline_executor.return_value
+        executor.start_detached = AsyncMock(
+            side_effect=PipelineStepRefusal("fleet_unhealthy: daemon health is unstable")
+        )
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "test-pipeline", "project_id": "proj-1", "background": True},
+        )
+        assert response.status_code == 422
+        assert "fleet_unhealthy" in response.json()["detail"]
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -313,6 +313,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                     inputs=request.inputs,
                     project_id=project_id,
                 )
+            except PipelineStepError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
             except Exception as e:
                 logger.exception("Failed to start detached pipeline run: %s", e)
                 raise HTTPException(status_code=500, detail="Internal server error") from e

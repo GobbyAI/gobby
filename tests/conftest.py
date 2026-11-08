@@ -1,15 +1,20 @@
 """Pytest configuration and shared fixtures for Gobby tests."""
 
+import json
 import logging
 import os
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from gobby.fleet_health.ledger import ledger_path
+from gobby.fleet_health.state import fleet_state_path
 
 # Capture the operator location before pytest or individual tests isolate home.
 # Host guards only compare paths here; tests never read or mutate this directory.
@@ -105,6 +110,32 @@ def pytest_configure(config: pytest.Config) -> None:
     config.add_cleanup(home.cleanup)
     config.add_cleanup(patcher.undo)
     _ensure_isolated_bootstrap()
+
+
+@pytest.fixture(autouse=True)
+def healthy_fleet_state() -> None:
+    """Start each test with a healthy fleet and an empty admission ledger.
+
+    The fleet gate reads the Gobby home, which one pytest session shares, so each test
+    writes its own healthy state and clears the ledger. Refusal tests overwrite the state
+    file with the condition they need. The ramp is wide open here because unrelated tests
+    launch many seats in one session; tests/fleet_health exercises the real ramp with
+    explicit values. This is fixture data, not a bypass.
+    """
+    state_path = fleet_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    healthy = {
+        "schema_version": 1,
+        "state": "healthy",
+        "sampled_at_unix": time.time(),
+        "last_non_healthy_at_unix": None,
+        "reasons": [],
+        "ramp": {"max_new_seats": 1000, "ramp_window_seconds": 900},
+        "thresholds_source": "defaults",
+        "watcher_pid": 0,
+    }
+    state_path.write_text(json.dumps(healthy), encoding="utf-8")
+    ledger_path().unlink(missing_ok=True)
 
 
 @pytest.fixture(autouse=True)
