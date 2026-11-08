@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -205,6 +206,23 @@ def git_repo_with_origin(
         repo_path=str(e2e_project_dir),
     )
     wait_for_project_registration(daemon_instance, project_id)
+
+    # Overlay pinning requires an indexed parent on the daemon's machine.
+    # Use the same isolated binary set, home and bootstrap database as the daemon.
+    subprocess.run(
+        [
+            str(Path(daemon_instance.env[NATIVE_BIN_DIR_ENV]) / native_bin_name("gcode")),
+            "--project",
+            str(e2e_project_dir),
+            "index",
+        ],
+        cwd=str(e2e_project_dir),
+        env=daemon_instance.env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
 
     return e2e_project_dir
 
