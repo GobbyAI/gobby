@@ -186,6 +186,18 @@ def issue_agent_api_token(
     )
 
 
+def issue_session_api_token(
+    signing_key: bytes,
+    *,
+    session_id: str,
+    project_id: str,
+    machine_id: str | None = None,
+    ttl_seconds: int = AGENT_TOKEN_MAX_TTL_SECONDS,
+) -> str:
+    """Mint a capability bound to one session (TDD stub: not yet implemented)."""
+    raise NotImplementedError("session-bound tokens are not implemented")
+
+
 def issue_tool_api_token(
     signing_key: bytes,
     *,
