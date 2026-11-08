@@ -48,8 +48,12 @@ test-group = 'ghook-process'
 [[profile.default.overrides]]
 # Lease and lifecycle fixtures serialize on one advisory lock with a bounded
 # wait; queued behind long lifecycle cases, a lease case outwaits that bound.
+# Every worktree's runs share that key on the one test hub, and a hung case holds
+# it until its process dies, so terminate at 180 s: past the 60 s lifecycle key
+# wait plus the slowest case (about 11 s alone).
 filter = 'package(gobby-daemon) & binary(suite) & (test(/^lease::/) | test(/^lifecycle::/))'
 test-group = 'gdaemon-lease'
+slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.default.overrides]]
 # Serial, so no sibling of this binary spawns during a test's spawn window
