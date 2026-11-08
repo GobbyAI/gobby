@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -25,6 +23,8 @@ from gobby.hooks.shell_execution import literal_shell_workdir
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
+from gobby.sessions.background_notices import background_receipt
+from gobby.sessions.owner_process_tree import capture_job_tree
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import capability_menu, route_gobby_request, standalone_menu
 from gobby.skills.parser import ParsedSkill
@@ -80,21 +80,6 @@ _EXPECTED_SKILL_RESOLUTION_ERRORS = (
     PermissionError,
     TimeoutError,
 )
-
-
-_BACKGROUND_OUTPUT_RECEIPT = re.compile(
-    r"Output is being written to: ([^\s\"\\]+?)\.(?=[\s\"\\]|$)"
-)
-
-
-def _background_output_path(data: dict[str, Any]) -> str | None:
-    """Return the output file of a Bash call that the CLI moved to the background."""
-    response = data.get("tool_output", data.get("tool_response", data.get("tool_result")))
-    if response is None:
-        return None
-    text = response if isinstance(response, str) else json.dumps(response, default=str)
-    match = _BACKGROUND_OUTPUT_RECEIPT.search(text)
-    return match.group(1) if match else None
 
 
 def _call_worktree_root(event: HookEvent) -> str | None:
@@ -538,8 +523,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             # A Bash call settles its worktree overlap first: the overlap record decides which
             # paths the literal and claimed-shell recording below may attribute.
+            job_tree = self._receipt_job_tree(event, session_id) if tool_name == "Bash" else None
             if tool_name == "Bash" and self._session_manager is not None:
-                self._record_worktree_shell_writes(event, session_id)
+                self._record_worktree_shell_writes(event, session_id, job_tree=job_tree)
 
             if (
                 not is_failure
@@ -558,7 +544,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
             if tool_name == "Bash" and self._session_manager is not None:
-                self._adopt_shell_writes(event, session_id)
+                self._adopt_shell_writes(event, session_id, job_tree=job_tree)
 
             if tool_name != "Bash" and is_edit:
                 self._release_worktree_edit_calls(event, session_id)
@@ -566,15 +552,19 @@ class ToolEventHandlerMixin(EventHandlersBase):
             db = getattr(self._session_manager, "db", None)
             if db is not None:
                 execution_id = tool_execution_id(event)
-                background_path = _background_output_path(input_data)
-                if tool_name == "Bash" and execution_id and background_path:
+                receipt = background_receipt(input_data)
+                if tool_name == "Bash" and execution_id and receipt is not None:
                     SessionVariableManager(db).defer_git_operation_call(
-                        session_id, execution_id, background_path
+                        session_id,
+                        execution_id,
+                        receipt.output_path,
+                        job_id=receipt.job_id,
+                        job_tree=job_tree,
                     )
                 if (
                     tool_name == "Bash"
                     and execution_id
-                    and background_path is None
+                    and receipt is None
                     and input_data.get("_verification_pending") is not True
                 ):
                     run_coro_blocking(
@@ -630,7 +620,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
         except Exception:
             self.logger.warning("Failed to snapshot claimed task edits", exc_info=True)
 
-    def _adopt_shell_writes(self, event: HookEvent, session_id: str) -> None:
+    def _adopt_shell_writes(
+        self, event: HookEvent, session_id: str, *, job_tree: dict[str, Any] | None = None
+    ) -> None:
         """Let the claimed tasks own the ledger paths this Bash call rewrote."""
         if event.data.get("_verification_pending") is True:
             return
@@ -639,13 +631,35 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if db is None or call_id is None:
             return
         try:
+            receipt = background_receipt(event.data)
             SessionVariableManager(db).adopt_claimed_shell_edits(
                 session_id,
                 call_id,
-                output_path=_background_output_path(event.data),
+                output_path=receipt.output_path if receipt is not None else None,
+                job_id=receipt.job_id if receipt is not None else None,
+                job_tree=job_tree,
             )
         except Exception:
             self.logger.warning("Failed to adopt shell writes to claimed tasks", exc_info=True)
+
+    def _receipt_job_tree(self, event: HookEvent, session_id: str) -> dict[str, Any] | None:
+        """Record the jobs a backgrounded Bash call started, while their processes still run.
+
+        A graceful owner end stops only the jobs recorded here, so a receipt that records none
+        leaves its call foreign.
+        """
+        receipt = background_receipt(event.data)
+        if receipt is None or self._session_manager is None:
+            return None
+        try:
+            session = self._session_manager.get(session_id)
+            tree = capture_job_tree(
+                session.terminal_context if session is not None else None, receipt.output_path
+            )
+        except Exception:
+            self.logger.warning("Failed to record the jobs of a background call", exc_info=True)
+            return None
+        return tree.record() if tree is not None else None
 
     def _begin_worktree_shell_call(
         self, event: HookEvent, session_id: str, project_id: str | None
@@ -684,7 +698,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
         except Exception:
             self.logger.warning("Failed to register worktree shell call", exc_info=True)
 
-    def _record_worktree_shell_writes(self, event: HookEvent, session_id: str) -> None:
+    def _record_worktree_shell_writes(
+        self, event: HookEvent, session_id: str, *, job_tree: dict[str, Any] | None = None
+    ) -> None:
         """Attribute what a settled Bash call changed in its linked worktree to the caller.
 
         A call whose process still runs defers instead: its owner settles it on the next tool
@@ -699,9 +715,15 @@ class ToolEventHandlerMixin(EventHandlersBase):
             root = manager.worktree_shell_call_root(session_id, call_id)
             if root is None:
                 return
-            output_path = _background_output_path(event.data)
-            if output_path is not None or event.data.get("_verification_pending") is True:
-                manager.defer_worktree_shell_call(session_id, call_id, output_path=output_path)
+            receipt = background_receipt(event.data)
+            if receipt is not None or event.data.get("_verification_pending") is True:
+                manager.defer_worktree_shell_call(
+                    session_id,
+                    call_id,
+                    output_path=receipt.output_path if receipt is not None else None,
+                    job_id=receipt.job_id if receipt is not None else None,
+                    job_tree=job_tree,
+                )
                 return
             after = run_coro_blocking(
                 worktree_digests(root), self._event_loop, self.logger, label="worktree_digests"
