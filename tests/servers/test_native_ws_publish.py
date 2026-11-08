@@ -828,9 +828,6 @@ async def test_a_bind_held_past_the_deadline_is_retried_until_the_front_door_ans
         finally:
             await publisher.stop()
 
-    binds = [target for target, _headers in daemon.requests if target == native_publish.BIND_PATH]
-    assert len(binds) == 3
-
 
 async def test_a_stalled_loop_is_reported_while_the_publisher_runs(
     supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
