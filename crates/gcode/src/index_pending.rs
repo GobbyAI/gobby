@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 const BATCH_PREFIX: &str = "batch-";
 const BATCH_SUFFIX: &str = ".json";
@@ -47,11 +47,46 @@ impl PendingBatch {
     }
 }
 
-/// The queue directory for one project, under the gobby home.
+/// The queue directory for one project, under the gobby home. The project id comes from the
+/// checkout's `.gobby/project.json`, which the repository controls, so it must parse as a UUID
+/// before it joins the path; the canonical form is what gets joined.
 pub(crate) fn pending_dir(project_id: &str) -> anyhow::Result<PathBuf> {
+    let project_id = uuid::Uuid::parse_str(project_id)
+        .with_context(|| format!("invalid project id {project_id:?} for the code-index queue"))?;
     Ok(gobby_core::gobby_home()?
         .join("code-index-pending")
-        .join(project_id))
+        .join(project_id.to_string()))
+}
+
+/// Whether a queued path stays inside `project_root`, judged lexically. A relative path must
+/// name only normal components (or `.`). An absolute path must start with the root and name no
+/// parent component. An empty path names nothing and is rejected.
+pub(crate) fn path_stays_within_root(project_root: &Path, path: &Path) -> bool {
+    if path.as_os_str().is_empty() {
+        return false;
+    }
+    if path.is_absolute() {
+        path.starts_with(project_root)
+            && !path
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+    } else {
+        path.components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+    }
+}
+
+/// Whether every explicit path and the whole-tree `path_filter` in `batch` stay inside
+/// `project_root`. A whole-tree marker without a filter covers the root itself.
+pub(crate) fn batch_stays_within_root(project_root: &Path, batch: &Batch) -> bool {
+    match batch {
+        Batch::Paths { paths } => paths
+            .iter()
+            .all(|path| path_stays_within_root(project_root, path)),
+        Batch::WholeTree { path_filter, .. } => path_filter
+            .as_deref()
+            .is_none_or(|path| path_stays_within_root(project_root, path)),
+    }
 }
 
 /// Writes `paths` as a new batch in `dir`. Every call creates its own file, so a second

@@ -66,6 +66,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.108"),
         # gcode: vector prune on sync, missing-vector repair, explicit-file repair scope, pinned-overlay scroll guard, bounded hook lock wait and timed-out lock paths persisted for the next run changed in #25810 under installed 1.9.108.
         ("gcode", "1.9.109"),
+        # gcode: queued explicit-path and whole-tree batches checked against the project root, and the queue dir keyed by a validated project UUID, changed in #25810 under installed 1.9.109.
+        ("gcode", "1.9.110"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
     ],

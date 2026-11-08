@@ -231,11 +231,19 @@ fn drain_queued_paths(
     request: &IndexRequest,
     lock_policy: IndexLockPolicy,
 ) -> anyhow::Result<()> {
-    let batches: Vec<_> =
-        index_pending::take(&index_pending::pending_dir(&target_ctx.project_id)?)?
-            .into_iter()
-            .filter(|batch| !batch.paths().is_empty())
-            .collect();
+    let mut batches = Vec::new();
+    for batch in index_pending::take(&index_pending::pending_dir(&target_ctx.project_id)?)? {
+        if batch.paths().is_empty() {
+            continue;
+        }
+        if !index_pending::batch_stays_within_root(&target_ctx.project_root, &batch.batch) {
+            eprintln!(
+                "warning: skipping a queued index batch whose paths leave the project root; it stays queued on disk"
+            );
+            continue;
+        }
+        batches.push(batch);
+    }
     if batches.is_empty() {
         return Ok(());
     }
@@ -295,6 +303,12 @@ fn drain_queued_whole_tree(
         let index_pending::Batch::WholeTree { path_filter, full } = &batch.batch else {
             continue;
         };
+        if !index_pending::batch_stays_within_root(&target_ctx.project_root, &batch.batch) {
+            eprintln!(
+                "warning: skipping a queued whole-tree index run whose path filter leaves the project root; it stays queued on disk"
+            );
+            continue;
+        }
         let marker_request = IndexRequest {
             project_root: target_ctx.project_root.clone(),
             path_filter: path_filter.clone(),

@@ -104,3 +104,73 @@ fn an_unreadable_batch_stays_on_disk() {
         "an unreadable batch must stay queued for inspection, never be deleted"
     );
 }
+
+#[test]
+fn pending_dir_accepts_a_project_uuid() {
+    let project_id = "9c1f5a2e-3b7d-4e8a-8f10-5d2c6b7a9e41";
+    let dir = pending_dir(project_id).expect("a UUID project id names a queue dir");
+    assert!(
+        dir.ends_with(Path::new("code-index-pending").join(project_id)),
+        "the queue dir must sit under code-index-pending/<project id>, got {}",
+        dir.display()
+    );
+}
+
+#[test]
+fn pending_dir_rejects_ids_that_are_not_uuids() {
+    for project_id in ["", "..", "../../escape", "/etc/gobby-escape", "not-a-uuid"] {
+        assert!(
+            pending_dir(project_id).is_err(),
+            "project id {project_id:?} must not name a queue dir"
+        );
+    }
+}
+
+#[test]
+fn queued_paths_must_stay_within_the_project_root() {
+    let root = Path::new("/work/project");
+    assert!(path_stays_within_root(root, Path::new("src/lib.rs")));
+    assert!(path_stays_within_root(
+        root,
+        Path::new("/work/project/src/lib.rs")
+    ));
+    assert!(!path_stays_within_root(root, Path::new("")));
+    assert!(!path_stays_within_root(root, Path::new("..")));
+    assert!(!path_stays_within_root(root, Path::new("src/../../x")));
+    assert!(!path_stays_within_root(root, Path::new("/work/other/x.rs")));
+    assert!(!path_stays_within_root(
+        root,
+        Path::new("/work/project2/x.rs")
+    ));
+    assert!(!path_stays_within_root(
+        root,
+        Path::new("/work/project/../secret.rs")
+    ));
+}
+
+#[test]
+fn a_batch_with_an_escaping_entry_is_not_contained() {
+    let root = Path::new("/work/project");
+    let whole_tree = |path_filter: Option<PathBuf>| Batch::WholeTree {
+        path_filter,
+        full: true,
+    };
+    assert!(batch_stays_within_root(root, &whole_tree(None)));
+    assert!(batch_stays_within_root(
+        root,
+        &whole_tree(Some(PathBuf::from("src")))
+    ));
+    assert!(!batch_stays_within_root(
+        root,
+        &whole_tree(Some(PathBuf::from("../escape")))
+    ));
+
+    let explicit = |entries: &[&str]| Batch::Paths {
+        paths: entries.iter().copied().map(PathBuf::from).collect(),
+    };
+    assert!(batch_stays_within_root(root, &explicit(&["src/a.rs"])));
+    assert!(!batch_stays_within_root(
+        root,
+        &explicit(&["src/a.rs", "../escape.rs"])
+    ));
+}
