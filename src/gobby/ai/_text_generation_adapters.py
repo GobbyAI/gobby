@@ -16,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby import shutdown_budget
 from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.ai._agy_models import normalize_agy_model_selection, resolve_agy_display
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.ai.text_generation")
 _CLI_PROCESS_CLEANUP_TIMEOUT_SECONDS = 2.0
-_CLI_TEXT_GENERATION_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+_CLI_TEXT_GENERATION_SHUTDOWN_TIMEOUT_SECONDS = shutdown_budget.CLI_CALL_CANCEL_SECONDS
 _active_cli_text_generation_tasks: set[asyncio.Task[Any]] = set()
 
 
