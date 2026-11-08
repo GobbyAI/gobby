@@ -24,10 +24,11 @@ pytestmark = pytest.mark.unit
 PYTEST = "uv run --no-sync pytest tests/hooks/test_codex_session_cell_retirement_cwd_proof.py -q"
 RUFF = "uv run --no-sync ruff check src/"
 SESSION_ID = 801
-STILL_RUNNING = json.dumps({"session_id": SESSION_ID, "output": "still running"})
 EXITED = json.dumps({"exit_code": 0, "output": "passed"})
 # The pending-cell cap in ExecutionChainCorrelator. Past it, overflow poisons every later proof.
 POLLS_PAST_CAP = 70
+# The pending-session cap: the session after the last one evicts the oldest open session.
+SESSION_CAP = 64
 
 
 def _record(payload: dict[str, Any]) -> dict[str, Any]:
@@ -97,25 +98,43 @@ def _computed_launch(command: str, workdir: Path) -> str:
     )
 
 
-def _poll() -> str:
+def _still_running(session_id: int) -> str:
+    return json.dumps({"session_id": session_id, "output": "still running"})
+
+
+def _poll(session_id: int = SESSION_ID) -> str:
     return (
-        f"const r = await tools.write_stdin({{session_id:{SESSION_ID},yield_time_ms:1000}}); "
+        f"const r = await tools.write_stdin({{session_id:{session_id},yield_time_ms:1000}}); "
         "text(r);"
     )
 
 
-def _open_session(launch: str, polls: int, *, waited: bool) -> list[dict[str, Any]]:
-    """One tty session, started by a yielding cell and driven by ``polls`` poll cells, still running."""
-    records = [_cell("launch", launch), _cell_output("launch", _yielded("cell-0"))]
-    records += _wait_result("wait-0", "cell-0", STILL_RUNNING)
+def _open_session(
+    launch: str,
+    polls: int,
+    *,
+    waited: bool,
+    session_id: int = SESSION_ID,
+    tag: str = "",
+) -> list[dict[str, Any]]:
+    """One tty session, started by a yielding cell and driven by ``polls`` poll cells, still running.
+
+    ``tag`` prefixes every call and cell id so several sessions can share one rollout.
+    """
+    still_running = _still_running(session_id)
+    records = [
+        _cell(f"{tag}launch", launch),
+        _cell_output(f"{tag}launch", _yielded(f"{tag}cell-0")),
+    ]
+    records += _wait_result(f"{tag}wait-0", f"{tag}cell-0", still_running)
     for index in range(polls):
-        cell_id = f"cell-{index + 1}"
+        cell_id = f"{tag}cell-{index + 1}"
         records += [
-            _cell(f"poll-{index}", _poll()),
-            _cell_output(f"poll-{index}", _yielded(cell_id)),
+            _cell(f"{tag}poll-{index}", _poll(session_id)),
+            _cell_output(f"{tag}poll-{index}", _yielded(cell_id)),
         ]
         if waited:
-            records += _wait_result(f"wait-{index + 1}", cell_id, STILL_RUNNING)
+            records += _wait_result(f"{tag}wait-{index + 1}", cell_id, still_running)
     return records
 
 
@@ -204,3 +223,75 @@ def test_open_unattributed_session_still_blocks_later_literal_cwd_proof(
     _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
     assert response.decision == "block"
     assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_evicted_unattributed_session_still_blocks_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """Evicting the oldest session must not drop a live unattributed session from the proof."""
+    workdir = tmp_path / "task"
+    records = _open_session(_computed_launch(PYTEST, workdir), 0, waited=True)
+    for number in range(SESSION_CAP):
+        records += _open_session(
+            _launch(PYTEST, workdir), 0, waited=True, session_id=900 + number, tag=f"s{number}-"
+        )
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_colliding_session_id_does_not_drop_a_live_unattributed_session(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A second session on the same id must not drop the live unattributed session."""
+    workdir = tmp_path / "task"
+    records = _open_session(_computed_launch(PYTEST, workdir), 0, waited=True)
+    records += _open_session(_launch(PYTEST, workdir), 0, waited=True, tag="s0-")
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_session_already_ambiguous_does_not_admit_a_later_unattributed_launch(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A launch reporting an already ambiguous session id is dropped; the proof must stay closed."""
+    workdir = tmp_path / "task"
+    records = _open_session(_computed_launch(PYTEST, workdir), 0, waited=True)
+    records += _open_session(_computed_launch(PYTEST, workdir), 0, waited=True, tag="s0-")
+    records += _open_session(_computed_launch(PYTEST, workdir), 0, waited=True, tag="s1-")
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_attributed_session_collision_blocks_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """Two attributed sessions on one id leave that id ambiguous; the proof gate must read it."""
+    workdir = tmp_path / "task"
+    records = _open_session(_launch(PYTEST, workdir), 0, waited=True)
+    records += _open_session(_launch(PYTEST, workdir), 0, waited=True, tag="s0-")
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_attributed_session_eviction_keeps_later_literal_cwd_proof_open(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """An evicted attributed session names its own command, so it must not block the proof."""
+    workdir = tmp_path / "task"
+    records: list[dict[str, Any]] = []
+    for number in range(SESSION_CAP + 1):
+        records += _open_session(
+            _launch(PYTEST, workdir), 0, waited=True, session_id=900 + number, tag=f"s{number}-"
+        )
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    event, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
