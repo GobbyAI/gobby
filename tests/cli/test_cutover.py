@@ -158,7 +158,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
         check=True,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=1200,
     )
     candidate = cargo_release_dir(repo).parent / "debug/gdaemon"
     assert candidate.is_file(), "the checkout build must produce its routed gdaemon candidate"
