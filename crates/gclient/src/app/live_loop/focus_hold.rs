@@ -34,10 +34,9 @@ pub(super) struct FocusHold {
     reported: Option<(PaneId, String)>,
     /// The report `step` returned last, so a refused send can be undone.
     in_flight: Option<FocusReport>,
-    /// An unfocus the daemon refused. It is sent again on the next tick only
-    /// while the hold is still idle and its pane is still the focused held key.
-    /// A focus move, a replaced attachment or returning activity makes it moot,
-    /// so it is dropped and the next report is the normal one.
+    /// An unfocus the daemon refused. Retry while its pane is departed, or while
+    /// the same held attachment remains idle. Refocusing the pane or replacing
+    /// its attachment makes the old report moot.
     owed_unfocus: Option<(PaneId, String)>,
     /// The pane focus just left. Its attachment keeps the daemon's focus flag until
     /// an unfocused report arrives, and nothing else clears it, so the report goes
@@ -99,7 +98,10 @@ impl FocusHold {
             })
         } else {
             match self.owed_unfocus.take() {
-                Some(owed) if idle && key.as_ref() == Some(&owed) => {
+                Some(owed)
+                    if (idle && key.as_ref() == Some(&owed))
+                        || key.as_ref().is_none_or(|current| current.0 != owed.0) =>
+                {
                     let (pane, attachment_id) = owed;
                     Some(FocusReport {
                         pane,
@@ -164,9 +166,8 @@ impl FocusHold {
         let idle = self.is_idle(now, hold_seconds);
         let report = self.step(key, idle)?;
         let pane = workspace.panes.get(&report.pane)?;
-        // An unfocused report for a pane that has since closed would name a
-        // flag the daemon already dropped.
-        if !report.focused && !pane.is_live() {
+        // A closed or replaced attachment no longer owns the old focus flag.
+        if !report.focused && (!pane.is_live() || pane.attachment_id() != report.attachment_id) {
             return None;
         }
         Some(json!({
@@ -331,6 +332,72 @@ mod tests {
             }),
             "a refused unfocus for a replaced attachment does not block the new focus"
         );
+    }
+
+    #[test]
+    fn a_departed_panes_timed_out_unfocus_is_retried_while_another_pane_is_current() {
+        let mut hold = FocusHold::new(Instant::now());
+        let first = (PaneId(1), "attach-1".to_string());
+        let second = (PaneId(2), "attach-2".to_string());
+        hold.step(Some(first.clone()), false);
+        hold.step(Some(second.clone()), false);
+        let unfocus = FocusReport {
+            pane: first.0,
+            attachment_id: first.1,
+            focused: false,
+        };
+        assert_eq!(
+            hold.step(Some(second.clone()), false),
+            Some(unfocus.clone())
+        );
+        hold.unsent(); // The departed pane's notification timed out.
+        assert_eq!(
+            hold.step(Some(second.clone()), false),
+            Some(unfocus),
+            "A's unfocus is still owed while B remains current"
+        );
+        assert_eq!(
+            hold.step(Some(second), false),
+            None,
+            "a delivered retry is not sent again"
+        );
+    }
+
+    #[test]
+    fn refocusing_a_departed_pane_drops_its_timed_out_unfocus() {
+        let mut hold = FocusHold::new(Instant::now());
+        let first = (PaneId(1), "attach-1".to_string());
+        let second = (PaneId(2), "attach-2".to_string());
+        hold.step(Some(first.clone()), false);
+        hold.step(Some(second.clone()), false);
+        assert_eq!(
+            hold.step(Some(second.clone()), false),
+            Some(FocusReport {
+                pane: first.0,
+                attachment_id: first.1.clone(),
+                focused: false,
+            })
+        );
+        hold.unsent();
+        assert_eq!(
+            hold.step(Some(first.clone()), false),
+            Some(FocusReport {
+                pane: first.0,
+                attachment_id: first.1.clone(),
+                focused: true,
+            }),
+            "refocusing A supersedes its stale owed unfocus"
+        );
+        assert_eq!(
+            hold.step(Some(first.clone()), false),
+            Some(FocusReport {
+                pane: second.0,
+                attachment_id: second.1,
+                focused: false,
+            }),
+            "the move back still unfocuses B"
+        );
+        assert_eq!(hold.step(Some(first), false), None);
     }
 
     #[test]
