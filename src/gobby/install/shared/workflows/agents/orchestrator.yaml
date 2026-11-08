@@ -8,7 +8,7 @@ description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and directs restarts and cutovers through the
   Release Manager.
-version: "7.2.1"
+version: "8.0.0"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]
@@ -120,6 +120,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-implementer-review"
       - "tag:task-closure-general"
       - "tag:task-closure-coding"
       - "tag:task-security"

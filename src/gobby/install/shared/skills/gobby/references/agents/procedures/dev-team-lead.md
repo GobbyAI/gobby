@@ -14,9 +14,9 @@ completed review to validate. Only the claim holder completes a stage. Messages
 coordinate candidates and findings; they do not move claims. Never attest for
 another seat. Corrections supersede records without erasing history.
 
-Developers write test-before, implementation, test-after, self-review and
-validation. Reviewers write independent-review and validation. You write
-validation and closing, never implementation. Each kind declares allowed_results
+Developers write test-before, implementation and test-after. Reviewers write
+independent-review and validation. You write validation and closing, never
+implementation. Each kind declares allowed_results
 and guidance. Use approved or rejected. Validation evidence carries stage and a
 per-criterion list [{criterion, met, how}] against task.validation_criteria.
 
@@ -111,6 +111,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 5.2.0_
+_Version: 6.0.0_
 
 _Last verified: 2026-11-06_
