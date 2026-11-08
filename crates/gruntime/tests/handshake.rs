@@ -2,18 +2,16 @@
 //! interactive grant, reuses the principal it already issued, and rejects with the
 //! Python codes. Each case runs against an isolated schema rendered from the baseline.
 
-mod common;
-
+use super::common::{
+    CONFIG_REVISION, EPOCH, HANDSHAKE_PATH, SECRET, call, claims, daemon_home, database_case,
+    family, handshake_request, json_body, pool, unix_now, vector_case,
+};
 use anyhow::{Result, anyhow, bail, ensure};
 use axum::body::Body;
 use axum::http::header::{CACHE_CONTROL, COOKIE};
 use axum::http::{Method, Request, Response, StatusCode};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use common::{
-    CONFIG_REVISION, EPOCH, HANDSHAKE_PATH, SECRET, call, claims, daemon_home, database_case,
-    family, handshake_request, json_body, pool, unix_now, vector_case,
-};
 use gobby_core::grant::presentation::{PresentationContext, verify_static};
 use gobby_core::grant::{
     EXPECTED_API_CONTRACT, GRANT_VERSION, GrantBundle, GrantCapabilities, PostgresCapability,

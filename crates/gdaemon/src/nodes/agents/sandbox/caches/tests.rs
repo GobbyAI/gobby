@@ -134,7 +134,6 @@ fn inputs_with_build_root(gobby_home: &Path, build_root: &Path, workspace: &Path
         build_root: build_root.to_owned(),
         env: BTreeMap::new(),
         provider_executable: None,
-        sccache_executable: None,
         allow_run_unix_sockets: false,
         daemon_port: 1,
         websocket_port: 2,
@@ -200,14 +199,13 @@ fn a_relative_build_root_is_refused_before_any_grant_is_rendered() -> Result<()>
     Ok(())
 }
 
-/// A native darwin srt spawn: the run tmp socket grant, and an sccache wrapper on PATH.
+/// A native darwin srt spawn with the run tmp socket grant.
 fn native_inputs(gobby_home: &Path, workspace: &Path) -> PolicyInputs {
     let mut inputs =
         inputs_with_build_root(gobby_home, Path::new("/gobby-test/GobbyBuild"), workspace);
     inputs.run_id = "r1".into();
     inputs.platform = "darwin".into();
     inputs.allow_run_unix_sockets = true;
-    inputs.sccache_executable = Some(PathBuf::from("/opt/homebrew/bin/sccache"));
     inputs
         .env
         .insert(SESSION_ENV.to_string(), "session-one".to_string());
@@ -231,32 +229,30 @@ fn synthetic_layout(gobby_home: &Path) -> RunLayout {
     }
 }
 
+/// Agent Cargo builds are plain incremental builds. The launch environment sets only the
+/// job limit: a set `CARGO_INCREMENTAL`, blank included, turns incremental off, and the
+/// launch removes the wrapper keys at exec instead of blanking them.
+fn plain_cargo_env() -> BTreeMap<String, String> {
+    BTreeMap::from([("CARGO_BUILD_JOBS".to_string(), "4".to_string())])
+}
+
 #[test]
-fn a_native_launch_sets_sccache_and_incremental_off_through_the_run_tmp_socket() {
+fn a_native_launch_sets_no_cargo_wrapper_or_incremental_key_and_keeps_the_socket_grant() {
     let gobby_home = Path::new("/gobby-test");
     let inputs = native_inputs(gobby_home, Path::new("/gobby-test/checkout"));
 
     let (socket_root, env) = native_cargo_grants(&inputs, &synthetic_layout(gobby_home));
 
+    // The run tmp socket grant predates sccache (#21752) and stays.
     assert_eq!(
         socket_root.as_deref(),
         Some("/gobby-test/run/sandbox/r1/tmp")
     );
-    assert_eq!(env["RUSTC_WRAPPER"], "/opt/homebrew/bin/sccache");
-    assert_eq!(env["CARGO_INCREMENTAL"], "0");
-    assert_eq!(
-        env["SCCACHE_DIR"],
-        "/gobby-test/cache/sandbox/cargo-home/sccache"
-    );
-    assert_eq!(
-        env["SCCACHE_SERVER_UDS"],
-        "/gobby-test/run/sandbox/r1/tmp/sccache.sock"
-    );
-    assert_eq!(env["CARGO_BUILD_JOBS"], "4");
+    assert_eq!(env, plain_cargo_env());
 }
 
 #[test]
-fn a_native_launch_without_the_socket_grant_builds_uncached() {
+fn a_native_launch_without_the_socket_grant_gets_no_socket_root() {
     let gobby_home = Path::new("/gobby-test");
     let mut inputs = native_inputs(gobby_home, Path::new("/gobby-test/checkout"));
     inputs.allow_run_unix_sockets = false;
@@ -264,52 +260,53 @@ fn a_native_launch_without_the_socket_grant_builds_uncached() {
     let (socket_root, env) = native_cargo_grants(&inputs, &synthetic_layout(gobby_home));
 
     assert_eq!(socket_root, None);
-    for key in ["RUSTC_WRAPPER", "CARGO_INCREMENTAL", "SCCACHE_SERVER_UDS"] {
-        assert_eq!(env[key], "", "{key}");
-    }
+    assert_eq!(env, plain_cargo_env());
 }
 
 #[test]
-fn a_native_spawn_without_the_socket_grant_compiles_with_sccache_blank() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let gobby_home = dir.path().join("gobby");
-    let workspace = dir.path().join("checkout");
-    let build_root = dir.path().join("GobbyBuild");
-    fs::create_dir_all(&gobby_home)?;
-    fs::create_dir_all(&workspace)?;
-    fs::create_dir_all(&build_root)?;
-    let mut inputs = native_inputs(&gobby_home, &workspace);
-    inputs.build_root = build_root.canonicalize()?;
-    inputs.allow_run_unix_sockets = false;
-    let run_tmp = text(&resolve_nonstrict(
-        &gobby_home
-            .join("run")
-            .join("sandbox")
-            .join("r1")
-            .join("tmp"),
-    ));
+fn a_compiled_native_policy_builds_plain_incremental() -> Result<()> {
+    for socket_granted in [true, false] {
+        let dir = tempfile::tempdir()?;
+        let gobby_home = dir.path().join("gobby");
+        let workspace = dir.path().join("checkout");
+        let build_root = dir.path().join("GobbyBuild");
+        fs::create_dir_all(&gobby_home)?;
+        fs::create_dir_all(&workspace)?;
+        fs::create_dir_all(&build_root)?;
+        let mut inputs = native_inputs(&gobby_home, &workspace);
+        inputs.build_root = build_root.canonicalize()?;
+        inputs.allow_run_unix_sockets = socket_granted;
+        let run_tmp = text(&resolve_nonstrict(
+            &gobby_home
+                .join("run")
+                .join("sandbox")
+                .join("r1")
+                .join("tmp"),
+        ));
 
-    let policy = compile_policy(&inputs, &[], &[])?;
+        let policy = compile_policy(&inputs, &[], &[])?;
 
-    for key in ["RUSTC_WRAPPER", "CARGO_INCREMENTAL", "SCCACHE_SERVER_UDS"] {
-        assert_eq!(policy.env.get(key).map(String::as_str), Some(""), "{key}");
+        for key in [
+            "CARGO_INCREMENTAL",
+            "RUSTC_WRAPPER",
+            "SCCACHE_DIR",
+            "SCCACHE_SERVER_UDS",
+        ] {
+            assert!(
+                !policy.env.contains_key(key),
+                "{key} (socket {socket_granted})"
+            );
+        }
+        assert_eq!(
+            policy.env.get("CARGO_BUILD_JOBS").map(String::as_str),
+            Some("4")
+        );
+        assert_eq!(
+            policy.sandbox.allow_unix_sockets.contains(&run_tmp),
+            socket_granted
+        );
     }
-    assert!(!policy.sandbox.allow_unix_sockets.contains(&run_tmp));
     Ok(())
-}
-
-#[test]
-fn an_overlong_socket_path_leaves_sccache_unwired() {
-    let socket = PathBuf::from(format!("/{}", "s".repeat(120))).join("sccache.sock");
-    let values = cargo_environment(
-        Path::new("/cache/sccache"),
-        Some(Path::new("/bin/sccache")),
-        Some(socket.as_path()),
-    );
-
-    assert_eq!(values["RUSTC_WRAPPER"], "");
-    assert_eq!(values["CARGO_INCREMENTAL"], "");
-    assert_eq!(values["CARGO_BUILD_JOBS"], "4");
 }
 
 #[test]

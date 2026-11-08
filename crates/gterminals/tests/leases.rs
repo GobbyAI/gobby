@@ -1,10 +1,8 @@
-mod common;
-
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use common::{Hub, terminal};
+use super::common::{Hub, terminal};
 use gobby_core::postgres_pool::Pool;
 use gobby_terminals::leases::{
     Attachment, Backend, Delivery, Error, GrantIdentity, HANDOFF_RECORD_DEADLINE, HandoffStore,

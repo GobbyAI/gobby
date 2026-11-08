@@ -103,22 +103,22 @@ uv run mypy src/
 
 ## Building Gobby
 
-Agent Cargo builds share one build root and one sccache. A workspace crate that has
-not changed compiles once and is reused by later builds that use the same target
-directory.
+Agent Cargo builds share one build root. A workspace crate that has not changed compiles
+once and is reused by later builds that use the same target directory.
 
-### sccache and incremental builds
+### Plain incremental builds
 
-When `sccache` is on `PATH` (`brew install sccache`) and its server socket path fits the
-103-byte Unix socket limit, agent launches set `RUSTC_WRAPPER=sccache` and
-`CARGO_INCREMENTAL=0`. sccache cannot cache incremental
-output, so a wrapped build turns incremental compilation off. Without sccache, agent
-launches set `CARGO_INCREMENTAL` blank, which also turns it off. An unset variable
-keeps Cargo's default, incremental on, so an operator shell that sets nothing keeps it.
+Agent Cargo builds are plain incremental builds with no compiler wrapper. Each agent
+launch sets `CARGO_BUILD_JOBS=4` and removes `CARGO_INCREMENTAL`, `RUSTC_WRAPPER`,
+`SCCACHE_DIR` and `SCCACHE_SERVER_UDS` from the provider's environment, so Cargo's
+default, incremental on, applies. Removing them matters: Cargo reads any set
+`CARGO_INCREMENTAL`, blank included, as incremental off.
 
-sccache keys each Rust compile on its source and target folder paths, so Rust hits come
-only from rebuilds in the same checkout and target folder. A new checkout or a new target
-folder compiles its Rust crates again. C and assembler compiles still hit across folders.
+Agent builds do not use sccache. Measured on this repository, cross-checkout sccache hits
+were 0 of 416 Rust compiles, and 0 of 27 with `SCCACHE_BASEDIRS` on sccache 0.19.0:
+sccache keys each Rust compile on its target folder path, and Cargo hashes path packages
+by their workspace path. sccache also needs `CARGO_INCREMENTAL=0`, and with it an edit
+loop took 480 s against 67 s for a plain incremental build.
 
 ### Debug info
 
@@ -139,6 +139,11 @@ gclient config set agent_build.build_root /Volumes/GobbyBuild
 The key is restart-required. The daemon reads it at startup, and an invalid value refuses
 the next start.
 
+A dedicated volume is not known to help. One ordered pair of `cargo build -p gobby-code`
+runs took 1432 s with the target on a dedicated APFS volume and 388 s on the boot volume,
+with similar file-watcher CPU per second. The volume run had higher host load, and the
+runs were 15 minutes apart, so the pair shows no benefit and no causal slowdown either.
+
 `gobby build-sweep` lists build folders that no registered checkout, worktree or clone
 owns. For live trees, each debug/release profile has an 8 GiB budget for hashed test
 executables: above that budget, the oldest test executables are trimmed until it is met.
@@ -152,7 +157,9 @@ reports an empty legacy `cache/cargo-target` without removing it.
 
 Each Rust crate builds one integration test program, `suite`, from its `tests/` files.
 Cargo test auto-discovery is off. To add an integration test file, add a
-`#[path = "<name>.rs"] mod <name>;` entry to that crate's `tests/suite.rs`. Filter by
+`#[path = "<name>.rs"] mod <name>;` entry to that crate's `tests/suite.rs`. Shared helpers
+in `tests/common/mod.rs` are declared once in `suite.rs`; test files reach them through
+`super::common`, because a second `mod common;` compiles a second copy. Filter by
 the binary name, for example
 `cargo nextest run -p gobby-terminal --test suite -E 'binary(suite) & test(/^build_env::/)'`.
 The `schema_contract`, `catalog_manifest_freshness` and `projection_stale` programs stay

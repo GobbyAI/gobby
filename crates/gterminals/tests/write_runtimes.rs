@@ -1,6 +1,6 @@
 //! The Native write runtime over its own authenticated host connection.
 
-mod common;
+use super::common;
 
 use std::future::Future;
 use std::path::PathBuf;

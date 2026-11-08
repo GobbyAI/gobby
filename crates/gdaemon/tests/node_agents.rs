@@ -1489,9 +1489,8 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         build_root: tree.path("gobby_home").join("cache"),
         env: serde_json::from_value(filled["env"].clone())?,
         provider_executable: Some(PathBuf::from(srt_text(&filled, "provider_executable")?)),
-        // The corpus oracle runs without the sccache wrapper and the socket grant, as the
-        // Python oracle does when it passes no socket.
-        sccache_executable: None,
+        // The corpus oracle runs without the socket grant, as the Python oracle does when it
+        // passes no socket.
         allow_run_unix_sockets: false,
         daemon_port: u16::try_from(filled["daemon_port"].as_u64().context("daemon_port")?)?,
         websocket_port: u16::try_from(

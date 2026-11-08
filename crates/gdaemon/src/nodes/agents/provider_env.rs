@@ -5,8 +5,8 @@ use crate::node_commands::SpawnPayload;
 use anyhow::Result;
 use std::{collections::BTreeMap, path::Path};
 
-/// What the native host spawns with: the argv prefix that unsets denied ambient keys, and
-/// the environment.
+/// What the native host spawns with: the argv prefix that unsets denied ambient keys and
+/// the Cargo wrapper and incremental keys, and the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderEnv {
     pub argv_prefix: Vec<String>,
@@ -83,23 +83,19 @@ pub fn build_env(payload: &SpawnPayload, inputs: &EnvInputs<'_>) -> Result<Provi
     // The sandbox run environment is complete, so its values win over the layers above.
     env.extend(inputs.sandbox_launch.env.clone());
     apply_ambient(&mut env, cli, inputs.ambient);
-    let denied = denied_ambient_keys(cli);
+    let denied = denied_ambient_keys(cli)
+        .iter()
+        .chain(REMOVED_CARGO_ENV_KEYS)
+        .copied();
+    let mut argv_prefix = vec!["/usr/bin/env".to_string()];
     for key in denied {
-        env.remove(*key);
+        env.remove(key);
+        argv_prefix.extend(["-u".to_string(), key.to_string()]);
     }
+    argv_prefix.push("--".to_string());
     for key in ["VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT"] {
         env.insert(key.to_string(), String::new());
     }
-    let argv_prefix = if denied.is_empty() {
-        Vec::new()
-    } else {
-        let mut prefix = vec!["/usr/bin/env".to_string()];
-        for key in denied {
-            prefix.extend(["-u".to_string(), (*key).to_string()]);
-        }
-        prefix.push("--".to_string());
-        prefix
-    };
     Ok(ProviderEnv { argv_prefix, env })
 }
 
@@ -281,6 +277,17 @@ fn cli_allowlist(cli: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
+
+/// Cargo keys every launch removes at exec, as Python's `REMOVED_CARGO_ENV_KEYS`. Agent
+/// builds are plain incremental builds with no compiler wrapper. Cargo reads any set
+/// `CARGO_INCREMENTAL`, blank included, as incremental off, and the native host hands its
+/// child the daemon environment, so a blank override is not enough.
+const REMOVED_CARGO_ENV_KEYS: &[&str] = &[
+    "CARGO_INCREMENTAL",
+    "RUSTC_WRAPPER",
+    "SCCACHE_DIR",
+    "SCCACHE_SERVER_UDS",
+];
 
 /// Ambient keys a provider CLI must not inherit, sorted as Python's `denied_ambient_keys`.
 fn denied_ambient_keys(cli: &str) -> &'static [&'static str] {

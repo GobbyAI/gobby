@@ -2,7 +2,18 @@
   "cases": [
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "claude",
           "--session-id",
@@ -157,7 +168,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "claude",
           "--resume",
@@ -290,7 +312,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "codex",
           "--model",
@@ -487,7 +520,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "codex",
           "resume",
@@ -666,7 +710,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "codex",
           "--oss",
@@ -852,7 +907,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "grok",
           "--always-approve",
@@ -976,7 +1042,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "grok",
           "--always-approve",
@@ -1092,7 +1169,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "grok",
           "--always-approve",
@@ -1205,7 +1293,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "exec",
@@ -1329,7 +1428,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "exec",
@@ -1442,7 +1552,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "--model",
@@ -1554,7 +1675,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "--resume",
@@ -1676,6 +1808,14 @@
           "GOOGLE_API_KEY",
           "-u",
           "GOOGLE_APPLICATION_CREDENTIALS",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
           "--"
         ],
         "command": [
@@ -1806,6 +1946,14 @@
           "GOOGLE_API_KEY",
           "-u",
           "GOOGLE_APPLICATION_CREDENTIALS",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
           "--"
         ],
         "command": [

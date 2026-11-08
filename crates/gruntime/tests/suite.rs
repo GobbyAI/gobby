@@ -4,6 +4,10 @@
 //! single integration test binary. A module that needs a feature carries its `cfg`
 //! here, where its former `required-features` gated a separate binary.
 
+// Shared helpers load once here; every test module reaches them through `super`.
+#[path = "common/mod.rs"]
+mod common;
+
 #[path = "capabilities.rs"]
 mod capabilities;
 

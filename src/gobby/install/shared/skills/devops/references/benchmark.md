@@ -31,7 +31,7 @@ hyperfine --warmup 1 --runs 3 --prepare 'rm -rf <scratch-root>' \
   'CARGO_TARGET_DIR=<scratch-root> <variant B command>'
 ```
 
-Also capture, per variant: wall time, `sccache --show-stats` hits, build-folder size,
+Also capture, per variant: wall time, build-folder size,
 executable count in `deps/`, and peak CPU of the security services and the file
 watcher (sampled with `ps` every few seconds into your workspace).
 
@@ -63,5 +63,5 @@ measure and report.
 - Store each run's results in your workspace with the date and command, and add the
   baseline to the host profile.
 
-_Version: 1.0.0_
-_Last verified: 2026-11-06_
+_Version: 1.0.1_
+_Last verified: 2026-11-07_

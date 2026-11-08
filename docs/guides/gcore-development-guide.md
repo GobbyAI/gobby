@@ -2,7 +2,7 @@
 
 Technical internals for developers and agents working in the `gobby-core` crate (`crates/gcore/`).
 
-For the build cache, build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
+For incremental builds, the build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
 
 ## What gobby-core Is
 

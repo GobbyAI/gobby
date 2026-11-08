@@ -8,7 +8,7 @@ workspace TUI. `gterm` is the supervised native PTY host. They are two
 binaries on purpose: the Ghostty VT engine sits behind `gobby-terminal`'s
 `vt-engine` feature and must not ship inside every client install.
 
-For the build cache, build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
+For incremental builds, the build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
 
 ## Build
 

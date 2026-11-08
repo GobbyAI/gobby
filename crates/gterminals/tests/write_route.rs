@@ -3,8 +3,6 @@
 //! Every test drives `Route::handle` with the JSON envelope the HTTP route
 //! carries, so the wire format and the typed replies are pinned together.
 
-mod common;
-
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -21,7 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use common::{Hub, terminal};
+use super::common::{Hub, terminal};
 
 type Scripted = Result<Delivery, WriteFailure>;
 
