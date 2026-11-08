@@ -610,10 +610,18 @@ class GcodeGateway(GcodeReconcileMixin):
             env=env,
         )
 
-    async def vector_rebuild(self, project_root: Path) -> dict[str, Any]:
+    async def vector_rebuild(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        budget = self._rebuild_timeout_seconds if timeout is None else timeout
         return await self._run_json(
             ["vector", "rebuild", "--project", str(project_root)],
-            timeout=self._rebuild_timeout_seconds,
+            timeout=budget,
+            env=env,
         )
 
     async def prune(self, project_root: Path) -> dict[str, Any]:

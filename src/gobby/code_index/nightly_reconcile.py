@@ -46,7 +46,13 @@ class ReconcileGateway(Protocol):
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult: ...
 
-    async def vector_rebuild(self, project_root: Path) -> dict[str, Any]: ...
+    async def vector_rebuild(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -106,7 +112,9 @@ async def reconcile_project(
                     gateway,
                     root,
                     last,
-                    receipt_dir / f"{run_id}-{project_id}.json",
+                    # One receipt per attempt: gcode refuses a receipt written for an earlier
+                    # inventory digest, and a retry re-observes the inventory.
+                    receipt_dir / f"{run_id}-{project_id}-attempt-{attempts}.json",
                     timeout=timeout,
                     env=env,
                 )
@@ -151,7 +159,7 @@ async def _observe(
         _check_result(await gateway.maintenance_index(root, timeout=timeout, env=env), "index")
         observed = await _dry_run(gateway, root, timeout=timeout, env=env)
     if observed.points_scanned == 0:
-        _check_rebuild(await gateway.vector_rebuild(root))
+        _check_rebuild(await gateway.vector_rebuild(root, timeout=timeout, env=env))
         observed = await _dry_run(gateway, root, timeout=timeout, env=env)
     if observed.pg_symbols == 0 or observed.points_scanned == 0:
         raise _AttemptFailedError("input still empty after the repair; not applying")
@@ -239,13 +247,22 @@ def _observation(payload: Mapping[str, Any]) -> _Observation:
 
 
 def _class_counts(entries: object) -> dict[str, Any]:
-    """Collapse each class's ``{"count": n, "ids": [...]}`` entry to its count."""
+    """Keep each class's figures and drop its id lists (reconcile.rs json_report).
+
+    An orphan class is ``{"count", "ids"}`` and collapses to its count. A missing class is
+    ``{"versions", "symbols", "version_ids"}`` and keeps its versions and symbols.
+    """
     if not isinstance(entries, dict):
         return {}
-    return {
-        name: entry.get("count") if isinstance(entry, dict) else entry
-        for name, entry in entries.items()
-    }
+    return {name: _class_figures(entry) for name, entry in entries.items()}
+
+
+def _class_figures(entry: object) -> Any:
+    if not isinstance(entry, dict):
+        return entry
+    if "count" in entry:
+        return entry["count"]
+    return {key: value for key, value in entry.items() if not isinstance(value, list)}
 
 
 def _receipt(
