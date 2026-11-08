@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import hashlib
 import inspect
 import logging
 import re
 import time
-from collections.abc import Sequence
-from typing import Any, NoReturn
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, NoReturn, cast
 
 import redis.exceptions
+from redis.asyncio.connection import AbstractConnection, Connection, ConnectionPool
 
 from gobby.memory import stage_timing
 
@@ -20,6 +24,55 @@ _CONSTRAINT_POLL_INTERVAL_SECONDS = 0.25
 # An embedding switch stages target-model entity vectors here until its flip.
 STAGED_VECTOR_PROPERTY = "embedding_next"
 _CONSTRAINT_READY_TIMEOUT_SECONDS = 30.0
+
+
+@dataclass
+class _QueryTrace:
+    opened_connections: int = 0
+
+
+_query_trace: contextvars.ContextVar[_QueryTrace | None] = contextvars.ContextVar(
+    "falkor_query_trace", default=None
+)
+
+
+class _TimedConnection(Connection):
+    """Attribute transport waits without changing Redis retry or auth behavior."""
+
+    async def _connect(self) -> None:
+        with stage_timing.timed("falkor_connect"):
+            connect = cast(Callable[[], Awaitable[None]], super()._connect)
+            await connect()
+            stage_timing.record("falkor_connection_opened", 0.0)
+            if (trace := _query_trace.get()) is not None:
+                trace.opened_connections += 1
+
+    async def on_connect_check_health(self, check_health: bool = True) -> None:
+        with stage_timing.timed("falkor_auth"):
+            await super().on_connect_check_health(check_health=check_health)
+
+    async def read_response(self, *args: Any, **kwargs: Any) -> Any:
+        with stage_timing.timed("falkor_response"):
+            try:
+                return await super().read_response(*args, **kwargs)
+            except asyncio.CancelledError:
+                stage_timing.record("falkor_response_cancelled", 0.0)
+                raise
+
+    async def send_packed_command(self, *args: Any, **kwargs: Any) -> None:
+        with stage_timing.timed("falkor_send"):
+            await super().send_packed_command(*args, **kwargs)
+
+
+class _TimedConnectionPool(ConnectionPool):
+    async def get_connection(self, *args: Any, **kwargs: Any) -> Any:
+        with stage_timing.timed("falkor_pool_acquire"):
+            acquire = cast(Callable[..., Awaitable[AbstractConnection]], super().get_connection)
+            return await acquire(*args, **kwargs)
+
+    async def ensure_connection(self, connection: AbstractConnection) -> None:
+        with stage_timing.timed("falkor_connection_ready"):
+            await super().ensure_connection(connection)
 
 
 class FalkorConnectionError(Exception):
@@ -157,11 +210,20 @@ class FalkorClient:
         self._graph_name = graph_name
         self._timeout = timeout
         self._query_timeout_ms = _query_timeout_ms(timeout)
+        self._pool = _TimedConnectionPool(
+            connection_class=_TimedConnection,
+            host=host,
+            port=port,
+            password=password,
+            socket_timeout=timeout,
+            decode_responses=True,
+        )
         self._db: Any = FalkorDB(
             host=host,
             port=port,
             password=password,
             socket_timeout=timeout,
+            connection_pool=self._pool,
         )
         self._graph: Any = self._db.select_graph(graph_name)
 
@@ -176,16 +238,19 @@ class FalkorClient:
             getattr(getattr(self, "_db", None), "connection", None),
             getattr(self, "_client", None),
         )
-        for target in targets:
-            if target is None:
-                continue
-            close = getattr(target, "aclose", None) or getattr(target, "close", None)
-            if close is None:
-                continue
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-            return
+        try:
+            for target in targets:
+                if target is None:
+                    continue
+                close = getattr(target, "aclose", None) or getattr(target, "close", None)
+                if close is None:
+                    continue
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+                return
+        finally:
+            await self._pool.aclose()
 
     async def query(
         self,
@@ -199,8 +264,15 @@ class FalkorClient:
         so the difference is queueing, pool, and socket wait.
         """
         start = time.perf_counter()
+        trace = _QueryTrace()
+        token = _query_trace.set(trace)
+        cancelled = False
         try:
             result = await self._graph.query(cypher, params, timeout=self._query_timeout_ms)
+        except asyncio.CancelledError:
+            cancelled = True
+            stage_timing.record("falkor_query_cancelled", 0.0)
+            raise
         except redis.exceptions.TimeoutError as exc:
             raise FalkorTimeoutError(
                 f"FalkorDB read timed out after {self._timeout:g}s: {exc}"
@@ -210,7 +282,17 @@ class FalkorClient:
         except redis.exceptions.ResponseError as exc:
             _raise_mapped_response_error(exc)
         finally:
-            stage_timing.record("falkor_wall", time.perf_counter() - start)
+            elapsed = time.perf_counter() - start
+            stage_timing.record("falkor_wall", elapsed)
+            _query_trace.reset(token)
+            logger.log(
+                logging.INFO if cancelled or elapsed >= 1.0 else logging.DEBUG,
+                "FalkorDB round trip query=%s elapsed=%.0fms opened_connections=%d cancelled=%s",
+                hashlib.sha256(cypher.encode()).hexdigest()[:12],
+                elapsed * 1000,
+                trace.opened_connections,
+                cancelled,
+            )
 
         server_ms = getattr(result, "run_time_ms", None)
         if isinstance(server_ms, (int, float)):
