@@ -438,25 +438,28 @@ fn held_seat_call_waits_out_a_planned_restart() -> anyhow::Result<()> {
             Some(format!("http://{address}")),
             || -> anyhow::Result<()> {
                 let dialer = Dialer::with_context(root, Default::default())?;
-                // The new daemon binds while the call is already waiting.
-                let comes_back = thread::spawn(move || {
-                    thread::sleep(Duration::from_millis(1200));
-                    KeepAliveDaemon::bind(
-                        address,
-                        Exit::Close,
-                        vec![
-                            Reply::Json(200, json!({"status":"healthy"})),
-                            Reply::Json(200, json!({"renewed":true})),
-                        ],
-                    )
-                });
+                // Mid-restart, the daemon drops the first two health probes unanswered. Each
+                // drop costs a retry pause, so the call outlives its own timeout before the
+                // daemon answers.
+                let daemon = KeepAliveDaemon::bind(
+                    address,
+                    Exit::Close,
+                    vec![
+                        Reply::Vanish,
+                        Reply::Vanish,
+                        Reply::Json(200, json!({"status":"healthy"})),
+                        Reply::Json(200, json!({"renewed":true})),
+                    ],
+                )?;
+                let started = Instant::now();
                 let result =
                     dialer.request("POST", TOOL_PATH, Some(&json!({})), held_call_options());
-                let daemon = comes_back
-                    .join()
-                    .map_err(|_| anyhow::anyhow!("daemon thread panicked"))??;
                 assert_eq!(result, json!({"renewed":true}));
-                assert_eq!(daemon.paths(), ["/api/health", TOOL_PATH]);
+                assert!(started.elapsed() > held_call_options().timeout);
+                assert_eq!(
+                    daemon.paths(),
+                    ["/api/health", "/api/health", "/api/health", TOOL_PATH]
+                );
                 Ok(())
             },
         )
