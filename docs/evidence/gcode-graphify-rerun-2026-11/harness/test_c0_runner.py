@@ -247,7 +247,7 @@ def test_manifest_lists_every_matrix_command_with_pins_and_the_concurrency_recei
         "1",
     ]
     assert commands["gcode-contract"]["argv"] == [
-        "/runtime/tools/gcode/bin/gcode",
+        "/runtime/gobby-home/bin/gcode",
         "--format",
         "json",
         "contract",
@@ -272,7 +272,7 @@ def test_the_cold_index_is_the_first_gcode_command_and_runs_the_september_index_
 
     assert gcode_commands[0]["name"] == COLD_INDEX_NAME
     assert gcode_commands[0]["argv"] == [
-        "/runtime/tools/gcode/bin/gcode",
+        "/runtime/gobby-home/bin/gcode",
         "--project",
         "/runtime/corpora/gcode/C0",
         "--format",

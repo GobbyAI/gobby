@@ -13,7 +13,7 @@ from typing import Any
 from c0_poller import IndexPoller
 from prepare_daemon import isolated_environment
 from runtime_boundary import EvidenceError, require, write_once
-from schema_head import read_archived_gcode_version
+from schema_head import gcode_binary_relative, read_archived_gcode_version
 
 GRAPHIFY_PIN = "0.9.103"
 # September's interrupt marker: run_c7.py MARKER_PATTERN and command-manifest.json c7_markers.
@@ -36,7 +36,6 @@ MAX_WORKERS_LINE = re.compile(r"(?<![\w-])--max-workers(?![\w-])")
 SEPTEMBER_RUN_RECORDS = "results/index-comparison/run-records.jsonl"
 SEPTEMBER_C0_EXTRACT_LINE = 3
 GRAPHIFY_BINARY = "tools/graphify/venv/bin/graphify"
-GCODE_BINARY = "tools/gcode/bin/gcode"
 GRAPHIFY_CORPUS = "corpora/graphify/C0"
 GCODE_CORPUS = "corpora/gcode/C0"
 GRAPHIFY_INVENTORY = (
@@ -158,7 +157,7 @@ def build_command_manifest(
         "graphify concurrency receipt is not the recorded shape",
     )
     graphify = str(root / GRAPHIFY_BINARY)
-    gcode = str(root / GCODE_BINARY)
+    gcode = str(root / gcode_binary_relative())
     graphify_corpus = root / GRAPHIFY_CORPUS
     gcode_corpus = root / GCODE_CORPUS
     extract = [

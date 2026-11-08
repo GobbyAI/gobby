@@ -44,12 +44,11 @@ from runtime_boundary import (
     verify_symlink_record,
     write_once,
 )
-from schema_head import read_archived_gcode_version, schema_head_proof
+from schema_head import gcode_binary_relative, read_archived_gcode_version, schema_head_proof
 from service_safety import validate_rendered
 from verify_corpora import compare_manifests, verify_corpora
 
 GRAPHIFY_ENTRYPOINT = "tools/graphify/venv/bin/graphify"
-GCODE_BINARY = "tools/gcode/bin/gcode"
 GCODE_CONTRACT_VERSION = 12
 SEPTEMBER_ROOT = Path("/Users/josh/Projects/wiki-bakeoff-code-2026-09")
 BINARY_SET_DIR = "gobby-home/bin"
@@ -444,7 +443,7 @@ def validate_gcode_receipt(root: Path, gcode: dict[str, Any]) -> None:
         gcode["contract_version"] == GCODE_CONTRACT_VERSION, "gcode contract_version is not pinned"
     )
     executable = verify_file_record(root, gcode["executable"])
-    require(executable == root / GCODE_BINARY, "unexpected gcode executable")
+    require(executable == root / gcode_binary_relative(), "unexpected gcode executable")
     verify_file_record(root, gcode["gdaemon"])
     verify_file_record(root, gcode["cargo_lock"])
     _validate_source_manifest(root, "gobby", GOBBY_SHA, gcode["source_manifest"])
@@ -676,7 +675,7 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     gcode_env = isolated_environment(root, dict(os.environ))
     status = _run_probe(
         [
-            str(root / "tools" / "gcode" / "bin" / "gcode"),
+            str(root / gcode_binary_relative()),
             "--project",
             str(root / "corpora" / "gcode" / "C0"),
             "--format",

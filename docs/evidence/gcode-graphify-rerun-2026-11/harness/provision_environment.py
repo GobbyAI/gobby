@@ -28,6 +28,7 @@ from runtime_boundary import (
     symlink_record,
     write_once,
 )
+from schema_head import gcode_binary_relative
 
 DEFAULT_RUNTIME_ROOT = Path(
     "/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf"
@@ -384,7 +385,7 @@ def _write_runtime_secrets(root: Path) -> None:
             "postgres_user": "gobby_bakeoff_22948",
             "gobby_home": str(root / "gobby-home"),
             "gobby_source": str(root / "sources" / "gobby"),
-            "gcode_binary": str(root / "tools" / "gcode" / "bin" / "gcode"),
+            "gcode_binary": str(root / gcode_binary_relative()),
         },
     )
 

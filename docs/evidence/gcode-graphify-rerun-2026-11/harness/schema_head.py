@@ -46,6 +46,14 @@ def read_archived_gcode_version(root: Path) -> str:
     return str(version)
 
 
+def gcode_binary_relative() -> str:
+    """The installed gcode in the gobby home bin set, the one binary step 3 installs."""
+    # Deferred like _run_binary: importing this module in step 3 loads no gobby.
+    from gobby.utils.native_bin import native_bin_name
+
+    return f"{BINARY_DIR_RELATIVE}/{native_bin_name('gcode')}"
+
+
 def check_schema_head(
     root: Path, *, gdaemon_identity: Mapping[str, Any], gcode_version: str
 ) -> dict[str, Any]:

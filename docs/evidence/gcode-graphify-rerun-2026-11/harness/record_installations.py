@@ -27,9 +27,8 @@ from runtime_boundary import (
     verify_file_record,
     write_once,
 )
-from schema_head import read_archived_gcode_version
+from schema_head import gcode_binary_relative, read_archived_gcode_version
 from validate_environment import (
-    GCODE_BINARY,
     GCODE_CONTRACT_VERSION,
     GRAPHIFY_ENTRYPOINT,
     validate_gcode_receipt,
@@ -132,7 +131,7 @@ def main() -> int:
         "version_log": version["log"],
         "evidence": [],
     }
-    binary = root / GCODE_BINARY
+    binary = root / gcode_binary_relative()
     gcode_version = probe(root, args.attempt, "gcode-version", [str(binary), "--version"], root)
     contract = probe(root, args.attempt, "gcode-contract", [str(binary), "contract"], root)
     gcode = {

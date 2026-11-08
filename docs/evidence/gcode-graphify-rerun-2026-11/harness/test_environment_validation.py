@@ -414,7 +414,7 @@ def test_graphify_receipt_rejects_tampered_executable(
 
 @pytest.fixture
 def gcode_receipt(tmp_path: Path) -> dict[str, Any]:
-    binary = tmp_path / "tools/gcode/bin/gcode"
+    binary = tmp_path / "gobby-home/bin/gcode"
     write_once(binary, "gcode-binary\n", 0o755)
     write_once(tmp_path / "gobby-home/bin/gdaemon", "gdaemon-binary\n", 0o755)
     write_once(tmp_path / "sources/gobby/Cargo.lock", "# lock\n", 0o644)
@@ -474,7 +474,7 @@ def test_gcode_receipt_rejects_the_previous_pin_as_its_version(
 def test_gcode_receipt_rejects_a_version_probe_from_the_previous_pin(
     tmp_path: Path, gcode_receipt: dict[str, Any]
 ) -> None:
-    binary = tmp_path / "tools/gcode/bin/gcode"
+    binary = tmp_path / "gobby-home/bin/gcode"
     old_probe = _passed_check(
         tmp_path, [str(binary), "--version"], "probe-gcode-version-old", "gcode 1.9.104\n"
     )
@@ -493,10 +493,12 @@ def test_recorded_gcode_version_is_the_archived_pin(
         0o644,
     )
     recorded: dict[str, Any] = {}
+    probed: list[list[str]] = []
 
     def fake_probe(
         root: Path, attempt: str, label: str, argv: list[str], cwd: Path, env: Any = None
     ) -> dict[str, Any]:
+        probed.append(argv)
         return {"argv": argv, "cwd": str(cwd), "exit_code": 0, "log": {"label": label}}
 
     def capture_gcode(root: Path, gcode: dict[str, Any]) -> None:
@@ -517,6 +519,8 @@ def test_recorded_gcode_version_is_the_archived_pin(
     )
     assert record_installations.main() == 0
     assert recorded["version"] == "1.9.105"
+    assert [str(tmp_path / "gobby-home/bin/gcode"), "--version"] in probed
+    assert [str(tmp_path / "gobby-home/bin/gcode"), "contract"] in probed
 
 
 def test_graphify_rejection_survives_python_optimize(
