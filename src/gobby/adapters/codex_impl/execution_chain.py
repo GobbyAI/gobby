@@ -915,9 +915,11 @@ class ExecutionChainCorrelator:
             return
         if key not in pending and len(pending) >= self._max_pending:
             self._overflowed = True
-            if pending is not self._sessions:
+            evicted = pending.pop(next(iter(pending)))
+            # Losing an unresolved cell or call fails closed: it can still launch a command.
+            # Losing a session fails closed only when unattributed: typed input can still reach it.
+            if pending is not self._sessions or evicted.literal_command is None:
                 self._pending_overflowed = True
-            pending.pop(next(iter(pending)))
         pending[key] = execution
 
     def _hydrate_ambiguities(self, value: Any) -> dict[str, None]:

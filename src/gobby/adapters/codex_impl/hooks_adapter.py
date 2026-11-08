@@ -125,9 +125,10 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
-    # receipts must not poison a new command's cwd proof; unresolved calls and
-    # yielded cells can still launch it, so their overflow remains fail closed.
-    if not chain["pending_complete"] or chain["ambiguous_cells"]:
+    # receipts must not poison a new command's cwd proof; unresolved calls, yielded
+    # cells, and session ids that may name two processes can still launch or type
+    # into it, so their overflow and ambiguity remain fail closed.
+    if not chain["pending_complete"] or chain["ambiguous_cells"] or chain["ambiguous_sessions"]:
         return _PendingLookup(None, "pending calls overflowed or are ambiguous")
     pending = {
         entry["outer_call_id"]: entry
