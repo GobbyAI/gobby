@@ -373,7 +373,7 @@ pub(super) fn send_live_input(
         return Ok(());
     }
     if !workspace.daemon_ready() {
-        refuse_during_outage(workspace, pane_id);
+        refuse_during_outage(workspace, chrome, pane_id);
         return Ok(());
     }
     // A lost lease and an unknown write outcome say what is wrong before the
@@ -484,11 +484,18 @@ fn request_host_grant(
 }
 
 /// Input typed while the daemon is away and the pane has no live host stream
-/// to type on. Nothing is sent, and the status says so (#24815).
-fn refuse_during_outage(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+/// to type on. Nothing is sent, and the status says so (#24815). The pane note
+/// is drawn only for a pane without a frame, so the toast is what a pane that
+/// was live before the outage shows.
+fn refuse_during_outage(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+) {
     if let Some(pane) = workspace.panes.get_mut(&pane_id) {
         pane.status_message = Some(DAEMON_DOWN_INPUT.to_string());
     }
+    chrome.notify(Toast::error(DAEMON_DOWN_INPUT));
 }
 
 /// Clears each pane whose revoke landed. A failed revoke leaves its pane as it

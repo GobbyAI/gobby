@@ -6,11 +6,13 @@ use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
 use super::super::outage_grant::{GrantOutcome, CONTROL_UNREACHABLE};
-use super::{apply_control_outcome, apply_outage_grant};
+use super::{apply_control_outcome, apply_outage_grant, send_live_input, DAEMON_DOWN_INPUT};
 use crate::app::live_control::ControlOutcome;
 use crate::app::{Backend, ControlState, Pane, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
-use crate::daemon::LiveDaemon;
-use crate::frame_source::{AttachLocator, PaneFrameSource, UnixSocketFrameSource};
+use crate::daemon::{Generation, LiveDaemon};
+use crate::frame_source::{
+    AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
+};
 use crate::ui::Chrome;
 
 /// A direct frame source whose socket is cut after the handshake, so every
@@ -254,4 +256,68 @@ async fn a_refused_host_grant_says_the_queued_keys_were_not_sent() {
 
     assert_eq!(queued, 0, "the refused grant drops the queued keys");
     assert_eq!(titles, [HOST_GRANT_UNAVAILABLE], "the refusal is reported");
+}
+
+/// The panes whose keys go through the daemon: a tmux pane, and a native pane
+/// whose frames come over the daemon's proxy.
+fn daemon_bound_panes() -> [(&'static str, Pane); 2] {
+    let tmux = Pane::new(PaneId(1), "terminal-1", Backend::Tmux, "epoch-1");
+    let mut native_proxy = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    native_proxy.install_attachment(
+        "attachment-1".to_owned(),
+        Transport::Proxy,
+        Generation(0),
+        0,
+        PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Proxy)),
+    );
+    [("tmux", tmux), ("native proxy", native_proxy)]
+}
+
+/// A key typed into a daemon-bound pane while the daemon is away is dropped.
+/// The pane's status note is drawn only for a pane with no frame, so a pane
+/// that was live before the outage shows the drop only through the toast.
+#[tokio::test]
+async fn a_key_typed_into_a_daemon_bound_pane_during_an_outage_is_reported_not_sent() {
+    for paste in [false, true] {
+        for (kind, pane) in daemon_bound_panes() {
+            let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+                .expect("unconnected daemon handle");
+            let mut workspace = Workspace::live(daemon);
+            workspace.daemon_ready = false;
+            workspace.panes.insert(PaneId(1), pane);
+            let mut jobs = LoopJobs::new(&workspace);
+            let mut chrome = Chrome::dark();
+
+            send_live_input(
+                &mut workspace,
+                &mut chrome,
+                &mut jobs,
+                PaneId(1),
+                b"x",
+                paste,
+            )
+            .expect("a refused key is not an error");
+
+            let case = format!("{kind} paste={paste}");
+            let pane = workspace.pane(PaneId(1));
+            assert_eq!(
+                pane.status_message(),
+                Some(DAEMON_DOWN_INPUT),
+                "{case}: the key took the outage refusal"
+            );
+            assert_eq!(pane.client_write_seq, 0, "{case}: no write was issued");
+            assert!(pane.writer.is_none(), "{case}: no writer took the key");
+            assert!(pane.pending_input.is_empty(), "{case}: the key is not held");
+            let titles: Vec<&str> = chrome
+                .alert_log
+                .iter()
+                .map(|toast| toast.title.as_str())
+                .collect();
+            assert_eq!(
+                titles,
+                [DAEMON_DOWN_INPUT],
+                "{case}: the dropped key is shown"
+            );
+        }
+    }
 }
