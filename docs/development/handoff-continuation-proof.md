@@ -59,7 +59,7 @@ that the running daemon acquired no test session, hook event or agent run. That
 production-side observation is a host runtime responsibility; the developer's
 CLI routing regression is not a substitute for it.
 
-Before landing, the host owner demonstrates RED on `7231f91990` or an equivalent
+Before landing, the host owner demonstrates RED on `3dc780c716` or an equivalent
 revert of `7231f91990`, then GREEN with the fix on the reviewed candidate. Refresh
 the admission for each source identity. Record the exact-SHA passing E2E evidence
 only after every case passes. Landing and closure gates enforce that evidence for
