@@ -8,6 +8,7 @@ import http.client
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -331,16 +332,42 @@ def _unwind_failed_launch(
     )
 
 
-def _active_launch_refusal(root: Path, active: Path) -> str:
-    """Name the kept launch record, its recorded process group, and the step that clears it."""
-    daemon_record = json.loads(active.read_text())["daemon"]
-    receipt = root / daemon_record["path"]
-    pgid = json.loads(receipt.read_text())["process_group"]["observed_pgid"]
+def _launch_evidence(root: Path) -> list[Path]:
+    """Every record a daemon launch left under root, from any attempt, in refusal order."""
+    active = root / "receipts/active-launches.json"
+    kept = [active] if active.exists() else []
+    kept += sorted((root / "receipts").glob("daemon-launch-*.json"))
+    kept += sorted((root / "logs/install").glob("daemon-*.log"))
+    return kept
+
+
+def _recorded_pgid(receipt: Path) -> int | None:
+    """The srt wrapper's group in a daemon receipt; None when a partial write left none readable."""
+    try:
+        return int(json.loads(receipt.read_text())["process_group"]["observed_pgid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _launch_refusal(evidence: list[Path]) -> str:
+    """Name every kept record, the group its receipts record, and the step that clears them."""
+    receipts = [
+        path
+        for path in evidence
+        if path.name.startswith("daemon-launch-") and path.suffix == ".json"
+    ]
+    groups = [str(pgid) for pgid in map(_recorded_pgid, receipts) if pgid is not None]
+    recorded = (
+        f"recorded process group {', '.join(groups)} (the srt wrapper's)"
+        if groups
+        else "no receipt records a process group"
+    )
+    kept = ", ".join(str(path) for path in evidence)
+    clear = shlex.join(["rm", "--", *(str(path) for path in evidence)])
     return (
-        f"an active launch is recorded at {active} (daemon receipt {receipt}, process group "
-        f"{pgid}, the srt wrapper's group). The backend's process group is not recorded. "
-        "Confirm that no gdaemon or backend process remains with `ps -axo pid,pgid,comm`, "
-        f"then clear the record with `rm -- {active} {receipt}` before launching again."
+        f"a launch is still on record: {kept}. {recorded}. The backend's process group is not "
+        "recorded. Confirm with `ps -axo pid,pgid,comm` that no gdaemon or backend process "
+        f"remains, then clear the records with `{clear}` before launching again."
     )
 
 
@@ -358,6 +385,9 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
         config["daemon_port"] == 59480 and config["websocket_port"] == 59481,
         "check failed: config['daemon_port'] == 59480 and config['websocket_port'] == 59481",
     )
+    evidence = _launch_evidence(root)
+    if evidence:
+        raise EvidenceError(_launch_refusal(evidence))
     env = isolated_environment(root, dict(os.environ))
     backend = backend_environment(root, bootstrap)
     env.update(backend)
@@ -372,12 +402,6 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
     log_path = root / f"logs/install/daemon-{attempt}.log"
     receipt = root / f"receipts/daemon-launch-{attempt}.json"
     active = root / "receipts/active-launches.json"
-    if active.exists():
-        raise EvidenceError(_active_launch_refusal(root, active))
-    require(
-        not log_path.exists() and not receipt.exists(),
-        "check failed: not log_path.exists() and (not receipt.exists())",
-    )
     daemon = daemon_argv(root)
     policy_path = root / f"srt/settings-{attempt}.json"
     violations_path = root / f"logs/violations-{attempt}.jsonl"

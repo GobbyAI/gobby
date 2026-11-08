@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -218,10 +219,18 @@ class _FakeProcess:
         self._exit_wrapper(signal.SIGKILL)
 
 
-def _patch_launch(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) -> None:
-    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kwargs: process)
+def _patch_launch(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) -> list[list[str]]:
+    """Patch Popen, killpg and the probe socket. Returns the argv of every spawn."""
+    spawns: list[list[str]] = []
+
+    def popen(argv: list[str], **kwargs: object) -> _FakeProcess:
+        spawns.append(argv)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
     monkeypatch.setattr(os, "killpg", process.killpg)
     monkeypatch.setattr(socket, "socket", _FakeSocket)
+    return spawns
 
 
 BACKEND_GROUP = 5151
@@ -243,6 +252,18 @@ def _patch_backend_group(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess)
 
     monkeypatch.setattr(os, "killpg", killpg)
     return backend_signals
+
+
+def _fail_before_writing(monkeypatch: pytest.MonkeyPatch, record: str) -> None:
+    """Fail as a disk error before the named record reaches disk; other records are written."""
+    real_write = provision_environment._write_json
+
+    def fail_then_write(path: Path, value: Any, *, mode: int = 0o644) -> None:
+        if path.name == record:
+            raise OSError(f"disk full before {record} was written")
+        real_write(path, value, mode=mode)
+
+    monkeypatch.setattr(launch_daemon, "_write_json", fail_then_write)
 
 
 def _fail_after_writing(monkeypatch: pytest.MonkeyPatch, record: str) -> None:
@@ -274,6 +295,13 @@ class _FakeSocket:
 
     def bind(self, address: tuple[str, int]) -> None:
         return None
+
+
+class _OccupiedSocket(_FakeSocket):
+    """A probe socket for a port that already has a listener."""
+
+    def bind(self, address: tuple[str, int]) -> None:
+        raise OSError(errno.EADDRINUSE, "Address already in use")
 
 
 @pytest.fixture
@@ -391,6 +419,79 @@ def test_launch_refuses_a_root_with_an_active_launch_before_starting_a_daemon(
     assert "process group 4242" in message
     assert f"rm -- {active} {receipt}" in message
     assert len(spawned) == 1
+
+
+def test_a_relaunch_is_refused_while_a_receipt_survives_without_an_active_index(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    spawns = _patch_launch(monkeypatch, process)
+    _patch_backend_group(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "daemon-launch-attempt-1.json")
+    with pytest.raises(OSError, match="disk full"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+    monkeypatch.setattr(launch_daemon, "_write_json", provision_environment._write_json)
+
+    with pytest.raises(EvidenceError, match="still on record") as caught:
+        launch(staged_root, "attempt-2", SRT, home=tmp_path / "home")
+
+    assert not (staged_root / "receipts/active-launches.json").exists()
+    assert str(staged_root / "receipts/daemon-launch-attempt-1.json") in str(caught.value)
+    assert "recorded process group 4242" in str(caught.value)
+    assert len(spawns) == 1
+
+
+def test_a_relaunch_is_refused_when_the_active_index_write_fails_before_its_file_exists(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    spawns = _patch_launch(monkeypatch, process)
+    _patch_backend_group(monkeypatch, process)
+    _fail_before_writing(monkeypatch, "active-launches.json")
+    with pytest.raises(OSError, match="disk full"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+    monkeypatch.setattr(launch_daemon, "_write_json", provision_environment._write_json)
+
+    with pytest.raises(EvidenceError, match="still on record") as caught:
+        launch(staged_root, "attempt-2", SRT, home=tmp_path / "home")
+
+    assert not (staged_root / "receipts/active-launches.json").exists()
+    assert str(staged_root / "receipts/daemon-launch-attempt-1.json") in str(caught.value)
+    assert len(spawns) == 1
+
+
+def test_a_relaunch_is_refused_when_the_receipt_write_fails_before_its_file_exists(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    spawns = _patch_launch(monkeypatch, process)
+    _patch_backend_group(monkeypatch, process)
+    _fail_before_writing(monkeypatch, "daemon-launch-attempt-1.json")
+    with pytest.raises(OSError, match="disk full"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+    monkeypatch.setattr(launch_daemon, "_write_json", provision_environment._write_json)
+
+    with pytest.raises(EvidenceError, match="still on record") as caught:
+        launch(staged_root, "attempt-2", SRT, home=tmp_path / "home")
+
+    log = staged_root / "logs/install/daemon-attempt-1.log"
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert str(log) in str(caught.value)
+    assert "no receipt records a process group" in str(caught.value)
+    assert len(spawns) == 1
+
+
+def test_an_active_record_is_named_before_the_daemon_ports_are_probed(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spawns = _patch_launch(monkeypatch, _FakeProcess())
+    launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+    monkeypatch.setattr(socket, "socket", _OccupiedSocket)
+
+    with pytest.raises(EvidenceError, match="still on record"):
+        launch(staged_root, "attempt-2", SRT, home=tmp_path / "home")
+
+    assert len(spawns) == 1
 
 
 def test_launch_writes_a_root_confined_policy_and_an_empty_violation_log(
