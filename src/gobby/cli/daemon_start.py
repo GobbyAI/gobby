@@ -108,12 +108,12 @@ def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
         click.echo(f"  Check runtime output: {runtime_log_file}", err=True)
 
 
-def _note_backend_state(resp: httpx.Response, noted: set[str]) -> str | None:
+def _note_backend_state(resp: httpx.Response, noted: set[str]) -> tuple[str, str | None] | None:
     """Show each backend state the front door reports while readiness is awaited.
 
     The front door's 503 body names the backend state and target that readiness waits on.
     Each distinct state prints once, so a start that never leaves ``starting`` names it at
-    the wait instead of only in silence. Returns the blocker it names, or None.
+    the wait instead of only in silence. Returns the state and optional wait reason.
     """
     try:
         payload = resp.json()
@@ -130,12 +130,12 @@ def _note_backend_state(resp: httpx.Response, noted: set[str]) -> str | None:
     # The supervisor's wait reason (for example a lease-lock holder) says what the backend
     # is blocked on; it is named only when the front door reports one.
     wait = backend.get("wait")
-    if isinstance(wait, str) and wait:
-        blocker = f"{blocker}, waiting: {wait}"
-    if blocker not in noted:
-        noted.add(blocker)
-        _step(f"waiting for startup readiness: {blocker}")
-    return blocker
+    wait = wait if isinstance(wait, str) and wait else None
+    detail = f"{blocker}, waiting: {wait}" if wait else blocker
+    if detail not in noted:
+        noted.add(detail)
+        _step(f"waiting for startup readiness: {detail}")
+    return blocker, wait
 
 
 def _poll_startup_progress(
@@ -158,6 +158,7 @@ def _poll_startup_progress(
     shown_header = False
     noted_backend_states: set[str] = set()
     last_blocker: str | None = None
+    last_wait: str | None = None
 
     while (remaining := deadline - time.monotonic()) > 0:
         if child_exited is not None and child_exited():
@@ -172,7 +173,10 @@ def _poll_startup_progress(
                 if refusal is not None:
                     _step(f"Backend unavailable: {refusal}", error=True)
                     return False
-                last_blocker = _note_backend_state(resp, noted_backend_states) or last_blocker
+                backend = _note_backend_state(resp, noted_backend_states)
+                if backend is not None:
+                    last_blocker, wait = backend
+                    last_wait = wait or last_wait
                 time.sleep(0.5)
                 continue
             progress = resp.json()
@@ -222,8 +226,9 @@ def _poll_startup_progress(
             error=True,
         )
     else:
+        detail = f"{last_blocker}; last reported wait: {last_wait}" if last_wait else last_blocker
         _step(
-            f"Startup readiness timed out after {max_wait:.0f}s; last reported {last_blocker}",
+            f"Startup readiness timed out after {max_wait:.0f}s; last reported {detail}",
             error=True,
         )
     return False

@@ -39,6 +39,8 @@ fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
         "UV_PROJECT_ENVIRONMENT".into(),
         repo_venv().into_os_string(),
     );
+    // The environment is already seeded; a child must never sync protected files.
+    config.environment.insert("UV_NO_SYNC".into(), "1".into());
     Ok(config)
 }
 
@@ -214,7 +216,10 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         let mut standby = db.lease("standby")?;
         assert!(!standby.try_acquire().await?);
         let (_tx, rx) = watch::channel(false);
-        assert_eq!(supervisor.run(rx.clone()).await?, SupervisorExit::Refused);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx.clone())).await??,
+            SupervisorExit::Refused
+        );
         assert!(
             standby.try_acquire().await?,
             "refusal releases lease to healthy standby"
@@ -233,12 +238,34 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         assert_eq!(wait_for_file(&healthy_home.path().join("ready")).await?,"healthy");
         stop.send(true)?;
         assert_eq!(timeout(Duration::from_secs(5),task).await???,SupervisorExit::Stopped);
-        assert_eq!(supervisor.run(rx).await?, SupervisorExit::Refused);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+            SupervisorExit::Refused
+        );
         let mut standby=db.lease("next-standby")?;
         assert!(standby.try_acquire().await?, "refused is never a contender");
         Ok(())
     })
     .await
+}
+
+#[tokio::test]
+async fn lifecycle_backend_disables_environment_sync() -> Result<()> {
+    let home = TempDir::new()?;
+    let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
+        .context("fixture PID claim")?;
+    // The explicit flag keeps RED safe before the fixture exports UV_NO_SYNC.
+    let script = "import os,pathlib,sys; (pathlib.Path(os.environ['GOBBY_HOME'])/'sync').write_text(os.environ.get('UV_NO_SYNC', 'missing')); sys.exit(78)";
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
+    let config = backend_config(home.path(), &argv)?;
+    let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+    let (_stop, rx) = watch::channel(false);
+    assert_eq!(
+        timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+        SupervisorExit::Refused
+    );
+    assert_eq!(fs::read_to_string(home.path().join("sync"))?, "1");
+    Ok(())
 }
 
 #[tokio::test]
@@ -1009,6 +1036,13 @@ async fn lease_lock_held_by_another_task_fails_the_supervisor_at_its_bound() -> 
         assert!(
             format!("{error:#}").contains("test lease holder"),
             "the error must name the holder: {error:#}"
+        );
+        assert!(
+            wait.borrow()
+                .as_deref()
+                .is_some_and(|reason| reason.contains("test lease holder")),
+            "the front door must retain the blocker after supervision fails: {:?}",
+            *wait.borrow()
         );
         Ok(())
     })

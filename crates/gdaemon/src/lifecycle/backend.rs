@@ -168,7 +168,9 @@ impl BackendSupervisor {
             &reporter,
         )
         .await;
-        self.wait.send_replace(None);
+        if outcome.is_ok() {
+            self.wait.send_replace(None);
+        }
         outcome
     }
 
