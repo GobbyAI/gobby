@@ -48,6 +48,27 @@ _DAEMON_SURFACES = frozenset(
 )
 # Porcelain XY codes of tracked files an interrupted delete already removed from disk.
 _TRACKED_DELETION_CODES = frozenset({" D", "D "})
+# Git refusals raised before any destructive step; a row they refuse returns to its prior status.
+_PRE_REMOVAL_REFUSALS = frozenset(
+    {
+        "merged_into_requires_verified_branch_deletion",
+        "merged_into_requires_source_branch",
+        "worktree_status_unavailable",
+        "worktree_branch_mismatch",
+        "worktree_registration_branch_mismatch",
+        "worktree_not_removable",
+        "branch_deletion_requires_base_branch",
+        "remote_base_branch_not_allowed",
+        "merge_target_requires_local_branch",
+        "merge_target_is_source_branch",
+        "invalid_merge_target_branch",
+        "merge_target_requires_direct_branch",
+        "branch_not_merged_into_base",
+        "branch_not_merged_into_target",
+        "merge_target_unresolvable",
+        "merge_state_unresolvable",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -259,17 +280,32 @@ async def _delete_worktree(
         return WorktreeDeletionResult(success=False, abandoned=True)
 
     if landing is not None and git_manager is not None and not git_already_deleted:
-        removal_error = await _remove_missing_detached_registration(
+        # Re-proof is read-only: a refusal here removes nothing, so the row returns to its status.
+        absent, refusal = await _probe_missing_detached(
             git_manager, Path(worktree.worktree_path), landing
         )
-        if removal_error is not None:
-            return WorktreeDeletionResult(success=False, git_deleted=False, error=removal_error)
+        if refusal is not None:
+            await run_thread_to_completion(
+                context.run, _set_status, worktree_storage, worktree.id, prior_status
+            )
+            return WorktreeDeletionResult(success=False, git_deleted=False, error=refusal)
+        if not absent:
+            # The removal is the first destructive step; a failure after it leaves the row deleting.
+            removal_error = await _remove_proven_detached_registration(
+                git_manager, Path(worktree.worktree_path)
+            )
+            if removal_error is not None:
+                return WorktreeDeletionResult(success=False, git_deleted=False, error=removal_error)
         git_already_deleted = True
 
     git_failure = await _delete_git_worktree(
         request, worktree, git_manager, force=force, git_already_deleted=git_already_deleted
     )
     if git_failure is not None:
+        if (git_failure.error_code or git_failure.error) in _PRE_REMOVAL_REFUSALS:
+            await run_thread_to_completion(
+                context.run, _set_status, worktree_storage, worktree.id, prior_status
+            )
         return git_failure
 
     cargo_cleanup_error = await run_thread_to_completion(
@@ -461,13 +497,14 @@ async def _delete_git_worktree(
 
     if result.success:
         return None
+    # Some Git failures carry only stderr text, which is not a code.
+    code = result.error if result.error and result.error.isidentifier() else None
     if request.merged_into is not None or request.surface in _DAEMON_SURFACES:
         return WorktreeDeletionResult(
             success=False,
             git_deleted=False,
             error=result.message,
-            # Some Git failures carry only stderr text, which is not a code.
-            error_code=result.error if result.error and result.error.isidentifier() else None,
+            error_code=code,
             message=result.message,
         )
     if request.surface is DeletionSurface.HTTP:
@@ -476,6 +513,7 @@ async def _delete_git_worktree(
             success=False,
             git_deleted=False,
             error=result.message,
+            error_code=code,
             message=result.message,
         )
     if Path(worktree.worktree_path).exists():
@@ -588,17 +626,13 @@ async def _detached_landing_refusal(
     return None
 
 
-async def _remove_missing_detached_registration(
-    git_manager: WorktreeGitManager, worktree_path: Path, merged_into: str
+async def _remove_proven_detached_registration(
+    git_manager: WorktreeGitManager, worktree_path: Path
 ) -> str | None:
-    """Mutation, run only after the deletion is marked: remove one proven detached registration.
+    """Mutation, run after the deletion is marked and the landing re-proven read-only.
 
-    Re-proves the landing first, so a registration that changed since the read-only probe is
-    preserved. Targets only this path: a global prune could retire unrelated unlanded roots.
+    Targets only this path: a global prune could retire unrelated unlanded roots.
     """
-    absent, refusal = await _probe_missing_detached(git_manager, worktree_path, merged_into)
-    if refusal is not None or absent:
-        return refusal
     try:
         removed = await git_manager.run_git_command(
             ["worktree", "remove", str(worktree_path)], timeout=30

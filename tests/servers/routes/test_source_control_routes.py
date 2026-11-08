@@ -1547,6 +1547,7 @@ class TestDeleteWorktree:
         mock_git_result = MagicMock()
         mock_git_result.success = False
         mock_git_result.message = "worktree locked"
+        mock_git_result.error = None
         mock_git_manager = MagicMock()
         mock_server.services.git_manager = mock_git_manager
 
