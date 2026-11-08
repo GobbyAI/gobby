@@ -163,6 +163,7 @@ class GobbyRunner:
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
     _startup_recovery_task: asyncio.Task[None] | None
+    _worktree_recovery_task: asyncio.Task[None] | None
     _sandbox_run_root_sweep_task: asyncio.Task[None] | None
     _provider_capability_refresh_task: asyncio.Task[None] | None
     _generation_endpoint_health_task: asyncio.Task[None] | None
@@ -175,6 +176,7 @@ class GobbyRunner:
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
+    _preserved_agent_listing_task: asyncio.Task[set[int] | None] | None
     _tmux_window_repair_task: asyncio.Task[None] | None
     _composer_ledger_task: asyncio.Task[None] | None
     database: HubDatabase

@@ -24,6 +24,7 @@ pytest_plugins = [
     "tests.fixtures.e2e_run_cleanup",
     "tests.fixtures.socket_paths",
     "tests.fixtures.hang_guard",
+    "tests.fixtures.git_repo",
 ]
 
 
@@ -852,6 +853,14 @@ def _clear_worker_staging() -> Iterator[None]:
     take_worker_staging()
     yield
     take_worker_staging()
+
+
+@pytest.fixture(autouse=True)
+def reset_code_index_enabled_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Daemon startup installs a process-wide code-index resolver; each test starts unset (pins)."""
+    from gobby.code_index import gcode_gateway
+
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", None)
 
 
 @pytest.fixture(autouse=True)

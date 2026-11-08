@@ -145,6 +145,14 @@ def setup_internal_registries(
     from gobby.mcp_proxy.tools.decisions import create_decisions_registry
 
     manager.add_registry(create_decisions_registry(config_resolver))
+    from gobby.code_index.gcode_gateway import set_code_index_enabled_resolver
+
+    def code_index_enabled() -> bool:
+        config = config_resolver()
+        return config is None or config.code_index.enabled
+
+    # Worktree creation and other pin callers skip the parent-index pin when indexing is off.
+    set_code_index_enabled_resolver(code_index_enabled)
     initial_config = config_resolver()
     # Review learning needs an initial manager; memory tools resolve per call.
     initial_memory_manager = (

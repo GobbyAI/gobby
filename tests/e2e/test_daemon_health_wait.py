@@ -1,9 +1,11 @@
 """Tests for isolated-daemon health polling."""
 
+import json
 import selectors
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -16,6 +18,8 @@ import pytest
 from tests.e2e.conftest import (
     DAEMON_HEALTH_LOG_TAIL_CHARS,
     DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
+    ISOLATED_DAEMON_HEALTH_CEILING_SECONDS,
+    ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS,
     DaemonHealthTimeoutError,
     find_free_port,
     wait_for_daemon_health,
@@ -304,3 +308,162 @@ def test_readiness_reuses_and_closes_loopback_client(
     assert attempts == 3
     factory.assert_called_once_with(verify=False, trust_env=False)
     assert client.is_closed
+
+
+class _StartupClock:
+    """Fake monotonic clock that advances only through the health wait's sleeps."""
+
+    def __init__(self, on_advance: Callable[[float], None] | None = None) -> None:
+        self.now = 0.0
+        self._on_advance = on_advance
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        if self._on_advance is not None:
+            self._on_advance(self.now)
+
+
+def _write_records_every(
+    timings: Path, every: float, until: float | None = None, *, state: str = "completed"
+) -> Callable[[float], None]:
+    """Clock hook that appends one startup-timing record of `state` every `every` seconds."""
+    written = 0
+
+    def write(now: float) -> None:
+        nonlocal written
+        if until is not None and now > until:
+            return
+        while written < int(now // every):
+            written += 1
+            record = {"stage": f"stage {written}", "state": state}
+            with timings.open("a") as stream:
+                stream.write(json.dumps(record) + "\n")
+
+    return write
+
+
+def _starting_probe(
+    clock: _StartupClock, *, healthy_at: float | None = None
+) -> Callable[..., httpx.Response]:
+    def probe(_client: httpx.Client, url: str, *, timeout: float) -> httpx.Response:
+        request = httpx.Request("GET", url)
+        if healthy_at is not None and clock.now >= healthy_at:
+            return httpx.Response(200, request=request)
+        return httpx.Response(503, json={"backend": {"state": "starting"}}, request=request)
+
+    return probe
+
+
+def test_steady_startup_progress_past_stall_window_stays_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timings = tmp_path / "startup-timings.jsonl"
+    clock = _StartupClock(_write_records_every(timings, every=20.0))
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr(
+        "tests.e2e.conftest.httpx.Client.get", _starting_probe(clock, healthy_at=90.0)
+    )
+
+    wait_for_daemon_health(find_free_port(), log_file=tmp_path / "daemon.log")
+
+    assert clock.now >= 90.0 > ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS
+
+
+def test_import_phase_module_growth_counts_as_startup_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Module-growth heartbeats cover the import phase before any stage completes.
+    timings = tmp_path / "startup-timings.jsonl"
+    clock = _StartupClock(_write_records_every(timings, every=20.0, state="progress"))
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr(
+        "tests.e2e.conftest.httpx.Client.get", _starting_probe(clock, healthy_at=90.0)
+    )
+
+    wait_for_daemon_health(find_free_port(), log_file=tmp_path / "daemon.log")
+
+    assert clock.now >= 90.0 > ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS
+
+
+def test_cold_bytecode_launch_keeps_passing_while_modules_grow_past_stall_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fresh tree without .pyc files imports slowly. Module growth every 15s keeps the
+    # stall window from expiring, so the launch passes well past the flat 75s budget.
+    timings = tmp_path / "startup-timings.jsonl"
+    clock = _StartupClock(_write_records_every(timings, every=15.0, state="progress"))
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr(
+        "tests.e2e.conftest.httpx.Client.get", _starting_probe(clock, healthy_at=200.0)
+    )
+
+    wait_for_daemon_health(find_free_port(), log_file=tmp_path / "daemon.log")
+
+    assert clock.now >= 200.0 > 2 * ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize(
+    ("last_progress_at", "expected_failure_at"),
+    [(None, 75.0), (30.0, 105.0)],
+    ids=["no-progress-from-start", "stalled-after-progress"],
+)
+def test_startup_without_progress_for_stall_window_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    last_progress_at: float | None,
+    expected_failure_at: float,
+) -> None:
+    timings = tmp_path / "startup-timings.jsonl"
+    on_advance = (
+        None
+        if last_progress_at is None
+        else _write_records_every(timings, every=10.0, until=last_progress_at)
+    )
+    clock = _StartupClock(on_advance)
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", _starting_probe(clock))
+
+    with pytest.raises(DaemonHealthTimeoutError) as exc_info:
+        wait_for_daemon_health(find_free_port(), log_file=tmp_path / "daemon.log")
+
+    assert expected_failure_at <= exc_info.value.elapsed_seconds < expected_failure_at + 0.5
+    assert "no startup progress" in str(exc_info.value)
+
+
+def test_startup_past_ceiling_fails_even_with_steady_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timings = tmp_path / "startup-timings.jsonl"
+    clock = _StartupClock(_write_records_every(timings, every=20.0))
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", _starting_probe(clock))
+
+    with pytest.raises(DaemonHealthTimeoutError) as exc_info:
+        wait_for_daemon_health(find_free_port(), log_file=tmp_path / "daemon.log")
+
+    expected = ISOLATED_DAEMON_HEALTH_CEILING_SECONDS
+    assert expected <= exc_info.value.elapsed_seconds < expected + 0.5
+    assert "ceiling" in str(exc_info.value)
+
+
+def test_daemon_exit_during_startup_fails_without_waiting_for_stall_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _StartupClock()
+    monkeypatch.setattr("tests.e2e.conftest.time", clock)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", _starting_probe(clock))
+    process = Mock(spec=subprocess.Popen)
+    process.poll.side_effect = lambda: None if clock.now < 5.0 else 17
+
+    with pytest.raises(DaemonHealthTimeoutError) as exc_info:
+        wait_for_daemon_health(
+            find_free_port(),
+            log_file=tmp_path / "daemon.log",
+            process=cast(subprocess.Popen[bytes], process),
+        )
+
+    assert 5.0 <= exc_info.value.elapsed_seconds < 5.5
+    assert "process=exited(17)" in str(exc_info.value)

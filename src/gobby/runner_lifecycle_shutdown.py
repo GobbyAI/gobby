@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
-from gobby import runner_lifecycle_processes
+from gobby import runner_lifecycle_processes, shutdown_budget
 from gobby.agents.terminal_delivery import (
     close_terminal_delivery_admission,
     detach_shielded_terminal_deliveries,
@@ -27,6 +27,7 @@ from gobby.runner_pid_file import PidOwnershipResolution, SupervisedPidOwnership
 from gobby.runner_shutdown_storage import (
     _shutdown_database_concurrency,
     _shutdown_database_concurrency_under_cancellation,
+    close_worktree_delete_admission,
 )
 from gobby.sessions.daemon_notices import send_hold_notice_if_restarting
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
@@ -42,11 +43,17 @@ _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
 _HTTP_CONNECTION_GRACE_SECONDS = 0.25
 _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
-_GRACEFUL_SHUTDOWN_BUDGET_SECONDS = 14.0
-_OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
+_GRACEFUL_SHUTDOWN_BUDGET_SECONDS = 8.0
+_OVERALL_SHUTDOWN_DEADLINE_SECONDS = 10.0
 _HEALTH_CHECK_SETTLE_SECONDS = 2.0
 _TERMINAL_DELIVERY_SETTLE_SECONDS = 6.0
-_FINALIZER_SETTLE_SECONDS = 10.0
+_FINALIZER_SETTLE_SECONDS = 3.0
+# Child-process tail after an overrun; each step's bound is shutdown_budget's.
+_DEADLINE_CHILD_REAP_BUDGET_SECONDS = shutdown_budget.DEADLINE_CHILD_REAP_BUDGET_SECONDS
+# Per-step bounds for the async cleanup steps that ran without their own timeout. A step
+# that overruns is named in the log instead of silently consuming the overall deadline.
+_CLEANUP_STEP_TIMEOUT_SECONDS = 2.0
+_TERMINAL_HOST_STOP_TIMEOUT_SECONDS = 10.0
 
 # Set on the finalizer-deadline expiry branch: an abandoned settlement scope
 # can leave a wedged non-daemon executor worker that blocks interpreter exit
@@ -122,6 +129,11 @@ async def _best_effort[T](
             logger.warning("%s timed out", name)
     except Exception as e:
         logger.warning("%s failed: %s", name, e, exc_info=True)
+    except asyncio.CancelledError:
+        # The overall deadline (or a caller) cancelled this step. Name it so the log
+        # shows which step was still running when the shutdown budget ran out.
+        logger.warning("%s was cancelled while in flight", name)
+        raise
     return None
 
 
@@ -216,7 +228,12 @@ async def stop_restart_recovery(runner: GobbyRunner) -> None:
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.shutdown_in_progress = True
-    for attr in ("_subsystem_init_task", "_startup_recovery_task", "_hook_inbox_task"):
+    for attr in (
+        "_subsystem_init_task",
+        "_startup_recovery_task",
+        "_worktree_recovery_task",
+        "_hook_inbox_task",
+    ):
 
         async def cancel_owned_task(attr: str = attr) -> None:
             await _cancel_runner_task(runner, attr)
@@ -552,35 +569,6 @@ async def _settle_finalizers_under_cancellation(
     return cancellation
 
 
-async def _drain_worktree_deletes_under_cancellation(
-    runner: GobbyRunner,
-    cancellation: asyncio.CancelledError | None,
-) -> asyncio.CancelledError | None:
-    """Finish destructive work before the database can close."""
-    executor = getattr(runner, "worktree_delete_executor", None)
-    if executor is None or executor.is_joined():
-        return cancellation
-    try:
-        executor.shutdown(cancel_futures=True)
-    except Exception:
-        logger.warning("Worktree delete executor revocation failed", exc_info=True)
-
-    drain = asyncio.create_task(
-        asyncio.to_thread(executor.join),
-        name="worktree-delete-final-drain",
-    )
-    while not drain.done():
-        try:
-            await asyncio.shield(drain)
-        except asyncio.CancelledError as exc:
-            cancellation = cancellation or exc
-    try:
-        drain.result()
-    except Exception:
-        logger.warning("Worktree delete executor drain failed", exc_info=True)
-    return cancellation
-
-
 async def _run_graceful_shutdown_sequence(
     runner: GobbyRunner,
     server: uvicorn.Server,
@@ -708,6 +696,72 @@ async def _run_graceful_shutdown_sequence(
     )
 
 
+async def _shutdown_child_processes(
+    runner: GobbyRunner,
+    *,
+    shutdown_intent: ShutdownIntent,
+    reap_remaining_child_processes: ReapChildProcesses,
+) -> None:
+    """Stop the transcript pool and CLI calls, then reap non-preserved children.
+
+    Order is part of the contract: the pool stops before the reaper runs, CLI calls
+    clean up before the reaper force-kills them, and the agent listing gates the reap.
+    """
+    from gobby.runner_background_services import shutdown_background_services
+
+    _best_effort_sync(
+        shutdown_background_services,
+        "Transcript evidence process pool shutdown",
+    )
+    await _best_effort(
+        shutdown_cli_text_generation_calls,
+        "Internal CLI text generation shutdown",
+    )
+    drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
+    preserved_agent_pids = await runner_lifecycle_processes.preserved_agent_pids_for_reap(runner)
+    if preserved_agent_pids is None:
+        runner_lifecycle_processes.log_children_left_unreaped(
+            "managed agent runs could not be enumerated, so reaping could kill live agents"
+        )
+    else:
+        await _best_effort(
+            lambda: reap_remaining_child_processes(
+                preserve_agents=True,
+                preserved_agent_pids=preserved_agent_pids,
+                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART or not drain_host,
+            ),
+            "Child process reap",
+        )
+
+
+async def _shutdown_child_processes_under_cancellation(
+    runner: GobbyRunner,
+    cancellation: asyncio.CancelledError | None,
+    *,
+    shutdown_intent: ShutdownIntent,
+    reap_remaining_child_processes: ReapChildProcesses,
+) -> asyncio.CancelledError | None:
+    """Stop the pool and reap children on their own budget, deferring caller cancellation."""
+    owned = asyncio.create_task(
+        _best_effort(
+            lambda: _shutdown_child_processes(
+                runner,
+                shutdown_intent=shutdown_intent,
+                reap_remaining_child_processes=reap_remaining_child_processes,
+            ),
+            "Fallback child process reap",
+            timeout=_DEADLINE_CHILD_REAP_BUDGET_SECONDS,
+        ),
+        name="fallback-child-reap",
+    )
+    while not owned.done():
+        try:
+            await asyncio.shield(owned)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+    return cancellation
+
+
 async def _run_async_shutdown_cleanup(
     runner: GobbyRunner,
     server: uvicorn.Server | None = None,
@@ -718,7 +772,6 @@ async def _run_async_shutdown_cleanup(
     shutdown_telemetry: Callable[[], None],
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
-    from gobby.runner_background_services import shutdown_background_services
     from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
 
     if server is not None and server_task is not None:
@@ -732,12 +785,17 @@ async def _run_async_shutdown_cleanup(
     await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
     config_runtime = getattr(runner, "config_runtime", None)
     if config_runtime is not None:
-        await _best_effort(config_runtime.close, "Config runtime shutdown")
+        await _best_effort(
+            config_runtime.close,
+            "Config runtime shutdown",
+            timeout=_CLEANUP_STEP_TIMEOUT_SECONDS,
+        )
     definition_revision_listener = getattr(runner, "definition_revision_listener", None)
     if definition_revision_listener is not None:
         await _best_effort(
             definition_revision_listener.close,
             "Definition revision listener shutdown",
+            timeout=_CLEANUP_STEP_TIMEOUT_SECONDS,
         )
     drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
     host = getattr(runner, "terminal_host_manager", None)
@@ -749,32 +807,15 @@ async def _run_async_shutdown_cleanup(
             await _best_effort(
                 lambda: stop(drain_host=drain_host),
                 "gterm host stop",
+                timeout=_TERMINAL_HOST_STOP_TIMEOUT_SECONDS,
             )
     # Nothing feeds the composer ledger once the host stops; cancelling flushes it.
     await _cancel_runner_task(runner, "_composer_ledger_task")
-    _best_effort_sync(
-        shutdown_background_services,
-        "Transcript evidence process pool shutdown",
+    await _shutdown_child_processes(
+        runner,
+        shutdown_intent=shutdown_intent,
+        reap_remaining_child_processes=reap_remaining_child_processes,
     )
-    await _best_effort(
-        shutdown_cli_text_generation_calls,
-        "Internal CLI text generation shutdown",
-    )
-    preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
-    if preserved_agent_pids is None:
-        logger.warning(
-            "Skipping child process reap: managed agent runs could not be "
-            "enumerated, so reaping could kill live agents"
-        )
-    else:
-        await _best_effort(
-            lambda: reap_remaining_child_processes(
-                preserve_agents=True,
-                preserved_agent_pids=preserved_agent_pids,
-                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART or not drain_host,
-            ),
-            "Child process reap",
-        )
     _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
     await _best_effort(
         lambda: _shutdown_database_concurrency(runner),
@@ -801,12 +842,6 @@ async def shutdown_daemon_services(
     loop = asyncio.get_running_loop()
     overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
     _overall_shutdown_deadline = overall_deadline
-    # Inside the overall deadline, and before the host stops: wakes reach terminals
-    # only while the host still accepts input.
-    await send_hold_notice_if_restarting(runner)
-    host = getattr(runner, "terminal_host_manager", None)
-    if host is not None:
-        host.begin_shutdown()
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     graceful_deadline = min(
@@ -814,7 +849,19 @@ async def shutdown_daemon_services(
         loop.time() + _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
     )
     overall_timeout = asyncio.timeout_at(overall_deadline)
+    # Shutdown start: no new worktree delete is admitted, so the graceful window runs none.
+    close_worktree_delete_admission(runner)
+    cleanup_completed = False
     try:
+        # Inside the overall deadline, and before the host stops: wakes reach terminals
+        # only while the host still accepts input. Inside the try, so a cancel or an error
+        # here still reaches the finally, which stops the pool and reaps children.
+        await send_hold_notice_if_restarting(runner)
+        host = getattr(runner, "terminal_host_manager", None)
+        if host is not None:
+            host.begin_shutdown()
+        # After the host stops accepting work, so the preserved host PID is final when read.
+        runner_lifecycle_processes.start_preserved_agent_listing(runner)
         try:
             async with overall_timeout:
                 await stop_restart_recovery(runner)
@@ -857,6 +904,7 @@ async def shutdown_daemon_services(
                     reap_remaining_child_processes=reap_remaining_child_processes,
                     shutdown_telemetry=shutdown_telemetry,
                 )
+                cleanup_completed = True
         except TimeoutError:
             if not overall_timeout.expired():
                 raise
@@ -871,11 +919,15 @@ async def shutdown_daemon_services(
             server_task,
             request_cancel_timeout_seconds=_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS,
         )
+        if not cleanup_completed:
+            # Any exit before cleanup finished (deadline, cancel, or error) reaps here.
+            deferred_cancellation = await _shutdown_child_processes_under_cancellation(
+                runner,
+                deferred_cancellation,
+                shutdown_intent=shutdown_intent,
+                reap_remaining_child_processes=reap_remaining_child_processes,
+            )
         deferred_cancellation = await _settle_finalizers_under_cancellation(
-            runner,
-            deferred_cancellation,
-        )
-        deferred_cancellation = await _drain_worktree_deletes_under_cancellation(
             runner,
             deferred_cancellation,
         )

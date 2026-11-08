@@ -1,4 +1,4 @@
-version: "2.1.1"
+version: "3.0.0"
 tags: [task-closure-general]
 
 rules:
@@ -118,7 +118,7 @@ rules:
            for record in descendant.get('all_attestations', descendant.get('attestations', []))
            if record.get('kind') in ['test-before', 'implementation', 'test-after']) or
        any(latest_attestation('independent-review').get('session_id') == record.get('session_id')
-           for record in all_attestations if record.get('kind') in ['implementation', 'self-review']))
+           for record in all_attestations if record.get('kind') in ['test-before', 'implementation', 'test-after']))
     effects:
       - type: block
         reason: Obtain final approval from a reviewer who authored none of this epic's implementation or tests.
