@@ -1320,7 +1320,18 @@ async fn plaintext_only_from_loopback_peers() {
         ("[::1]:0", "::1"),
         ("[::]:0", "127.0.0.1"),
     ] {
-        let bind: SocketAddr = bind.parse().expect("bind addr");
+        let mut bind: SocketAddr = bind.parse().expect("bind addr");
+        if bind.ip().is_unspecified() {
+            // macOS gives a dual-stack `[::]:0` bind the next port without checking IPv4
+            // sockets, so it can pick a port another test process holds as `127.0.0.1:P`
+            // or `0.0.0.0:P`, and that listener then takes the IPv4 dial. The IPv4
+            // allocator skips every held port, and no allocator hands out a port that a
+            // `[::]` listener holds, so take P from it and bind `[::]:P`.
+            let reserved = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("reserve an IPv4 loopback port");
+            bind.set_port(reserved.local_addr().expect("reserved addr").port());
+        }
         if TcpListener::bind(bind).await.is_err() {
             eprintln!("{bind} is unavailable here; skipping that family");
             continue;

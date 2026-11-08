@@ -3,7 +3,7 @@
 //! The loader, secret redaction, masks, and response normalization mirror
 //! `tests/contracts/http_corpus.py`, so both harnesses compare like with like.
 //! Each case replays in its declared `backend` state: `up` against a case-driven stub
-//! backend, `down` against a held backend address that refuses connections.
+//! backend, `down` against `common::refused_addr`, which refuses connections at once.
 
 use super::common;
 
@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use common::TIMEOUT;
+use common::{TIMEOUT, refused_addr};
 use gobby_core::bootstrap::RouteBackend;
 use gobby_daemon::front_door::FrontDoorState;
 use gobby_daemon::front_door::compare::{Outcome, WaiverRef};
@@ -30,7 +30,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use serde_json::{Map, Value, json};
-use tokio::net::{TcpListener, TcpSocket, TcpStream};
+use tokio::net::{TcpListener, TcpStream};
 
 const CORPUS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/contracts/http");
 const MASK: &str = "@mask@";
@@ -255,17 +255,6 @@ async fn stub_backend(case: &Value) -> (SocketAddr, SeenLog) {
     (addr, seen)
 }
 
-/// A loopback address bound without listening, so connections to it are refused for as
-/// long as the returned socket is held.
-fn refusing_backend() -> (TcpSocket, SocketAddr) {
-    let socket = TcpSocket::new_v4().expect("socket");
-    socket
-        .bind("127.0.0.1:0".parse().expect("loopback"))
-        .expect("bind refusing backend");
-    let addr = socket.local_addr().expect("refusing addr");
-    (socket, addr)
-}
-
 async fn start_front_door(
     backend: SocketAddr,
     routes: BTreeMap<String, RouteBackend>,
@@ -403,8 +392,9 @@ fn assert_request_unchanged(case: &Value, seen: &SeenLog) {
 enum CaseBackend {
     /// The case-driven stub, with the requests it received.
     Up(SeenLog),
-    /// The bound, non-listening socket that keeps the address refusing connections.
-    Down(TcpSocket),
+    /// A refused address. A bound, never-listening socket is not one on macOS: its
+    /// dials time out after about 8 s instead of being refused.
+    Down,
 }
 
 /// Replay `case` through a front door whose backend is in the case's declared state, assert
@@ -470,8 +460,7 @@ async fn replay_in_declared_backend_state(
         let (addr, seen) = stub_backend(case).await;
         (addr, CaseBackend::Up(seen))
     } else {
-        let (held, addr) = refusing_backend();
-        (addr, CaseBackend::Down(held))
+        (refused_addr().await, CaseBackend::Down)
     };
     let family = case["family"].as_str().expect("case family");
     let routes = if matches!(family, SYNTHETIC_FAMILY | NATIVE_CHALLENGE_FAMILY) {
@@ -500,7 +489,7 @@ async fn replay_in_declared_backend_state(
             );
         }
         CaseBackend::Up(seen) => assert_request_unchanged(case, &seen),
-        CaseBackend::Down(held) => drop(held),
+        CaseBackend::Down => {}
     }
     if let Some(citation) = &waiver {
         let label = if outcome == Outcome::NativeExtension {
