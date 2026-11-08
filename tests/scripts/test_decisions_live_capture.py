@@ -70,6 +70,15 @@ BOX_HOST = "box.example"
 BOX_BASE = f"https://{BOX_HOST}/api"
 BOX_MODEL = "typesafe-box"
 BOX_RESPONSE_MODEL = "typesafe-box-20261101"
+# Box always goes to the supported OpenRouter endpoint; the default wire varies per test.
+BOX_FLAGS = [
+    "--box-wire-api",
+    "openrouter-decisions",
+    "--box-api-base",
+    BOX_BASE,
+    "--box-model",
+    BOX_MODEL,
+]
 
 
 def _parse_flags(argv: list[str]) -> argparse.Namespace:
@@ -392,15 +401,17 @@ def test_capture_output_omits_key_and_image(
     assert imported.isdisjoint(LIVE_CONFIG_MODULES)
 
 
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
 def test_capture_box_failure_does_not_block_raw_probes(
-    tmp_path: Path, openrouter_wire: OpenRouterWire
+    tmp_path: Path, openrouter_wire: OpenRouterWire, wire_api: str
 ) -> None:
     openrouter_wire.refused_kinds = {"box"}
 
-    code, section = _capture(tmp_path)
+    code, section = _capture(tmp_path, wire_api, *BOX_FLAGS)
 
     assert code == 0
     capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    assert capture["wire_api"] == wire_api
     box = next(shape for shape in capture["shapes"] if shape["shape"] == "box")
     assert box["finding"] == {"reason": "http_status", "detail": "HTTP 400"}
     probe_requests = [body for body in openrouter_wire.posts() if "probe" in body["questions"]]
@@ -410,10 +421,12 @@ def test_capture_box_failure_does_not_block_raw_probes(
     assert capture["alias_matches_pinned_response"] is True
 
 
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
 def test_capture_records_bounded_redacted_http_errors(
     tmp_path: Path,
     openrouter_wire: OpenRouterWire,
     monkeypatch: pytest.MonkeyPatch,
+    wire_api: str,
 ) -> None:
     original = openrouter_wire.handle
     image = base64.b64encode(png()).decode()
@@ -433,10 +446,11 @@ def test_capture_records_bounded_redacted_http_errors(
         return original(request)
 
     monkeypatch.setattr(openrouter_wire, "handle", fail)
-    code, section = _capture(tmp_path)
+    code, section = _capture(tmp_path, wire_api, *BOX_FLAGS)
 
     assert code == 0
     capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    assert capture["wire_api"] == wire_api
     box = next(shape for shape in capture["shapes"] if shape["shape"] == "box")
     failures = [*box["exchanges"], *capture["probes"]]
     assert [failure["status"] for failure in failures] == [400, 500, 500, 500, 500, 500, 500]
