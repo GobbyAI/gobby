@@ -38,7 +38,8 @@ from gobby.llm.sdk_utils import (
 
 logger = logging.getLogger(__name__)
 
-_HISTORY_MESSAGE_LIMIT = 50
+# Messages fetched per read while the loader pages through the whole history.
+_HISTORY_PAGE_SIZE = 500
 _DRAIN_PENDING_RESPONSE_TIMEOUT_SECONDS = 1.0
 _EXPECTED_CHAT_ERRORS: tuple[type[Exception], ...] = (
     ClaudeSDKError,
@@ -78,10 +79,16 @@ class ChatSessionMessagesMixin:
             return None
 
         try:
-            messages = await self._message_manager.get_messages(
-                target_id,
-                limit=_HISTORY_MESSAGE_LIMIT,
-            )
+            messages: list[dict[str, Any]] = []
+            after_seq = 0
+            while True:
+                batch = await self._message_manager.get_messages(
+                    target_id, after_seq=after_seq, limit=_HISTORY_PAGE_SIZE
+                )
+                messages.extend(batch)
+                if len(batch) < _HISTORY_PAGE_SIZE:
+                    break
+                after_seq = batch[-1]["seq"]
             if not messages:
                 return None
 

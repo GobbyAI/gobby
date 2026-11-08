@@ -18,9 +18,13 @@ from claude_agent_sdk.types import PreToolUseHookSpecificOutput, SyncHookJSONOut
 from gobby.adapters.capabilities import ContextChannel
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.adapters.degradation import CARRIED_CONTEXT_VARIABLE
+from gobby.adapters.degradation import (
+    CARRIED_CONTEXT_VARIABLE,
+    ContextQueueUnavailableError,
+    page_context_for_adapter,
+)
 from gobby.adapters.droid import DroidAdapter
-from gobby.hooks.events import HookResponse
+from gobby.hooks.events import HookResponse, SessionSource
 from gobby.hooks.receipt_effects import (
     apply_acknowledged_receipt,
     take_worker_staging,
@@ -44,13 +48,25 @@ pytestmark = pytest.mark.unit
 _CHANNEL_VARIABLE = f"{CARRIED_CONTEXT_VARIABLE}_{ContextChannel.SYSTEM_MESSAGE}"
 _BREADCRUMB = re.compile(r"\n\ncontext continues on the next delivery: [^\n]*\Z")
 _PAGE_HEADER = re.compile(r"\[[^\]\n]* \(page \d+/\d+\)\]\n")
-_WHITESPACE = re.compile(r"\s+")
+_LEADING_PAGE_NUMBER = re.compile(r"\A\[[^\]\n]* \(page (\d+)/\d+\)\]\n")
 
 
-def _contributor_bytes(text: str) -> str:
-    """One delivery's contributor bytes, without its breadcrumb, page headers or separators."""
-    body = _BREADCRUMB.sub("", text)
-    return _WHITESPACE.sub("", _PAGE_HEADER.sub("", body))
+def _reassemble_serialized(texts: list[str]) -> str:
+    """Rebuild the original bytes from each delivery's serialized text, not its contributors.
+
+    A delivery's text loses its breadcrumb and page headers and nothing else. Inside a
+    delivery the text already carries its blank lines. Between deliveries a whole part starts
+    on a blank line, and a continuation page joins the page before it directly.
+    """
+    pieces: list[str] = []
+    for text in texts:
+        body = _BREADCRUMB.sub("", text)
+        leading = _LEADING_PAGE_NUMBER.match(body)
+        continues = leading is not None and int(leading.group(1)) > 1
+        if pieces and not continues:
+            pieces.append("\n\n")
+        pieces.append(_PAGE_HEADER.sub("", body))
+    return "".join(pieces)
 
 
 def _deliver(db: HubDatabase, translate: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -104,8 +120,10 @@ def test_an_empty_delivery_drains_the_queue(
     session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-000000000002")
     adapter = adapter_type(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
     response = HookResponse(decision="allow", metadata={"session_id": session_id})
-    response.add_context(("rule:big", "b" * (ADDITIONAL_CONTEXT_LIMIT + 500)))
-    _deliver(
+    body = "\n\n".join("b" * 99 for _ in range(104))
+    assert len(body) > ADDITIONAL_CONTEXT_LIMIT
+    response.add_context(("rule:big", body))
+    first = _deliver(
         temp_db,
         lambda: adapter.translate_from_hook_response(response, hook_type=hook_type),
     )
@@ -118,10 +136,38 @@ def test_an_empty_delivery_drains_the_queue(
         lambda: adapter.translate_from_hook_response(empty_response, hook_type=hook_type),
     )
 
+    first_context = str(first.get("hookSpecificOutput", {}).get("additionalContext", ""))
     carried = str(empty.get("hookSpecificOutput", {}).get("additionalContext", ""))
     assert carried.startswith("[rule:big (page 2/2)]\n")
     assert "context continues" not in carried
+    assert _reassemble_serialized([first_context, carried]) == body
     assert not _queue(temp_db, session_id)
+
+
+def test_parts_that_do_not_fit_without_a_session_queue_raise_and_ship_nothing() -> None:
+    """With no queue to wait in, the parts that do not fit fail loudly; none is dropped."""
+    parts = [("rule:a", "a" * 9_000), ("rule:b", "b" * 2_000)]
+
+    with pytest.raises(ContextQueueUnavailableError) as raised:
+        page_context_for_adapter(
+            parts,
+            provider=SessionSource.CLAUDE,
+            hook_type=None,
+            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+        )
+
+    assert raised.value.labels == ["rule:b"]
+
+
+def test_parts_that_fit_without_a_session_queue_ship_whole() -> None:
+    text = page_context_for_adapter(
+        [("rule:a", "a" * 40), ("rule:b", "b" * 60)],
+        provider=SessionSource.CLAUDE,
+        hook_type=None,
+        destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+    )
+
+    assert text == "a" * 40 + "\n\n" + "b" * 60
 
 
 def test_three_times_the_cap_arrives_over_consecutive_deliveries_in_order(
@@ -143,18 +189,16 @@ def test_three_times_the_cap_arrives_over_consecutive_deliveries_in_order(
     response.add_context(*parts)
     deliveries = [_claude_context(adapter, temp_db, response)]
     while _queue(temp_db, session_id):
-        # Any delivery with fresh context drains the queue; "ping" is that trigger.
-        follow = HookResponse(decision="allow", metadata={"session_id": session_id})
-        follow.add_context(("rule:trigger", "ping"))
-        deliveries.append(_claude_context(adapter, temp_db, follow))
+        # A later hook with nothing fresh still drains the queue, one page per delivery.
+        later = HookResponse(decision="allow", metadata={"session_id": session_id})
+        deliveries.append(_claude_context(adapter, temp_db, later))
         assert len(deliveries) < 20, "the queue must drain"
 
     assert len(deliveries) >= 3
     for text in deliveries:
         assert len(text) <= ADDITIONAL_CONTEXT_LIMIT
     assert "context continues" not in deliveries[-1]
-    shipped = "".join(_contributor_bytes(text) for text in deliveries).replace("ping", "")
-    assert shipped == "".join(_WHITESPACE.sub("", body) for _, body in parts)
+    assert _reassemble_serialized(deliveries) == "\n\n".join(body for _, body in parts)
 
 
 def test_queued_parts_ship_before_fresh_parts_and_nothing_jumps_ahead(
@@ -421,6 +465,39 @@ async def test_a_tool_result_with_no_callback_result_still_drains_the_queue(
     hook = cast(dict[str, Any], output["hookSpecificOutput"])
     assert hook["additionalContext"] == "c" * 3_000
     assert not _queue(temp_db, session_id)
+
+
+def _receipt_states(temp_db: HubDatabase, session_id: str) -> list[str]:
+    with temp_db.transaction() as conn:
+        rows = conn.execute(
+            "SELECT state FROM hook_receipt_effects WHERE session_id = %s ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+    return [str(row["state"]) for row in rows]
+
+
+def test_a_shipped_chat_output_commits_its_effects_through_an_acknowledged_receipt(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000b")
+    chat = _ChatHooks(temp_db, session_id)
+
+    chat._commit_staged_context({"session_variables": {"chat_probe": "shipped"}})
+
+    assert _receipt_states(temp_db, session_id) == ["acknowledged"]
+    assert SessionVariableManager(temp_db).get_variables(session_id)["chat_probe"] == "shipped"
+
+
+def test_a_chat_commit_that_loses_the_receipt_cas_applies_no_effects(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000c")
+    chat = _ChatHooks(temp_db, session_id)
+    monkeypatch.setattr("gobby.storage.hook_receipts.acknowledge_receipt", lambda *_a, **_k: None)
+
+    chat._commit_staged_context({"session_variables": {"chat_probe": "shipped"}})
+
+    assert "chat_probe" not in SessionVariableManager(temp_db).get_variables(session_id)
 
 
 async def test_a_blocked_stop_delivers_no_context_and_commits_no_queue(

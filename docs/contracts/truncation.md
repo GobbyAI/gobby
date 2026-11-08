@@ -58,26 +58,22 @@ context. Context loads are never offloaded and never cut. They page.
   staged with the delivery and committed only when the delivery is acknowledged.
   A blocked prompt or stop, and a denied tool call, delivers no context and
   commits nothing; their parts are generated again by the next event.
-- **Breadcrumb.** The model is told what waits. With a session queue it reads
-  `context continues on the next delivery: <labels>`. Without one it reads
-  `context not carried, no session queue: <labels>`, and the adapter logs an error.
-  Labels are bounded to `min(400, limit // 4)` characters and end in `(+N more)`.
-  The queue still holds every waiting part.
+- **Breadcrumb.** The model is told what waits: `context continues on the next
+  delivery: <labels>`. Labels are bounded to `min(400, limit // 4)` characters and
+  end in `(+N more)`. The queue still holds every waiting part. A rule name is bounded
+  at load so its `rule:` label fits a page header (`MAX_CONTEXT_LABEL_CHARS`, 200).
+  The config floor for a limit is derived from that bound and rejects lower values.
 - **Duplicates.** A fresh part identical to a queued (label, text) pair is dropped
   in favour of the queued copy, so the text ships once.
-
-### Named exceptions
-
-- A whitespace-free run longer than the page budget splits at the budget edge. The
-  pages are contiguous and join back to the exact bytes, so nothing is lost. A page
-  boundary falls inside that run.
-- Without a session identity or store, a part that does not fit cannot queue. Its
-  remainder is named as not carried and logged as an error. The model is told.
-- Chat history loads the last 50 messages as one part. The window is a query bound,
-  not a budget. Older messages stay in the session store; `get_session_messages`
-  reads them.
-- A hook call that produces no response dict does not deliver, so it cannot drain
-  the queue. Every delivery that returns a response does.
+- **Unbreakable runs.** A whitespace-free run longer than the page budget has no
+  boundary to page at. It raises `UnpageableContextError`; no character is cut by length.
+- **No queue.** Without a session identity or store, a part that does not fit cannot
+  wait. The delivery raises `ContextQueueUnavailableError` with the labels before anything
+  ships and before any queue changes.
+- **Chat history.** History loads in full, read in pages of 500 messages resumed after
+  the last `seq`, and ships as one part through the queue like any other context.
+- **No response.** A hook call that produces no response dict delivers nothing and
+  leaves the queue as it is. Every delivery that returns a response drains it.
 
 ## Token-budget pagination
 

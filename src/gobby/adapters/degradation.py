@@ -27,6 +27,17 @@ logger = logging.getLogger(__name__)
 CARRIED_CONTEXT_VARIABLE = "_carried_context"
 
 
+class ContextQueueUnavailableError(RuntimeError):
+    """Parts that do not fit this delivery have no readable session queue to wait in.
+
+    Raised before anything ships or any queue changes. Nothing is dropped or cut.
+    """
+
+    def __init__(self, labels: list[str]) -> None:
+        super().__init__(f"additionalContext queue unavailable; parts not carried labels={labels}")
+        self.labels = labels
+
+
 class AdditionalContextPersistKwargs(TypedDict):
     """Session and store kwargs that let a channel's waiting parts reach its next delivery."""
 
@@ -168,7 +179,8 @@ def page_context_for_adapter(
 
     Nothing is dropped or cut. Parts that do not ship now wait in the session's queue for
     the channel and ship first, in order, on its next delivery. Pages of an oversized part
-    ship consecutively. Channels with no delivery (``none``) queue nothing.
+    ship consecutively. When no readable queue can hold the waiting parts,
+    ContextQueueUnavailableError is raised before anything ships and no queue changes.
     """
     ship_limit = additional_context_limit_for(provider)
     variable = _carried_variable(destination_channel)
@@ -183,6 +195,8 @@ def page_context_for_adapter(
         limit=ship_limit,
         carry=Carry.QUEUED if stored is not None else Carry.UNQUEUED,
     )
+    if delivery.remaining and not (stored is not None and session_id and variable):
+        raise ContextQueueUnavailableError([label for label, _ in delivery.remaining])
     if aggregate_len > ship_limit:
         record_adapter_degradation(
             provider=provider,
@@ -198,11 +212,6 @@ def page_context_for_adapter(
         )
     if stored is not None and session_id and variable and (pending or delivery.remaining):
         _stage_carried_context(session_id, variable, delivery.remaining)
-    elif delivery.remaining:
-        logger.error(
-            "additionalContext queue unavailable; parts not carried labels=%s",
-            [label for label, _ in delivery.remaining],
-        )
     return delivery.text
 
 

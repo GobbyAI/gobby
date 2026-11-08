@@ -2,7 +2,6 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
 
@@ -16,10 +15,10 @@ from gobby.adapters.degradation import (
 )
 from gobby.hooks.events import ContextPart
 from gobby.hooks.receipt_effects import (
-    apply_acknowledged_receipt,
     take_worker_staging,
     worker_staging_scope,
 )
+from gobby.hooks.replay_decision import acknowledge_and_apply_receipt
 from gobby.servers.chat_session_helpers import (
     _PLAN_FILE_PATTERN,
     _response_to_compact_output,
@@ -29,6 +28,7 @@ from gobby.servers.chat_session_helpers import (
     _response_to_stop_output,
     _response_to_subagent_output,
 )
+from gobby.storage.hook_receipts import prepare_receipt
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
@@ -97,12 +97,25 @@ class ChatSessionHooksMixin:
         return _staged
 
     def _commit_staged_context(self, staged: dict[str, Any]) -> None:
-        """Persist the queued context a shipped hook output staged."""
+        """Persist the queued context a shipped hook output staged, through a receipt CAS.
+
+        The staged effects are prepared as a receipt and acknowledged in one call. They
+        apply only when this call wins the CAS, the same gate every other delivery uses.
+        """
         db = getattr(self._additional_context_persist()["store"], "db", None)
         if not staged or db is None or not self.db_session_id:
             return
-        apply_acknowledged_receipt(
-            SimpleNamespace(session_id=self.db_session_id, staged_payload=staged),
+        receipt = prepare_receipt(
+            db,
+            session_id=self.db_session_id,
+            envelope_id=f"chat-hook:{uuid4()}",
+            staged_payload=staged,
+        )
+        acknowledge_and_apply_receipt(
+            db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+            message_manager=None,
             variable_manager=SessionVariableManager(db),
         )
 

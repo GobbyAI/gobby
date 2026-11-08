@@ -13,6 +13,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.features import ChatConfig
 from gobby.servers.chat_session import ChatSession
+from gobby.servers.chat_session_messages import _HISTORY_PAGE_SIZE
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -665,6 +666,36 @@ class TestHistoryInjection:
 
         with pytest.raises(TypeError):
             await cast(Any, session)._load_history_context(max_total_chars=300)
+
+    @pytest.mark.asyncio
+    async def test_load_history_context_reads_every_page_of_history(
+        self, session: ChatSession
+    ) -> None:
+        """History longer than one fetch loads whole: each read resumes after the last seq."""
+        first_page = [
+            {"seq": seq, "role": "user", "content_type": "text", "content": f"turn {seq}"}
+            for seq in range(1, _HISTORY_PAGE_SIZE + 1)
+        ]
+        last_page = [
+            {
+                "seq": _HISTORY_PAGE_SIZE + 1,
+                "role": "assistant",
+                "content_type": "text",
+                "content": "final answer",
+            },
+        ]
+        mock_manager = AsyncMock()
+        mock_manager.get_messages.side_effect = [first_page, last_page]
+        session.db_session_id = "hist-session"
+        session._message_manager = mock_manager
+
+        result = await session._load_history_context()
+
+        assert result is not None
+        assert result.count("**User:**") == _HISTORY_PAGE_SIZE
+        assert f"**User:** turn {_HISTORY_PAGE_SIZE}\n\n**Assistant:** final answer" in result
+        resumed = mock_manager.get_messages.await_args_list[1]
+        assert resumed.kwargs["after_seq"] == _HISTORY_PAGE_SIZE
 
     @pytest.mark.asyncio
     async def test_load_history_context_handles_error(self, session: ChatSession) -> None:

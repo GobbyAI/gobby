@@ -10,6 +10,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cache
 
 
 def sanitize_error(e: Exception) -> str:
@@ -73,6 +74,36 @@ class ContextDelivery:
     text: str
     shipped: list[ContextPart]
     remaining: list[ContextPart]
+
+
+class UnpageableContextError(ValueError):
+    """A part holds a run no page can hold whole and no boundary can split. Nothing is cut."""
+
+
+# Longest context label a page header carries. Rule names are bounded to it at load.
+MAX_CONTEXT_LABEL_CHARS = 200
+# Page numbers in a header count up to six digits, as the breadcrumb's queue count does.
+_PAGE_NUMBER_DIGITS = 6
+
+
+def _page_room(limit: int) -> int:
+    """Characters a page body may use beside its header at ``limit``."""
+    return limit - _breadcrumb_reserve(limit) - len("\n\n")
+
+
+@cache
+def minimum_additional_context_limit() -> int:
+    """Smallest ship limit whose page holds the longest label, its header and one character.
+
+    Derived, not fixed: the breadcrumb reserve grows with the limit, so the search runs over the
+    limit itself. Config rejects a limit below this value; nothing is clamped to it.
+    """
+    digits = "9" * _PAGE_NUMBER_DIGITS
+    header = len(f"[{'x' * MAX_CONTEXT_LABEL_CHARS} (page {digits}/{digits})]\n")
+    limit = 1
+    while _page_room(limit) - header < 1:
+        limit += 1
+    return limit
 
 
 def deliver_context(
@@ -200,7 +231,7 @@ def _page(part: ContextPart, limit: int, first: int = 1) -> list[ContextPart]:
     Pages are cut from raw text, so no page ever carries another page's header.
     """
     label, text = part
-    room = limit - _breadcrumb_reserve(limit) - len("\n\n")
+    room = _page_room(limit)
     budget = room
     while budget > 0:
         bodies = _split_to_budget(text, budget)
@@ -223,12 +254,16 @@ def _split_to_budget(
 
     Each separator stays attached to the unit before it, so the pieces concatenate back
     to ``text`` exactly. A unit too large for ``budget`` splits again at the next finer
-    separator. Only a run with no separator at all is cut by length.
+    separator. A run with no separator left that still exceeds ``budget`` raises
+    UnpageableContextError: no character is ever cut by length.
     """
     if len(text) <= budget:
         return [text]
     if not separators:
-        return [text[start : start + budget] for start in range(0, len(text), budget)]
+        raise UnpageableContextError(
+            f"{len(text)}-character run has no paragraph, line or word boundary "
+            f"to page within a {budget}-character page budget"
+        )
     separator, finer = separators[0], separators[1:]
     segments = text.split(separator)
     units: list[str] = []

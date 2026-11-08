@@ -30,6 +30,31 @@ def _reassemble(shipped: list[tuple[str, str]]) -> str:
     return text
 
 
+_ANY_PAGE_HEADER = re.compile(r"\[[^\]\n]* \(page \d+/\d+\)\]\n")
+_LEADING_PAGE_NUMBER = re.compile(r"\A\[[^\]\n]* \(page (\d+)/\d+\)\]\n")
+_BREADCRUMB = re.compile(r"(?:\n\n)?context continues on the next delivery: [^\n]*\Z")
+
+
+def _reassemble_serialized(texts: list[str]) -> str:
+    """Rebuild the original bytes from each delivery's serialized text, not its shipped tuples.
+
+    Each delivery's text loses its breadcrumb and page headers and nothing else. Within a
+    delivery the text already carries its blank lines. Between deliveries a whole part starts
+    on a blank line, and a continuation page joins the page before it directly.
+    """
+    pieces: list[str] = []
+    for text in texts:
+        body = _BREADCRUMB.sub("", text)
+        if not body:
+            continue
+        leading = _LEADING_PAGE_NUMBER.match(body)
+        continues = leading is not None and int(leading.group(1)) > 1
+        if pieces and not continues:
+            pieces.append("\n\n")
+        pieces.append(_ANY_PAGE_HEADER.sub("", body))
+    return "".join(pieces)
+
+
 def _deliver_all(parts: list[tuple[str, str]], limit: int) -> list[ContextDelivery]:
     deliveries: list[ContextDelivery] = []
     queue = list(parts)
@@ -88,7 +113,7 @@ def test_oversized_part_pages_at_paragraph_boundaries_with_numbered_labels() -> 
     paragraphs = [f"paragraph {index} " + "p" * 25 for index in range(6)]
     body = "\n\n".join(paragraphs)
 
-    deliveries = _deliver_all([("rule:big", body)], limit=120)
+    deliveries = _deliver_all([("rule:big", body)], limit=200)
 
     shipped = [entry for delivery in deliveries for entry in delivery.shipped]
     assert len(shipped) > 1
@@ -96,8 +121,9 @@ def test_oversized_part_pages_at_paragraph_boundaries_with_numbered_labels() -> 
         f"rule:big (page {index}/{len(shipped)})" for index in range(1, len(shipped) + 1)
     ]
     for delivery in deliveries:
-        assert len(delivery.text) <= 120
+        assert len(delivery.text) <= 200
     assert _reassemble(shipped) == body
+    assert _reassemble_serialized([delivery.text for delivery in deliveries]) == body
 
 
 def test_three_times_the_cap_with_an_oversized_part_arrives_in_order_and_whole() -> None:
@@ -108,32 +134,50 @@ def test_three_times_the_cap_with_an_oversized_part_arrives_in_order_and_whole()
     deliveries = _deliver_all(parts, limit)
 
     shipped = [entry for delivery in deliveries for entry in delivery.shipped]
+    expected = "a" * 400 + "\n\n" + big + "\n\n" + "c" * 300
     assert len(deliveries) >= 3
     for delivery in deliveries:
         assert len(delivery.text) <= limit
-    assert _reassemble(shipped) == "a" * 400 + "\n\n" + big + "\n\n" + "c" * 300
+    assert _reassemble(shipped) == expected
+    assert _reassemble_serialized([delivery.text for delivery in deliveries]) == expected
     whole_labels = [label for label, _ in shipped if "(page " not in label]
     assert whole_labels == ["rule:a", "rule:c"]
 
 
-def test_whitespace_free_run_larger_than_the_limit_still_pages_losslessly() -> None:
+def test_whitespace_free_run_larger_than_the_limit_fails_loudly_and_is_never_cut() -> None:
     run = "x" * 1_250
 
-    deliveries = _deliver_all([("rule:run", run)], limit=300)
-
-    shipped = [entry for delivery in deliveries for entry in delivery.shipped]
-    assert all(len(delivery.text) <= 300 for delivery in deliveries)
-    assert _reassemble(shipped) == run
+    with pytest.raises(sdk_utils.UnpageableContextError, match="1250-character run"):
+        deliver_context([("rule:run", run)], limit=300)
 
 
 def test_a_limit_too_small_to_hold_a_page_and_its_breadcrumb_fails_loudly() -> None:
     with pytest.raises(ValueError, match="too small to page rule:run"):
-        deliver_context([("rule:run", "x" * 250)], limit=100)
+        deliver_context([("rule:run", "x " * 100)], limit=100)
+
+
+def test_the_derived_minimum_is_the_smallest_limit_that_holds_the_longest_label() -> None:
+    # 375 = the longest label (200) plus a six-digit page header and one body character.
+    assert sdk_utils.MAX_CONTEXT_LABEL_CHARS == 200
+    assert sdk_utils.minimum_additional_context_limit() == 375
+
+
+def test_the_longest_label_pages_within_the_derived_minimum() -> None:
+    label = "rule:" + "x" * (sdk_utils.MAX_CONTEXT_LABEL_CHARS - len("rule:"))
+    limit = sdk_utils.minimum_additional_context_limit()
+    body = " ".join(["word"] * 100)
+
+    deliveries = _deliver_all([(label, body)], limit)
+
+    assert len(deliveries) > 1
+    for delivery in deliveries:
+        assert len(delivery.text) <= limit
+    assert _reassemble_serialized([delivery.text for delivery in deliveries]) == body
 
 
 @pytest.mark.parametrize(
     ("limit", "paragraphs", "paragraph_chars", "late_parts", "late_chars"),
-    [(200, 4, 84, 4, 44), (300, 39, 21, 3, 16), (600, 51, 120, 4, 84)],
+    [(200, 4, 60, 4, 44), (300, 39, 21, 3, 16), (600, 51, 120, 4, 84)],
 )
 def test_a_queued_page_never_nests_its_header_when_later_parts_join_the_queue(
     limit: int, paragraphs: int, paragraph_chars: int, late_parts: int, late_chars: int
@@ -142,6 +186,7 @@ def test_a_queued_page_never_nests_its_header_when_later_parts_join_the_queue(
     body = "\n\n".join(f"p{index} " + "x" * paragraph_chars for index in range(paragraphs))
     queue: list[tuple[str, str]] = [("rule:big", body)]
     shipped: list[tuple[str, str]] = []
+    texts: list[str] = []
     for turn in range(200):
         if turn < late_parts:
             queue.append((f"rule:late-{turn}", "l" * late_chars))
@@ -150,6 +195,7 @@ def test_a_queued_page_never_nests_its_header_when_later_parts_join_the_queue(
         delivery = deliver_context(queue, limit=limit)
         assert delivery.shipped, "every delivery ships at least one part"
         shipped.extend(delivery.shipped)
+        texts.append(delivery.text)
         queue = delivery.remaining
     else:
         pytest.fail("paging must terminate")
@@ -158,6 +204,8 @@ def test_a_queued_page_never_nests_its_header_when_later_parts_join_the_queue(
         assert label.count(" (page ") <= 1, label
     big = [entry for entry in shipped if entry[0].startswith("rule:big")]
     assert _reassemble(big) == body
+    late = "".join("\n\n" + "l" * late_chars for _ in range(late_parts))
+    assert _reassemble_serialized(texts) == body + late
 
 
 @pytest.mark.parametrize(("first_limit", "later_limit"), [(1_000, 600), (600, 300), (2_000, 400)])
@@ -168,6 +216,7 @@ def test_a_queued_page_cut_again_after_the_limit_shrinks_keeps_one_header(
     body = "\n\n".join(f"p{index} " + "x" * 60 for index in range(40))
     first = deliver_context([("rule:big", body)], limit=first_limit)
     shipped = list(first.shipped)
+    texts = [first.text]
     queue = first.remaining
     for _ in range(200):
         if not queue:
@@ -176,6 +225,7 @@ def test_a_queued_page_cut_again_after_the_limit_shrinks_keeps_one_header(
         assert delivery.shipped, "every delivery ships at least one part"
         assert len(delivery.text) <= later_limit
         shipped.extend(delivery.shipped)
+        texts.append(delivery.text)
         queue = delivery.remaining
     else:
         pytest.fail("paging must terminate")
@@ -183,6 +233,7 @@ def test_a_queued_page_cut_again_after_the_limit_shrinks_keeps_one_header(
     for label, _ in shipped:
         assert label.count(" (page ") <= 1, label
     assert _reassemble(shipped) == body
+    assert _reassemble_serialized(texts) == body
 
 
 def test_removed_length_cutting_helpers_stay_gone() -> None:
