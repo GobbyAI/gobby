@@ -198,9 +198,9 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
     )
 }
 
-/// `credential_roots`: install credentials and the daemon's startup files. The oracle
-/// denies the bootstrap the daemon bound at startup. `PolicyInputs` carries no bound
-/// path, so the default `gobby_home/bootstrap.yaml` stands in for it.
+/// Default install credentials and startup files. Trusted hub-resolved canonical and
+/// bound-daemon authorities join these denies in `compute`; absent authorities retain
+/// the default `gobby_home/bootstrap.yaml` stand-in.
 fn credential_roots(gobby: &Path) -> Vec<PathBuf> {
     vec![
         gobby.join("bootstrap.yaml"),
@@ -685,9 +685,15 @@ pub(super) fn assert_sensitive_path_contract(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    authority_roots: &[PathBuf],
 ) -> Result<()> {
     let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env)
         .into_iter()
+        .chain(deny_paths(
+            authority_roots.iter().map(|path| text(path)),
+            None,
+            home,
+        ))
         .map(PathBuf::from)
         .collect();
     let grant_cache: Vec<PathBuf> = deny_paths([text(&gobby.join("grants"))], None, home)
@@ -857,9 +863,18 @@ pub(super) fn compute(
         Some(&workspace),
         home,
     );
+    let authority_denies = deny_paths(
+        inputs
+            .credential_authority_roots
+            .iter()
+            .map(|path| text(path)),
+        None,
+        home,
+    );
     let mut deny_read_paths = deny_paths(
         sensitive_roots(gobby, home, env)
             .into_iter()
+            .chain(authority_denies.iter().cloned())
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
             .chain(config.extra_deny_read_paths.iter().cloned()),
@@ -874,6 +889,7 @@ pub(super) fn compute(
     let deny_write_paths = deny_paths(
         sensitive_write_roots(gobby, home, env)
             .into_iter()
+            .chain(authority_denies)
             .chain(provider_control_write_paths(
                 &workspace,
                 env,
@@ -899,6 +915,7 @@ pub(super) fn compute(
         gobby,
         home,
         env,
+        &inputs.credential_authority_roots,
     )?;
     assert_credential_read_contract(
         &read_paths,

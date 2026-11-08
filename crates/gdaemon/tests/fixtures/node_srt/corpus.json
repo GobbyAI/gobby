@@ -121,8 +121,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -1450,6 +1452,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -1612,8 +1620,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -2937,6 +2947,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -3110,8 +3126,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -4434,6 +4452,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -4597,8 +4621,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -5927,6 +5953,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -6094,8 +6126,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -7420,6 +7454,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -7582,8 +7622,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -8914,6 +8956,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -9086,8 +9134,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -10462,6 +10512,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -10635,8 +10691,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -12011,6 +12069,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -12188,8 +12252,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -13517,6 +13583,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -13683,8 +13755,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -15055,6 +15129,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -15228,8 +15308,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -16604,6 +16686,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -16780,8 +16868,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -18203,6 +18293,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": "fixture-worker",
         "env": {
@@ -18372,8 +18468,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -19748,6 +19846,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": "custom-admin",
         "env": {
@@ -19919,8 +20023,10 @@
               "{gobby_home}/.secret_kek",
               "{gobby_home}/grants",
               "{gobby_home}/tools/srt",
-              "{gobby_home}/break_glass",
-              "{gobby_home}/.break_glass-staging",
+              "{bound_bootstrap}",
+              "{bound_home}/break_glass",
+              "{bound_home}/.break_glass-staging",
+              "{home}/.gobby/bootstrap.yaml",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -21295,6 +21401,12 @@
         }
       },
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": "persistent-seat",
         "env": {
@@ -22985,6 +23097,12 @@
     {
       "error": "sandbox allow path contains sensitive root: {gobby_home}/grants/extra",
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {
@@ -23035,6 +23153,12 @@
     {
       "error": "sandbox read grant shadows credential deny: {home}/.ssh/extra",
       "inputs": {
+        "credential_authority_roots": [
+          "{bound_bootstrap}",
+          "{bound_home}/break_glass",
+          "{bound_home}/.break_glass-staging",
+          "{home}/.gobby/bootstrap.yaml"
+        ],
         "daemon_port": 60887,
         "definition": null,
         "env": {

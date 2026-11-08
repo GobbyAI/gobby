@@ -1388,6 +1388,8 @@ impl SrtTree {
         let named = [
             ("home", root.join("home")),
             ("gobby_home", gobby_home.clone()),
+            ("bound_home", root.join("bound-daemon")),
+            ("bound_bootstrap", root.join("bound-daemon/startup.yaml")),
             ("workspace", workspace.clone()),
             ("main", root.join("main")),
             ("bin", root.join("bin")),
@@ -1484,6 +1486,12 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         workspace: PathBuf::from(srt_text(&filled, "workspace")?),
         home: tree.path("home"),
         gobby_home: tree.path("gobby_home"),
+        credential_authority_roots: serde_json::from_value(
+            filled
+                .get("credential_authority_roots")
+                .cloned()
+                .unwrap_or(json!([])),
+        )?,
         env: serde_json::from_value(filled["env"].clone())?,
         provider_executable: Some(PathBuf::from(srt_text(&filled, "provider_executable")?)),
         daemon_port: u16::try_from(filled["daemon_port"].as_u64().context("daemon_port")?)?,
@@ -1637,6 +1645,150 @@ fn srt_expected_settings(tree: &SrtTree, corpus: &Value, settings: &Value) -> Re
     document["filesystem"]["denyRead"] = json!(srt_dedupe(deny_read));
     document["filesystem"]["denyWrite"] = json!(srt_dedupe(deny_write));
     Ok(srt_canonical(&document))
+}
+
+#[test]
+fn srt_trusted_credential_authorities_add_to_default_denials() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let case = srt_entries(&corpus, "cases")?
+        .iter()
+        .find(|case| case["platform"] == srt_host_platform())
+        .context("no host corpus case")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(root.path())?;
+    tree.materialize(&case["inputs"])?;
+    let mut inputs = srt_policy_inputs(&tree, &case["inputs"])?;
+    // SRT implicitly grants this directory. Explicit parent grants containing
+    // credentials are rejected, while redundant write denies are not rendered.
+    let default_write = inputs.home.join(".npm/_logs");
+    inputs.gobby_home = default_write.join("runtime");
+    inputs.credential_authority_roots.clear();
+    let baseline: Value = serde_json::from_slice(&resolve_srt_policy(&inputs)?.settings)?;
+    let authorities = [
+        default_write.join("bound-authority/startup.yaml"),
+        default_write.join("canonical-authority/startup.yaml"),
+    ];
+    inputs.credential_authority_roots = authorities.to_vec();
+    let actual: Value = serde_json::from_slice(&resolve_srt_policy(&inputs)?.settings)?;
+    for operation in ["denyRead", "denyWrite"] {
+        let before = baseline["filesystem"][operation]
+            .as_array()
+            .context("baseline deny paths")?;
+        let after = actual["filesystem"][operation]
+            .as_array()
+            .context("authority deny paths")?;
+        assert!(
+            before.iter().all(|path| after.contains(path)),
+            "{operation}: narrowed defaults"
+        );
+        for path in authorities
+            .iter()
+            .chain(std::iter::once(&inputs.gobby_home.join("bootstrap.yaml")))
+        {
+            assert!(
+                after.contains(&json!(path)),
+                "{operation}: missing {}",
+                path.display()
+            );
+        }
+    }
+    inputs.credential_authority_roots.clear();
+    let default_again: Value = serde_json::from_slice(&resolve_srt_policy(&inputs)?.settings)?;
+    assert_eq!(
+        default_again, baseline,
+        "absent authorities changed default policy"
+    );
+    Ok(())
+}
+
+#[test]
+fn srt_trusted_credential_authority_grants_are_refused() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let case = srt_entries(&corpus, "cases")?
+        .iter()
+        .find(|case| case["platform"] == srt_host_platform())
+        .context("no host corpus case")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(root.path())?;
+    tree.materialize(&case["inputs"])?;
+    for authority in [
+        "bound-authority/startup.yaml",
+        "canonical-authority/startup.yaml",
+    ] {
+        for write in [false, true] {
+            let mut inputs = srt_policy_inputs(&tree, &case["inputs"])?;
+            let path = root.path().join(authority);
+            inputs.credential_authority_roots = vec![path.clone()];
+            let grants = if write {
+                &mut inputs.sandbox.extra_write_paths
+            } else {
+                &mut inputs.sandbox.extra_read_paths
+            };
+            grants.push(path.to_string_lossy().into_owned());
+            let error = resolve_srt_policy(&inputs)
+                .err()
+                .context("an explicit credential authority grant must be refused")?;
+            assert!(
+                error
+                    .to_string()
+                    .contains("sandbox allow path contains sensitive root")
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn srt_runtime_rechecks_authorities_after_early_external_validation() -> Result<()> {
+    use gobby_daemon::nodes::agents::sandbox::external_roots::validate_external_write_roots;
+
+    let corpus = srt_corpus()?;
+    let case = srt_entries(&corpus, "cases")?
+        .iter()
+        .find(|case| case["platform"] == srt_host_platform())
+        .context("no host corpus case")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(root.path())?;
+    tree.materialize(&case["inputs"])?;
+    let mut inputs = srt_policy_inputs(&tree, &case["inputs"])?;
+    let authority = root.path().join("synthetic-authority");
+    fs::create_dir_all(&authority)?;
+    let authority_text = authority.to_string_lossy().into_owned();
+    validate_external_write_roots(
+        &[authority_text.clone()],
+        &inputs.gobby_home,
+        &inputs.home,
+        &inputs.env,
+    )
+    .map_err(anyhow::Error::msg)?;
+    inputs.credential_authority_roots = vec![authority.clone()];
+    let installation = SrtInstallation {
+        runner: authority.join("runner.mjs"),
+        node: tree.path("bin").join("node"),
+        root: authority,
+    };
+    // This root is appended after policy compilation, so only the final runtime
+    // check can reject the credential grant before preflight launches anything.
+    let error = prepare_launch_with(&inputs, &root.path().join("absent-prompt"), &installation)
+        .err()
+        .context("the final runtime check must refuse the authority")?;
+    assert!(
+        error
+            .to_string()
+            .contains("sandbox allow path contains sensitive root")
+    );
+
+    // An early accepted write grant also cannot pass the compiled policy check.
+    inputs.sandbox.extra_write_paths.push(authority_text);
+    let error = resolve_srt_policy(&inputs)
+        .err()
+        .context("the write grant must be refused")?;
+    assert!(
+        error
+            .to_string()
+            .contains("sandbox allow path contains sensitive root")
+    );
+    Ok(())
 }
 
 #[test]

@@ -1258,6 +1258,7 @@ fn assert_late_frame_attach_is_refused(socket_dir: &Path, host_terminal_id: &str
 
 /// Runs a handover and returns the stream identifiers before and after the restore.
 fn restored_attachment_ids(fallback: bool, late_attach: bool) -> (u64, u64) {
+    let measured = Instant::now();
     let env: &[(&str, &str)] = if fallback {
         &[("GTERM_RESTORE_FAULT", "decode:ht-1")]
     } else {
@@ -1278,12 +1279,14 @@ fn restored_attachment_ids(fallback: bool, late_attach: bool) -> (u64, u64) {
         Value::Null
     };
     let accepted = host_upgrade(&mut ctl, &gterm_bin(), "stale-grant", hold);
+    eprintln!("attachment handover accepted at {:?}: {accepted}", measured.elapsed());
     assert_eq!(accepted["accepted"], true);
     if late_attach {
         wait_until("the capture is written", || dir.join(STATE_FILE).exists());
         assert_late_frame_attach_is_refused(&dir, terminal);
     }
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "stale-grant", OUTCOME_WAIT);
+    eprintln!("attachment handover outcome at {:?}: {after}", measured.elapsed());
     assert_outcome(
         &after,
         "stale-grant",
@@ -2386,6 +2389,7 @@ fn sigterm_in_accepted_hold_aborts_and_exits() {
 /// the attempt instead of carrying the host into the new image.
 #[test]
 fn sigterm_before_exec_aborts_and_exits() {
+    let measured = Instant::now();
     let mut host = live_host(&[]);
     let dir = host.socket_dir().to_path_buf();
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
@@ -2396,10 +2400,12 @@ fn sigterm_before_exec_aborts_and_exits() {
         "attempt-term-write",
         json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
     );
+    eprintln!("SIGTERM handover accepted at {:?}: {accepted}", measured.elapsed());
     assert_eq!(accepted["accepted"], true, "{accepted}");
     wait_until("the state file is written", || {
         dir.join(STATE_FILE).exists()
     });
+    eprintln!("SIGTERM state visible at {:?}", measured.elapsed());
     terminate(&host);
     assert_ended_and_drained(
         &mut host,
@@ -2408,6 +2414,7 @@ fn sigterm_before_exec_aborts_and_exits() {
         "aborted",
         "host_draining",
     );
+    eprintln!("SIGTERM drain finished at {:?}", measured.elapsed());
 }
 
 /// SIGTERM that arrives once exec has started stays pending across it: the

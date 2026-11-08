@@ -476,11 +476,18 @@ pub fn try_ping(socket_dir: &Path, token: &str) -> Option<Value> {
 /// Waits for an idle host whose `last_outcome` names `attempt_id`, and returns
 /// that ping.
 pub fn wait_outcome(socket_dir: &Path, token: &str, attempt_id: &str, timeout: Duration) -> Value {
+    let observed = Instant::now();
     let deadline = Instant::now() + timeout;
     let mut last = None;
+    let mut phase = None;
     loop {
         if let Some(ping) = try_ping(socket_dir, token) {
             let upgrade = &ping["upgrade"];
+            let current = upgrade["phase"].as_str().map(str::to_owned);
+            if phase != current {
+                eprintln!("{attempt_id} at {:?}: {upgrade}", observed.elapsed());
+                phase = current;
+            }
             if upgrade["phase"] == "idle" && upgrade["last_outcome"]["attempt_id"] == attempt_id {
                 return ping;
             }

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,9 +34,14 @@ from gobby.agents.cargo_target import (
     sandbox_checkout_cargo_target_dir,
 )
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
-from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions, prepare_sandbox_run_paths
+from gobby.agents.sandbox_policy import (
+    gcode_runtime_write_exceptions,
+    prepare_sandbox_run_paths,
+    sensitive_write_roots,
+)
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
 from gobby.agents.srt_settings import render_srt_settings
+from gobby.utils import local_token
 from gobby.utils.project_context import get_project_sandbox_config
 
 _CORPUS = (
@@ -55,6 +61,7 @@ _SESSION_ID = "node-srt-session"
 _DAEMON_PORT = 60887
 _WEBSOCKET_PORT = 60888
 _PROVIDERS = ("claude", "codex", "grok", "droid", "agy")
+_GIT = shutil.which("git")
 _DARWIN_WRITE_PATHS = (
     "{darwin_temp}/xcrun_db-*",
     "{darwin_cache}/com.apple.DeveloperTools",
@@ -144,6 +151,12 @@ def _case(
             "epic_seq": epic_seq,
             "read_all_agent_workspaces": read_all_agent_workspaces,
             "predecessor_workspace_folders": list(predecessor_workspace_folders),
+            "credential_authority_roots": [
+                "{bound_bootstrap}",
+                "{bound_home}/break_glass",
+                "{bound_home}/.break_glass-staging",
+                "{home}/.gobby/bootstrap.yaml",
+            ],
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -270,6 +283,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
     layout = {
         "home": root / "home",
         "gobby_home": root / "gobby-home",
+        "bound_home": root / "bound-daemon",
+        "bound_bootstrap": root / "bound-daemon" / "startup.yaml",
         "workspace": root / "workspace",
         "main": root / "main",
         "bin": root / "bin",
@@ -324,6 +339,7 @@ def _placeholderize(text: str, layout: dict[str, str]) -> str:
 
 
 def _materialize(inputs: dict[str, Any], layout: dict[str, str]) -> None:
+    assert _GIT is not None, "the corpus fixture requires git"
     for name in ("home", "gobby_home", "bin", "tmp", "workspace", "main"):
         Path(layout[name]).mkdir(parents=True, exist_ok=True)
     for relative in inputs["home_tree"]:
@@ -333,7 +349,7 @@ def _materialize(inputs: dict[str, Any], layout: dict[str, str]) -> None:
         executable.write_text("#!/bin/sh\n", encoding="utf-8")
         executable.chmod(0o755)
     for repo in (Path(layout["workspace"]), Path(layout["main"])):
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run([_GIT, "init", "-q", str(repo)], check=True)
     if inputs["project_json"] is not None:
         config_dir = Path(layout["main"]) / ".gobby"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -447,6 +463,11 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     return settings, additions
 
 
+def _pin_credential_authorities(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -> None:
+    monkeypatch.setattr(local_token, "account_home", lambda: Path(layout["home"]))
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", Path(layout["bound_bootstrap"]))
+
+
 def _evaluate(
     template: dict[str, Any], case_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[str, dict[str, str], dict[str, str]]:
@@ -454,6 +475,7 @@ def _evaluate(
     inputs = _fill(template["inputs"], layout)
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
+    _pin_credential_authorities(monkeypatch, layout)
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
     monkeypatch.setattr(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
@@ -470,6 +492,7 @@ def _refusal(
     inputs = _fill(template["inputs"], layout)
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
+    _pin_credential_authorities(monkeypatch, layout)
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
     monkeypatch.setattr(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
@@ -576,6 +599,43 @@ def _load_corpus() -> dict[str, Any]:
     if not corpus.get("cases"):
         pytest.fail(f"node SRT corpus at {_CORPUS} has no cases; re-record it")
     return corpus
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_corpus_credential_authorities_are_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    host_account = Path("/outside-corpus-account")
+    host_bound = Path("/outside-corpus-bound/startup.yaml")
+    monkeypatch.setattr(local_token, "account_home", lambda: host_account)
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", host_bound)
+
+    settings, _, layout = _evaluate(
+        _case("credential-authorities", "claude"),
+        tmp_path / "case",
+        monkeypatch,
+    )
+    authorities = {
+        str(Path(layout["gobby_home"]) / "bootstrap.yaml"),
+        str(Path(layout["home"]) / ".gobby" / "bootstrap.yaml"),
+        layout["bound_bootstrap"],
+    }
+    assert len(authorities) == 3, "the credential authorities must remain distinct"
+    expected = authorities | {
+        str(Path(layout["bound_home"]) / "break_glass"),
+        str(Path(layout["bound_home"]) / ".break_glass-staging"),
+    }
+    document: dict[str, Any] = json.loads(settings)
+    # The renderer omits write denies for already-unwritable paths. Check the
+    # resolved write-denial contract as well as the emitted read denials.
+    for key, denied in (
+        ("denyRead", document["filesystem"]["denyRead"]),
+        ("denyWrite", sensitive_write_roots()),
+    ):
+        assert expected <= set(denied), (key, expected - set(denied))
+        assert not any(path.startswith(str(host_account)) for path in denied), (key, denied)
+        assert str(host_bound) not in denied, (key, denied)
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])

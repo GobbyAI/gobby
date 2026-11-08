@@ -41,7 +41,7 @@ fn validate_root(
     }
     // The same contract the policy compiler enforces at prepare, applied before acceptance.
     let allowed = [paths::text(&canonical)];
-    paths::assert_sensitive_path_contract(&[allowed.as_slice()], gobby, home, env)
+    paths::assert_sensitive_path_contract(&[allowed.as_slice()], gobby, home, env, &[])
         .map_err(|error| format!("External write root overlaps a protected root: {root} ({error})"))
 }
 

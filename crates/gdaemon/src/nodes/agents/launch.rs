@@ -259,6 +259,11 @@ fn policy_inputs(
         workspace: cwd.to_owned(),
         home: context.home.clone(),
         gobby_home: gobby_home.to_owned(),
+        credential_authority_roots: payload
+            .credential_authority_roots
+            .iter()
+            .map(PathBuf::from)
+            .collect(),
         env,
         provider_executable: find_on_path(&context.path_env, &payload.provider),
         daemon_port: context.daemon_port,

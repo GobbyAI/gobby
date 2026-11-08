@@ -41,6 +41,8 @@ pub struct PolicyInputs {
     pub workspace: PathBuf,
     pub home: PathBuf,
     pub gobby_home: PathBuf,
+    /// Additional credential roots resolved by the trusted hub, never by the seat environment.
+    pub credential_authority_roots: Vec<PathBuf>,
     pub env: BTreeMap<String, String>,
     pub provider_executable: Option<PathBuf>,
     pub daemon_port: u16,

@@ -228,6 +228,7 @@ pub fn prepare_launch_with(
         gobby,
         home,
         &run_inputs.env,
+        &inputs.credential_authority_roots,
     )
     .map_err(lift)?;
 

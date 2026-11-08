@@ -1,8 +1,7 @@
 //! A4b outcome-gate tests. The transport produces the real outcome; tests
 //! change its generation only to control the ordering at the apply gate.
 
-#[path = "../../../tests/mock_daemon/transport.rs"]
-mod mock_daemon;
+use crate::mock_daemon;
 
 use crate as client;
 #[path = "../../../tests/mock_daemon/draw.rs"]

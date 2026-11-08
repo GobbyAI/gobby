@@ -6,8 +6,7 @@
 use super::*;
 use serde_json::json;
 
-#[path = "../../../tests/mock_daemon/transport.rs"]
-mod mock_daemon;
+use crate::mock_daemon;
 
 #[tokio::test]
 async fn buffered_proxy_finalization_never_detaches_the_retired_attachment() {

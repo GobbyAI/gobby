@@ -67,7 +67,13 @@ pub(super) fn prepare(
     let source_list = vec![source_text.clone()];
     let credential_roots = paths::credential_read_roots(user_home);
     let grok_required = paths::provider_credential_read_exceptions("grok", user_home);
-    paths::assert_sensitive_path_contract(&[source_list.as_slice(), &[]], gobby, user_home, env)?;
+    paths::assert_sensitive_path_contract(
+        &[source_list.as_slice(), &[]],
+        gobby,
+        user_home,
+        env,
+        &inputs.credential_authority_roots,
+    )?;
     paths::assert_credential_read_contract(
         &source_list,
         &credential_roots,
@@ -92,6 +98,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        &inputs.credential_authority_roots,
     )?;
     paths::assert_credential_read_contract(
         &[
@@ -140,6 +147,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        &inputs.credential_authority_roots,
     )?;
     paths::assert_credential_read_contract(
         &resolved_runtime,
