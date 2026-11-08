@@ -256,6 +256,7 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
         plan_id: str,
         *,
         project_id: str | None = None,
+        checkout_root: Path | None = None,
     ) -> tuple[SimpleNamespace, bool]:
         db_threads.append(threading.get_ident())
         return record, True
@@ -272,6 +273,8 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
     def generate_coverage_manifest(
         self: LocalPlanManager,
         _record: object,
+        *,
+        checkout_root: Path | None = None,
     ) -> Path:
         coverage_threads.append(threading.get_ident())
         return manifest_path
@@ -351,7 +354,12 @@ async def test_large_plan_coverage_does_not_starve_short_db_job(
     coverage_started = threading.Event()
     release_coverage = threading.Event()
 
-    def slow_coverage(_self: LocalPlanManager, _record: object) -> Path:
+    def slow_coverage(
+        _self: LocalPlanManager,
+        _record: object,
+        *,
+        checkout_root: Path | None = None,
+    ) -> Path:
         coverage_started.set()
         if not release_coverage.wait(timeout=3):
             raise TimeoutError("coverage test release was not signaled")

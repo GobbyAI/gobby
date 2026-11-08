@@ -6,7 +6,7 @@
 01 : text/panel_bg*25 surface0/panel_bg*15 text/panel_bg*80
 02 | build      │ logs       │ Split right │                                                                                |
 02 : text/selection+b*12 line/surface0*1 subtext0/surface0*12 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*1 text/surface0*80
-03 |┌ ○ term-alpha ──────────│ Split down  │───────────────────┐┌ ○ term-beta · Focused ───────────────────────────────────┐|
+03 |┌   term-alpha ──────────│ Split down  │───────────────────┐┌   term-beta · Focused ───────────────────────────────────┐|
 03 : overlay0/panel_bg*25 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*1 overlay0/panel_bg*20 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*36
 04 |│                        │ Zoom        │                   ││                                                          │|
 04 : overlay0/panel_bg*1 text/unfocused*24 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*1 text/unfocused*19 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1

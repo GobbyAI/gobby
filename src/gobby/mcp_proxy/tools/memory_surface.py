@@ -96,6 +96,18 @@ def register_memory_surface_tools(
         trigger: SurfaceTrigger,
         session_id: str,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
+        with stage_timing.recording() as timings:
+            try:
+                return await _surface_memories(text, trigger, session_id)
+            finally:
+                _log_recall_stages(trigger, time.perf_counter() - started, timings)
+
+    async def _surface_memories(
+        text: str,
+        trigger: SurfaceTrigger,
+        session_id: str,
+    ) -> dict[str, Any]:
         try:
             # Truncation is the only edit the text takes: the search service
             # embeds it verbatim, so trimming here would change the vector.
@@ -112,7 +124,9 @@ def register_memory_surface_tools(
             if session_manager is None or (not fall_back and not query.strip()):
                 return _empty(trigger)
 
-            resolved = await asyncio.to_thread(resolve_session, session_manager, session_id)
+            resolved = await stage_timing.timed_await(
+                "session_resolve", asyncio.to_thread(resolve_session, session_manager, session_id)
+            )
             if resolved is None:
                 return _empty(trigger)
             resolved_session_id, session = resolved
@@ -127,8 +141,7 @@ def register_memory_surface_tools(
                     return _empty(trigger)
 
             manager = memory_manager()
-            search_started = time.perf_counter()
-            with stage_timing.recording() as timings:
+            with stage_timing.timed("search"):
                 memories = await manager.search_memories(
                     # The search service embeds ``embed_text`` and hands ``query``
                     # to the keyword leg; passing the same text keeps both verbatim.
@@ -141,7 +154,6 @@ def register_memory_surface_tools(
                     session_id=resolved_session_id,
                     caller=SURFACE_CALLER,
                 )
-            _log_recall_stages(trigger, time.perf_counter() - search_started, timings)
         except Exception:
             # Surfacing is unasked-for context; it never fails the caller's turn.
             logger.warning(
