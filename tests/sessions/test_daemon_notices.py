@@ -194,9 +194,10 @@ async def test_stalled_persistence_never_stalls_the_event_loop(
     runner = _runner(database=hub, session_manager=MagicMock(), wake_dispatcher=None)
     notice = asyncio.create_task(send_daemon_notice(runner, HOLD_NOTICE, timeout_seconds=0.1))
     try:
+        # Resuming here already proves the loop ran while the transaction is stalled. The
+        # notice's own 0.1s loop-side timeout may fire before this resumes, so its state is
+        # not asserted.
         assert await asyncio.to_thread(hub.entered.wait, 5)
-        # The loop runs this test while the transaction is still stalled.
-        assert not notice.done()
         await notice
         assert not hub.release.is_set()
     finally:
