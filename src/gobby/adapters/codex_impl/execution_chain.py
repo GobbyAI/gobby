@@ -269,6 +269,14 @@ def _normalize_session_id(value: Any) -> str | None:
     return None
 
 
+def _typed_into(execution: PendingExecution, typed: str | None) -> PendingExecution:
+    # Typed input names the command of a session whose launch is readable. An unattributed
+    # launch stays unattributed: what is typed into it does not say what it is running.
+    if typed and execution.literal_command is not None:
+        return replace(execution, literal_command=typed)
+    return execution
+
+
 def extract_functions_write_stdin_session_id(arguments: Any) -> str | None:
     """Extract one literal nested or direct write_stdin session ID."""
     if isinstance(arguments, dict):
@@ -615,8 +623,8 @@ class ExecutionChainCorrelator:
                         execution, expects_serialized_result=_prints_whole_tool_results(arguments)
                     )
                 typed = extract_functions_write_stdin_command(arguments)
-                if execution is not None and typed:
-                    execution = replace(execution, literal_command=typed)
+                if execution is not None:
+                    execution = _typed_into(execution, typed)
             # Only a cell that can start a shell blocks cwd proof. An MCP-only cell that
             # merely mentions exec_command in its text stays out of the chain.
             elif allow_unattributed and may_reach_shell(arguments):
@@ -633,8 +641,8 @@ class ExecutionChainCorrelator:
             typed = extract_direct_write_stdin_command(arguments)
             if session_id is not None and session_id not in self._ambiguous_sessions:
                 execution = self._sessions.get(session_id)
-                if execution is not None and typed:
-                    execution = replace(execution, literal_command=typed)
+                if execution is not None:
+                    execution = _typed_into(execution, typed)
             if execution is None and write_stdin_sends_input(arguments):
                 self._mark_sticky_unattributed()
         elif name in WAIT_NAMES:
@@ -904,6 +912,11 @@ class ExecutionChainCorrelator:
             )
         ):
             pending.pop(key, None)
+            # A dropped unattributed session fails closed: typed input can still reach it.
+            if pending is self._sessions and (
+                existing.literal_command is None or execution.literal_command is None
+            ):
+                self._pending_overflowed = True
             if len(ambiguous) >= self._max_pending and key not in ambiguous:
                 self._overflowed = True
                 if pending is not self._sessions:
@@ -912,6 +925,8 @@ class ExecutionChainCorrelator:
             ambiguous[key] = None
             return
         if ambiguous is not None and key in ambiguous:
+            if pending is self._sessions and execution.literal_command is None:
+                self._pending_overflowed = True
             return
         if key not in pending and len(pending) >= self._max_pending:
             self._overflowed = True
