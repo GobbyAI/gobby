@@ -811,10 +811,14 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             try:
                 from gobby.code_index.nightly_repair import (
                     CodeIndexNightlyRepairer,
+                    nightly_reconcile_apply_switch,
                     register_code_index_nightly_repair_cron,
                 )
 
-                runner.code_index_nightly_repairer = CodeIndexNightlyRepairer(runner.code_indexer)
+                runner.code_index_nightly_repairer = CodeIndexNightlyRepairer(
+                    runner.code_indexer,
+                    apply_enabled=nightly_reconcile_apply_switch(runner.config_runtime),
+                )
                 register_code_index_nightly_repair_cron(
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,

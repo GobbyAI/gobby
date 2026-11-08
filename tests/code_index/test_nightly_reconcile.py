@@ -15,6 +15,7 @@ from gobby.code_index.nightly_reconcile import (
     MODE_DRY_RUN,
     OUTCOME_COMPLETED,
     OUTCOME_FAILED,
+    NightlyReconcileReceipt,
     reconcile_project,
 )
 
@@ -128,7 +129,7 @@ async def _run(
     *,
     apply_enabled: bool,
     max_attempts: int = 3,
-):
+) -> NightlyReconcileReceipt:
     return await reconcile_project(
         run_id="run-1",
         project_id="project-1",
@@ -185,6 +186,28 @@ async def test_apply_receipt_file_lives_in_the_private_receipt_dir(tmp_path: Pat
     [receipt_path] = gateway.apply_receipt_paths
     assert receipt_path is not None
     assert receipt_path.parent == tmp_path / "receipts"
+
+
+async def test_apply_receipts_are_separate_per_project_within_one_run(tmp_path: Path) -> None:
+    gateway = ScriptedGateway(
+        dry_runs=[_result(_dry(digest="a")), _result(_dry(digest="b"))],
+        applies=[_applied("a"), _applied("b")],
+    )
+
+    for project_id in ("project-a", "project-b"):
+        await reconcile_project(
+            run_id="run-1",
+            project_id=project_id,
+            root=tmp_path / project_id,
+            gateway=gateway,
+            apply_enabled=True,
+            receipt_dir=tmp_path / "receipts",
+        )
+
+    first, second = gateway.apply_receipt_paths
+    assert first is not None
+    assert second is not None
+    assert first != second
 
 
 async def test_failed_read_retries_then_records_failure_and_never_deletes(tmp_path: Path) -> None:
@@ -261,6 +284,24 @@ async def test_empty_symbol_table_is_indexed_before_reconcile(tmp_path: Path) ->
     assert gateway.rebuild_calls == 0
     assert gateway.calls == ["dry", "index", "dry", "apply"]
     assert gateway.apply_digests == ["built"]
+    assert receipt.outcome == OUTCOME_COMPLETED
+
+
+async def test_empty_table_and_collection_are_both_repaired_in_one_attempt(tmp_path: Path) -> None:
+    gateway = ScriptedGateway(
+        dry_runs=[
+            _result(_dry(points=0, symbols=0, digest="none")),
+            _result(_dry(points=0, symbols=7, digest="indexed")),
+            _result(_dry(points=7, symbols=7, digest="full")),
+        ],
+        applies=[_applied("full")],
+    )
+
+    receipt = await _run(gateway, tmp_path, apply_enabled=True)
+
+    assert gateway.calls == ["dry", "index", "dry", "rebuild", "dry", "apply"]
+    assert gateway.apply_digests == ["full"]
+    assert receipt.retries == 0
     assert receipt.outcome == OUTCOME_COMPLETED
 
 

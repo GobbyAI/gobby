@@ -106,7 +106,7 @@ async def reconcile_project(
                     gateway,
                     root,
                     last,
-                    receipt_dir / f"{run_id}.json",
+                    receipt_dir / f"{run_id}-{project_id}.json",
                     timeout=timeout,
                     env=env,
                 )
@@ -150,7 +150,7 @@ async def _observe(
     if observed.pg_symbols == 0:
         _check_result(await gateway.maintenance_index(root, timeout=timeout, env=env), "index")
         observed = await _dry_run(gateway, root, timeout=timeout, env=env)
-    elif observed.points_scanned == 0:
+    if observed.points_scanned == 0:
         _check_rebuild(await gateway.vector_rebuild(root))
         observed = await _dry_run(gateway, root, timeout=timeout, env=env)
     if observed.pg_symbols == 0 or observed.points_scanned == 0:

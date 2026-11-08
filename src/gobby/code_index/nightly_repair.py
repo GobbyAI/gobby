@@ -28,6 +28,7 @@ from gobby.utils.datetime import resolve_local_timezone
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.config.code_index import CodeIndexConfig
+    from gobby.config.values import ConfigRuntimeReader
 
 logger = logging.getLogger(__name__)
 
@@ -275,3 +276,19 @@ def _reconcile_enabled_state(
         enabled=True,
         next_run_at=next_run.isoformat() if next_run else None,
     )
+
+
+def nightly_reconcile_apply_switch(config_runtime: ConfigRuntimeReader) -> Callable[[], bool]:
+    """Return a reader of the config-store apply key that runs on every nightly run.
+
+    Config that has not started reads as off, so the run stays a dry run.
+    """
+
+    def _enabled() -> bool:
+        try:
+            section = config_runtime.snapshot.active_section("code_index")
+        except RuntimeError:
+            return False
+        return bool(section.nightly_reconcile_apply)
+
+    return _enabled

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,10 @@ class _RecordingGateway(GcodeGateway):
 
     async def _run_command_result(
         self,
-        command,
+        command: Sequence[str],
         *,
-        timeout=None,
-        env=None,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         self.commands.append(tuple(command))
         return GcodeCommandResult(
