@@ -39,7 +39,6 @@ from gobby.llm.sdk_utils import (
 logger = logging.getLogger(__name__)
 
 _HISTORY_MESSAGE_LIMIT = 50
-_HISTORY_WRAPPER_OVERHEAD_CHARS = 200
 _DRAIN_PENDING_RESPONSE_TIMEOUT_SECONDS = 1.0
 _EXPECTED_CHAT_ERRORS: tuple[type[Exception], ...] = (
     ClaudeSDKError,
@@ -62,23 +61,15 @@ class ChatSessionMessagesMixin:
     _context_window_overrides: dict[str, int]
     _last_model: str | None
     _lock: asyncio.Lock
-    _max_history_message_chars: int
-    _max_history_total_chars: int
     _message_manager: Any | None
     _message_manager_source_session_id: str | None
     _abort_pending_interactions: Callable[[], None]
 
-    async def _load_history_context(self, max_total_chars: int | None = None) -> str | None:
-        """Load prior conversation messages and format as context for injection.
+    async def _load_history_context(self) -> str | None:
+        """Load prior conversation messages as one context part, with nothing cut.
 
-        Args:
-            max_total_chars: Override for maximum total characters. If None, uses
-                the instance default (_max_history_total_chars). Callers should pass
-                a budget that accounts for other additionalContext content to avoid
-                Claude Code's 10K truncation limit.
-
-        Returns a formatted string with conversation history, or None if
-        no messages exist or an error occurs.
+        Returns the formatted history wrapped in ``<conversation-history>``, or None when
+        no text messages exist or an error occurs. The delivery queue pages long history.
         """
         if not self._message_manager:
             return None
@@ -104,75 +95,15 @@ class ChatSessionMessagesMixin:
             if not text_messages:
                 return None
 
-            effective_max = (
-                max_total_chars if max_total_chars is not None else self._max_history_total_chars
-            )
-            content_budget = effective_max - _HISTORY_WRAPPER_OVERHEAD_CHARS
-            if content_budget <= 0:
-                return None
-
-            parts: list[str] = []
-            total = 0
-            session_ref = str(target_id)
-
-            for index, message in enumerate(text_messages):
-                role_label = "**User:**" if message["role"] == "user" else "**Assistant:**"
-                content = str(message["content"])
-                entry = f"{role_label} {content}"
-                separator = 2 if parts else 0
-                if total + separator + len(entry) <= content_budget:
-                    parts.append(entry)
-                    total += separator + len(entry)
-                    continue
-
-                if not parts:
-                    pointer_entry = (
-                        f"{role_label} [omitted {len(content)} chars; "
-                        f"get_session_messages session_id={session_ref}]"
-                    )
-                    if len(pointer_entry) <= content_budget:
-                        parts.append(pointer_entry)
-                        total += len(pointer_entry)
-                        continue
-                    return None
-
-                omitted = len(text_messages) - index
-                omit_line = (
-                    f"[omitted {omitted} messages to fit history budget; "
-                    f"get_session_messages session_id={session_ref}]"
-                )
-                if len(omit_line) > content_budget:
-                    return None
-                while parts and total + (2 if parts else 0) + len(omit_line) > content_budget:
-                    removed = parts.pop()
-                    omitted += 1
-                    omit_line = (
-                        f"[omitted {omitted} messages to fit history budget; "
-                        f"get_session_messages session_id={session_ref}]"
-                    )
-                    total -= len(removed)
-                    if parts:
-                        total -= 2
-                    if len(omit_line) > content_budget:
-                        return None
-                if parts:
-                    parts.append(omit_line)
-                    total += 2 + len(omit_line)
-                elif len(omit_line) <= content_budget:
-                    parts.append(omit_line)
-                    total = len(omit_line)
-                else:
-                    return None
-                break
-
-            if not parts:
-                return None
-
+            entries = [
+                f"{'**User:**' if m['role'] == 'user' else '**Assistant:**'} {m['content']}"
+                for m in text_messages
+            ]
             return (
                 "<conversation-history>\n"
                 "The following is the prior conversation history for this session, "
                 "restored after session recreation. Use it to maintain continuity.\n\n"
-                + "\n\n".join(parts)
+                + "\n\n".join(entries)
                 + "\n</conversation-history>"
             )
         except _EXPECTED_CHAT_ERRORS as e:

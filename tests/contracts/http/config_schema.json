@@ -1544,26 +1544,6 @@
           "default": "feature_high",
           "description": "Capability profile for chat sessions."
         },
-        "chat_history.max_message_chars": {
-          "type": "integer",
-          "namespace": "chat_history",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 2000,
-          "description": "Maximum characters per individual history message before truncation."
-        },
-        "chat_history.max_total_chars": {
-          "type": "integer",
-          "namespace": "chat_history",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 30000,
-          "description": "Maximum total characters of combined history context to inject."
-        },
         "clones_dir": {
           "type": "string",
           "namespace": "clones_dir",

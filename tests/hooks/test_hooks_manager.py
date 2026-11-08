@@ -2770,8 +2770,13 @@ _ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
     HookEventType.SUBAGENT_STOP,
 }
 
+# Claude main compaction hooks are held until the compaction boundary settles (#25683,
+# ``CompactionOwnership.route``). A held event reaches no handler and materializes nothing
+# on arrival, so the matrix expects the hold rather than a materialized session.
+_HELD_UNTIL_BOUNDARY = frozenset({HookEventType.PRE_COMPACT, HookEventType.POST_COMPACT})
+
 _FIRST_HOOK_CASES = tuple(
-    (event_type, event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS)
+    (event_type, event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS | _HELD_UNTIL_BOUNDARY)
     for event_type in HookEventType
     if event_type is not HookEventType.SESSION_START
 )
@@ -2837,6 +2842,8 @@ def test_first_hook_materialization_matrix(
     else:
         assert "_platform_session_id" not in event.metadata
         activate.assert_not_called()
+        if event_type in _HELD_UNTIL_BOUNDARY:
+            handler.assert_not_called()
 
 
 def test_first_pre_tool_use_without_ups_registers_session(

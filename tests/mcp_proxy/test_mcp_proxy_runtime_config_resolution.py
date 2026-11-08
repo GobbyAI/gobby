@@ -24,7 +24,7 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 _SESSION_ID = "796c13d5-34bd-4b6a-b60c-b022df873ad2"
-_CONFIG_KEY = "chat_history.max_message_chars"
+_CONFIG_KEY = "daemon_health_check_interval"
 
 
 class _MutableRuntime(ConfigRuntime):
@@ -65,8 +65,8 @@ class _MemoryManager:
         self.db = db
 
 
-def _snapshot(revision: int, max_chars: int) -> ConfigSnapshot:
-    config = DaemonConfig.model_validate({"chat_history": {"max_message_chars": max_chars}})
+def _snapshot(revision: int, interval: float) -> ConfigSnapshot:
+    config = DaemonConfig.model_validate({"daemon_health_check_interval": interval})
     return ConfigSnapshot(
         revision=revision,
         desired=config,
@@ -74,8 +74,8 @@ def _snapshot(revision: int, max_chars: int) -> ConfigSnapshot:
         row_revisions={_CONFIG_KEY: revision},
         pending_restart_keys=frozenset(),
         failed_live_keys={},
-        desired_values={_CONFIG_KEY: max_chars},
-        active_values={_CONFIG_KEY: max_chars},
+        desired_values={_CONFIG_KEY: interval},
+        active_values={_CONFIG_KEY: interval},
     )
 
 
@@ -112,7 +112,7 @@ def _http_server(
 
 
 def test_http_config_reuses_bootstrap_overlaid_projection_per_epoch() -> None:
-    runtime = _MutableRuntime(_snapshot(1, 3))
+    runtime = _MutableRuntime(_snapshot(1, 3.0))
     server = _http_server(
         runtime.snapshot.active,
         bootstrap_config=BootstrapConfig(daemon_port=62000),
@@ -138,7 +138,7 @@ def _epoch_probe(
     registry = InternalToolRegistry("gobby-epoch")
 
     @registry.tool(name="probe_epoch", description="Read one runtime epoch twice.")
-    async def probe_epoch() -> list[int]:
+    async def probe_epoch() -> list[float]:
         first = server.resolve_runtime_config()
         runtime.current = next_snapshot
         if activate_runtime:
@@ -146,7 +146,7 @@ def _epoch_probe(
         second = server.resolve_runtime_config()
         assert first is not None
         assert second is not None
-        return [first.chat_history.max_message_chars, second.chat_history.max_message_chars]
+        return [first.daemon_health_check_interval, second.daemon_health_check_interval]
 
     manager = InternalRegistryManager()
     manager.add_registry(registry)
@@ -155,8 +155,8 @@ def _epoch_probe(
 
 @pytest.mark.asyncio
 async def test_in_process_mcp_call_pins_one_active_runtime_epoch() -> None:
-    first_snapshot = _snapshot(1, 3)
-    second_snapshot = _snapshot(2, 17)
+    first_snapshot = _snapshot(1, 3.0)
+    second_snapshot = _snapshot(2, 17.0)
     runtime = _MutableRuntime(first_snapshot)
     http_server = _http_server(first_snapshot.active)
     http_server.services.config_runtime = runtime
@@ -164,17 +164,17 @@ async def test_in_process_mcp_call_pins_one_active_runtime_epoch() -> None:
 
     result = await _proxy(manager, http_server).call_tool("gobby-epoch", "probe_epoch", {})
 
-    assert result == [3, 3]
+    assert result == [3.0, 3.0]
     assert runtime.capture_count == 1
     current = http_server.resolve_runtime_config()
     assert current is not None
-    assert current.chat_history.max_message_chars == 17
+    assert current.daemon_health_check_interval == 17.0
 
 
 @pytest.mark.asyncio
 async def test_in_process_mcp_call_pins_pre_start_fallback() -> None:
-    startup_config = DaemonConfig.model_validate({"chat_history": {"max_message_chars": 3}})
-    runtime = _MutableRuntime(_snapshot(2, 17), ready=False)
+    startup_config = DaemonConfig.model_validate({"daemon_health_check_interval": 3.0})
+    runtime = _MutableRuntime(_snapshot(2, 17.0), ready=False)
     http_server = _http_server(startup_config)
     http_server.services.config_runtime = runtime
     manager = _epoch_probe(
@@ -186,29 +186,29 @@ async def test_in_process_mcp_call_pins_pre_start_fallback() -> None:
 
     result = await _proxy(manager, http_server).call_tool("gobby-epoch", "probe_epoch", {})
 
-    assert result == [3, 3]
+    assert result == [3.0, 3.0]
     assert runtime.capture_count == 0
     current = http_server.resolve_runtime_config()
     assert current is not None
-    assert current.chat_history.max_message_chars == 17
+    assert current.daemon_health_check_interval == 17.0
 
 
 @pytest.mark.asyncio
 async def test_live_config_patch_changes_next_mcp_call(temp_db: HubDatabase) -> None:
     del temp_db
-    initial = _snapshot(1, 3)
+    initial = _snapshot(1, 3.0)
     runtime = _MutableRuntime(initial)
-    runtime.reconciled = _snapshot(2, 17)
+    runtime.reconciled = _snapshot(2, 17.0)
     config_service = ConfigValuesService(
         runtime=runtime,
         mutations=_MutationWriter(revision=2),
     )
-    observed: list[int] = []
+    observed: list[float] = []
     probe = InternalToolRegistry("gobby-probe")
 
-    @probe.tool(name="read_max_chars", description="Record the chat-history char budget in force.")
-    async def read_max_chars() -> int:
-        value = runtime.snapshot.active.chat_history.max_message_chars
+    @probe.tool(name="read_interval", description="Record the health-check interval in force.")
+    async def read_interval() -> float:
+        value = runtime.snapshot.active.daemon_health_check_interval
         observed.append(value)
         return value
 
@@ -218,17 +218,17 @@ async def test_live_config_patch_changes_next_mcp_call(temp_db: HubDatabase) -> 
     proxy = _proxy(manager)
 
     with session_context_for_test(_SESSION_ID):
-        await proxy.call_tool("gobby-probe", "read_max_chars", {})
+        await proxy.call_tool("gobby-probe", "read_interval", {})
         patch_result = await proxy.call_tool(
             "gobby-config",
             "patch_config_values",
             {
                 "expected_revision": 1,
-                "values": {"chat_history": {"max_message_chars": 17}},
+                "values": {"daemon_health_check_interval": 17.0},
             },
         )
-        await proxy.call_tool("gobby-probe", "read_max_chars", {})
+        await proxy.call_tool("gobby-probe", "read_interval", {})
 
     assert patch_result["committed"] is True
     assert patch_result["apply_status"] == "applied"
-    assert observed == [3, 17]
+    assert observed == [3.0, 17.0]

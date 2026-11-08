@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
@@ -614,143 +614,57 @@ class TestHistoryInjection:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_load_history_context_respects_total_limit(self, session: ChatSession) -> None:
-        """History should stop before exceeding 30KB total."""
+    async def test_load_history_context_keeps_every_message_it_loads(
+        self, session: ChatSession
+    ) -> None:
+        """Every loaded message reaches the history part; nothing is dropped for size."""
         mock_manager = AsyncMock()
-        # Each message is ~1100 chars, 30 messages = ~33KB > 30KB limit
+        # 30 messages of ~1100 chars: ~33KB, past any budget the loader used to apply.
         mock_manager.get_messages.return_value = [
-            {"role": "user", "content_type": "text", "content": "a" * 1100} for _ in range(30)
+            {"role": "user", "content_type": "text", "content": f"{index:02d}-" + "a" * 1100}
+            for index in range(30)
         ]
         session.db_session_id = "test-db-id"
         session._message_manager = mock_manager
 
         result = await session._load_history_context()
+
         assert result is not None
-        # Should have fewer than 30 entries due to 30KB cap
-        count = result.count("**User:**")
-        assert count < 30
-        assert count > 0
+        assert result.count("**User:**") == 30
+        assert "29-" + "a" * 1100 in result
+        assert "omitted" not in result
 
     @pytest.mark.asyncio
-    async def test_load_history_context_does_not_slice_bodies_for_message_cap(
+    async def test_load_history_context_keeps_a_long_message_whole(
         self, session: ChatSession
     ) -> None:
-        """Per-message char caps no longer prefix-slice a body that fits the total."""
-        session._max_history_message_chars = 50
-        body = "a" * 200
+        """A long body is never cut or replaced by a marker; the delivery queue pages it."""
+        body = "z" * 20_000
         mock_manager = AsyncMock()
         mock_manager.get_messages.return_value = [
             {"role": "user", "content_type": "text", "content": body},
         ]
-        session.db_session_id = "test-db-id"
-        session._message_manager = mock_manager
-
-        result = await session._load_history_context()
-        assert result is not None
-        assert body in result
-        assert "a" * 50 + "..." not in result
-
-    @pytest.mark.asyncio
-    async def test_load_history_context_omits_whole_message_when_over_budget(
-        self, session: ChatSession
-    ) -> None:
-        """A single message larger than the remaining budget is omitted whole."""
-        mock_manager = AsyncMock()
-        mock_manager.get_messages.return_value = [
-            {"role": "user", "content_type": "text", "content": "z" * 4000},
-        ]
         session.db_session_id = "hist-session"
         session._message_manager = mock_manager
 
-        result = await session._load_history_context(max_total_chars=300)
-        assert result is not None
-        assert "z" * 20 not in result
-        assert "omitted 4000 chars" in result
-        assert "get_session_messages session_id=hist-session" in result
-
-    @pytest.mark.asyncio
-    async def test_load_history_context_evicts_fitted_message_for_omission_marker(
-        self, session: ChatSession
-    ) -> None:
-        """Keep a retrieval pointer even when one message fits and the marker does not."""
-        first = "keep-me-body-" + ("x" * 80)
-        first_entry = f"**User:** {first}"
-        session_ref = "hist-session"
-        omit_line = (
-            f"[omitted 2 messages to fit history budget; "
-            f"get_session_messages session_id={session_ref}]"
-        )
-        leftover = 10
-        max_total = 200 + len(first_entry) + leftover
-        assert leftover < 2 + len(omit_line)
-        assert len(omit_line) <= max_total - 200
-
-        mock_manager = AsyncMock()
-        mock_manager.get_messages.return_value = [
-            {"role": "user", "content_type": "text", "content": first},
-            {"role": "user", "content_type": "text", "content": "z" * 4000},
-        ]
-        session.db_session_id = session_ref
-        session._message_manager = mock_manager
-
-        result = await session._load_history_context(max_total_chars=max_total)
-        assert result is not None
-        assert first not in result
-        assert "omitted 2 messages" in result
-        assert f"get_session_messages session_id={session_ref}" in result
-
-    @pytest.mark.asyncio
-    async def test_load_history_context_respects_custom_total_limit(
-        self, session: ChatSession
-    ) -> None:
-        """History should stop before exceeding _max_history_total_chars."""
-        session._max_history_total_chars = 500
-        mock_manager = AsyncMock()
-        # Each message is ~110 chars with role label, 10 messages = ~1100 > 500
-        mock_manager.get_messages.return_value = [
-            {"role": "user", "content_type": "text", "content": "b" * 100} for _ in range(10)
-        ]
-        session.db_session_id = "test-db-id"
-        session._message_manager = mock_manager
-
         result = await session._load_history_context()
+
         assert result is not None
-        count = result.count("**User:**")
-        assert count < 10
-        assert count > 0
+        assert body in result
+        assert "omitted" not in result
 
     @pytest.mark.asyncio
-    async def test_load_history_context_respects_budget_param(self, session: ChatSession) -> None:
-        """max_total_chars parameter should override instance default."""
-        mock_manager = AsyncMock()
-        # Each entry is ~110 chars with role label, 10 messages = ~1100 chars content
-        mock_manager.get_messages.return_value = [
-            {"role": "user", "content_type": "text", "content": "c" * 100} for _ in range(10)
-        ]
-        session.db_session_id = "test-db-id"
-        session._message_manager = mock_manager
-        # Instance default is 30K, but pass a tight budget
-        result = await session._load_history_context(max_total_chars=500)
-        assert result is not None
-        count = result.count("**User:**")
-        assert count < 10
-        assert count > 0
-        # Total result should be under the budget
-        assert len(result) <= 500
-
-    @pytest.mark.asyncio
-    async def test_load_history_context_returns_none_for_tiny_budget(
-        self, session: ChatSession
-    ) -> None:
-        """Returns None when budget is too small for even the wrapper."""
+    async def test_load_history_context_takes_no_budget(self, session: ChatSession) -> None:
+        """History is one whole part; sizing belongs to the delivery queue, not the loader."""
         mock_manager = AsyncMock()
         mock_manager.get_messages.return_value = [
             {"role": "user", "content_type": "text", "content": "hello"},
         ]
-        session.db_session_id = "test-db-id"
+        session.db_session_id = "hist-session"
         session._message_manager = mock_manager
-        result = await session._load_history_context(max_total_chars=100)
-        assert result is None
+
+        with pytest.raises(TypeError):
+            await cast(Any, session)._load_history_context(max_total_chars=300)
 
     @pytest.mark.asyncio
     async def test_load_history_context_handles_error(self, session: ChatSession) -> None:

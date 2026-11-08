@@ -35,10 +35,10 @@ from gobby.adapters.codex_impl.shared import (
 )
 from gobby.adapters.degradation import (
     AdapterDegradationKind,
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
     record_adapter_degradation,
     record_unsupported_response_fields,
-    truncate_context_for_adapter,
 )
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.checkout_reads import node_origin
@@ -509,7 +509,7 @@ class CodexHooksAdapter(BaseAdapter):
                             destination_channel=ContextChannel.SYSTEM_MESSAGE,
                             event_logger=logger,
                         )
-                    deny_result["systemMessage"] = truncate_context_for_adapter(
+                    deny_result["systemMessage"] = page_context_for_adapter(
                         system_parts,
                         provider=self.source,
                         hook_type=hook_type,
@@ -601,16 +601,17 @@ class CodexHooksAdapter(BaseAdapter):
         # so place it after session-critical context before applying the budget.
         context_parts.extend(response.context_contributors())
 
-        # Build hookSpecificOutput or systemMessage based on event type.
-        if context_parts:
-            combined_context = truncate_context_for_adapter(
-                context_parts,
-                provider=self.source,
-                hook_type=hook_type,
-                destination_channel=context_channel,
-                event_logger=logger,
-                **persist_kwargs_from_hook_response(response, self._hook_manager),
-            )
+        # Build hookSpecificOutput or systemMessage based on event type. Always page: a delivery
+        # with nothing fresh still carries the session's queued remainder.
+        combined_context = page_context_for_adapter(
+            context_parts,
+            provider=self.source,
+            hook_type=hook_type,
+            destination_channel=context_channel,
+            event_logger=logger,
+            **persist_kwargs_from_hook_response(response, self._hook_manager),
+        )
+        if combined_context:
             if context_channel is ContextChannel.SYSTEM_MESSAGE:
                 if response.context:
                     record_adapter_degradation(

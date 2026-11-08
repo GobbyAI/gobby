@@ -33,9 +33,14 @@ from gobby.agents.cargo_target import (
     sandbox_checkout_cargo_target_dir,
 )
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
-from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions, prepare_sandbox_run_paths
+from gobby.agents.sandbox_policy import (
+    deny_paths,
+    gcode_runtime_write_exceptions,
+    prepare_sandbox_run_paths,
+)
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
 from gobby.agents.srt_settings import render_srt_settings
+from gobby.utils.local_token import operator_bootstrap_path
 from gobby.utils.project_context import get_project_sandbox_config
 
 _CORPUS = (
@@ -482,6 +487,16 @@ def _refusal(
     pytest.fail(f"{template['name']}: the oracle accepted a grant it must refuse")
 
 
+def _operator_credential_entries() -> list[str]:
+    """The operator credential at the passwd home, spelled the way the oracle spells it.
+
+    No environment variable selects this home, so the host's own path is denied on every
+    run (#25723). The corpus cannot hold a host path, so these entries are set aside below.
+    """
+    canonical = operator_bootstrap_path()
+    return [] if canonical is None else deny_paths([str(canonical)])
+
+
 def _portable_settings(settings: str, layout: dict[str, str]) -> str:
     """Check host-specific grants separately, retaining the complete common policy."""
     document: dict[str, Any] = json.loads(settings)
@@ -491,6 +506,12 @@ def _portable_settings(settings: str, layout: dict[str, str]) -> str:
             assert paths.count(grant) == int(sys.platform == "darwin"), (key, grant)
             if sys.platform == "darwin":
                 paths.remove(grant)
+    # The operator credential must stay denied: each spelling appears exactly once in
+    # denyRead, then it is set aside as the host's path rather than the corpus's.
+    deny_read: list[str] = document["filesystem"]["denyRead"]
+    for entry in _operator_credential_entries():
+        assert deny_read.count(entry) == 1, ("denyRead", entry)
+        deny_read.remove(entry)
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 

@@ -3622,10 +3622,10 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         assert "hookSpecificOutput" not in result
 
-    def test_additional_context_drops_oversized_response_context_whole(
+    def test_additional_context_waits_oversized_response_context_behind_the_note(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Oversized response.context is omitted whole, not prefix-sliced."""
+        """The note ships; oversized response.context waits, named as not carried without a session."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -3640,12 +3640,11 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             result = adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
 
         ctx = result["hookSpecificOutput"]["additionalContext"]
-        assert len(ctx) <= ADDITIONAL_CONTEXT_LIMIT
-        assert "Session-critical note" in ctx
+        assert ctx == (
+            "Session-critical note\n\ncontext not carried, no session queue: response.context"
+        )
         assert unique_head not in ctx
-        assert "omitted contributors=[response.context]" in ctx
-        assert "... [truncated]" not in ctx
-        assert "additionalContext truncated" in caplog.text
+        assert "additionalContext queue unavailable" in caplog.text
 
     def test_session_metadata_precedes_oversized_response_context(self) -> None:
         """Session metadata remains visible when response.context is over budget."""
@@ -3669,11 +3668,10 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         ctx = result["hookSpecificOutput"]["additionalContext"]
         assert len(ctx) <= ADDITIONAL_CONTEXT_LIMIT
-        assert "Gobby Session ID: #100 (abc-123)" in ctx
+        assert ctx.startswith("Gobby Session ID: #100 (abc-123)")
         assert "codex-ext-id" in ctx
         assert unique_head not in ctx
-        assert "omitted contributors=[response.context]" in ctx
-        assert "... [truncated]" not in ctx
+        assert ctx.endswith("context not carried, no session queue: response.context")
 
 
 class TestCodexHooksAdapterHandleNative:
@@ -3719,8 +3717,8 @@ class TestCodexHooksAdapterHandleNative:
         mock_hook_manager.handle.assert_not_called()
         assert result == {}
 
-    def test_handle_native_persists_overflow_via_hook_manager(self) -> None:
-        """handle_native assigns hook_manager so overflow persist reaches the store."""
+    def test_handle_native_pages_overflow_without_offloading_it(self) -> None:
+        """handle_native pages overflow through the hook manager's queue, never offloading it."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         store = MagicMock()
@@ -3747,11 +3745,11 @@ class TestCodexHooksAdapterHandleNative:
         with patch("gobby.adapters.degradation.ToolResultStore", return_value=store):
             result = adapter.handle_native(native_event, mock_hook_manager)
 
-        store.save.assert_called_once()
-        assert unique_head in store.save.call_args.kwargs["content"]
+        # Context loads are never offloaded: the store takes no save, and page 2 waits in order.
+        store.save.assert_not_called()
         ctx = result["hookSpecificOutput"]["additionalContext"]
-        assert unique_head not in ctx
-        assert "get_tool_result result_id=result-codex-native-1" in ctx
+        assert ctx.startswith("[response.context (page 1/2)]\n" + unique_head)
+        assert "context continues on the next delivery: response.context (page 2/2)" in ctx
 
 
 # =============================================================================

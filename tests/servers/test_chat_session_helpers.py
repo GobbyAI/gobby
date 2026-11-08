@@ -96,9 +96,13 @@ class TestHookResponseConverters:
     def test_prompt_output(self) -> None:
         assert _response_to_prompt_output(None) == SyncHookJSONOutput()
 
+        # A blocked prompt delivers nothing, so it carries no context.
         res = _response_to_prompt_output({"decision": "block", "reason": "No", "context": "ctx"})
         assert res["decision"] == "block"
         assert res["reason"] == "No"
+        assert "hookSpecificOutput" not in res
+
+        res = _response_to_prompt_output({"context": "ctx"})
         assert res["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
 
@@ -158,9 +162,13 @@ class TestHookResponseConverters:
 
     def test_stop_output(self) -> None:
         assert _response_to_stop_output(None) == SyncHookJSONOutput()
+        # A blocked stop delivers nothing, so it carries no context.
         res = _response_to_stop_output({"decision": "block", "context": "ctx"})
         assert res["decision"] == "block"
+        assert "hookSpecificOutput" not in res
+
         # The SDK has no Stop TypedDict; production builds this payload as Any.
+        res = _response_to_stop_output({"context": "ctx"})
         hook = cast(dict[str, Any], res["hookSpecificOutput"])
         assert hook["additionalContext"] == "ctx"
 
@@ -183,13 +191,9 @@ class TestHookResponseConverters:
         assert res["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
 
-    def test_prompt_output_persists_overflow(self) -> None:
-        from unittest.mock import MagicMock
-
+    def test_prompt_output_pages_context_it_cannot_ship_and_names_it(self) -> None:
         from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 
-        store = MagicMock()
-        store.save.return_value = "result-chat-ac-1"
         unique_head = "UNIQUE_CHAT_HELPER_7f3a9c"
         context = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 50)
         res = _response_to_prompt_output(
@@ -197,17 +201,12 @@ class TestHookResponseConverters:
                 "context": context,
                 "metadata": {"session_id": "sess-1", "project_id": "proj-1"},
             },
-            persist={
-                "store": store,
-                "session_id": "sess-1",
-                "project_id": "proj-1",
-            },
         )
-        store.save.assert_called_once()
-        assert store.save.call_args.kwargs["content"] == context
         hook_specific = res.get("hookSpecificOutput")
         assert isinstance(hook_specific, dict)
         ctx = hook_specific.get("additionalContext")
         assert isinstance(ctx, str)
-        assert unique_head not in ctx
-        assert "get_tool_result result_id=result-chat-ac-1" in ctx
+        # No store means no queue: page 2 is named as not carried, never cut.
+        assert len(ctx) <= ADDITIONAL_CONTEXT_LIMIT
+        assert ctx.startswith("[response.context (page 1/2)]\n" + unique_head)
+        assert ctx.endswith("context not carried, no session queue: response.context (page 2/2)")
