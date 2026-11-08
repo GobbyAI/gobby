@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from collections.abc import MutableMapping
 from copy import deepcopy
 from pathlib import Path
@@ -248,6 +249,21 @@ def _merge_droid_isolation_hooks(
     return updated
 
 
+def _replace_mcp_config(path: Path, config: dict[str, Any]) -> None:
+    """Replace the directory entry so a selected symlink's target stays untouched."""
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
+    ) as f:
+        temporary = Path(f.name)
+        try:
+            f.write(json.dumps(config, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 async def _patch_mcp_config_for_isolation(
     main_repo_path: str,
     isolated_path: str,
@@ -278,9 +294,7 @@ async def _patch_mcp_config_for_isolation(
         if not isinstance(servers, dict):
             raise ValueError("MCP servers configuration must be an object")
         servers["gobby"] = mcp_config["mcpServers"]["gobby"]
-        await asyncio.to_thread(
-            mcp_json_path.write_text, json.dumps(selected_config, indent=2) + "\n"
-        )
+        await asyncio.to_thread(_replace_mcp_config, mcp_json_path, selected_config)
         logger.info("Wrote MCP config to %s", mcp_json_path)
     except OSError as e:
         logger.warning("Failed to write .mcp.json to %s: %s", isolated_path, e)

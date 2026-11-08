@@ -184,7 +184,14 @@ async def _repair_adopted_tree(
     """
     marker = await asyncio.to_thread(read_isolation_marker, Path(tree.worktree_path))
     base_commit = None
-    if marker is None or "base_commit" not in marker:
+    if (
+        marker is None
+        or "base_commit" not in marker
+        or marker.get("parent_project_path") != str(main.resolve())
+        or marker.get("parent_project_id") != parent.project_id
+        or marker.get("ancestor_checkout_path") != str(main.resolve())
+        or marker.get("ancestor_checkout_identity") != parent.project_id
+    ):
         base_commit = await WorktreeGitManager(str(main)).get_local_commit(
             f"refs/heads/{parent.branch}^{{commit}}"
         )

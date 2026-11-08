@@ -465,6 +465,8 @@ async def ensure_project_json_for_isolation(
             or "base_commit" not in marker
             or marker[_PARENT_PROJECT_PATH_KEY] != ancestor_checkout_path
             or marker[_PARENT_PROJECT_ID_KEY] != parent_project_id
+            or marker.get("ancestor_checkout_path") != ancestor_checkout_path
+            or marker.get("ancestor_checkout_identity") != parent_project_id
             or (base_commit is not None and marker["base_commit"] != base_commit)
         ):
             marker = {
