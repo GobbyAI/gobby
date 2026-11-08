@@ -1562,6 +1562,41 @@ async def test_unbound_apply_patch_stays_owned_by_its_author_through_restore(
 
 
 @pytest.mark.asyncio
+async def test_unbound_apply_patch_changed_after_its_record_stays_refused(
+    guard_harness: GuardHarness,
+) -> None:
+    """Content that changed after an unbound record is no longer the author's recorded content."""
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("edited\n", encoding="utf-8")
+    _record_apply_patch_without_binding(h, "tracked.txt")
+    (h.repo / "tracked.txt").write_text("edited again outside\n", encoding="utf-8")
+
+    response = await h.handler._evaluate_rules(h.event("git restore tracked.txt"))
+
+    assert response.decision == "block"
+    assert "tracked.txt" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_unclaimed_record_of_another_session_stays_refused(
+    guard_harness: GuardHarness,
+) -> None:
+    """Another session's pre-claim record with matching content is not this session's own."""
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("edited\n", encoding="utf-8")
+    SessionVariableManager(h.db).record_edited_files(
+        h.foreign_session.id, ["tracked.txt"], checkout_root=str(h.repo), attribute_to_task=False
+    )
+
+    response = await h.handler._evaluate_rules(h.event("git restore tracked.txt"))
+
+    assert response.decision == "block"
+    assert "tracked.txt" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("other_sorts", ["before", "after"])
 @pytest.mark.parametrize("claimant_edited_last", [True, False])
 async def test_latest_editor_owns_a_shared_path_whatever_the_ledger_key_order(

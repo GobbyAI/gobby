@@ -111,7 +111,10 @@ class _MarkerStore:
 
 
 async def _run_servers_backfill(search: Any, proxy: Any, store: Any) -> set[Any]:
-    """Drive the servers.py call site: the scheduler with the HTTP server's internal manager."""
+    """Call mcp_stack's scheduler directly with the internal manager servers.py passes.
+
+    servers.py itself is not run here.
+    """
     from gobby.runner_init import mcp_stack
 
     before = set(mcp_stack._BACKFILL_TASKS)

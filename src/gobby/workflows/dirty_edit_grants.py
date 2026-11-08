@@ -144,17 +144,28 @@ def checkout_path_owners(
 def content_recorded_paths(
     variables: Mapping[str, Any], checkout_root: str, paths: Iterable[str]
 ) -> set[str]:
-    """Return the paths, among ``paths``, whose current content matches a record in ``variables``."""
+    """Return the paths, among ``paths``, whose current content matches a record in ``variables``.
+
+    A record is a task's attributed edit, or a pre-claim write this session holds in
+    ``session_unclaimed_edits`` until a claim adopts it. Both are this session's own content.
+    """
     root = normalize_task_checkout_root(checkout_root)
-    hashes = variables.get("task_edited_checkout_hashes")
-    if root is None or not isinstance(hashes, dict):
+    if root is None:
         return set()
     records: dict[str, set[str | None]] = {}
-    for task_id in hashes:
-        for entry, digest in task_checkout_edit_hashes(
-            {"task_edited_checkout_hashes": hashes}, task_id, root
-        ).items():
-            records.setdefault(entry, set()).add(digest)
+    hashes = variables.get("task_edited_checkout_hashes")
+    if isinstance(hashes, dict):
+        for task_id in hashes:
+            for entry, digest in task_checkout_edit_hashes(
+                {"task_edited_checkout_hashes": hashes}, task_id, root
+            ).items():
+                records.setdefault(entry, set()).add(digest)
+    unclaimed = variables.get("session_unclaimed_edits")
+    root_unclaimed = unclaimed.get(root) if isinstance(unclaimed, dict) else None
+    if isinstance(root_unclaimed, dict):
+        for entry, record in root_unclaimed.items():
+            if isinstance(record, dict):
+                records.setdefault(entry, set()).add(record.get("digest"))
     return {
         path for path in paths if path in records and _current_digest(root, path) in records[path]
     }
