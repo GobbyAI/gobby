@@ -46,6 +46,7 @@ def _dry(
     symbols: int = 10,
     orphans: int = 0,
     digest: str = "d1",
+    missing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "success": True,
@@ -53,9 +54,24 @@ def _dry(
         "points_scanned": points,
         "pg_symbols": symbols,
         "orphans": {"stale": {"count": orphans, "ids": []}},
-        "missing": {},
+        "missing": missing or {},
         "inventory_digest": digest,
     }
+
+
+def _persist_progress_receipt(receipt_path: Path, digest: str) -> str | None:
+    """Apply gcode's receipt rule (reconcile.rs apply_with_persist) to a scripted apply.
+
+    An existing receipt at the path must belong to the same inventory digest. The first progress
+    write lands before any deletion, so a failed apply leaves its receipt on disk.
+    """
+    if receipt_path.exists():
+        previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if previous.get("digest") != digest:
+            return f"receipt {receipt_path} belongs to another reconcile run"
+    progress = {"digest": digest, "project_id": "project-1", "complete": False}
+    receipt_path.write_text(json.dumps(progress), encoding="utf-8")
+    return None
 
 
 def _applied(digest: str, deleted: int = 0) -> GcodeCommandResult:
@@ -85,8 +101,11 @@ class ScriptedGateway:
         self.calls: list[str] = []
         self.apply_digests: list[str | None] = []
         self.apply_receipt_paths: list[Path | None] = []
+        self.receipt_refusals: list[str] = []
         self.index_calls = 0
         self.rebuild_calls = 0
+        self.rebuild_timeouts: list[float | None] = []
+        self.rebuild_envs: list[Mapping[str, str] | None] = []
 
     async def vector_reconcile(
         self,
@@ -102,6 +121,11 @@ class ScriptedGateway:
             self.calls.append("apply")
             self.apply_digests.append(expect_digest)
             self.apply_receipt_paths.append(receipt_path)
+            if receipt_path is not None and expect_digest is not None:
+                refusal = _persist_progress_receipt(receipt_path, expect_digest)
+                if refusal is not None:
+                    self.receipt_refusals.append(refusal)
+                    return _result(None, returncode=1)
             return self._applies.pop(0)
         self.calls.append("dry")
         return self._dry_runs.pop(0)
@@ -117,9 +141,17 @@ class ScriptedGateway:
         self.index_calls += 1
         return _result({"success": True})
 
-    async def vector_rebuild(self, project_root: Path) -> dict[str, Any]:
+    async def vector_rebuild(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
         self.calls.append("rebuild")
         self.rebuild_calls += 1
+        self.rebuild_timeouts.append(timeout)
+        self.rebuild_envs.append(env)
         return {"success": True}
 
 
@@ -245,10 +277,16 @@ async def test_failed_apply_retries_from_a_fresh_dry_run(tmp_path: Path) -> None
 
     receipt = await _run(gateway, tmp_path, apply_enabled=True)
 
+    assert gateway.receipt_refusals == []
     assert receipt.outcome == OUTCOME_COMPLETED
     assert receipt.retries == 1
     assert gateway.apply_digests == ["a", "b"]
     assert receipt.digest == "b"
+    first, second = gateway.apply_receipt_paths
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert first.exists(), "the failed attempt's receipt is audit evidence and must stay"
 
 
 async def test_empty_vector_collection_is_re_embedded_before_apply(tmp_path: Path) -> None:
@@ -317,3 +355,44 @@ async def test_dry_run_never_runs_the_empty_input_guards(tmp_path: Path) -> None
     assert gateway.apply_digests == []
     assert receipt.mode == MODE_DRY_RUN
     assert receipt.outcome == OUTCOME_COMPLETED
+
+
+async def test_missing_classes_keep_their_versions_and_symbols(tmp_path: Path) -> None:
+    """gcode reports a missing class as versions, symbols, version_ids (reconcile.rs)."""
+    missing = {
+        "synced_missing_current": {"versions": 2, "symbols": 5, "version_ids": ["v1", "v2"]},
+        "pending_current": {"versions": 0, "symbols": 0, "version_ids": []},
+    }
+    gateway = ScriptedGateway(dry_runs=[_result(_dry(missing=missing))])
+
+    receipt = await _run(gateway, tmp_path, apply_enabled=False)
+
+    assert receipt.class_counts["missing"] == {
+        "synced_missing_current": {"versions": 2, "symbols": 5},
+        "pending_current": {"versions": 0, "symbols": 0},
+    }
+
+
+async def test_empty_collection_rebuild_receives_the_maintenance_env_and_timeout(
+    tmp_path: Path,
+) -> None:
+    gateway = ScriptedGateway(
+        dry_runs=[_result(_dry(points=0, digest="d1")), _result(_dry(digest="d1"))],
+        applies=[_applied("d1")],
+    )
+    env = {"GOBBY_TEST_GRANT": "grant"}
+
+    receipt = await reconcile_project(
+        run_id="run-1",
+        project_id="project-1",
+        root=tmp_path,
+        gateway=gateway,
+        apply_enabled=True,
+        receipt_dir=tmp_path / "receipts",
+        timeout=9.0,
+        env=env,
+    )
+
+    assert receipt.outcome == OUTCOME_COMPLETED
+    assert gateway.rebuild_timeouts == [9.0]
+    assert gateway.rebuild_envs == [env]
