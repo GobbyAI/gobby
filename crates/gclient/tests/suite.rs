@@ -91,6 +91,9 @@ mod reconciliation;
 #[path = "roster_machines.rs"]
 mod roster_machines;
 
+#[path = "row_states.rs"]
+mod row_states;
+
 #[path = "screens.rs"]
 mod screens;
 
