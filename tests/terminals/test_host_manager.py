@@ -2057,9 +2057,7 @@ async def test_shutdown_start_stops_host_respawn(
             patch.object(
                 shutdown, "_settle_finalizers_under_cancellation", AsyncMock(return_value=None)
             ),
-            patch.object(
-                shutdown, "_drain_worktree_deletes_under_cancellation", AsyncMock(return_value=None)
-            ),
+            patch.object(shutdown, "close_worktree_delete_admission") as close_admission,
             patch.object(
                 shutdown,
                 "_shutdown_database_concurrency_under_cancellation",
@@ -2081,6 +2079,7 @@ async def test_shutdown_start_stops_host_respawn(
                 shutdown_telemetry=MagicMock(),
                 cleanup_pid_file=MagicMock(),
             )
+            close_admission.assert_called_once_with(runner)
     finally:
         await manager.stop()
         await server_task

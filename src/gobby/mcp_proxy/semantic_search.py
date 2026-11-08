@@ -16,14 +16,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import NAMESPACE_DNS, uuid5
 
-from qdrant_client.models import FieldCondition, Filter, HasIdCondition, MatchAny, MatchValue
-
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore, project_write_context
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.search.similarity import cosine_similarity
 from gobby.storage.hub.protocol import HubDatabase
+
+if TYPE_CHECKING:
+    from qdrant_client.models import Filter
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -452,6 +453,8 @@ class SemanticToolSearch:
         Returns:
             True if embedded successfully
         """
+        from qdrant_client.models import FieldCondition, Filter, HasIdCondition, MatchValue
+
         point_id = tool_embedding_id(server_id, name)
         source_id = tool_id if tool_id != point_id else None
         if source_id is None and self._vector_store is not None:
@@ -695,6 +698,8 @@ class SemanticToolSearch:
         Returns:
             List of SearchResult sorted by similarity (descending)
         """
+        from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+
         if not self._vector_store:
             logger.warning(
                 "No VectorStore configured - tool search unavailable for query %r", query

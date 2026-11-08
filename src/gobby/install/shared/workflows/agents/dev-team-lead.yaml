@@ -8,7 +8,7 @@ capabilities:
 - team_main_checkout
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "6.0.0"
+version: "6.1.0"
 tags:
 - gobby
 - seat
@@ -147,6 +147,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+    - "tag:task-closure-implementer-review"
     - tag:task-closure-general
     - tag:task-closure-coding
     - tag:task-closure-independent-review
