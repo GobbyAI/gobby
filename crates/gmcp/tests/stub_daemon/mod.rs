@@ -9,6 +9,9 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+/// Backstop only: `wait_for_requests` returns as soon as the request arrives.
+const REQUEST_BACKSTOP: Duration = Duration::from_secs(10);
+
 #[derive(Clone, Debug)]
 pub struct Request {
     pub method: String,
@@ -107,7 +110,7 @@ impl StubDaemon {
             .arrived
             .wait_timeout_while(
                 self.requests.lock().unwrap(),
-                Duration::from_secs(2),
+                REQUEST_BACKSTOP,
                 |requests| requests.len() < count,
             )
             .unwrap();

@@ -625,6 +625,22 @@
         "source-workflows",
         "focused-current"
       ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-communications",
+      "tool": "compose_status_report",
+      "audience": "daemon-run pipeline steps only; refused to agent sessions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "compose_status_report"
+      },
+      "verification": [
+        "inventory",
+        "schemas",
+        "focused-current"
+      ]
     }
   ],
   "evidence": [

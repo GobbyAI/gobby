@@ -14,7 +14,8 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Iterator
+from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -294,6 +295,37 @@ def test_missing_transcript_exception_preserves_process_pool() -> None:
         assert worker_pid != os.getpid()
 
 
+class _StalledPrewarmExecutor:
+    """Pool whose probes never start, as on a host too loaded to start workers in time."""
+
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+
+    def submit(self, function: object, /, *args: object) -> Future[None]:
+        return Future()
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        self.shutdown_calls += 1
+
+
+async def test_prewarm_miss_keeps_the_pool_in_service(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stalled = _StalledPrewarmExecutor()
+    pool = cast(ProcessPoolExecutor, stalled)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", pool)
+    monkeypatch.setattr(transcript_evidence_pool, "_POOL_PREWARM_WAIT_SECONDS", 0.05)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.tasks.transcript_evidence_pool"):
+        await transcript_evidence_pool.prewarm_transcript_evidence_pool()
+
+    # A slow host misses the barrier while its workers are still starting. The pool is
+    # not torn down: the same executor keeps serving derivations.
+    assert transcript_evidence_pool._pool is pool
+    assert stalled.shutdown_calls == 0
+    assert "prewarm did not finish" in caplog.text
+
+
 def _concurrent_pool_probe(directory: str) -> int:
     pid = os.getpid()
     root = Path(directory)
@@ -363,6 +395,19 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert fake.shutdown_args == (False, True)
 
 
+@pytest.fixture(autouse=True)
+def _stop_transcript_pool_after_test() -> Iterator[None]:
+    """Stop the shared process pool a derivation started, before the test ends.
+
+    Derivations run through the shared pool, and only an explicit shutdown stops it. A pool
+    left running keeps its workers and resource tracker alive into session end, where the
+    exit watchdog fires.
+    """
+    yield
+    if isinstance(transcript_evidence_pool._pool, ProcessPoolExecutor):
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
+
+
 @pytest.fixture
 def _no_pending_pool_exit() -> None:
     """Let an earlier test's pool-exit thread finish before tracker calls are recorded.
@@ -377,9 +422,16 @@ def _no_pending_pool_exit() -> None:
 
 
 class _RecordingExecutor:
-    def __init__(self, events: list[str], *, block_on_wait: threading.Event | None = None) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        block_on_wait: threading.Event | None = None,
+        processes: dict[int, object] | None = None,
+    ) -> None:
         self._events = events
         self._block_on_wait = block_on_wait
+        self._processes = processes
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         self._events.append(f"shutdown:wait={wait}:cancel={cancel_futures}")
@@ -404,8 +456,25 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     assert transcript_evidence_pool._pool is None
 
 
+class _FakeWorker:
+    def __init__(self, pid: int, events: list[str]) -> None:
+        self.pid = pid
+        self._events = events
+        self._alive = True
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def kill(self) -> None:
+        self._alive = False
+        self._events.append(f"kill:{self.pid}")
+
+    def join(self, timeout: float | None = None) -> None:
+        self._events.append(f"join:{self.pid}")
+
+
 @pytest.mark.usefixtures("_no_pending_pool_exit")
-def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shutdown_kills_hung_worker_after_bounded_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
     tracker_stopped = threading.Event()
@@ -414,7 +483,8 @@ def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) 
         events.append("tracker")
         tracker_stopped.set()
 
-    fake = _RecordingExecutor(events, block_on_wait=release)
+    worker = _FakeWorker(4242, events)
+    fake = _RecordingExecutor(events, block_on_wait=release, processes={worker.pid: worker})
     monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
     monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", stop_tracker)
 
@@ -424,12 +494,14 @@ def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) 
         elapsed = time.monotonic() - started
 
         assert elapsed < 1.0
-        assert events == ["shutdown:wait=True:cancel=True"]
+        assert "kill:4242" in events
+        assert "join:4242" in events
+        assert worker.is_alive() is False
         assert transcript_evidence_pool._pool is None
     finally:
         release.set()
         assert tracker_stopped.wait(5), "pool drain must finish before patches are restored"
-    assert events == ["shutdown:wait=True:cancel=True", "tracker"]
+    assert events[-1] == "tracker"
 
 
 def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -462,6 +534,28 @@ pids.append(resource_tracker._resource_tracker._pid)
 print(" ".join(str(pid) for pid in pids), flush=True)
 time.sleep(600)
 """
+
+
+@pytest.mark.usefixtures("_no_pending_pool_exit")
+def test_shutdown_reaps_worker_killed_at_the_bounded_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A live worker killed at the bounded wait is reaped before shutdown returns."""
+    release = threading.Event()
+    tracker_stopped = threading.Event()
+    worker = multiprocessing.Process(target=time.sleep, args=(60,))
+    worker.start()
+    assert worker.pid is not None
+    fake = _RecordingExecutor([], block_on_wait=release, processes={worker.pid: worker})
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
+    monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", tracker_stopped.set)
+
+    try:
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
+
+        assert worker.is_alive() is False
+        assert worker not in multiprocessing.active_children()
+    finally:
+        release.set()
+        assert tracker_stopped.wait(5), "pool drain must finish before patches are restored"
 
 
 def test_pool_processes_exit_when_the_daemon_is_killed() -> None:

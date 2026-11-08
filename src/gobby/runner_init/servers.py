@@ -276,9 +276,19 @@ def init_servers(runner: GobbyRunner) -> None:
     http_server_ref = weakref.ref(runner.http_server)
     runner.http_server.set_runner_getter(weakref.ref(runner))
 
-    from gobby.runner_init.services import schedule_scoped_tool_backfill
+    from gobby.runner_init.mcp_stack import schedule_scoped_embedding_backfill
+    from gobby.storage.config_store import ConfigStore
 
-    schedule_scoped_tool_backfill(runner)
+    tools_handler = runner.http_server._tools_handler
+    if runner.bootstrap_config.run_mode() == "node":
+        logger.info("skipping hub-only scoped tool backfill in node mode")
+    elif tools_handler is not None:
+        schedule_scoped_embedding_backfill(
+            tools_handler._semantic_search,
+            runner.mcp_proxy,
+            config_store=ConfigStore(runner.database),
+            internal_manager=runner.http_server._internal_manager,
+        )
 
     if runner.communications_manager:
         from gobby.communications.telegram_actions import TelegramActionController

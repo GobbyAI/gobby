@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Literal
@@ -30,6 +31,7 @@ from gobby.workflows.dirty_edit_grants import (
     record_dirty_path_approval,
 )
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.worktree_shell_attribution import OVERLAPS_VARIABLE, overlapped_worktree_paths
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -58,7 +60,7 @@ def seat(
 
 def _approve(db: HubDatabase, seat: Session, root: Path, paths: list[str]) -> set[str]:
     record_dirty_path_approval(
-        db, seat.id, checkout_root=str(root), paths=paths, approved_by="operator"
+        db, seat.id, checkout_root=str(root), paths=paths, approved_by="operator", reason="test"
     )
     return approved_dirty_paths(SessionVariableManager(db).get_variables(seat.id), str(root))
 
@@ -82,6 +84,7 @@ def test_dirty_path_approval_records_exact_checkout_relative_paths(
                 checkout_root=str(tmp_path),
                 paths=[outside],
                 approved_by="operator",
+                reason="test",
             )
 
 
@@ -99,6 +102,78 @@ def test_dirty_path_approval_lapses_when_path_content_changes(
 
     assert approved == {"edited.txt", "removed.txt", "created.txt"}
     assert approved_dirty_paths(variables, str(tmp_path)) == set()
+
+
+def test_approval_clears_its_overlap_record_and_retires_only_ended_owner_calls(
+    temp_db: HubDatabase, seat: Session, tmp_path: Path
+) -> None:
+    (tmp_path / "a.txt").write_text("edit\n", encoding="utf-8")
+    manager = SessionVariableManager(temp_db)
+    sessions = SessionManager(temp_db)
+    root = str(tmp_path)
+    manager.set_variable(seat.id, OVERLAPS_VARIABLE, {root: ["a.txt", "b.txt"]})
+    ended = sessions.register(
+        external_id="ended-owner",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=seat.project_id,
+    )
+    sessions.update_status(ended.id, "expired")
+    live = sessions.register(
+        external_id="live-owner",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=seat.project_id,
+    )
+    manager.begin_worktree_shell_call(
+        ended.id, root, "ended-call", before={"a.txt": None}, attributable=True, now=time.time()
+    )
+    manager.begin_worktree_shell_call(
+        ended.id, root, "unrelated-call", before={"c.txt": None}, attributable=True, now=time.time()
+    )
+    manager.begin_worktree_shell_call(
+        live.id, root, "live-call", before={}, attributable=True, now=time.time()
+    )
+
+    release = record_dirty_path_approval(
+        temp_db,
+        seat.id,
+        checkout_root=root,
+        paths=["a.txt"],
+        approved_by="operator",
+        reason="owner session ended; its notice never arrived",
+    )
+
+    assert release.cleared_overlaps == ("a.txt",)
+    assert release.released_calls == {ended.id: ("ended-call",)}
+    variables = manager.get_variables(seat.id)
+    assert overlapped_worktree_paths(variables, root) == {"b.txt"}
+    assert set(manager.worktree_shell_call_entries(live.id)) == {"live-call"}
+    # The ended owner's call that touches no approved path stays in flight: approval names only
+    # the paths it releases, and that call may still be writing other paths.
+    assert set(manager.worktree_shell_call_entries(ended.id)) == {"unrelated-call"}
+    recorded = variables[OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE][root]
+    assert recorded["reason"] == "owner session ended; its notice never arrived"
+    assert recorded["released_calls"] == {ended.id: ["ended-call"]}
+
+
+def test_approval_refuses_a_blank_reason(
+    temp_db: HubDatabase, seat: Session, tmp_path: Path
+) -> None:
+    (tmp_path / "a.txt").write_text("edit\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="reason"):
+        record_dirty_path_approval(
+            temp_db,
+            seat.id,
+            checkout_root=str(tmp_path),
+            paths=["a.txt"],
+            approved_by="operator",
+            reason="   ",
+        )
+    assert OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE not in SessionVariableManager(
+        temp_db
+    ).get_variables(seat.id)
 
 
 @pytest.mark.parametrize("scope", ["session", "step"])
@@ -143,8 +218,8 @@ def test_seat_variable_writes_cannot_forge_the_edit_ledgers_the_gate_trusts(
 
 OBFUSCATED_SPELLINGS = (
     'a=approve-dirty-; b=paths; c=sess; d=ions; "{python}" -m gobby.cli $c$d $a$b s7 '
-    "--checkout {root} a.txt",
-    "printf '\"{python}\" -m gobby.cli sessions approve-dirty-%s s7 --checkout {root} a.txt\\n' "
+    "--checkout {root} --reason r a.txt",
+    "printf '\"{python}\" -m gobby.cli sessions approve-dirty-%s s7 --checkout {root} --reason r a.txt\\n' "
     "paths | sh",
 )
 
@@ -169,7 +244,8 @@ def test_approve_dirty_paths_cli_refuses_without_an_operator_key(
 ) -> None:
     with patch("gobby.cli.sessions_dirty_paths.httpx.post") as post:
         result = CliRunner().invoke(
-            approve_dirty_paths, [seat.id, "--checkout", str(tmp_path), "a.txt"]
+            approve_dirty_paths,
+            [seat.id, "--checkout", str(tmp_path), "--reason", "test", "a.txt"],
         )
     variables = SessionVariableManager(temp_db).get_variables(seat.id)
 
@@ -193,7 +269,8 @@ def test_approve_dirty_paths_cli_ignores_managed_credentials_without_an_operator
     monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(bootstrap_home / "managed.yaml"))
     with patch("gobby.cli.sessions_dirty_paths.httpx.post") as post:
         result = CliRunner().invoke(
-            approve_dirty_paths, ["seat-ref", "--checkout", str(tmp_path), "a.txt"]
+            approve_dirty_paths,
+            ["seat-ref", "--checkout", str(tmp_path), "--reason", "test", "a.txt"],
         )
 
     assert result.exit_code != 0
@@ -213,7 +290,15 @@ def test_approve_dirty_paths_cli_sends_only_the_operator_key(
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"session_id": seat.id, "approvals": {"a.txt": "f1"}})
+        return httpx.Response(
+            200,
+            json={
+                "session_id": seat.id,
+                "approvals": {"a.txt": "f1"},
+                "cleared_overlaps": [],
+                "released_calls": {},
+            },
+        )
 
     def through_transport(url: str, **kwargs: Any) -> httpx.Response:
         post_calls.append(kwargs)
@@ -224,7 +309,8 @@ def test_approve_dirty_paths_cli_sends_only_the_operator_key(
 
     with patch("gobby.cli.sessions_dirty_paths.httpx.post", side_effect=through_transport):
         result = CliRunner().invoke(
-            approve_dirty_paths, [seat.id, "--checkout", str(tmp_path), "a.txt"]
+            approve_dirty_paths,
+            [seat.id, "--checkout", str(tmp_path), "--reason", "owner ended", "a.txt"],
         )
 
     assert result.exit_code == 0, result.output
@@ -232,6 +318,7 @@ def test_approve_dirty_paths_cli_sends_only_the_operator_key(
     [call] = post_calls
     assert call["trust_env"] is False
     assert call["headers"] == {"Authorization": "Bearer operator-key"}
+    assert call["json"]["reason"] == "owner ended"
     [request] = requests
     assert request.headers.get_list("authorization") == ["Bearer operator-key"]
     assert not [name for name in request.headers if name.lower().startswith("x-gobby")]
@@ -249,7 +336,7 @@ def test_approve_dirty_paths_cli_reports_the_daemon_refusal(
 
     with patch("gobby.cli.sessions_dirty_paths.httpx.post", side_effect=refuse):
         result = CliRunner().invoke(
-            approve_dirty_paths, [seat.id, "--checkout", str(tmp_path), "a"]
+            approve_dirty_paths, [seat.id, "--checkout", str(tmp_path), "--reason", "r", "a"]
         )
 
     assert result.exit_code != 0

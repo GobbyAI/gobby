@@ -491,20 +491,13 @@ fn refuse_during_outage(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) 
     }
 }
 
-/// Applies an outage grant's answer. Each revoke that landed clears its pane,
-/// and a granted pane types its queued keys. A refused or unreachable grant
-/// says why, and sends nothing.
-pub(super) fn apply_outage_grant(
+/// Clears each pane whose revoke landed. A failed revoke leaves its pane as it
+/// was, and the next grant retries it.
+pub(super) fn drop_revoked_grants(
     workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    jobs: &LoopJobs,
-    pane_id: PaneId,
-    attachment: &str,
-    grant: io::Result<GrantOutcome>,
     revoked: Vec<(PaneId, String, io::Result<()>)>,
 ) {
     for (other, other_attachment, result) in revoked {
-        // A failed revoke leaves its pane as it was; the next grant retries it.
         if result.is_err() {
             continue;
         }
@@ -514,6 +507,19 @@ pub(super) fn apply_outage_grant(
             }
         }
     }
+}
+
+/// Applies an outage grant's answer. A granted pane types its queued keys. A
+/// refused or unreachable grant says why, and sends nothing.
+pub(super) fn apply_outage_grant(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    jobs: &LoopJobs,
+    pane_id: PaneId,
+    attachment: &str,
+    lease: u64,
+    grant: io::Result<GrantOutcome>,
+) {
     let Some(pane) = workspace.panes.get_mut(&pane_id) else {
         return;
     };
@@ -521,6 +527,10 @@ pub(super) fn apply_outage_grant(
     if pane.attachment_id() != attachment {
         return;
     }
+    // A grant asked under an older lease than the pane holds now was answered
+    // after the daemon's take granted the pane. That take is the newer answer,
+    // so a refusal to the older grant does not take the lease back (#25790).
+    let superseded = pane.lease_generation() > lease;
     match grant {
         Ok(GrantOutcome::Granted) => {
             pane.restore_host_control();
@@ -534,9 +544,11 @@ pub(super) fn apply_outage_grant(
             pane.clear_pending_input();
             chrome.notify(Toast::warning(HELD_BY_PEER));
         }
+        Ok(GrantOutcome::Refused(_)) if superseded => {}
         Ok(GrantOutcome::Refused(_)) => {
             pane.apply_host_grant(Some(false));
         }
+        Err(_) if superseded => {}
         Err(_) => {
             pane.apply_host_grant(Some(false));
             pane.status_message = Some(CONTROL_UNREACHABLE.to_string());

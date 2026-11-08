@@ -6,7 +6,7 @@
 01 : text/panel_bg*120
 02 | alpha      │ +                                                                                                         |
 02 : text/selection+b*12 line/surface0*1 overlay1/surface0*3 text/surface0*104
-03 |┌ ○ Codex ─────────────────────────────────────────────────┐┌ ○ nvim ────────────────────┐┌ ○ term-gam · Focused ──────┐|
+03 |┌   Codex ─────────────────────────────────────────────────┐┌   nvim ────────────────────┐┌   term-gam · Focused ──────┐|
 03 : overlay0/panel_bg*90 accent/panel_bg*1 accent/panel_bg+b*22 accent/panel_bg*7
 04 |│                                                          ││                            ││                            │|
 04 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*2 text/unfocused*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
@@ -78,5 +78,5 @@
 37 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*2 text/unfocused*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 38 |└───────────────────────────────────────────────── gclient ┘└─────────────────── gclient ┘└─────────────────── gclient ┘|
 38 : overlay0/panel_bg*90 accent/panel_bg*20 accent/panel_bg+b*9 accent/panel_bg*1
-39 | 1 idle                                                                                                   prefix ctrl+b |
-39 : text/surface0*1 subtext0/surface0*6 text/surface0*99 subtext0/surface0*13 text/surface0*1
+39 | 1 blank                                                                                                  prefix ctrl+b |
+39 : text/surface0*1 subtext0/surface0*7 text/surface0*98 subtext0/surface0*13 text/surface0*1

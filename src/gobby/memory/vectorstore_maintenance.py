@@ -7,16 +7,12 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from qdrant_client.http.models.models import (
-    CreateAlias,
-    CreateAliasOperation,
-    DeleteAlias,
-    DeleteAliasOperation,
-)
-
 from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.vectorstore_client import QdrantClientLike, VectorStoreCollectionDimensionError
 from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
+
+if TYPE_CHECKING:
+    from qdrant_client.http.models.models import CreateAliasOperation, DeleteAliasOperation
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -113,6 +109,13 @@ class VectorStoreMaintenance:
         plan: RebuildCollectionPlan,
     ) -> None:
         """Activate a fully populated rebuild target."""
+        from qdrant_client.http.models.models import (
+            CreateAlias,
+            CreateAliasOperation,
+            DeleteAlias,
+            DeleteAliasOperation,
+        )
+
         store = self._store
         operations: list[DeleteAliasOperation | CreateAliasOperation] = []
         if plan.active_is_alias:

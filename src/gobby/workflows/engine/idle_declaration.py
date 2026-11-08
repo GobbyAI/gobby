@@ -67,7 +67,10 @@ def native_variable_write_error(
         if active_run is not None or (instance is not None and instance.enabled):
             return prefix + "The calling seat has no protected active agent definition."
     if not session_has_capability_or_operator(sessions.db, caller_id, "write_session_variables"):
-        return prefix + "The calling definition does not grant write_session_variables."
+        return prefix + (
+            f"The calling definition for session {caller_id} does not grant "
+            "write_session_variables."
+        )
     # The idle step's own-session restriction is enforced by is_idle_declaration.
     return None
 

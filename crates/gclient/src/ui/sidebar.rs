@@ -426,7 +426,7 @@ pub(super) fn render_section_rows(
                     hits.worktrees.push((row.id.clone(), rect));
                     // An unbound worktree draws no dot, so it has no dot hit.
                     let x = body.x.saturating_add(worktree_glyph_offset(row));
-                    if row.state != RowState::Unknown && x < body.right() {
+                    if row.state != RowState::Blank && x < body.right() {
                         hits.worktree_glyphs
                             .push((row.id.clone(), Rect::new(x, y, 1, 1)));
                     }

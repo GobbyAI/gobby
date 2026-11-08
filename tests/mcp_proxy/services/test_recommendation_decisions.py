@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -352,6 +353,40 @@ async def test_enforce_unavailable_classifier_runs_llm_rerank(
     assert _ids(result["recommendations"]) == ["git/tool_1", "git/tool_0"]
     assert shadow_records[0]["classifier"]["reason"] == "transport"
     assert shadow_records[0]["incumbent"]["status"] == "ok"
+
+
+async def test_mismatch_warning_follows_the_routed_noul_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+    shadow_records: list[dict[str, Any]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The warning window comes from the endpoint that serves Noul, not the default."""
+    fake = FakeDecisions({}, error=DecisionsUnavailable("transport", "connection reset"))
+    llm = _llm(error=RuntimeError("llm down"))
+    config = DecisionsConfig(
+        api_base="https://decisions.test",
+        model=MODEL,
+        failure_cooldown_seconds=3600,
+        overrides={
+            "noul": {
+                "api_base": "https://noul.test",
+                "model": "noul-model",
+                "failure_cooldown_seconds": 0,
+            }
+        },
+        tool_rerank=_enforce(evaluated_model="jev-0"),
+    )
+    svc = _service(monkeypatch, fake, llm, {"config": config}, _candidates(2))
+
+    await _recommend(svc)
+    await _recommend(svc)
+
+    mismatch_warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "evaluated_backend_mismatch" in record.getMessage()
+    ]
+    assert len(mismatch_warnings) == 2
 
 
 async def test_enforce_double_failure_returns_semantic_order(

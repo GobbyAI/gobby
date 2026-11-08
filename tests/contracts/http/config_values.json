@@ -111,6 +111,64 @@
               "evaluated_model": null,
               "min_probability": 0.5,
               "mode": "off"
+            },
+            "overrides": {
+              "box": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              },
+              "choice": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              },
+              "noul": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              },
+              "score": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              }
             }
           },
           "embeddings": {
@@ -1210,6 +1268,64 @@
               "evaluated_model": null,
               "min_probability": 0.5,
               "mode": "off"
+            },
+            "overrides": {
+              "box": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              },
+              "choice": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              },
+              "noul": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              },
+              "score": {
+                "api_base": null,
+                "api_key": "@secret@",
+                "backend_max_question_tokens": null,
+                "backend_max_state_tokens": null,
+                "failure_cooldown_seconds": 60.0,
+                "identity_contract": null,
+                "long_context": false,
+                "max_input_tokens": 8192,
+                "max_request_bytes": null,
+                "model": null,
+                "timeout_seconds": 2.0,
+                "wire_api": "systemone"
+              }
             }
           },
           "embeddings": {
@@ -2218,6 +2334,22 @@
       },
       "secret_set": {
         "ai.decisions.api_key": {
+          "desired": false,
+          "active": false
+        },
+        "ai.decisions.overrides.box.api_key": {
+          "desired": false,
+          "active": false
+        },
+        "ai.decisions.overrides.choice.api_key": {
+          "desired": false,
+          "active": false
+        },
+        "ai.decisions.overrides.noul.api_key": {
+          "desired": false,
+          "active": false
+        },
+        "ai.decisions.overrides.score.api_key": {
           "desired": false,
           "active": false
         },

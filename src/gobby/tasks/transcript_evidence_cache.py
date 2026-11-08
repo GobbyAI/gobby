@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from gobby.agents.constants import agent_home_cache_root
@@ -15,6 +17,8 @@ logger = logging.getLogger(__name__)
 _DISK_SNAPSHOT_LIMIT = 64
 _MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
 _MAX_CACHE_BYTES = 256 * 1024 * 1024
+# A temp file older than this was left by a writer that was killed before its rename.
+_STALE_TEMP_SECONDS = 60.0
 
 
 def _cache_dir() -> Path:
@@ -43,6 +47,15 @@ def read_snapshot(session_id: str) -> bytes | None:
         return None
 
 
+def _remove_stale_temporaries(directory: Path) -> None:
+    """Remove temp files from killed writers; a recent one may belong to a live writer."""
+    cutoff = time.time() - _STALE_TEMP_SECONDS
+    for temporary in directory.glob(".snapshot-*"):
+        with contextlib.suppress(OSError):
+            if temporary.stat().st_mtime < cutoff:
+                temporary.unlink(missing_ok=True)
+
+
 def write_snapshot(session_id: str, payload: bytes) -> None:
     """Replace a checkpoint atomically; cache failure must not fail a hook."""
     if len(payload) > _MAX_SNAPSHOT_BYTES:
@@ -56,6 +69,7 @@ def write_snapshot(session_id: str, payload: bytes) -> None:
             stream.write(payload)
         os.replace(temporary, path)
         temporary = None
+        _remove_stale_temporaries(path.parent)
         entries = sorted(
             (item.stat().st_mtime_ns, item.stat().st_size, item)
             for item in path.parent.glob("*.json")
