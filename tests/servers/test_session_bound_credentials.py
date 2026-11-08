@@ -86,6 +86,7 @@ def _service(database: Any, tmp_path: Path) -> AuthService:
         ("POST", "/api/mcp/tools/call"),
         ("POST", "/api/hooks/execute"),
         ("POST", "/api/embeddings"),
+        ("POST", "/api/sessions/session-123/acp/close"),
     ],
 )
 def test_machine_bearer_refuses_session_selection(
@@ -98,7 +99,7 @@ def test_machine_bearer_refuses_session_selection(
     assert not decision.allowed
     assert decision.code == "session_requires_bound_credential"
     assert decision.status_code == 403
-    rendered = json.dumps(decision.__dict__, default=str)
+    rendered = repr(decision)
     assert API_KEY not in rendered
     assert FRONT_DOOR_SECRET not in rendered
 
@@ -106,7 +107,9 @@ def test_machine_bearer_refuses_session_selection(
 def test_machine_bearer_without_session_selector_stays_operator(tmp_path: Path) -> None:
     service = _service(MagicMock(spec=HubDatabase), tmp_path)
 
-    decision = service.authenticate(_request(MACHINE_HEADERS, method="GET", path="/api/mcp/servers"))
+    decision = service.authenticate(
+        _request(MACHINE_HEADERS, method="GET", path="/api/mcp/servers")
+    )
 
     assert decision.allowed
     assert decision.user_id == "user-1"

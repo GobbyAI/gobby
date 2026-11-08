@@ -40,9 +40,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.storage.users import LocalUserManager, User
 from gobby.utils.break_glass import BREAK_GLASS_HEADER, break_glass_matches, break_glass_path
 from gobby.utils.local_token import (
+    SESSION_TOKEN_KIND,
     AgentApiTokenClaims,
     AgentApiTokenRejection,
     classify_agent_api_token,
@@ -51,6 +53,7 @@ from gobby.utils.local_token import (
     verify_expired_agent_api_token,
     verify_managed_payload,
 )
+from gobby.utils.session_context import SESSION_SELECTOR_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,17 @@ _AGENT_RUN_HEADER = "X-Gobby-Agent-Run-Id"
 _MANAGED_EXECUTION_HEADER = "X-Gobby-Managed-Execution-Id"
 _HOOKS_EXECUTE_PATH = "/api/hooks/execute"
 _RUNTIME_HANDSHAKE_PATH = "/api/runtime/handshake"
+
+SESSION_REQUIRES_BOUND_CREDENTIAL = "session_requires_bound_credential"
+_SESSION_REQUIRES_BOUND_CREDENTIAL_MESSAGE = (
+    "Session selection requires a credential bound to that session"
+)
+
+
+def presents_session_selector(request: HTTPConnection) -> bool:
+    """Return whether the request selects a session, run or execution by header."""
+    return any(request.headers.get(name) is not None for name in SESSION_SELECTOR_HEADERS)
+
 
 # Why a managed capability bearer was refused; rendered as the 401 body code.
 _CapabilityRejection = (
@@ -195,6 +209,9 @@ def _agent_identity_matches(
         return False
     if managed_execution_id is not None and claims.managed_execution_id is None:
         return False
+    if claims.kind == SESSION_TOKEN_KIND:
+        # A session token has no agent owner; owner headers were refused above.
+        return True
     if supplied_owner is not None:
         return supplied_owner == expected_owner
     return not bind_identity
@@ -315,6 +332,21 @@ class AuthService:
                 user_id=browser.user_id,
                 machine_id=browser.claims.machine_id,
                 browser_session=browser,
+            )
+        if (
+            self.verified_front_door_identity(request) is not None
+            and GRANT_HEADER not in request.headers
+            and presents_session_selector(request)
+        ):
+            # The machine-wide bearer names no session. A caller-chosen session,
+            # run, execution or terminal selector would make it act as that session.
+            # A presented runtime grant is itself session-bound: the grant path
+            # checks the selector against its principal before admitting.
+            return AuthDecision(
+                allowed=False,
+                code=SESSION_REQUIRES_BOUND_CREDENTIAL,
+                message=_SESSION_REQUIRES_BOUND_CREDENTIAL_MESSAGE,
+                status_code=403,
             )
         grant_route = match_grant_route(
             str(request.scope.get("method", "GET")),
@@ -627,6 +659,8 @@ class AuthService:
         return claims
 
     def _managed_capability_is_live(self, claims: AgentApiTokenClaims) -> bool:
+        if claims.kind == SESSION_TOKEN_KIND:
+            return self._session_is_live(claims.session_id)
         if claims.agent_run_id is not None:
             return self._agent_run_is_live(claims.agent_run_id)
         if claims.managed_execution_id is None:
@@ -643,6 +677,18 @@ class AuthService:
         except Exception:
             return False
         return row is not None and row["login_capable"] is True
+
+    def _session_is_live(self, session_id: str) -> bool:
+        """A session-bound capability dies with its session row leaving live status."""
+        try:
+            row = self._database_getter().fetchone(
+                "SELECT status FROM sessions WHERE id = %s",
+                (session_id,),
+            )
+        except Exception:
+            # Malformed ids and storage failures fail closed at the auth boundary.
+            return False
+        return row is not None and row["status"] in LIVE_SESSION_STATUSES
 
     def _agent_run_is_live(self, run_id: str) -> bool:
         """A capability dies with its run: only pending/running runs pass.

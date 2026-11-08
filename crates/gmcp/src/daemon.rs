@@ -1,7 +1,8 @@
 //! Blocking HTTP dialer, shared across blocking-pool requests.
 
-use crate::{contract::WRAPPER_CONTRACT, terminal_context};
+use crate::{contract::WRAPPER_CONTRACT, session_binding, terminal_context};
 use anyhow::Context;
+use gobby_core::session_credential::SESSION_ID_HEADER;
 use gobby_core::{daemon_url::daemon_url, local_token, project};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -257,12 +258,17 @@ impl Dialer {
         if let Some(caller) = caller {
             headers.insert("X-Gobby-Caller-Project-Id".into(), caller);
         }
+        // An unspawned client whose pane holds a session credential presents that
+        // session's own token and names the session; it sends no terminal context.
+        let pane_binding = session_binding::pane_binding();
         let session = self.environment_session.as_deref().or_else(|| {
             options
                 .session_id
                 .filter(|id| !id.is_empty() && !self.has_tmux_pane)
         });
-        if let Some(session) = session {
+        if let Some(record) = &pane_binding {
+            headers.insert(SESSION_ID_HEADER.into(), record.session_id.clone());
+        } else if let Some(session) = session {
             headers.insert("X-Gobby-Session-Id".into(), session.into());
         } else {
             headers.insert(
@@ -277,7 +283,13 @@ impl Dialer {
             let fresh = auth_headers()?;
             self.cached()?.auth = fresh;
         }
-        let mut auth = self.cached()?.auth.clone();
+        let mut auth = match &pane_binding {
+            Some(record) => Headers::from([(
+                "Authorization".into(),
+                local_token::authorization_bearer(&record.token),
+            )]),
+            None => self.cached()?.auth.clone(),
+        };
         let mut response = self.send(
             method,
             &format!("{base}{path}"),
@@ -286,7 +298,8 @@ impl Dialer {
             &headers,
             &auth,
         );
-        if matches!(&response, Ok(response) if response.status() == 401) {
+        // A bound session never falls back to the machine key on rejection.
+        if pane_binding.is_none() && matches!(&response, Ok(response) if response.status() == 401) {
             auth = auth_headers()?;
             self.cached()?.auth = auth.clone();
             response = self.send(

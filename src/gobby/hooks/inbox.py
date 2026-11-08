@@ -32,6 +32,7 @@ from gobby.hooks.replay_decision import acknowledge_and_apply_receipt, decide_re
 from gobby.hooks.replay_fence import defer_live_hook
 from gobby.utils import daemon_url as daemon_address
 from gobby.utils.local_token import daemon_bootstrap_path, read_local_api_token
+from gobby.utils.session_context import SESSION_SELECTOR_HEADERS
 
 logger = logging.getLogger(__name__)
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
@@ -264,12 +265,11 @@ async def _post_envelope(
 ) -> httpx.Response:
     """Replay an inbox envelope through the real hook ingress route."""
     headers = envelope.get("headers")
+    # The replay speaks as the machine caller, which may not select a session by
+    # header. The envelope body names its session, so drop the selectors here.
+    dropped = {"authorization", *(name.lower() for name in SESSION_SELECTOR_HEADERS)}
     request_headers = (
-        {
-            str(key): str(value)
-            for key, value in headers.items()
-            if str(key).lower() != "authorization"
-        }
+        {str(key): str(value) for key, value in headers.items() if str(key).lower() not in dropped}
         if isinstance(headers, dict)
         else {}
     )

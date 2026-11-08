@@ -28,6 +28,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod mermaid;
 pub mod progress;
+pub mod session_credential;
 pub mod token_budget;
 
 /// Return Gobby home, respecting `GOBBY_HOME` when set.

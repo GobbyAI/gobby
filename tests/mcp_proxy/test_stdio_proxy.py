@@ -445,7 +445,6 @@ async def test_set_variable_calls_relocated_session_path_with_scope() -> None:
         "POST",
         "/api/sessions/sess-1/variables/set",
         json={"name": "foo", "value": "bar", "scope": "session"},
-        session_id="sess-1",
     )
 
 
@@ -460,7 +459,6 @@ async def test_get_variable_calls_relocated_session_path_with_scope() -> None:
         "POST",
         "/api/sessions/sess-1/variables/get",
         json={"name": "foo", "scope": "session", "brief": True},
-        session_id="sess-1",
     )
 
 
@@ -473,7 +471,6 @@ async def test_get_variable_forwards_brief_false_for_the_full_map() -> None:
         "POST",
         "/api/sessions/sess-1/variables/get",
         json={"name": None, "scope": "session", "brief": False},
-        session_id="sess-1",
     )
 
 

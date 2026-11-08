@@ -757,11 +757,14 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
         "n-0000000000001-abcd",
         processed_dir=inbox_dir / "processed",
     )
+    # Session selector headers are dropped on replay: the operator-token replay
+    # is a machine caller, and the envelope body names its session.
+    # See tests/hooks/test_inbox_replay_selectors.py.
     mock_client.post.assert_awaited_once_with(
         "/api/hooks/execute",
         json=envelope,
         headers={
-            **envelope["headers"],
+            "X-Gobby-Project-Id": "proj-123",
             ENVELOPE_ID_HEADER: "n-0000000000001-abcd",
             "Authorization": "Bearer test-operator-token",
         },

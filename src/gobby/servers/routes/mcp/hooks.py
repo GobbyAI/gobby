@@ -40,6 +40,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
+from gobby.hooks.hook_types import HookType
 from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
@@ -51,6 +52,7 @@ from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
 )
+from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD, mint_session_credential
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
     StartupClaimPreflightTimeout,
@@ -124,6 +126,54 @@ def _run_bound_platform_session(
         external_ids=conversation_ids,
     )
     return current_session_id if earlier_session_id is None else earlier_session_id
+
+
+def _attach_session_credential(
+    server: "HTTPServer",
+    request: Request,
+    payload: dict[str, Any],
+    response: dict[str, Any],
+    *,
+    db: Any,
+) -> dict[str, Any]:
+    """Hand a machine-started session its own token after its hook is persisted.
+
+    Only the machine bearer gets one. A managed agent token never reaches this
+    branch, and a run-bound start already holds its own token.
+    """
+    if payload.get("hook_type") != HookType.SESSION_START.value:
+        return response
+    if request.headers.get(AGENT_RUN_ID_HEADER):
+        return response
+    identity = server.auth_service.verified_front_door_identity(request)
+    input_data = payload.get("input_data")
+    source = payload.get("source")
+    if identity is None or not isinstance(input_data, dict) or not isinstance(source, str):
+        return response
+    external_id = next(
+        (
+            value
+            for key in _PROVIDER_SESSION_KEYS
+            if isinstance(value := input_data.get(key), str) and value
+        ),
+        None,
+    )
+    if external_id is None or db is None:
+        return response
+    try:
+        credential = mint_session_credential(
+            db,
+            signing_key=server.auth_service.managed_signing_key(),
+            external_id=external_id,
+            source=source,
+            machine_id=identity.machine_id,
+        )
+    except Exception as exc:
+        logger.warning("Session credential mint failed: %s", type(exc).__name__)
+        return response
+    if credential is None:
+        return response
+    return {**response, SESSION_CREDENTIAL_FIELD: credential}
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -306,6 +356,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
+                response = _attach_session_credential(
+                    server, request, payload, response, db=receipt_db
+                )
                 return receipt_guarded_response(response, db=receipt_db)
             if envelope_id:
                 try:
@@ -320,6 +373,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
+            response = _attach_session_credential(server, request, payload, response, db=receipt_db)
             return receipt_guarded_response(response, db=receipt_db)
 
         async def mark_processed_and_return(response: dict[str, Any]) -> Any:
