@@ -13,7 +13,7 @@ import launch_daemon
 import pytest
 import runtime_gobby
 from launch_daemon import SrtRunner, daemon_argv, launch, srt_policy, srt_wrapped_argv
-from runtime_boundary import EvidenceError
+from runtime_boundary import EvidenceError, file_record, verify_file_record
 
 ROOT = Path("/runtime/root")
 HOME = Path("/operator/home")
@@ -192,6 +192,27 @@ def test_launch_receipt_names_the_monitor_socket_env_and_path(
     assert sandbox["monitor_socket_env"] == "GOBBY_SRT_MONITOR_SOCKET"
     assert sandbox["monitor_socket"] == "/private/tmp/srt-monitor/v-abc"
     assert sandbox["run_key"] == "attempt-1"
+
+
+def test_launch_indexes_the_daemon_receipt_as_the_active_launch(
+    staged_root: Path, tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    index = json.loads((staged_root / "receipts/active-launches.json").read_text())
+    assert set(index) == {"daemon"}
+    assert index["daemon"] == file_record(staged_root, "receipts/daemon-launch-attempt-1.json")
+    verify_file_record(staged_root, index["daemon"])
+
+
+def test_launch_refuses_a_root_with_an_active_launch_before_starting_a_daemon(
+    staged_root: Path, tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    with pytest.raises(EvidenceError):
+        launch(staged_root, "attempt-2", SRT, home=tmp_path / "home")
+    assert len(spawned) == 1
 
 
 def test_launch_writes_a_root_confined_policy_and_an_empty_violation_log(

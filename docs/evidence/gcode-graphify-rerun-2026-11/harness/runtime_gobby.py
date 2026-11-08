@@ -105,7 +105,7 @@ def package_digest(files: Mapping[str, str]) -> str:
 
 
 def package_files(root: Path, _payload: dict[str, Any]) -> dict[str, Any]:
-    """Hash every .py file of the gobby package this interpreter imports."""
+    """Hash every file under the imported gobby package except __pycache__ and .pyc."""
     gobby_file = verify_gobby(root)["gobby"]
     return {"files": hash_package_files(Path(gobby_file).parent)}
 

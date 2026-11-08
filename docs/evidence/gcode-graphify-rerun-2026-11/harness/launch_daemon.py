@@ -17,7 +17,13 @@ from typing import Any
 
 from prepare_daemon import isolated_environment, run_runtime_gobby
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
-from runtime_boundary import EvidenceError, assert_owned_runtime, contained_file, require
+from runtime_boundary import (
+    EvidenceError,
+    assert_owned_runtime,
+    contained_file,
+    file_record,
+    require,
+)
 from runtime_gobby import hash_package_files, package_digest
 
 
@@ -211,9 +217,10 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
             probe.bind(("127.0.0.1", port))
     log_path = root / f"logs/install/daemon-{attempt}.log"
     receipt = root / f"receipts/daemon-launch-{attempt}.json"
+    active = root / "receipts/active-launches.json"
     require(
-        not log_path.exists() and not receipt.exists(),
-        "check failed: not log_path.exists() and (not receipt.exists())",
+        not log_path.exists() and not receipt.exists() and not active.exists(),
+        "check failed: not log_path.exists() and (not receipt.exists()) and (not active.exists())",
     )
     daemon = daemon_argv(root, bootstrap)
     policy_path = root / f"srt/settings-{attempt}.json"
@@ -258,6 +265,7 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
         },
         mode=0o600,
     )
+    _write_json(active, {"daemon": file_record(root, receipt)}, mode=0o600)
     print(f"owned daemon PID {process.pid}; launch receipt {receipt}")
 
 
