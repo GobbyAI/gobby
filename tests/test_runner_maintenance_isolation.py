@@ -100,7 +100,9 @@ async def test_expiry_preserves_active_or_unlanded_work(
         assert _git(repo, "branch", "--list", "task/expired") == ""
     else:
         assert path.exists()
-        assert storage.get(worktree.id) is not None
+        kept = storage.get(worktree.id)
+        assert kept is not None
+        assert kept.status == "merged"
         assert _git(repo, "rev-parse", "refs/heads/task/expired") == source_tip
     assert caplog.records == []
 
@@ -340,6 +342,9 @@ async def test_missing_worktree_requires_absent_source_ref(
     assert (storage.get(workspace.id) is None) == (ref_state == "absent")
     if ref_state == "unmerged":
         assert _git(repo, "rev-parse", "refs/heads/task/missing") == tip
+        kept = storage.get(workspace.id)
+        assert kept is not None
+        assert kept.status == "merged"
     assert caplog.records == []
 
 
@@ -644,7 +649,7 @@ async def test_expired_isolation_loop_preserves_failed_git_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A refused Git operation preserves the directory and row without force fallback."""
+    """A refused Git removal keeps the directory and the row deleting, with no force fallback."""
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     _git(repo_path, "init", "-b", "main")
@@ -691,6 +696,13 @@ async def test_expired_isolation_loop_preserves_failed_git_cleanup(
     )
 
     assert worktree_path.exists()
-    assert worktrees.get(worktree.id) is not None
+    kept = worktrees.get(worktree.id)
+    assert kept is not None
+    assert kept.status == "deleting"
     assert _git(repo_path, "branch", "--list", "task/expired") == "+ task/expired"
-    assert caplog.records == []
+    assert len(caplog.records) == 1
+    warning = caplog.records[0]
+    assert warning.levelname == "WARNING"
+    assert worktree.id in warning.getMessage()
+    assert str(worktree_path) in warning.getMessage()
+    assert "worktree removal refused" in warning.getMessage()

@@ -27,6 +27,11 @@ class SessionEndMixin(EventHandlersBase):
 
     def handle_session_end(self, event: HookEvent) -> HookResponse:
         """Handle SESSION_END event."""
+        from gobby.workflows.owner_end_settle import (
+            GRACEFUL_END_REASONS,
+            settle_graceful_owner_end,
+        )
+        from gobby.workflows.state_manager import SessionVariableManager
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
         external_id = event.session_id
@@ -109,6 +114,26 @@ class SessionEndMixin(EventHandlersBase):
             and session.status == "awaiting_handoff"
             and session.agent_run_id
         )
+
+        # A graceful exit stops the owner's background process tree while the CLI is still
+        # its parent. Its calls settle only once that tree is verified empty; any other end
+        # leaves them foreign until an operator releases them.
+        db = getattr(self._session_manager, "db", None)
+        if session_id and session is not None and end_reason in GRACEFUL_END_REASONS and db:
+            try:
+                settle_graceful_owner_end(
+                    SessionVariableManager(db),
+                    session_id,
+                    session.terminal_context,
+                    loop=self._event_loop,
+                    logger=self.logger,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "SESSION_END: failed to settle background calls of session %s: %s",
+                    session_id,
+                    e,
+                )
 
         # Auto-link outside the critical hook executor. The managed worker drains
         # accepted work before HookManager closes shared storage.

@@ -12,6 +12,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
+from gobby.tasks.attestation_authorship import attestation_authorship_refusal
 from gobby.tasks.attestation_shapes import attestation_shape_refusal
 from gobby.tasks.claim_flow import advance_claim_flow
 from gobby.tasks.lifecycle_access import task_scope_refusal
@@ -253,6 +254,15 @@ def record_attestation(
             raise AttestationError(refusal)
         if task.closed_at is not None:
             raise AttestationError("closed tasks cannot receive new attestations")
+        rules = RuleDefinitionManager(db).list_effective(task.project_id)
+        if authorship_refusal := attestation_authorship_refusal(
+            kind=submission.kind,
+            session_id=session_id,
+            records=records,
+            agent=body,
+            rules=rules,
+        ):
+            raise AttestationError(authorship_refusal)
         reference = submission.reference
         if shape_refusal := attestation_shape_refusal(
             kind=submission.kind,
@@ -262,7 +272,7 @@ def record_attestation(
             task=task.to_dict(),
             agent=body,
             declared=kind,
-            rules=RuleDefinitionManager(db).list_effective(task.project_id),
+            rules=rules,
         ):
             raise AttestationError(shape_refusal)
         if submission.supersedes_id is not None:

@@ -275,7 +275,9 @@ def init_servers(runner: GobbyRunner) -> None:
     from gobby.storage.config_store import ConfigStore
 
     tools_handler = runner.http_server._tools_handler
-    if tools_handler is not None:
+    if runner.bootstrap_config.run_mode() == "node":
+        logger.info("skipping hub-only scoped tool backfill in node mode")
+    elif tools_handler is not None:
         schedule_scoped_embedding_backfill(
             tools_handler._semantic_search,
             runner.mcp_proxy,

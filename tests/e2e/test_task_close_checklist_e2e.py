@@ -10,10 +10,39 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.sync_registry import sync_bundled_content_to_db
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, MCPTestClient
 
 pytestmark = pytest.mark.e2e
 PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
+# A synthetic seat, so test code names no bundled definition. Its rule selectors carry the
+# closure tags that a coding leaf's close is checked against.
+SEAT_DEFINITION = "close-checklist-seat"
+SEAT_RULE_SELECTORS = ["tag:task-closure-general", "tag:task-closure-coding"]
+CLOSURE_KINDS = (
+    "test-before",
+    "implementation",
+    "test-after",
+    "self-review",
+    "validation",
+    "closing",
+    "disposition",
+)
+
+
+@pytest.fixture(autouse=True)
+def bundled_rules(e2e_config: tuple[Path, int, int], postgres_db: Any) -> None:
+    """Install the bundled rules in the test hub, as an installed daemon has them.
+
+    The isolated daemon's project is not a dev checkout, so startup never syncs bundled
+    content. Close policy is rule-driven, so without this no closure rule applies to the
+    tasks these tests close.
+    """
+    # Fixture order: autouse runs before daemon_instance, and e2e_config has already reset
+    # and seeded the schema, so the rules land before the daemon loads them at startup.
+    _ = e2e_config
+    synced = sync_bundled_content_to_db(postgres_db, only=["rules"])
+    assert synced["errors"] == [], synced
 
 
 def _unwrap(result: dict[str, Any]) -> dict[str, Any]:
@@ -21,10 +50,43 @@ def _unwrap(result: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], nested) if isinstance(nested, dict) else result
 
 
+def _bind_closing_seat(postgres_db: Any, session_id: str) -> None:
+    """Bind the session to the synthetic seat, which selects the closure rules.
+
+    An unnamed session receives only default-tagged rules, and no closure rule carries that
+    tag, so the close checks run only for a session bound to a definition selecting them.
+    """
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    definitions = AgentDefinitionManager(postgres_db)
+    if definitions.get_by_name(SEAT_DEFINITION, PROJECT_ID) is None:
+        definitions.create(
+            SEAT_DEFINITION,
+            {
+                "name": SEAT_DEFINITION,
+                "surfaces": ["persona"],
+                "prompts": {"persona": "Synthetic seat for the close-checklist tests."},
+                "workflows": {"rule_selectors": {"include": SEAT_RULE_SELECTORS}},
+                "task_attestation_writes": list(CLOSURE_KINDS),
+                "task_attestation_kinds": {
+                    kind: {
+                        "allowed_results": ["approved", "rejected"],
+                        "guidance": f"Record the {kind} evidence for this task.",
+                    }
+                    for kind in CLOSURE_KINDS
+                },
+            },
+            project_id=PROJECT_ID,
+        )
+    SessionVariableManager(postgres_db).set_variable(session_id, "_agent_type", SEAT_DEFINITION)
+
+
 def _register_claimed_task(
     daemon: DaemonInstance,
     client: MCPTestClient,
     events: CLIEventSimulator,
+    postgres_db: Any,
     *,
     suffix: str,
     task_type: str = "task",
@@ -43,6 +105,7 @@ def _register_claimed_task(
         cwd=str(daemon.project_dir),
     )
     session_id = cast(str, session["id"])
+    _bind_closing_seat(postgres_db, session_id)
     client.session_id = session_id
     task = _unwrap(
         client.call_tool(
@@ -109,6 +172,70 @@ def _close(
     return _unwrap(client.call_tool("gobby-tasks", "close_task", arguments))
 
 
+def _record_closure_evidence(client: MCPTestClient, task_id: str, commit_sha: str) -> None:
+    """Record the six closure attestations for a candidate, in TDD order, each approved."""
+    git_ref = {"scheme": "git", "value": commit_sha}
+    steps: list[tuple[str, dict[str, Any] | None, dict[str, Any], str]] = [
+        (
+            "test-before",
+            None,
+            {"stage": "implement"},
+            "Observed the close-module test fail before the module existed.",
+        ),
+        ("implementation", git_ref, {}, "Added the close module with VALUE = 1."),
+        ("test-after", git_ref, {}, "The close-module test passes on the candidate."),
+        ("self-review", git_ref, {}, "Reviewed the candidate against the task criteria."),
+        (
+            "validation",
+            git_ref,
+            {
+                "stage": "implement",
+                "criteria": [
+                    {
+                        "criterion": "The committed Python module contains VALUE = 1.",
+                        "met": True,
+                        "how": "src/close_checklist.py assigns VALUE = 1.",
+                    }
+                ],
+            },
+            "Validated the candidate against the task criteria.",
+        ),
+        ("closing", git_ref, {}, "Closing the leaf on the candidate."),
+    ]
+    for kind, reference, evidence, summary in steps:
+        arguments: dict[str, Any] = {
+            "task_id": task_id,
+            "kind": kind,
+            "result": "approved",
+            "summary": summary,
+            "evidence": evidence,
+        }
+        if reference is not None:
+            arguments["reference"] = reference
+        recorded = _unwrap(client.call_tool("gobby-tasks", "record_attestation", arguments))
+        assert "error" not in recorded, recorded
+
+
+def _record_disposition(
+    client: MCPTestClient,
+    task_id: str,
+    reason: str,
+    reference: dict[str, str] | None = None,
+) -> None:
+    """Record the approved disposition that a close for a non-done reason requires."""
+    arguments: dict[str, Any] = {
+        "task_id": task_id,
+        "kind": "disposition",
+        "result": "approved",
+        "summary": f"Closing as {reason}.",
+        "evidence": {"reason": reason},
+    }
+    if reference is not None:
+        arguments["reference"] = reference
+    recorded = _unwrap(client.call_tool("gobby-tasks", "record_attestation", arguments))
+    assert "error" not in recorded, recorded
+
+
 def _write_source(project: Path, contents: str = "VALUE = 1\n") -> None:
     source = project / "src/close_checklist.py"
     source.parent.mkdir(exist_ok=True)
@@ -122,23 +249,26 @@ def test_ready_task_previews_and_closes(
     postgres_db: Any,
 ) -> None:
     task_id, session_id = _register_claimed_task(
-        daemon_instance, mcp_client, cli_events, suffix="ready"
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="ready"
     )
     project = daemon_instance.project_dir
     _write_source(project)
     _record_edit(postgres_db, session_id, project)
     commit_sha = _commit(project, "Add close module", mcp_client, task_id)
 
+    # Before the closure evidence exists, the contract refuses the candidate.
+    blocked = _close(mcp_client, task_id, commit_sha, preview=True)
+    assert blocked["can_close"] is False, blocked
+    assert blocked["error"] == "closure_policy", blocked
+
+    _record_closure_evidence(mcp_client, task_id, commit_sha)
     preview = _close(mcp_client, task_id, commit_sha, preview=True)
     assert preview["can_close"] is True, preview
     assert preview["closed"] is False
-    assert [(gate["name"], gate["status"]) for gate in preview["gates"]] == [
-        ("children_closed", "passed"),
-        ("linked_commits", "passed"),
-        ("uncommitted_task_edits", "passed"),
-        ("integration_ancestry", "passed"),
-        ("step_records", "skipped"),
-    ]
+    assert preview["blocking_reasons"] == [], preview
+    assert preview["facts"]["task_files_clean"] is True, preview
+    assert preview["facts"]["candidate_covers_linked_commits"] is True, preview
+    assert preview["facts"]["integration_ancestry"] is True, preview
     stored = _unwrap(mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id}))
     assert stored["state"]["is_closed"] is False
 
@@ -158,17 +288,19 @@ def test_dirty_task_file_blocks_close(
     postgres_db: Any,
 ) -> None:
     task_id, session_id = _register_claimed_task(
-        daemon_instance, mcp_client, cli_events, suffix="dirty"
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="dirty"
     )
     project = daemon_instance.project_dir
     _write_source(project)
     _record_edit(postgres_db, session_id, project)
     commit_sha = _commit(project, "Add close module", mcp_client, task_id)
+    _record_closure_evidence(mcp_client, task_id, commit_sha)
     _write_source(project, "VALUE = 2\n")
     _record_edit(postgres_db, session_id, project)
     result = _close(mcp_client, task_id, commit_sha)
-    assert result["error"] == "uncommitted_task_edits", result
+    assert result["error"] == "closure_policy", result
     assert result["closed"] is False
+    assert result["facts"]["task_files_clean"] is False, result
 
 
 def test_unintegrated_commit_blocks_close(
@@ -178,7 +310,7 @@ def test_unintegrated_commit_blocks_close(
     postgres_db: Any,
 ) -> None:
     task_id, session_id = _register_claimed_task(
-        daemon_instance, mcp_client, cli_events, suffix="branch"
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="branch"
     )
     project = daemon_instance.project_dir
     integration_branch = subprocess.run(
@@ -194,8 +326,9 @@ def test_unintegrated_commit_blocks_close(
     commit_sha = _commit(project, "Unintegrated close module", mcp_client, task_id)
     subprocess.run(["git", "checkout", integration_branch], cwd=project, check=True)
     result = _close(mcp_client, task_id, commit_sha)
-    assert result.get("error") == "integration_ancestry", result
+    assert result.get("error") == "closure_policy", result
     assert result["closed"] is False
+    assert result["facts"]["integration_ancestry"] is False, result
 
 
 @pytest.mark.parametrize("reason,ready", [("done", False), ("moot", True)])
@@ -203,17 +336,20 @@ def test_epic_uses_same_commit_and_no_work_gates(
     daemon_instance: DaemonInstance,
     mcp_client: MCPTestClient,
     cli_events: CLIEventSimulator,
+    postgres_db: Any,
     reason: str,
     ready: bool,
 ) -> None:
     task_id, _session_id = _register_claimed_task(
-        daemon_instance, mcp_client, cli_events, suffix="epic", task_type="epic"
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="epic", task_type="epic"
     )
+    if ready:
+        # A no-work close is ready only once its disposition names the close reason.
+        _record_disposition(mcp_client, task_id, reason)
     result = _close(mcp_client, task_id, preview=True, reason=reason)
     assert result["closed"] is False, result
     assert result["can_close"] is ready, result
-    assert result.get("error") == (None if ready else "linked_commits")
-    assert len(result["gates"]) == 5
+    assert result.get("error") == (None if ready else "closure_policy"), result
 
 
 def test_edit_after_ready_preview_blocks_close(
@@ -223,19 +359,22 @@ def test_edit_after_ready_preview_blocks_close(
     postgres_db: Any,
 ) -> None:
     task_id, session_id = _register_claimed_task(
-        daemon_instance, mcp_client, cli_events, suffix="stale"
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="stale"
     )
     project = daemon_instance.project_dir
     _write_source(project)
     _record_edit(postgres_db, session_id, project)
     commit_sha = _commit(project, "Add close module", mcp_client, task_id)
+    _record_closure_evidence(mcp_client, task_id, commit_sha)
     assert _close(mcp_client, task_id, commit_sha, preview=True)["can_close"] is True
     _write_source(project, "VALUE = 2\n")
     _record_edit(postgres_db, session_id, project)
     refused = _close(mcp_client, task_id, commit_sha)
-    assert refused["error"] == "uncommitted_task_edits", refused
+    assert refused["error"] == "closure_policy", refused
     assert refused["closed"] is False
+    assert refused["facts"]["task_files_clean"] is False, refused
     updated = _commit(project, "Commit later edit", mcp_client, task_id)
+    _record_closure_evidence(mcp_client, task_id, updated)
     assert _close(mcp_client, task_id, updated)["closed"] is True
 
 
@@ -267,7 +406,7 @@ def _landed_and_candidate(
     suffix: str,
 ) -> tuple[str, str, str, str]:
     """Link one commit on the integration branch and one unlanded task-branch commit."""
-    task_id, session_id = _register_claimed_task(daemon, client, events, suffix=suffix)
+    task_id, session_id = _register_claimed_task(daemon, client, events, postgres_db, suffix=suffix)
     project = daemon.project_dir
     integration_branch = _current_branch(project)
     _write_source(project)
@@ -290,7 +429,7 @@ def test_superseded_task_closes_with_an_unlanded_candidate(
     postgres_db: Any,
 ) -> None:
     task_id, session_id = _register_claimed_task(
-        daemon_instance, mcp_client, cli_events, suffix="superseded"
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="superseded"
     )
     project = daemon_instance.project_dir
     integration_branch = _current_branch(project)
@@ -309,6 +448,7 @@ def test_superseded_task_closes_with_an_unlanded_candidate(
         )
     )
     assert "error" not in unlinked, unlinked
+    _record_disposition(mcp_client, task_id, "superseded", {"scheme": "task", "value": "#24970"})
     result = _close(mcp_client, task_id, reason="superseded", superseded_by="#24970")
     assert result["closed"] is True, result
     stored = _unwrap(
@@ -334,9 +474,11 @@ def test_superseded_close_refuses_a_task_with_a_landed_commit(
     task_id, _, candidate, _ = _landed_and_candidate(
         daemon_instance, mcp_client, cli_events, postgres_db, suffix="superseded-mixed"
     )
+    _record_disposition(mcp_client, task_id, "superseded", {"scheme": "task", "value": "#24970"})
     refused = _close(mcp_client, task_id, candidate, reason="superseded", superseded_by="#24970")
-    assert refused["error"] == "integration_ancestry", refused
-    assert refused["closed"] is False
+    assert refused.get("error") == "closure_policy", refused
+    assert refused["closed"] is False, refused
+    assert refused["facts"]["integration_ancestry"] is False, refused
 
 
 def test_landed_commit_cannot_be_unlinked_from_a_claimed_task(

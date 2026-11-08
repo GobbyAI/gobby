@@ -328,10 +328,9 @@ async def _refuse_unmerged_branch_deletion(
                 else ""
             )
         ),
+        # The stderr detail stays in the message; the error is always a refusal code.
         error=(
-            "merge_target_unresolvable"
-            if merged_into is not None
-            else detail or "merge_state_unresolvable"
+            "merge_target_unresolvable" if merged_into is not None else "merge_state_unresolvable"
         ),
     )
 
