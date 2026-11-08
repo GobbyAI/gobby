@@ -16,8 +16,8 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | Attempt | `rerun2611b` |
 | Owner session | `7674aa11-70a3-40d5-91dd-1fe46140732b` (orchestrator root pane) |
 | Compose project | `gcode-graphify-rerun-2026-11` |
-| Source commit (gobby, gcode) | `30d2a5956241c208e670133efbc9d9452721118f`, the 0.5.0 tip at candidate time |
-| gcode pins | version read from `sources/gobby/crates/gcode/Cargo.toml` `package.version` (archived at `GOBBY_SHA`; `1.9.104` at candidate time), frozen into the command manifest and checked against `gcode --version` at C0; contract `12` |
+| Source commit (gobby, gcode) | `0bf234a92e1266e310db2f7bf9245f0bc69a08bb`, the 0.5.0 tip merged at candidate time |
+| gcode pins | version read from `sources/gobby/crates/gcode/Cargo.toml` `package.version` (archived at `GOBBY_SHA`; `1.9.105` at candidate time), frozen into the command manifest and checked against `gcode --version` at C0; contract `12` |
 | Graphify | PyPI `graphifyy==0.9.103` (version-only pin, `GRAPHIFY_PACKAGE` in `harness/launch_services.py`); recorded by version, executable SHA-256 and lock |
 | Graphify wheel | `graphifyy-0.9.103-py3-none-any.whl`, SHA-256 `7948c030f8b04153d88bc1ee23a485ddaa0c2d6aaa03a748c177e3c217bcfe34` (PyPI, latest release at review time) |
 | Database and account | `gobby_bakeoff_22948`; account email `bakeoff-22948@example.invalid` (reserved placeholder) |
@@ -91,7 +91,7 @@ on each run.
 Gobby package aggregate, expected:
 
 - File count: 3031 files in each copy (2190 `.py`, 841 other), with the same set of paths.
-- Aggregate digest: `1614095779db8bc81a8727af6020c227a2b298b549197e193009101cb781694a` in each copy.
+- Aggregate digest: `467edf61aae6ef8e1886595a4992e5a49f7c26cc4efc6da8d0d6a81853164ef1` in each copy.
 
 Residual: third-party packages that gobby imports are not hashed.
 
@@ -167,7 +167,7 @@ is checked at step 8 by `validate_environment.py --live`, through `schema_head.s
 - The source pin moved from the September `7394b97c` to the 0.5.0 tip. The plan requires the
   source archived at the run's commit. If the tip moves before provisioning, the pin must be
   updated and the gcode version and contract checks will fail loudly until it is.
-- The gcode pins were read from the source at `GOBBY_SHA`. The installed binary `1.9.104`,
+- The gcode pins were read from the source at `GOBBY_SHA`. The installed binary `1.9.105`,
   contract `12` agrees, but the built binary has not been run here.
 - The grok-wiki and opendeepwiki live checks were dropped with the comparator narrowing. C9 remains
   in `INDEX_CASES`; this is flagged for the lead.

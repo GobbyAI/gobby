@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import shutil
@@ -90,6 +91,8 @@ def check_fresh() -> None:
             try:
                 port_probe.bind(("127.0.0.1", port))
             except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
                 raise EvidenceError(f"port {port} is already in use on 127.0.0.1") from error
 
 

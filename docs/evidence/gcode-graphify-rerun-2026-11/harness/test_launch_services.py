@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import socket
 import subprocess
@@ -30,6 +31,25 @@ def test_a_port_already_in_use_is_named_in_the_refusal(monkeypatch: pytest.Monke
             launch_services.check_fresh()
     finally:
         listener.close()
+
+
+class _PermissionDeniedSocket:
+    def __enter__(self) -> _PermissionDeniedSocket:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def bind(self, _address: tuple[str, int]) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+
+def test_a_permission_error_on_bind_keeps_its_own_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(launch_services, "PORTS", {"probe": 40123})
+    monkeypatch.setattr(launch_services, "docker", lambda *_args: "")
+    monkeypatch.setattr(socket, "socket", _PermissionDeniedSocket)
+    with pytest.raises(PermissionError, match="Permission denied"):
+        launch_services.check_fresh()
 
 
 def test_step_three_modules_load_no_gobby_at_import() -> None:
