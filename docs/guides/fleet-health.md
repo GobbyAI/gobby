@@ -27,56 +27,35 @@ admitted in the current ramp window.
 
 ## Supervision
 
-The watcher runs under a launchd LaunchAgent, `com.gobby.fleet-watch`. The agent is
-set up by hand. `gobby install` does not create it.
+`gobby install` installs and loads a separate user service after provisioning the
+native binaries and database. It uses launchd (`com.gobby.fleet-watch`, with
+`KeepAlive`) on macOS and systemd (`gobby-fleet-watch.service`, with `Restart=always`)
+on Linux. Windows is excluded because the native command is Unix-only.
 
-Create `~/Library/LaunchAgents/com.gobby.fleet-watch.plist`, replacing `USER`:
+Installation is idempotent: it replaces the same service definition and reloads the
+same job. The job receives the installed native executable, Gobby home, governing
+project UUID and configured daemon log directory. Installation waits up to 60 seconds
+for a newly written sample less than 30 seconds old; an unchanged or missing state
+file cannot satisfy readiness. A fresh sample may report an unhealthy daemon; admission
+continues to fail closed until the watcher reports healthy.
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.gobby.fleet-watch</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/USER/.gobby/bin/gdaemon</string>
-    <string>fleet-watch</string>
-    <string>--project-id</string>
-    <string>PROJECT_UUID</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/Users/USER/.gobby/logs/fleet-watch.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/USER/.gobby/logs/fleet-watch.log</string>
-</dict>
-</plist>
-```
+Activation sequence (the operator's cutover owner performs these steps):
 
-Start it:
+1. Stop any manually launched or interim watcher, then run `gobby install` from the
+   governing project. Do not leave a manual sampler alongside the supervised job.
+2. Confirm `sampled_at_unix` is less than 30 seconds old and exactly one
+   `gdaemon fleet-watch` process runs. On macOS inspect
+   `launchctl print gui/$(id -u)/com.gobby.fleet-watch`; on Linux inspect
+   `systemctl --user status gobby-fleet-watch.service`. Check process command lines
+   separately for a manual duplicate.
+3. Perform the approved cutover. After coherent binary promotion, cutover reloads
+   the installed watcher and waits for its new sample before starting the daemon.
+   This makes the watcher execute the promoted inode. A normal daemon restart
+   leaves the watcher running independently.
 
-```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gobby.fleet-watch.plist
-```
-
-Check it: `launchctl print gui/$(id -u)/com.gobby.fleet-watch` shows it running, and the
-`sampled_at_unix` field in the state file advances about every 30 seconds.
-
-Stop it:
-
-```bash
-launchctl bootout gui/$(id -u)/com.gobby.fleet-watch
-```
-
-`KeepAlive` restarts the watcher if it exits. Its binary is `~/.gobby/bin/gdaemon`.
-Promotion replaces that binary, but a running watcher keeps the old image until it
-restarts. After promoting a new `gdaemon`, restart the watcher with `bootout`, then
-`bootstrap`. The daemon's own restarts do not require this.
+Service definitions live in `~/Library/LaunchAgents/com.gobby.fleet-watch.plist` or
+`~/.config/systemd/user/gobby-fleet-watch.service`. Linux user services require a
+user manager; enable lingering if the watcher must survive logout.
 
 ## Single sample
 
@@ -113,5 +92,5 @@ started are not read back, so log-derived signals rebuild over the next five min
 
 ## Log
 
-The watcher writes to `GOBBY_HOME/logs/fleet-watch.log` through launchd, next to the
-daemon logs in `GOBBY_HOME/logs/`.
+The service writes stdout and stderr to `fleet-watch.log` beside the configured
+daemon log (by default `GOBBY_HOME/logs/`).
