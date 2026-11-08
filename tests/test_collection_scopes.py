@@ -4,11 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from tests import conftest as root_config
-
 pytest_plugins = ["pytester"]
 pytestmark = pytest.mark.unit
-_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("selection", ["explicit", "directory"])
@@ -20,13 +17,11 @@ def test_autouse_fixtures_follow_every_directory_collector(
     package: str,
 ) -> None:
     monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
-    monkeypatch.setenv("PYTHONPATH", str(_ROOT))
-    plugins = [
-        name for name in root_config.pytest_plugins if name == "tests.fixtures.collection_scopes"
-    ]
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.delenv("PYTEST_PLUGINS", raising=False)
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     pytester.makeini("[pytest]\n")
     pytester.makeconftest(
-        f"pytest_plugins = {plugins!r}\n"
         "import pytest\n"
         "@pytest.fixture(autouse=True)\n"
         "def root_guard(monkeypatch):\n"
