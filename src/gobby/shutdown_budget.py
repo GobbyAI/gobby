@@ -6,5 +6,5 @@ stacks, worst case, inside that window with ``SHUTDOWN_MARGIN_SECONDS`` to spare
 
 from __future__ import annotations
 
-DAEMON_STOP_ESCALATION_SECONDS = 30.0
+DAEMON_STOP_ESCALATION_SECONDS = 32.0
 SHUTDOWN_MARGIN_SECONDS = 5.0
