@@ -9,7 +9,7 @@ description: |
   sandbox. It carries the operator's words to the Orchestrator, brings fleet news
   and decisions back on the operator's current channel, and recovers stalled
   seats in an emergency.
-version: "7.1.0"
+version: "7.2.0"
 tags: [gobby, seat]
 surfaces: [spawn]
 provider: claude

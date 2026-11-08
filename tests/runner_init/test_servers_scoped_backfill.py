@@ -22,6 +22,7 @@ from gobby.runner_init.mcp_stack import (
     SCOPED_PAYLOAD_VERSION,
     SCOPED_PAYLOAD_VERSION_KEY,
     _store_get,
+    schedule_scoped_embedding_backfill,
 )
 from gobby.runner_init.servers import init_servers
 from gobby.storage.config_store import ConfigStore
@@ -165,4 +166,29 @@ def test_init_servers_skips_backfill_without_tools_handler(temp_db: Any) -> None
     """Without MCP subsystems there is no tools handler, so nothing is scheduled or marked."""
     _run_init_servers(_runner(temp_db, MagicMock()), _http_server(None, None, tools_handler=False))
 
+    assert _store_get(ConfigStore(temp_db), SCOPED_PAYLOAD_VERSION_KEY) is None
+
+
+def test_init_servers_skips_backfill_without_internal_manager(temp_db: Any) -> None:
+    """No internal manager means no internal registry tools to embed: nothing runs or is marked."""
+    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
+
+    _run_init_servers(
+        _runner(temp_db, MagicMock()),
+        _http_server(search, None, tools_handler=True),
+    )
+
+    search.embed_all_tools.assert_not_awaited()
+    assert _store_get(ConfigStore(temp_db), SCOPED_PAYLOAD_VERSION_KEY) is None
+
+
+def test_schedule_scoped_backfill_skips_without_internal_manager(temp_db: Any) -> None:
+    """The scheduler guard: a missing internal manager runs no embedding and writes no marker."""
+    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
+
+    schedule_scoped_embedding_backfill(
+        search, MagicMock(), config_store=ConfigStore(temp_db), internal_manager=None
+    )
+
+    search.embed_all_tools.assert_not_awaited()
     assert _store_get(ConfigStore(temp_db), SCOPED_PAYLOAD_VERSION_KEY) is None

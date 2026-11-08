@@ -32,6 +32,6 @@ Load a topic with `gobby-skills:get_skill_file(name="gobby", path="references/ag
 | [worktrees](worktrees.md) | Cleaning up, correcting or staffing an existing worktree; approving a seat's dirty paths |
 | [self-reflection](self-reflection.md) | The daily standing-directives pass, or writing a new standing directive |
 
-_Version: 1.1.0_
+_Version: 1.1.1_
 
 _Last verified: 2026-11-05_

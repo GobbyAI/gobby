@@ -8,7 +8,7 @@ description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and directs restarts and cutovers through the
   Release Manager.
-version: "8.0.0"
+version: "8.0.1"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]
