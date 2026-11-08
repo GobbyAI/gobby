@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import subprocess
+import sys
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +14,8 @@ from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.workflows.pipeline_loader import PipelineLoader
 
@@ -183,3 +187,40 @@ def pipeline_with_inputs():
             PipelineStep(id="process", exec="echo processing"),
         ],
     )
+
+
+_LIVE_WRITER = """
+import sys, time
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(sys.argv[2])
+print("ready", flush=True)
+time.sleep(60)
+"""
+
+
+@pytest.fixture
+def live_background_writer(tmp_path: Path) -> Iterator[Callable[[str, str], str]]:
+    """Start a real background process that writes its output and keeps running.
+
+    The process stays alive until the test ends, so its output can end in an exit line while
+    the process is still running. The starter returns the output path once the text is written.
+    """
+    processes: list[subprocess.Popen[bytes]] = []
+
+    def start(name: str, text: str) -> str:
+        output = tmp_path / name
+        process = subprocess.Popen(
+            [sys.executable, "-c", _LIVE_WRITER, str(output), text],
+            stdout=subprocess.PIPE,
+        )
+        processes.append(process)
+        assert process.stdout is not None
+        assert process.stdout.readline() == b"ready\n"
+        return str(output)
+
+    yield start
+    for process in processes:
+        process.kill()
+        process.wait()
+        if process.stdout is not None:
+            process.stdout.close()

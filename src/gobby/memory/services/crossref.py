@@ -8,12 +8,14 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from psycopg.rows import dict_row
-from qdrant_client.models import Filter
 
 from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.vectorstore import memory_scope_filter
 from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
 from gobby.storage.memories_crud import _memory_lock_key
+
+if TYPE_CHECKING:
+    from qdrant_client.models import Filter
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
