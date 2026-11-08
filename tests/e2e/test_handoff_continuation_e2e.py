@@ -1,4 +1,4 @@
-"""Real Claude and Codex seats: a seat's own set_handoff continues it through the daemon.
+"""Real fleet seats: a seat's own set_handoff continues it through the daemon.
 
 Execution is a separately admitted operation, like the composer proof: the admission
 file and the execution grant must both be present, otherwise the module skips. Once
@@ -27,30 +27,29 @@ import httpx
 import pytest
 
 from tests.e2e import handoff_continuation_fixture as _handoff
-from tests.e2e import test_composer_live_proof as _composer
 from tests.e2e.composer_proof import ProofRefused
-from tests.e2e.composer_proof_admission import Admission, verify_binary_set
 from tests.e2e.composer_proof_live import LiveProof, Seat
 from tests.e2e.conftest import daemon_auth_headers
+from tests.e2e.handoff_continuation_admission import Admission, verify_binary_set
 from tests.e2e.handoff_continuation_barrier import HandoffBarrier
+from tests.e2e.handoff_continuation_launch import provider_launch
 from tests.e2e.handoff_continuation_runner import adopt
 
-# Reuse admission and temporary HOME; the handoff fixture has its own isolated runner.
-composer_admission = _composer.composer_admission
+handoff_admission = _handoff.handoff_admission
+provider_environment = _handoff.provider_environment
 handoff_fixture = _handoff.handoff_fixture
-e2e_home_dir = _composer.e2e_home_dir
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
 _BOUND_SECONDS = 240.0
-Provider = Literal["claude", "codex"]
-_PROVIDERS: tuple[Provider, ...] = ("claude", "codex")
+Provider = Literal["claude", "codex", "grok", "agy", "droid"]
+_PROVIDERS: tuple[Provider, ...] = ("claude", "codex", "grok", "agy", "droid")
 _SCENARIOS = ("compact", "clear", "restart_hold")
 
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.slow,
     pytest.mark.skipif(
-        os.environ.get("GOBBY_COMPOSER_PROOF_EXECUTION") != _GRANT,
+        os.environ.get("GOBBY_HANDOFF_PROOF_EXECUTION") != _GRANT,
         reason="real-provider execution requires separate admission",
     ),
 ]
@@ -84,6 +83,12 @@ def _seat_command(provider: Provider, binary: Path, scenario: str) -> list[str]:
     if provider == "claude":
         allowed = list(_GOBBY_PROXY_TOOLS)
         return [str(binary), prompt, "--tools", "", "--allowedTools", *allowed]
+    if provider == "grok":
+        return [str(binary), "--always-approve", "--no-alt-screen", prompt]
+    if provider == "agy":
+        return [str(binary), "--prompt-interactive", prompt]
+    if provider == "droid":
+        return [str(binary), prompt]
     return [
         str(binary),
         "-c",
@@ -208,22 +213,47 @@ async def test_seat_continues_after_its_own_handoff(
     provider: Provider,
     scenario: str,
     handoff_fixture: tuple[LiveProof, HandoffBarrier],
-    composer_admission: Admission,
+    handoff_admission: Admission,
+    provider_environment: dict[str, str],
     postgres_db: Any,
 ) -> None:
     composer_fixture, barrier = handoff_fixture
-    verify_binary_set(composer_admission)
-    binary = composer_admission.providers[provider].path
+    verify_binary_set(handoff_admission)
+    binary = handoff_admission.providers[provider].path
     clear = scenario == "clear"
-    seat = await adopt(composer_fixture, provider, _seat_command(provider, binary, scenario))
+    command = provider_launch(
+        _seat_command(provider, binary, scenario), provider_environment, provider=provider
+    )
+    try:
+        seat = await adopt(composer_fixture, provider, command)
+    except (TimeoutError, ProofRefused) as exc:
+        raise ProofRefused(
+            f"{provider}: real seat failed registration; verify normal login and native hooks"
+        ) from exc
     writes_before = len(composer_fixture.trace.events)
+    await seat.ws.wait_for(
+        lambda event: event.get("type") == "hook_event"
+        and event.get("event_type") == "session-start"
+        and event.get("session_id") == seat.external_id,
+        timeout=_BOUND_SECONDS,
+        description=f"{provider}: native SessionStart on the isolated daemon",
+    )
+    composer_fixture.evidence.append(
+        {
+            "kind": "isolated-hook-registration",
+            "provider": provider,
+            "session_id": seat.surface.session_id,
+            "external_id": seat.external_id,
+            "daemon_url": provider_environment["GOBBY_DAEMON_URL"],
+        }
+    )
     if scenario == "restart_hold":
         await _assert_restart_held(composer_fixture, seat, barrier, postgres_db)
     # The launch turn ends only after set_handoff returns, so the handoff is staged by then.
     await seat.ws.wait_for(
         lambda event: _is_turn_end(event, seat),
         timeout=_BOUND_SECONDS,
-        description="launch turn ended after the seat's set_handoff",
+        description=f"{provider}: launch turn after set_handoff (normal login required)",
     )
     await _assert_continuation(composer_fixture, seat, writes_before=writes_before, clear=clear)
     # A clear is not a compaction, so its boundary kind is not asserted here.
@@ -231,3 +261,4 @@ async def test_seat_continues_after_its_own_handoff(
         assert await asyncio.to_thread(_compact_boundary_recorded, postgres_db, seat), (
             "the daemon recorded no compact boundary for this seat"
         )
+    composer_fixture.matrix_passed = True

@@ -1,6 +1,6 @@
 """Handoff-only fixture; preserves the separately admitted composer proof tree.
 
-Setup and teardown mirror its isolated fixture, with a dedicated runner and barrier.
+Only Gobby state is temporary. Seats use normal provider homes and installed hooks.
 """
 
 from __future__ import annotations
@@ -25,14 +25,8 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.composer_proof import (
     ProofRefused,
     ProofScope,
-    link_existing_auth,
     require_private_root,
     sealed_environment,
-)
-from tests.e2e.composer_proof_admission import (
-    Admission,
-    binary_readback,
-    verify_binary_set,
 )
 from tests.e2e.composer_proof_live import LiveProof
 from tests.e2e.composer_proof_races import ComposerRaces
@@ -40,13 +34,19 @@ from tests.e2e.composer_proof_trace import ProofTrace
 from tests.e2e.conftest import (
     DaemonInstance,
     copy_daemon_api_key,
-    link_spawning_operator_srt,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
     wait_for_daemon_websocket,
 )
+from tests.e2e.handoff_continuation_admission import (
+    Admission,
+    binary_readback,
+    load_admission,
+    verify_binary_set,
+)
 from tests.e2e.handoff_continuation_barrier import HandoffBarrier
+from tests.e2e.handoff_continuation_launch import seat_environment
 from tests.e2e.test_terminal_client_stack import _open_control
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
@@ -54,30 +54,56 @@ _CHECKOUT = Path(__file__).resolve().parents[2]
 _PROJECT = "00000000-0000-0000-0000-000000000e2e"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def handoff_admission() -> Admission:
+    if os.environ.get("GOBBY_HANDOFF_PROOF_EXECUTION") != _GRANT:
+        raise ProofRefused("isolated handoff execution grant required")
+    config = os.environ.get("GOBBY_HANDOFF_PROOF_ADMISSION")
+    if config is None:
+        raise ProofRefused("reviewed handoff admission file required")
+    spec = load_admission(Path(config), _CHECKOUT)
+    require_private_root(spec.artifact_dir)
+    return spec
+
+
+@pytest.fixture
+def provider_environment(
+    e2e_config: tuple[Path, int, int], handoff_admission: Admission
+) -> dict[str, str]:
+    config, port, _ = e2e_config
+    native_bin = verify_binary_set(handoff_admission)
+    env = seat_environment(dict(os.environ), home=config.parent, port=port)
+    if not env.get("HOME"):
+        raise ProofRefused("normal operator HOME required for provider login")
+    env.update(
+        GOBBY_PROJECT_ID=_PROJECT,
+        GOBBY_NATIVE_BIN_DIR=str(native_bin),
+        GOBBY_CONFIG=str(config),
+    )
+    env["PATH"] = f"{native_bin}{os.pathsep}{env.get('PATH', '/usr/bin:/bin')}"
+    return env
+
+
 @pytest.fixture
 async def handoff_fixture(
-    composer_admission: Admission,
+    handoff_admission: Admission,
+    provider_environment: dict[str, str],
+    provider: str,
     scenario: str,
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
     postgres_db: Any,
 ) -> AsyncIterator[tuple[LiveProof, HandoffBarrier]]:
-    spec = composer_admission
+    spec = handoff_admission
     native_bin = verify_binary_set(spec)
     config, http_port, ws_port = e2e_config
     home = config.parent
     home.chmod(0o700)
     require_private_root(home)
     (home / "tmp").mkdir(mode=0o700)
-    providers = home / "providers"
-    providers.mkdir(mode=0o700)
-    for name in ("claude", "codex"):
-        link_existing_auth(providers, name, spec.providers[name].auth_reference)
-        (home / f".{name}").symlink_to(providers / name, target_is_directory=True)
     nested = home / ".gobby"
     nested.mkdir(mode=0o700, exist_ok=True)
     (nested / "bin").symlink_to(native_bin, target_is_directory=True)
-    link_spawning_operator_srt(home)
     # Short private socket root accommodates macOS AF_UNIX limits.
     root = Path(tempfile.mkdtemp(prefix="p"))
     host = root / "h"
@@ -107,7 +133,7 @@ async def handoff_fixture(
                 ],
             }
         ),
-        source="22915-isolated-composer-proof",
+        source="25771-isolated-handoff-proof",
     )
     for directory in (home, nested, host):
         copy_daemon_api_key(home, directory)
@@ -122,8 +148,7 @@ async def handoff_fixture(
     env.update(
         GOBBY_CONFIG=str(config),
         GOBBY_HOME=str(home),
-        CODEX_HOME=str(home / ".codex"),
-        CLAUDE_CONFIG_DIR=str(providers / "claude"),
+        GOBBY_DAEMON_URL=f"http://127.0.0.1:{http_port}",
         GOBBY_COMPOSER_PROOF_EXECUTION=_GRANT,
         GOBBY_COMPOSER_PROOF_SOCKET=str(trace.socket),
         GOBBY_ALLOW_WORKTREE_DAEMON="1",
@@ -141,17 +166,11 @@ async def handoff_fixture(
     proof: LiveProof | None = None
     clean = False
     try:
-        readback = await asyncio.to_thread(binary_readback, spec, env)
-        # Installers execute with the sealed temporary HOME; no real state is read/copied.
-        await asyncio.to_thread(
-            subprocess.run,
-            [sys.executable, "-m", "tests.e2e.composer_proof_setup", str(e2e_project_dir)],
-            cwd=e2e_project_dir,
-            env=env,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=120,
+        readback = await asyncio.to_thread(binary_readback, spec, env, provider_environment)
+        # No provider installer, trust-file edit, auth link or config mutation.
+        (e2e_project_dir / "AGENTS.md").write_text(
+            "Disposable handoff acceptance seat. Follow the launch prompt. Never edit files, "
+            "run shell commands, spawn agents or contact other sessions.\n"
         )
         await trace.start()
         with log.open("wb") as output, errors.open("wb") as error:
@@ -212,19 +231,20 @@ async def handoff_fixture(
             if clean and process is not None and process.poll() is None:
                 await asyncio.to_thread(terminate_process_tree, process.pid)
             if spec.artifact_dir is not None:
-                artifact = spec.artifact_dir / f"composer-proof-{uuid4()}.json"
+                artifact = spec.artifact_dir / f"handoff-proof-{uuid4()}.json"
                 payload = {
                     "reviewed_commit": spec.reviewed_commit,
                     "reviewed_tree": spec.reviewed_tree,
                     "execution": "real-provider-opt-in",
+                    "isolated_daemon_url": provider_environment["GOBBY_DAEMON_URL"],
+                    "normal_provider_homes": True,
+                    "provider": provider,
+                    "scenario": scenario,
                     "binary_readback": readback,
-                    "criterion5": "PASSED"
+                    "continuation": "PASSED"
                     if clean and proof is not None and proof.matrix_passed
                     else "FAILED_OR_REFUSED",
                     "cleanup_confirmed": clean,
-                    "criterion6": "PASSED"
-                    if clean and proof is not None and proof.races_passed
-                    else "PENDING_OR_REFUSED: full real race matrix has not passed",
                     "surfaces": []
                     if proof is None
                     else [seat.surface.__dict__ for seat in proof.seats],

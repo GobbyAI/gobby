@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.test_handoff_continuation_e2e import _SCENARIOS, _seat_command
+from tests.e2e.test_handoff_continuation_e2e import (
+    _PROVIDERS,
+    _SCENARIOS,
+    Provider,
+    _seat_command,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -23,6 +28,30 @@ _CODEX_FLAGS = [
     "--ask-for-approval",
     "never",
 ]
+
+
+def test_every_fleet_provider_runs_all_three_scenarios() -> None:
+    assert set(_PROVIDERS) == {"claude", "codex", "grok", "agy", "droid"}
+    assert set(_SCENARIOS) == {"compact", "clear", "restart_hold"}
+
+
+@pytest.mark.parametrize("scenario", _SCENARIOS)
+@pytest.mark.parametrize(
+    ("provider", "required", "forbidden"),
+    [
+        ("grok", "--no-alt-screen", "--single"),
+        ("agy", "--prompt-interactive", "--print"),
+        ("droid", None, "exec"),
+    ],
+)
+def test_additional_providers_stay_in_real_terminal_mode(
+    provider: Provider, required: str | None, forbidden: str, scenario: str
+) -> None:
+    command = _seat_command(provider, _BINARY, scenario)
+    if required is not None:
+        assert required in command
+    assert forbidden not in command
+    assert any("set_handoff" in arg for arg in command)
 
 
 @pytest.mark.parametrize(

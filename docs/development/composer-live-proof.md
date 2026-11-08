@@ -101,13 +101,16 @@ unprepared onboarding refuse the proof; there is no permissive fallback. See
 [Codex CLI reference](https://developers.openai.com/codex/cli/reference/).
 
 The handoff continuation fixture (`tests/e2e/test_handoff_continuation_e2e.py`) is the one
-named exception. Its Claude seat passes `--tools ""` for compact, clear, and restart_hold.
+named exception, with its own [normal-login admission](handoff-continuation-proof.md).
+Its Claude seat passes `--tools ""` for compact, clear, and restart_hold.
 Its `--allowedTools` covers only `mcp__gobby__call_tool` and `mcp__gobby__get_tool_schema`,
 the gobby proxy tools its set_handoff path calls. The separate handoff runner holds
 compact submission with a test-side barrier during the restart judgment; the seat needs
 no shell sleep or Bash access. Its Codex seat passes
 `-c mcp_servers.gobby.enabled=true` and keeps the read-only sandbox and approval policy
-`never`. Every other fixture keeps built-in and MCP tools disabled.
+`never`. Its Grok, AGY and Droid seats use persistent terminal modes, covering the
+same three scenarios with normal provider homes and isolated Gobby routing.
+Every other fixture keeps built-in and MCP tools disabled.
 `tests/test_handoff_continuation_seat_launch.py` pins these launch arguments.
 
 ## Execute only after admission
