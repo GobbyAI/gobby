@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -18,6 +19,26 @@ from gobby.mcp_proxy.tools.memory_surface import SURFACE_MIN_SCORE, TURN_MIN_PRO
 from gobby.storage.memories import MemoryType
 
 pytestmark = pytest.mark.unit
+
+
+async def test_cancelled_surface_logs_partial_stages(caplog: pytest.LogCaptureFixture) -> None:
+    from gobby.memory import stage_timing
+
+    registry, manager = _registry()
+
+    async def cancelled_search(**_kwargs: Any) -> list[SimpleNamespace]:
+        stage_timing.record("falkor_pool", 0.125)
+        raise asyncio.CancelledError
+
+    manager.search_memories = AsyncMock(side_effect=cancelled_search)
+    with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.memory_surface"):
+        with pytest.raises(asyncio.CancelledError):
+            await registry.call(
+                "surface_memories",
+                {"text": "Handoff contract", "trigger": "task", "session_id": SESSION_ID},
+            )
+    assert any("falkor_pool=125ms/1" in record.getMessage() for record in caplog.records)
+
 
 SESSION_ID = "11111111-1111-4111-8111-111111110042"
 PROJECT_ID = "11111111-1111-4111-8111-111111110001"
