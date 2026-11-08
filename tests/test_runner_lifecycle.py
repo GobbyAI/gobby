@@ -2297,7 +2297,11 @@ class TestShutdownDaemonServices:
             coverage_executor,
             db_executor,
         ]
-        assert shutdown_calls[0][1]["join_timeout_seconds"] is None
+        # The worktree join is bounded: a delete that outlives it is logged and left for the next start.
+        assert (
+            shutdown_calls[0][1]["join_timeout_seconds"]
+            == runner_shutdown_storage._WORKTREE_DELETE_JOIN_SECONDS
+        )
 
     async def test_overall_deadline_still_drains_active_worktree_delete_before_database_close(
         self,

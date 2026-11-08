@@ -8,6 +8,7 @@ import signal
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 import gobby.cli.utils_shutdown as utils_shutdown
 from gobby import runner_lifecycle_shutdown, runner_shutdown_storage, shutdown_budget
 from gobby.cli.utils import stop_daemon
+from gobby.runner import GobbyRunner
 
 
 def test_worktree_delete_join_is_bounded_and_leaves_a_stuck_delete(
@@ -44,7 +46,7 @@ def test_worktree_delete_join_is_bounded_and_leaves_a_stuck_delete(
 
     async def run() -> None:
         async with asyncio.timeout(5):
-            await runner_shutdown_storage._shutdown_database_concurrency(runner)
+            await runner_shutdown_storage._shutdown_database_concurrency(cast(GobbyRunner, runner))
 
     asyncio.run(run())
     assert "Worktree delete executor did not settle" in caplog.text
@@ -58,8 +60,9 @@ def test_daemon_worst_case_stacks_under_the_escalation_with_margin() -> None:
         + 2 * runner_lifecycle_shutdown._HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS
         + runner_lifecycle_shutdown._DEADLINE_CHILD_REAP_BUDGET_SECONDS
         + runner_lifecycle_shutdown._FINALIZER_SETTLE_SECONDS
-        # Coverage and database executor joins, then the worktree-delete join.
-        + 2 * runner_shutdown_storage._DATABASE_EXECUTOR_JOIN_SECONDS
+        # Coverage, database and worktree-delete joins, each with its own bound.
+        + runner_shutdown_storage._COVERAGE_EXECUTOR_JOIN_SECONDS
+        + runner_shutdown_storage._DATABASE_EXECUTOR_JOIN_SECONDS
         + runner_shutdown_storage._WORKTREE_DELETE_JOIN_SECONDS
     )
     limit = shutdown_budget.DAEMON_STOP_ESCALATION_SECONDS - shutdown_budget.SHUTDOWN_MARGIN_SECONDS

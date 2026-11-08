@@ -11,7 +11,8 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
-_DATABASE_EXECUTOR_JOIN_SECONDS = 6.0
+_DATABASE_EXECUTOR_JOIN_SECONDS = 2.0
+_COVERAGE_EXECUTOR_JOIN_SECONDS = 1.0
 # Worktree deletes that outlive this bound are logged and left in place for the next start.
 _WORKTREE_DELETE_JOIN_SECONDS = 1.0
 
@@ -73,7 +74,7 @@ async def _shutdown_database_concurrency(runner: GobbyRunner) -> None:
             worktree_delete_executor,
             label="Worktree delete executor",
             join_thread_name="gobby-worktree-delete-join",
-            join_timeout_seconds=None,
+            join_timeout_seconds=_WORKTREE_DELETE_JOIN_SECONDS,
         )
     coverage_executor = getattr(runner, "coverage_executor", None)
     if coverage_executor is not None:
@@ -81,6 +82,7 @@ async def _shutdown_database_concurrency(runner: GobbyRunner) -> None:
             coverage_executor,
             label="Coverage executor",
             join_thread_name="gobby-coverage-join",
+            join_timeout_seconds=_COVERAGE_EXECUTOR_JOIN_SECONDS,
         )
     db_executor = getattr(runner, "db_executor", None)
     if db_executor is not None:
@@ -106,3 +108,18 @@ async def _shutdown_database_concurrency_under_cancellation(
     except Exception:
         logger.warning("Final database concurrency shutdown failed", exc_info=True)
     return cancellation
+
+
+def close_worktree_delete_admission(runner: GobbyRunner) -> None:
+    """Refuse new worktree deletes and revoke queued ones when shutdown starts.
+
+    A revoked delete keeps its record and its tree, so the next start's pass finds it.
+    An active delete is not cancelled; it gets the bounded join at the end of shutdown.
+    """
+    executor = getattr(runner, "worktree_delete_executor", None)
+    if executor is None:
+        return
+    try:
+        executor.shutdown(cancel_futures=True)
+    except Exception as e:
+        logger.warning("Worktree delete admission close failed: %s", e)

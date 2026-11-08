@@ -15,6 +15,8 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from time import monotonic, sleep
 
+from gobby import shutdown_budget
+
 logger = logging.getLogger(__name__)
 
 _pool: ProcessPoolExecutor | None = None
@@ -148,9 +150,9 @@ async def run_in_transcript_evidence_pool[T](
         return await asyncio.to_thread(function, *args)
 
 
-POOL_EXIT_TIMEOUT_SECONDS = 2.0
+POOL_EXIT_TIMEOUT_SECONDS = shutdown_budget.TRANSCRIPT_POOL_EXIT_SECONDS
 # SIGKILL ends a worker within milliseconds; this bounds the reap that follows it.
-_POOL_KILL_REAP_SECONDS = 1.0
+_POOL_KILL_REAP_SECONDS = shutdown_budget.TRANSCRIPT_POOL_KILL_REAP_SECONDS
 
 
 def _stop_resource_tracker() -> None:

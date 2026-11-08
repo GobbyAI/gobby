@@ -7,6 +7,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from gobby import shutdown_budget
 from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
 
 if TYPE_CHECKING:
@@ -16,10 +17,10 @@ logger = logging.getLogger("gobby.runner_lifecycle")
 
 # Bounds the managed-run listing that gates the child reap, so a stalled hub cannot
 # consume the deadline-path reap budget. A timeout skips the reap, as a failed listing does.
-_AGENT_RUN_LISTING_SECONDS = 3.0
+_AGENT_RUN_LISTING_SECONDS = shutdown_budget.AGENT_LISTING_SECONDS
 # Bounds the reaper's pre-kill enumeration. The live-broker and node-launcher probes in
 # srt_monitor each take at most _PROBE_TIMEOUT_SECONDS (2s); the psutil reads are synchronous.
-_CHILD_ENUMERATION_BUDGET_SECONDS = 4.0
+_CHILD_ENUMERATION_BUDGET_SECONDS = shutdown_budget.CHILD_ENUMERATION_SECONDS
 
 
 def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
@@ -39,7 +40,60 @@ def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
     return set()
 
 
-async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None:
+def start_preserved_agent_listing(runner: GobbyRunner) -> None:
+    """Start the managed-run listing at shutdown start, inside the graceful window.
+
+    The deadline path reads this result, so a stalled hub at the deadline does not
+    decide the reap. The bound is spent while the graceful sequence runs.
+    """
+    runner._preserved_agent_listing_task = asyncio.create_task(
+        _preserved_agent_terminal_pids(
+            runner, timeout=shutdown_budget.SHUTDOWN_AGENT_LISTING_SECONDS
+        ),
+        name="preserved-agent-listing",
+    )
+
+
+async def preserved_agent_pids_for_reap(runner: GobbyRunner) -> set[int] | None:
+    """The shutdown-start listing when it succeeded; otherwise a fresh bounded listing.
+
+    A failed start-time listing is re-run here with the shorter deadline bound. A second
+    failure returns None, and the caller skips the reap rather than risk a live agent.
+    """
+    cached: asyncio.Task[set[int] | None] | None = getattr(
+        runner, "_preserved_agent_listing_task", None
+    )
+    if cached is not None:
+        await asyncio.wait({cached})
+        if not cached.cancelled() and cached.exception() is None:
+            pids = cached.result()
+            if pids is not None:
+                return pids
+    return await _preserved_agent_terminal_pids(runner)
+
+
+def log_children_left_unreaped(reason: str) -> None:
+    """Name each child a skipped reap leaves running, with the reason it was skipped."""
+    import psutil
+
+    try:
+        root = psutil.Process(os.getpid())
+        children = root.children(recursive=True)
+    except (psutil.Error, OSError) as e:
+        logger.warning(
+            "Child process reap skipped (%s); child processes could not be listed: %s", reason, e
+        )
+        return
+    logger.warning(
+        "Child process reap skipped (%s); left unreaped: %s",
+        reason,
+        _describe_children(children, root_pid=root.pid) if children else "none",
+    )
+
+
+async def _preserved_agent_terminal_pids(
+    runner: GobbyRunner, *, timeout: float = _AGENT_RUN_LISTING_SECONDS
+) -> set[int] | None:
     """Preserve the native host and active agent process IDs during shutdown.
 
     The managed-run set must be known before reaping any daemon descendants.
@@ -57,7 +111,7 @@ async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None
         else:
             listing = asyncio.to_thread(_list_active_agent_runs_once, runner, include_fenced=True)
         # Bounded: a stalled hub must not hold the deadline-path reap hostage.
-        runs = await asyncio.wait_for(listing, timeout=_AGENT_RUN_LISTING_SECONDS)
+        runs = await asyncio.wait_for(listing, timeout=timeout)
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return None
@@ -91,7 +145,7 @@ def _describe_child_process(process: Any, *, root_pid: int) -> str:
 
 
 async def _reap_remaining_child_processes(
-    timeout: float = 1.0,
+    timeout: float = shutdown_budget.CHILD_SWEEP_WAIT_SECONDS,
     *,
     preserve_agents: bool = False,
     preserved_agent_pids: set[int] | None = None,
