@@ -311,10 +311,12 @@ def _unwind_failed_launch(
     records: Sequence[Path],
     cause: BaseException,
 ) -> None:
-    """Stop a failed launch, then drop its records only once its processes are proven gone.
+    """Stop a failed launch's wrapper group and keep its records, whatever the outcome.
 
-    Returns normally when the cleanup is proven, so the caller re-raises the original error.
-    Otherwise the records stay, as the only evidence of a live group, and the error names both.
+    gdaemon starts its backend in a process group of its own, and the harness cannot observe
+    that group or its termination. So cleanup is never proven here: the records are the only
+    index of the daemon and stay. A proven wrapper stop adds a note to the cause, and the
+    caller re-raises it. A failed stop raises an EvidenceError that names both failures.
     """
     try:
         _stop_unrecorded_launch(process, group)
@@ -322,8 +324,11 @@ def _unwind_failed_launch(
         raise EvidenceError(
             f"launch failed ({cause}); its processes were not proven stopped ({stop_error})"
         ) from cause
-    for record in records:
-        record.unlink(missing_ok=True)
+    kept = ", ".join(str(record) for record in records)
+    cause.add_note(
+        "cleanup unproven: the srt wrapper group is gone, but gdaemon's backend group is not "
+        f"observable here; records kept: {kept}"
+    )
 
 
 def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None) -> None:
@@ -415,7 +420,7 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
         _write_json(active, {"daemon": file_record(root, receipt)}, mode=0o600)
         _await_daemon_healthy(process, daemon_health_url(root))
     except BaseException as error:
-        # A daemon that no index names must not outlive the failed launch; partial records go with it.
+        # Stop the wrapper group; the records stay, since the backend group is unobservable here.
         _unwind_failed_launch(process, verified, (receipt, active), error)
         raise
     print(f"owned daemon PID {process.pid}; launch receipt {receipt}")

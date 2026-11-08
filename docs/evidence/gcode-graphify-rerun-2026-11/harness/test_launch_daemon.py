@@ -58,22 +58,23 @@ def test_gdaemon_runs_the_venv_gobby_runner_as_its_backend_on_the_bootstrap_conf
     ]
 
 
-def test_launch_fails_and_unwinds_when_the_daemon_never_becomes_healthy(
+def test_failed_launch_keeps_its_records_when_the_daemon_never_becomes_healthy(
     staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess()
     _patch_launch(monkeypatch, process)
     monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: False)
 
-    with pytest.raises(EvidenceError, match="not healthy"):
+    with pytest.raises(EvidenceError, match="not healthy") as caught:
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert process.group_signals
-    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
-    assert not (staged_root / "receipts/active-launches.json").exists()
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert (staged_root / "receipts/active-launches.json").exists()
+    assert any("cleanup unproven" in note for note in caught.value.__notes__)
 
 
-def test_launch_fails_when_the_wrapper_exits_before_the_daemon_is_healthy(
+def test_failed_launch_keeps_its_records_when_the_wrapper_exits_before_the_daemon_is_healthy(
     staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess()
@@ -84,7 +85,7 @@ def test_launch_fails_when_the_wrapper_exits_before_the_daemon_is_healthy(
     with pytest.raises(EvidenceError, match="exited before"):
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
-    assert not (staged_root / "receipts/active-launches.json").exists()
+    assert (staged_root / "receipts/active-launches.json").exists()
 
 
 def test_launch_probes_the_health_route_on_the_bootstrap_daemon_port(
@@ -221,6 +222,27 @@ def _patch_launch(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) -> Non
     monkeypatch.setattr(subprocess, "Popen", lambda argv, **kwargs: process)
     monkeypatch.setattr(os, "killpg", process.killpg)
     monkeypatch.setattr(socket, "socket", _FakeSocket)
+
+
+BACKEND_GROUP = 5151
+
+
+def _patch_backend_group(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) -> list[int]:
+    """Give gdaemon's backend a group of its own, alive apart from the wrapper group.
+
+    Returns the signal numbers that reached the backend group, probes included.
+    """
+    backend_signals: list[int] = []
+    wrapper_killpg = process.killpg
+
+    def killpg(pgid: int, number: int) -> None:
+        if pgid == BACKEND_GROUP:
+            backend_signals.append(number)
+            return
+        wrapper_killpg(pgid, number)
+
+    monkeypatch.setattr(os, "killpg", killpg)
+    return backend_signals
 
 
 def _fail_after_writing(monkeypatch: pytest.MonkeyPatch, record: str) -> None:
@@ -551,19 +573,19 @@ def test_a_non_python_package_file_on_one_side_only_fails_naming_it(tmp_path: Pa
 
 
 @pytest.mark.parametrize("failing_record", ["daemon-launch-attempt-1.json", "active-launches.json"])
-def test_launch_stops_an_unrecorded_daemon_and_removes_its_partial_records(
+def test_launch_stops_an_unrecorded_daemon_and_keeps_its_partial_records(
     staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_record: str
 ) -> None:
     process = _FakeProcess()
     _patch_launch(monkeypatch, process)
     _fail_after_writing(monkeypatch, failing_record)
 
-    with pytest.raises(OSError, match="disk full"):
+    with pytest.raises(OSError, match="disk full") as caught:
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert process.group_signals == [(4242, signal.SIGTERM)]
-    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
-    assert not (staged_root / "receipts/active-launches.json").exists()
+    assert (staged_root / "receipts" / failing_record).exists()
+    assert any("cleanup unproven" in note for note in caught.value.__notes__)
 
 
 def test_launch_kills_a_daemon_that_ignores_sigterm(
@@ -580,7 +602,7 @@ def test_launch_kills_a_daemon_that_ignores_sigterm(
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert process.group_signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
-    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
 
 
 def test_launch_sigkills_a_group_member_that_outlives_its_wrapper(
@@ -594,8 +616,8 @@ def test_launch_sigkills_a_group_member_that_outlives_its_wrapper(
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert process.group_signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
-    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
-    assert not (staged_root / "receipts/active-launches.json").exists()
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert (staged_root / "receipts/active-launches.json").exists()
 
 
 def test_a_sigkill_that_finds_the_group_gone_keeps_the_original_error(
@@ -613,7 +635,7 @@ def test_a_sigkill_that_finds_the_group_gone_keeps_the_original_error(
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert process.group_signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
-    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
 
 
 def test_a_refused_group_signal_keeps_the_records_and_names_both_failures(
@@ -645,6 +667,25 @@ def test_a_group_that_survives_sigkill_is_not_reported_as_cleaned_up(
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+
+
+def test_launch_keeps_its_records_when_the_backend_group_outlives_the_wrapper_group(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    _patch_launch(monkeypatch, process)
+    backend_signals = _patch_backend_group(monkeypatch, process)
+    _fail_after_writing(monkeypatch, "active-launches.json")
+
+    with pytest.raises(OSError, match="disk full") as caught:
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert process.group_signals == [(4242, signal.SIGTERM)]
+    assert not process.descendant_alive
+    assert backend_signals == []
+    assert (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert (staged_root / "receipts/active-launches.json").exists()
+    assert any("cleanup unproven" in note for note in caught.value.__notes__)
 
 
 def test_launch_refuses_a_wrapper_that_does_not_lead_its_own_group(
