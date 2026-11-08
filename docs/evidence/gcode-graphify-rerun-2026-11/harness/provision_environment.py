@@ -255,19 +255,20 @@ def external_state_snapshot(source_repo: Path) -> dict[str, Any]:
     user_home = Path.home()
     gobby_home = user_home / ".gobby"
     codex_home = user_home / ".codex"
-    # Operator-owned files: the operator's standing rule forbids reading their bytes.
+    # Operator-owned files: the operator's standing rule forbids reading their bytes. Codex
+    # rewrites config.toml, so it is fingerprinted by stat (inode, size, mtime_ns, mode) too.
     operator_paths = [
         gobby_home / "bootstrap.yaml",
         gobby_home / ".secret_kek",
         gobby_home / ".secret_salt",
         gobby_home / "local_cli_token",
         codex_home / "auth.json",
+        codex_home / "config.toml",
     ]
     stable_paths = [
         gobby_home / "machine_id",
         gobby_home / "mcp-servers.json",
         gobby_home / "gcore.yaml",
-        codex_home / "config.toml",
         codex_home / "hooks.json",
         codex_home / "installation_id",
         codex_home / "version.json",

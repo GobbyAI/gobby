@@ -19,9 +19,11 @@ import record_installations
 from provision_environment import GOBBY_SHA, external_state_snapshot
 from runtime_boundary import EvidenceError, file_record, write_once
 from validate_environment import (
+    AUTH_PROBE,
     _validate_grant_binding,
     _validate_installation_checks,
     _validate_source_manifest,
+    auth_probe,
     validate_external_changes,
     validate_gcode_receipt,
     validate_graphify_receipt,
@@ -114,15 +116,12 @@ def test_installation_rejects_tampered_probe_log(tmp_path: Path) -> None:
         _validate_installation_checks(tmp_path, checks)
 
 
+OWNER_SESSION = "7674aa11-70a3-40d5-91dd-1fe46140732b"
+
+
 @pytest.fixture
 def external_snapshots(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     config_path = str(Path.home() / ".codex/config.toml")
-    prefix = str(Path.home() / ".gobby/worktrees/gobby/wt-")
-    old, new = prefix + "158-example", prefix + "162-example"
-    before_text = f'model = "unchanged"\n[projects."{old}"]\ntrust_level = "trusted"\n'
-    after_text = before_text.replace(old, new)
-    capture = tmp_path / "isolation/codex.toml"
-    write_once(capture, after_text, 0o600)
     history = tmp_path / "isolation/history.log"
     write_once(history, "before-head\nafter-head\n", 0o600)
     source = {
@@ -133,46 +132,66 @@ def external_snapshots(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         "status_sha256": "clean",
     }
     later = {**source, "head": "after-head", "index_sha256": "after-index"}
-    base_file = {"path": config_path, "bytes": len(before_text.encode()), "mode": "0600"}
-    before = {
-        "source": source,
-        "stable_global_files": [
-            {**base_file, "sha256": hashlib.sha256(before_text.encode()).hexdigest()}
-        ],
+    # config.toml is recorded by stat only: inode, size, mtime_ns and mode, never its bytes.
+    config = {
+        "path": config_path,
+        "exists": True,
+        "type": "file",
+        "mode": "0600",
+        "size": 58,
+        "mtime_ns": 1,
+        "inode": 9,
     }
-    after = {
-        "source": later,
-        "stable_global_files": [
-            {**base_file, "sha256": hashlib.sha256(after_text.encode()).hexdigest()}
-        ],
-    }
+    before = {"source": source, "stable_global_files": [dict(config)]}
+    after = {"source": later, "stable_global_files": [dict(config)]}
+    # The isolated PATH the daemon was launched with. It holds no provider CLI.
+    isolated_bin = tmp_path / "isolated-bin"
+    isolated_bin.mkdir()
+    write_isolated_path(tmp_path, str(isolated_bin))
     attribution = {
         "source": {
             "before": source,
             "after": later,
-            "owner_session": "coordinator",
+            "owner_session": OWNER_SESSION,
             "message": "Owner attributed merges",
             "history": file_record(tmp_path, history),
         },
         "codex_trust": {
             "path": config_path,
-            "owner_session": "coordinator",
-            "message": "Owner confirmed spawn",
-            "old_path": old,
-            "new_path": new,
-            "capture": file_record(tmp_path, capture),
+            "codex": "absent",
+            "reason": "no provider CLI on the isolated PATH; config.toml is stat-only",
+            "owner_session": OWNER_SESSION,
+            "message": "Owner recorded no Codex trust change",
         },
     }
     write_once(tmp_path / "isolation/concurrent-changes.json", json.dumps(attribution), 0o600)
     return before, after
 
 
-def test_isolation_accepts_exact_attributed_trust_replacement(
+def write_isolated_path(root: Path, path_value: str) -> None:
+    """Write the daemon launch receipt and its active-launch index, as launch_daemon.py does."""
+    receipt = root / "receipts/daemon-launch-attempt-1.json"
+    write_once(receipt, json.dumps({"path": path_value}), 0o600)
+    index = {"daemon": file_record(root, receipt)}
+    write_once(root / "receipts/active-launches.json", json.dumps(index), 0o600)
+
+
+def test_isolation_accepts_no_codex_record_with_unchanged_globals(
     tmp_path: Path, external_snapshots: tuple[dict[str, Any], dict[str, Any]]
 ) -> None:
     original = copy.deepcopy(external_snapshots)
     validate_external_changes(tmp_path, *external_snapshots)
     assert external_snapshots == original
+
+
+def test_isolation_refuses_no_codex_record_when_codex_is_on_the_recorded_path(
+    tmp_path: Path, external_snapshots: tuple[dict[str, Any], dict[str, Any]]
+) -> None:
+    codex = tmp_path / "isolated-bin/codex"  # the recorded PATH's directory
+    codex.write_text("#!/bin/sh\n")
+    codex.chmod(0o755)
+    with pytest.raises(EvidenceError, match="provider CLI on the isolated PATH: codex"):
+        validate_external_changes(tmp_path, *external_snapshots)
 
 
 def test_isolation_rejects_additional_global_change(
@@ -185,18 +204,12 @@ def test_isolation_rejects_additional_global_change(
         validate_external_changes(tmp_path, before, after)
 
 
-def test_isolation_rejects_unrelated_config_edit_despite_matching_capture_hash(
+def test_isolation_rejects_config_fingerprint_change_under_no_codex_record(
     tmp_path: Path, external_snapshots: tuple[dict[str, Any], dict[str, Any]]
 ) -> None:
     before, after = external_snapshots
-    capture = tmp_path / "isolation/codex.toml"
-    capture.write_text(capture.read_text().replace("unchanged", "different"))
-    proof_path = tmp_path / "isolation/concurrent-changes.json"
-    proof = json.loads(proof_path.read_text())
-    proof["codex_trust"]["capture"] = file_record(tmp_path, capture)
-    proof_path.write_text(json.dumps(proof))
-    after["stable_global_files"][0]["sha256"] = hashlib.sha256(capture.read_bytes()).hexdigest()
-    with pytest.raises(EvidenceError, match="exceeds the attributed"):
+    after["stable_global_files"][0]["mtime_ns"] = 2
+    with pytest.raises(EvidenceError, match="unattributed global file change"):
         validate_external_changes(tmp_path, before, after)
 
 
@@ -206,6 +219,7 @@ OPERATOR_PATHS = (
     ".gobby/.secret_salt",
     ".gobby/local_cli_token",
     ".codex/auth.json",
+    ".codex/config.toml",
 )
 
 
@@ -557,3 +571,24 @@ def test_gcode_receipt_rejects_source_commit_other_than_gobby_pin(
     gcode_receipt["source_commit"] = "0" * 40
     with pytest.raises(EvidenceError, match="source_commit"):
         validate_gcode_receipt(tmp_path, gcode_receipt)
+
+
+def test_auth_probe_needs_no_local_token_file_or_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "runtime"
+    write_once(root / AUTH_PROBE, "built probe\n", 0o700)
+    (root / "gobby-home").mkdir()  # no gobby-home/local_cli_token exists
+    cache = root / "gobby-home/grants/deployment/project.json"
+    write_once(cache, "{}", 0o600)
+    argvs: list[list[str]] = []
+
+    def run_probe(argv: list[str], *, env: dict[str, str] | None = None) -> str:
+        argvs.append(argv)
+        return '{"mode": "valid", "verdict": "ok", "config_revision": 7}'
+
+    monkeypatch.setattr("validate_environment._run_probe", run_probe)
+    verdict = auth_probe(root, cache, "valid")
+    assert verdict == {"mode": "valid", "verdict": "ok", "config_revision": 7}
+    assert len(argvs) == 1
+    assert not any("local_cli_token" in arg or "Local-Token" in arg for arg in argvs[0])

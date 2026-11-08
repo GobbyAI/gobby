@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import copy
 import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
 import time
-import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
@@ -52,6 +50,9 @@ GRAPHIFY_ENTRYPOINT = "tools/graphify/venv/bin/graphify"
 GCODE_CONTRACT_VERSION = 12
 SEPTEMBER_ROOT = Path("/Users/josh/Projects/wiki-bakeoff-code-2026-09")
 BINARY_SET_DIR = "gobby-home/bin"
+AUTH_PROBE = "probes/managed_bearer_probe"
+PROBE_SOURCE = "crates/gcore/examples/managed_bearer_probe.rs"
+REPO_ROOT = Path(__file__).resolve().parents[4]
 ALLOWED_EXAMPLE_ENV = {".env.example", "Buylist/.env.example", "Restocks/.env.example"}
 SECRET_PATTERNS = {
     "private-key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -250,44 +251,38 @@ def validate_external_changes(root: Path, before: dict[str, Any], after: dict[st
         before["source"]["head"] in history and after["source"]["head"] in history,
         "check failed: before['source']['head'] in history and after['source']['head'] in history",
     )
+    # config.toml is compared by stat only (inode, size, mtime_ns, mode). Any change to any global
+    # file is unattributed: a Codex trust rewrite cannot be attributed without reading the file.
     before_files = {item["path"]: item for item in before["stable_global_files"]}
     after_files = {item["path"]: item for item in after["stable_global_files"]}
-    trust = attribution["codex_trust"]
     config_path = str(Path.home() / ".codex/config.toml")
-    require(trust["path"] == config_path, "check failed: trust['path'] == config_path")
-    original = before_files.pop(config_path)
-    current = after_files.pop(config_path)
+    require(config_path in before_files, "config.toml fingerprint missing from the snapshot")
     require(before_files == after_files, "unattributed global file change")
+    trust = attribution["codex_trust"]
+    require(trust["path"] == config_path, "check failed: trust['path'] == config_path")
     require(
-        {k: v for k, v in original.items() if k != "sha256"}
-        == {k: v for k, v in current.items() if k != "sha256"},
-        "check failed: {k: v for k, v in original.items() if k != 'sha256'} == {k: v for k, v in current.items() if k != 'sha256'}",
-    )
-    captured = verify_file_record(root, trust["capture"])
-    _assert_file_mode(captured, 0o600)
-    payload = captured.read_bytes()
-    require(
-        hashlib.sha256(payload).hexdigest() == current["sha256"],
-        "check failed: hashlib.sha256(payload).hexdigest() == current['sha256']",
-    )
-    old, new = trust["old_path"].encode(), trust["new_path"].encode()
-    prefix = str(Path.home() / ".gobby/worktrees/gobby/wt-").encode()
-    require(
-        old.startswith(prefix) and new.startswith(prefix) and old != new,
-        "check failed: old.startswith(prefix) and new.startswith(prefix) and (old != new)",
-    )
-    require(
-        payload.count(new) == 1 and old not in payload,
-        "check failed: payload.count(new) == 1 and old not in payload",
-    )
-    require(
-        hashlib.sha256(payload.replace(new, old, 1)).hexdigest() == original["sha256"],
-        "config difference exceeds the attributed worktree trust replacement",
+        trust["codex"] == "absent" and trust["reason"],
+        "codex_trust must record that no Codex runs, with its reason",
     )
     require(
         trust["owner_session"] == source["owner_session"] and trust["message"],
         "check failed: trust['owner_session'] == source['owner_session'] and trust['message']",
     )
+    codex = _provider_cli_on_isolated_path(root)
+    require(codex is None, f"provider CLI on the isolated PATH: {codex}")
+
+
+PROVIDER_CLIS = ("codex", "qwen", "claude", "droid", "grok", "agy")
+
+
+def _provider_cli_on_isolated_path(root: Path) -> str | None:
+    """The first provider CLI that the daemon's recorded launch PATH resolves, or None."""
+    index = _load_json(contained_file(root, "receipts/active-launches.json"))
+    launch = _load_json(verify_file_record(root, index["daemon"]))
+    for name in PROVIDER_CLIS:
+        if shutil.which(name, path=launch["path"]) is not None:
+            return name
+    return None
 
 
 def validate_external_services(before: dict[str, Any], after: dict[str, Any]) -> None:
@@ -493,15 +488,12 @@ def validate_receipts(root: Path) -> None:
         "check failed: proof['issued_at'] <= proof['observed_unix'] < proof['expires_at']",
     )
     require(
-        proof["valid_signature_http"] == 200, "check failed: proof['valid_signature_http'] == 200"
+        proof["valid_probe"]["verdict"] == "ok" and proof["valid_probe"]["config_revision_match"],
+        "valid bearer probe verdict is not ok with a matching config_revision",
     )
     require(
-        proof["tampered_signature_http"] == 403,
-        "check failed: proof['tampered_signature_http'] == 403",
-    )
-    require(
-        proof["tampered_signature_reason"] == "invalid_signature",
-        "check failed: proof['tampered_signature_reason'] == 'invalid_signature'",
+        proof["tampered_probe"]["verdict"] == "invalid_signature",
+        "tampered bearer probe verdict is not invalid_signature",
     )
     require(
         proof["project_id"]
@@ -606,18 +598,28 @@ def _validate_grant_binding(
     return connection
 
 
-def _present_grant(root: Path, grant: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    encoded = base64.urlsafe_b64encode(json.dumps(grant).encode()).decode().rstrip("=")
-    token = contained_file(root, "gobby-home/local_cli_token").read_text().strip()
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{PORTS['daemon_http']}/api/runtime/config",
-        headers={"X-Gobby-Runtime-Grant": encoded, "X-Gobby-Local-Token": token},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            return response.status, json.load(response)
-    except urllib.error.HTTPError as error:
-        return error.code, json.load(error)
+def auth_probe(root: Path, cache: Path, mode: str) -> dict[str, Any]:
+    """Run the built product probe and return its one JSON verdict line.
+
+    The probe reads the isolated key in-process through gcore's local-token reader and sends the
+    grant with fetch_runtime_config. It prints the outcome only: "ok" with the settings'
+    config_revision, or the daemon's refusal code. It never prints the key, signature or grant.
+    """
+    from prepare_daemon import isolated_environment
+
+    require(mode in ("valid", "tampered"), f"unknown bearer probe mode: {mode}")
+    argv = [
+        str(contained_file(root, AUTH_PROBE)),
+        "--home",
+        str(root / "gobby-home"),
+        "--cache",
+        str(contained_file(root, cache)),
+        "--daemon-url",
+        f"http://127.0.0.1:{PORTS['daemon_http']}",
+        "--mode",
+        mode,
+    ]
+    return json.loads(_run_probe(argv, env=isolated_environment(root, dict(os.environ))))
 
 
 def validate_live_processes(root: Path, launches: dict[str, Any]) -> None:
@@ -707,18 +709,15 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     postgres_user = connection["user"]
     require(isinstance(postgres_dsn, str), "check failed: isinstance(postgres_dsn, str)")
     require(isinstance(postgres_user, str), "check failed: isinstance(postgres_user, str)")
-    status_code, config = _present_grant(root, grant)
+    valid = auth_probe(root, cache, "valid")
     require(
-        status_code == 200 and config["config_revision"] == grant["config_revision"],
-        "check failed: status_code == 200 and config['config_revision'] == grant['config_revision']",
+        valid["verdict"] == "ok" and valid["config_revision"] == grant["config_revision"],
+        "valid bearer probe did not return the grant's config_revision",
     )
-    tampered = copy.deepcopy(grant)
-    signature = tampered["signature"]
-    tampered["signature"] = ("A" if signature[0] != "A" else "B") + signature[1:]
-    rejected, reason = _present_grant(root, tampered)
+    tampered = auth_probe(root, cache, "tampered")
     require(
-        rejected == 403 and reason["code"] == "invalid_signature",
-        "check failed: rejected == 403 and reason['code'] == 'invalid_signature'",
+        tampered["verdict"] == "invalid_signature",
+        "tampered bearer probe was not refused for its signature",
     )
     with psycopg.connect(postgres_dsn, connect_timeout=5) as conn:
         identity = conn.execute(
@@ -779,9 +778,16 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
         "issued_at": grant["issued_at"],
         "expires_at": grant["expires_at"],
         "project_id": project_id,
-        "valid_signature_http": status_code,
-        "tampered_signature_http": rejected,
-        "tampered_signature_reason": reason["code"],
+        "valid_probe": {
+            "verdict": valid["verdict"],
+            "config_revision_match": valid["config_revision"] == grant["config_revision"],
+        },
+        "tampered_probe": {"verdict": tampered["verdict"]},
+        "auth_probe_binary": file_record(root, AUTH_PROBE),
+        "auth_probe_source": {
+            "path": PROBE_SOURCE,
+            "sha256": hashlib.sha256((REPO_ROOT / PROBE_SOURCE).read_bytes()).hexdigest(),
+        },
         "postgres_identity": list(identity),
         "postgres_role": postgres_user,
         "qdrant_url": qdrant["url"],
