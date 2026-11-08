@@ -220,7 +220,7 @@ fn credential_roots(gobby: &Path) -> Vec<PathBuf> {
 /// selects it, never `GOBBY_HOME` or `HOME`, so an override cannot redirect the credential
 /// that activation trusts. `None` when the account has no passwd entry.
 #[cfg(unix)]
-fn operator_bootstrap_path() -> Option<PathBuf> {
+pub fn operator_bootstrap_path() -> Option<PathBuf> {
     use std::os::unix::ffi::OsStrExt;
 
     // SAFETY: sysconf has no memory effects; a negative limit is indeterminate and falls back.
@@ -255,7 +255,7 @@ fn operator_bootstrap_path() -> Option<PathBuf> {
 }
 
 #[cfg(not(unix))]
-fn operator_bootstrap_path() -> Option<PathBuf> {
+pub fn operator_bootstrap_path() -> Option<PathBuf> {
     None
 }
 

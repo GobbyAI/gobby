@@ -8,6 +8,7 @@ mod grant_glob;
 mod grok_home;
 mod monitor;
 mod paths;
+pub use paths::operator_bootstrap_path;
 mod prewarm;
 mod ps_shim;
 pub mod runtime;

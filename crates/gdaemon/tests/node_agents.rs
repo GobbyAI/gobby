@@ -26,7 +26,8 @@ use gobby_daemon::nodes::agents::{
     NodeAgents,
     repair::{self, RepairEnv},
     sandbox::{
-        PolicyInputs, checkout_component, gcode_runtime_digest, resolve_srt_policy,
+        PolicyInputs, checkout_component, gcode_runtime_digest, operator_bootstrap_path,
+        resolve_srt_policy,
         runtime::{
             SRT_VERSION, SrtInstallation, prepare_launch, prepare_launch_with, verify_srt_content,
         },
@@ -1594,6 +1595,22 @@ fn srt_portable_settings(tree: &SrtTree, corpus: &Value, settings: &[u8]) -> Res
             );
             paths.retain(|path| path != grant);
         }
+    }
+    // The operator credential stays denied. Its canonical path appears once in denyRead and is
+    // set aside as the host's path, as the Python oracle does.
+    if let Some(canonical) = operator_bootstrap_path() {
+        let entry = canonical.display().to_string();
+        let deny = document["filesystem"]["denyRead"]
+            .as_array_mut()
+            .context("denyRead is not an array")?;
+        assert_eq!(
+            deny.iter()
+                .filter(|path| path.as_str() == Some(entry.as_str()))
+                .count(),
+            1,
+            "denyRead: {entry}"
+        );
+        deny.retain(|path| path.as_str() != Some(entry.as_str()));
     }
     Ok(srt_canonical(&document))
 }
