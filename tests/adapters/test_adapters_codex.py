@@ -3623,7 +3623,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "hookSpecificOutput" not in result
 
     def test_oversized_response_context_behind_a_note_without_a_queue_raises(self) -> None:
-        """Without a session queue the note cannot ship beside a waiting response.context."""
+        """Without a session queue nothing ships: the note and the waiting context are withheld."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
         from gobby.adapters.degradation import ContextQueueUnavailableError
 
@@ -3637,12 +3637,13 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         with pytest.raises(ContextQueueUnavailableError) as raised:
             adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
-        assert raised.value.labels == ["response.context"]
+        assert raised.value.labels == ["system_message", "response.context"]
+        assert "additionalContext queue unavailable" in str(raised.value)
 
     def test_session_metadata_with_oversized_response_context_without_a_queue_raises(
         self,
     ) -> None:
-        """Without a queue the metadata cannot ship beside a waiting response.context."""
+        """Without a queue nothing ships: the metadata and the waiting context are withheld."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -3663,7 +3664,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         with pytest.raises(ContextQueueUnavailableError) as raised:
             adapter.translate_from_hook_response(response, hook_type="SessionStart")
-        assert raised.value.labels == ["response.context"]
+        assert raised.value.labels == ["metadata", "response.context"]
 
 
 class TestCodexHooksAdapterHandleNative:

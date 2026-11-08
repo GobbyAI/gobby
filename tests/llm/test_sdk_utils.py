@@ -7,7 +7,7 @@ import re
 import pytest
 
 from gobby.llm import sdk_utils
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, Carry, ContextDelivery, deliver_context
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, ContextDelivery, deliver_context
 
 pytestmark = pytest.mark.unit
 
@@ -85,17 +85,6 @@ def test_first_part_that_does_not_fit_waits_and_nothing_behind_it_jumps_ahead() 
 
     assert delivery.text == "a" * 40 + "\n\ncontext continues on the next delivery: rule:b, rule:c"
     assert delivery.remaining == [("rule:b", "b" * 60), ("rule:c", "c")]
-
-
-def test_a_delivery_that_cannot_queue_its_waiting_parts_says_they_were_not_carried() -> None:
-    delivery = deliver_context(
-        [("rule:a", "a" * 40), ("rule:b", "b" * 60)],
-        limit=100,
-        carry=Carry.UNQUEUED,
-    )
-
-    assert delivery.text == "a" * 40 + "\n\ncontext not carried, no session queue: rule:b"
-    assert delivery.remaining == [("rule:b", "b" * 60)]
 
 
 def test_breadcrumb_names_are_bounded_and_every_queued_part_still_waits() -> None:

@@ -159,7 +159,7 @@ def test_parts_that_do_not_fit_without_a_session_queue_raise_and_ship_nothing() 
             destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
         )
 
-    assert raised.value.labels == ["rule:b"]
+    assert raised.value.labels == ["rule:a", "rule:b"]
 
 
 def test_parts_that_fit_without_a_session_queue_ship_whole() -> None:
@@ -220,6 +220,37 @@ def test_queued_parts_ship_before_fresh_parts_and_nothing_jumps_ahead(
     second = HookResponse(decision="allow", metadata={"session_id": session_id})
     second.add_context(("rule:reminder", "be brief"))
     assert _claude_context(adapter, temp_db, second) == (
+        "o" * 4_000 + "\n\ncontext continues on the next delivery: rule:big, rule:reminder"
+    )
+    assert _queue(temp_db, session_id) == [
+        ["rule:big", "b" * 9_000],
+        ["rule:reminder", "be brief"],
+    ]
+
+
+def test_codex_queued_prepend_parts_ship_before_fresh_parts(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-000000000005")
+    adapter = CodexHooksAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+
+    def additional_context(response: HookResponse) -> str:
+        result = _deliver(
+            temp_db,
+            lambda: adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit"),
+        )
+        return str(result["hookSpecificOutput"]["additionalContext"])
+
+    first = HookResponse(decision="allow", metadata={"session_id": session_id})
+    first.add_context(("rule:policy", "o" * 4_000), ("rule:big", "b" * 9_000))
+    first.add_context(("agent_prompt", "p" * 6_000), prepend=True)
+    assert additional_context(first) == (
+        "p" * 6_000 + "\n\ncontext continues on the next delivery: rule:policy, rule:big"
+    )
+
+    second = HookResponse(decision="allow", metadata={"session_id": session_id})
+    second.add_context(("rule:reminder", "be brief"))
+    assert additional_context(second) == (
         "o" * 4_000 + "\n\ncontext continues on the next delivery: rule:big, rule:reminder"
     )
     assert _queue(temp_db, session_id) == [

@@ -205,4 +205,4 @@ class TestHookResponseConverters:
                     "metadata": {"session_id": "sess-1", "project_id": "proj-1"},
                 },
             )
-        assert raised.value.labels == ["response.context (page 2/2)"]
+        assert raised.value.labels == ["response.context (page 1/2)", "response.context (page 2/2)"]

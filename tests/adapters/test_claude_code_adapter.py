@@ -1018,7 +1018,7 @@ class TestTranslateFromHookResponse:
         # No session identity means no queue: the overflow raises before anything ships.
         with pytest.raises(ContextQueueUnavailableError) as raised:
             adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
-        assert raised.value.labels == ["response.context (page 2/2)"]
+        assert raised.value.labels == ["response.context (page 1/2)", "response.context (page 2/2)"]
 
     def test_session_start_overflow_without_a_queue_raises_and_names_what_waits(self) -> None:
         from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
@@ -1038,7 +1038,12 @@ class TestTranslateFromHookResponse:
 
         with pytest.raises(ContextQueueUnavailableError) as raised:
             adapter.translate_from_hook_response(response, hook_type="session-start")
-        assert raised.value.labels == ["rule:oversized"]
+        assert raised.value.labels == [
+            "system_message",
+            "parent_session",
+            "claimed_tasks",
+            "rule:oversized",
+        ]
 
     def test_spawned_agent_first_prompt_12169_without_a_queue_raises_and_names_what_waits(
         self,
@@ -1064,6 +1069,7 @@ class TestTranslateFromHookResponse:
         with pytest.raises(ContextQueueUnavailableError) as raised:
             adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
         assert raised.value.labels == [
+            "agent_prompt (page 1/2)",
             "agent_prompt (page 2/2)",
             "skill:gobby:references/skills/loading.md",
             "skill:gobby:references/memory/overview.md",
@@ -1074,7 +1080,7 @@ class TestTranslateFromHookResponse:
 
     def test_seat_first_prompt_without_a_queue_raises_and_names_what_waits(self) -> None:
         # Measured oversized seat first prompt (14,185 chars). Without a queue nothing ships:
-        # the policy rule does not fit beside the agent prompt, so it and what follows wait.
+        # every part of this delivery is named as withheld, from the agent prompt onward.
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow")
         response.add_context(
@@ -1088,7 +1094,12 @@ class TestTranslateFromHookResponse:
 
         with pytest.raises(ContextQueueUnavailableError) as raised:
             adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
-        assert raised.value.labels == ["rule:fixture-policy", "mcp:gobby-memory/surface_memories"]
+        assert raised.value.labels == [
+            "agent_prompt",
+            "rule:fixture-seat-context",
+            "rule:fixture-policy",
+            "mcp:gobby-memory/surface_memories",
+        ]
 
     def test_context_injection_session_start(self) -> None:
         adapter = ClaudeCodeAdapter()
