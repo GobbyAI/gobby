@@ -55,6 +55,7 @@ from gobby.workflows.worktree_shell_attribution import (
     begin_structured_edit_calls,
     release_structured_edit_calls,
 )
+from tests.fixtures.background_notices import owner_transcript
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, write_project_marker
 
 pytestmark = pytest.mark.unit
@@ -200,11 +201,10 @@ class Checkout:
 
 @pytest.fixture
 def checkout(
-    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, throwaway_repo: Path
 ) -> Checkout:
-    repo = tmp_path / "repo"
+    repo = throwaway_repo
     (repo / "pkg").mkdir(parents=True)
-    _git(repo, "init", "-q")
     project = isolated_checkout_factory(temp_db, "opaque-writes", root=repo).project
     for name in (
         "base.txt",
@@ -1390,9 +1390,10 @@ def test_git_operation_receipt_survives_pending_and_handler_restart(
     assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
 
 
-def test_claude_background_git_waits_for_its_terminal_output(
+def _background_merge_output(
     mock_dependencies: dict[str, Any], checkout: Checkout, tmp_path: Path
-) -> None:
+) -> Path:
+    """Start a merge that moves to the background, and return its output file while it runs."""
     _prepare_incoming(checkout, "foreign.txt")
     manager = SessionVariableManager(checkout.db)
     manager.record_edited_files(
@@ -1418,10 +1419,50 @@ def test_claude_background_git_waits_for_its_terminal_output(
     TaskToolBindings(manager, checkout.session_id).clear_pending("prompt")
     _git(checkout.repo, "merge", "--no-ff", "--no-commit", "incoming")
     assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+    return output
+
+
+def test_claude_background_git_stays_pending_without_its_notice_despite_exit_line(
+    mock_dependencies: dict[str, Any], checkout: Checkout, tmp_path: Path
+) -> None:
+    """Output that prints an exit line is not proof: only the owner's notice row settles a merge."""
+    output = _background_merge_output(mock_dependencies, checkout, tmp_path)
     output.write_text("merge stopped\n[exited with code 0]\n", encoding="utf-8")
-    asyncio.run(
-        SessionVariableManager(checkout.db).settle_background_git_operations(checkout.session_id)
+    transcript = owner_transcript(
+        tmp_path,
+        tool_use_id="toolu_opaque",
+        job_id="git-job",
+        output_path=str(output),
+        exit_code=None,
     )
+    asyncio.run(
+        SessionVariableManager(checkout.db).settle_background_git_operations(
+            checkout.session_id, transcript
+        )
+    )
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+
+
+def test_claude_background_git_settles_once_its_notice_row_arrives(
+    mock_dependencies: dict[str, Any], checkout: Checkout, tmp_path: Path
+) -> None:
+    output = _background_merge_output(mock_dependencies, checkout, tmp_path)
+    output.write_text("merge stopped\n", encoding="utf-8")
+    manager = SessionVariableManager(checkout.db)
+    pending = owner_transcript(
+        tmp_path,
+        tool_use_id="toolu_opaque",
+        job_id="git-job",
+        output_path=str(output),
+        exit_code=None,
+    )
+    asyncio.run(manager.settle_background_git_operations(checkout.session_id, pending))
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+
+    settled = owner_transcript(
+        tmp_path, tool_use_id="toolu_opaque", job_id="git-job", output_path=str(output)
+    )
+    asyncio.run(manager.settle_background_git_operations(checkout.session_id, settled))
     assert checkout.rule_3_reason("foreign.txt") == ""
 
 

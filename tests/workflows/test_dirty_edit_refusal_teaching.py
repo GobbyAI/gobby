@@ -1,8 +1,8 @@
-"""Rule 3's unowned-dirt refusal names its likely cause and routes recovery to Triage (#24956).
+"""The unowned-dirt refusal names its likely cause and routes recovery to a coordinator (#24956).
 
 A seat that rewrites a repository file through an interpreter script in a main or
 shared checkout leaves the change unattributed, so its own next Edit is refused as
-unowned dirt. The refusal must name that cause and route recovery to Triage. It must
+unowned dirt. The refusal must name that cause and route recovery to a coordinator. It must
 not name the operator-only approval command.
 """
 
@@ -32,10 +32,21 @@ def test_unowned_refusal_names_the_opaque_interpreter_write_cause() -> None:
     assert "outside a task worktree" in reason, reason
 
 
-def test_unowned_refusal_routes_recovery_to_triage_without_the_approval_command() -> None:
+def test_unowned_refusal_routes_recovery_to_the_report_target() -> None:
     reason = _unowned_reason()
 
     assert "approve-dirty-paths" not in reason
-    assert "Triage" in reason, reason
+    assert "report target" in reason, reason
     assert re.search(r"\brevert", reason, re.IGNORECASE), reason
     assert "Then retry." not in reason.splitlines()
+
+
+def test_overlapped_refusal_names_the_reclaim_step_without_a_clock() -> None:
+    reason = format_dirty_edit_reason(set(), overlapped={_PATH})
+
+    assert f"- {_PATH} — overlapped with another session's Bash call" in reason, reason
+    assert "while that call is in flight" in reason, reason
+    assert "goes stale" not in reason, reason
+    assert "native Edit or Write" in reason, reason
+    assert "approve-dirty-paths" not in reason, reason
+    assert "report target" in reason, reason

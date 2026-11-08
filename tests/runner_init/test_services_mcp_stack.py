@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init import services
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -110,30 +110,78 @@ class _MarkerStore:
         self.values[key] = value
 
 
-@pytest.mark.asyncio
-async def test_stateful_init_backfill_skipped_without_memory_bundle() -> None:
+async def _run_servers_backfill(search: Any, proxy: Any, store: Any) -> set[Any]:
+    """Call mcp_stack's scheduler directly with the internal manager servers.py passes.
+
+    servers.py itself is not run here.
+    """
     from gobby.runner_init import mcp_stack
 
-    runner = _fake_runner(
-        bootstrap_config=BootstrapConfig(),
-        config_runtime=SimpleNamespace(capture=lambda: SimpleNamespace(services={})),
-        mcp_proxy=MagicMock(),
-        database=object(),
-        definition_revision_listener=None,
+    before = set(mcp_stack._BACKFILL_TASKS)
+    mcp_stack.schedule_scoped_embedding_backfill(
+        search,
+        proxy,
+        config_store=store,
+        internal_manager=MagicMock(),
     )
+    created = set(mcp_stack._BACKFILL_TASKS) - before
+    await asyncio.gather(*created)
+    return created
+
+
+@pytest.mark.asyncio
+async def test_servers_backfill_schedules_scoped_embedding_backfill() -> None:
+    from gobby.runner_init import mcp_stack
+
+    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
+    store = _MarkerStore()
+    proxy = MagicMock()
+
+    created = await _run_servers_backfill(search, proxy, store)
+
+    assert len(created) == 1
+    search.embed_all_tools.assert_awaited_once_with(GLOBAL_PROJECT_ID, proxy, internal_manager=ANY)
+    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
+
+
+@pytest.mark.asyncio
+async def test_servers_backfill_runs_once_across_restarts() -> None:
+    from gobby.runner_init import mcp_stack
+
+    search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
+    store = _MarkerStore()
+
+    await _run_servers_backfill(search, MagicMock(), store)
+    await _run_servers_backfill(search, MagicMock(), store)
+
+    search.embed_all_tools.assert_awaited_once()
+    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
+
+
+@pytest.mark.asyncio
+async def test_servers_backfill_skips_when_marker_current() -> None:
+    from gobby.runner_init import mcp_stack
+
+    search = SimpleNamespace(embed_all_tools=AsyncMock())
+    store = _MarkerStore()
+    store.set(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY, mcp_stack.SCOPED_PAYLOAD_VERSION)
+
+    await _run_servers_backfill(search, MagicMock(), store)
+
+    search.embed_all_tools.assert_not_awaited()
+    assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
+
+
+@pytest.mark.asyncio
+async def test_servers_backfill_skipped_without_search_service() -> None:
+    from gobby.runner_init import mcp_stack
+
     store = _MarkerStore()
     before = set(mcp_stack._BACKFILL_TASKS)
-    with (
-        patch.object(services, "_init_stateful_dependencies") as deps,
-        patch.object(services, "_register_stateful_services", new=AsyncMock()) as register,
-        patch.object(services, "_apply_stateful_services") as apply_services,
-        patch.object(services, "_init_project_context"),
-        patch.object(services, "ConfigStore", return_value=store),
-    ):
-        await services.init_stateful_services(runner)
-    deps.assert_called_once_with(runner)
-    register.assert_awaited_once_with(runner)
-    apply_services.assert_called_once_with(runner)
+
+    created = await _run_servers_backfill(None, MagicMock(), store)
+
+    assert created == set()
     assert set(mcp_stack._BACKFILL_TASKS) == before
     assert store.values == {}
 
