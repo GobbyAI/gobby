@@ -580,7 +580,8 @@ async fn request_proxy_source(
     ) {
         Ok(source) => source,
         Err(error) => {
-            ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment).await;
+            ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment, &error)
+                .await;
             return Err(error);
         }
     };
@@ -598,7 +599,7 @@ async fn request_proxy_source(
         .send(&ClientMessage::SetViewport { rows, cols })
         .await
     {
-        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment).await;
+        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment, &error).await;
         return Err(error);
     }
     Ok(ProxyAttachOutcome::Attached(reply, attachment, source))

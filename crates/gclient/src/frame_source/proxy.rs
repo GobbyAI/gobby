@@ -77,8 +77,10 @@ pub(crate) async fn claim_writer_lease(
         // The attachment already exists on the daemon. A claim that timed out in the
         // write queue may still be written, and the detach queues behind it on the same
         // channel. A closed socket is cleaned up by the daemon's disconnect handling.
-        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, attachment_id).await;
-        return Err(FrameError::Other(error.to_string()));
+        let error = FrameError::Other(error.to_string());
+        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, attachment_id, &error)
+            .await;
+        return Err(error);
     }
     Ok(())
 }
@@ -122,8 +124,8 @@ impl ProxyFrameSource {
             attachment_id.as_str(),
             receiver,
         );
-        if source.is_err() {
-            Self::detach_failed_attachment(&daemon, &terminal_id, &attachment_id).await;
+        if let Err(error) = &source {
+            Self::detach_failed_attachment(&daemon, &terminal_id, &attachment_id, error).await;
         }
         source
     }
@@ -132,7 +134,13 @@ impl ProxyFrameSource {
         daemon: &LiveDaemon,
         terminal_id: &str,
         attachment_id: &str,
+        cause: &FrameError,
     ) {
+        // A matching finalization already released this attachment. Sending a
+        // detach now would issue a request against a retired attachment id.
+        if matches!(cause, FrameError::Finalized { .. }) {
+            return;
+        }
         // Queue cleanup behind the claim on the same connection. If the socket
         // has closed, daemon disconnect handling finalizes its attachments.
         detach_with_retry(terminal_id, attachment_id, |message| daemon.notify(message)).await;
