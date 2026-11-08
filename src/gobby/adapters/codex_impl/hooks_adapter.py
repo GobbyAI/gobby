@@ -141,6 +141,13 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         return _PendingLookup(
             None, "typed input reached an unmapped session; a pending cell is unattributed"
         )
+    # An open session whose launch command is unreadable can still take typed input and run
+    # it, so it blocks every proof. An attributed session names its command and stays out.
+    pending.update(
+        (entry["outer_call_id"], entry)
+        for entry in chain["sessions"].values()
+        if entry["literal_command"] is None
+    )
     invocations = [
         {**entry, "literal_command": call["cmd"], "workdir": call.get("workdir")}
         for entry in pending.values()
