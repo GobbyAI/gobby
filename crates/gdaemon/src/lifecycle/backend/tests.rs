@@ -46,22 +46,23 @@ async fn bounded_spawn_returns_at_its_deadline_for_a_stalled_child() {
     assert!(error.to_string().contains("did not exec"), "{error:#}");
 }
 
-/// The runtime keeps running while a spawn waits on a stalled child. A timer on the same
-/// single-threaded runtime fires well before the spawn's deadline; a blocking wait would hold the
-/// timer until the deadline passed.
-#[tokio::test]
+/// The runtime keeps running while a spawn waits on a stalled child. The clock is paused, so the
+/// 50 ms timer is the first event and the spawn must still be pending when it fires. A blocking
+/// wait finishes the spawn first, when the real stall ends, and fails the select. Virtual time
+/// makes the ordering independent of host load.
+#[tokio::test(start_paused = true)]
 async fn bounded_spawn_leaves_the_runtime_free_while_a_child_is_stalled() {
-    let started = std::time::Instant::now();
-    let (spawned, ticked) = tokio::join!(
-        spawn_bounded(stalled_command(), Duration::from_millis(500)),
-        async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            started.elapsed()
+    let spawn = spawn_bounded(stalled_command(), Duration::from_millis(500));
+    tokio::pin!(spawn);
+    tokio::select! {
+        biased;
+        _ = &mut spawn => {
+            panic!("spawn finished before the timer; the stalled child blocked the runtime")
         }
-    );
-    assert!(spawned.is_err(), "a stalled child must miss the deadline");
+        () = tokio::time::sleep(Duration::from_millis(50)) => {}
+    }
     assert!(
-        ticked < Duration::from_millis(400),
-        "timer fired after {ticked:?}; the stalled spawn blocked the runtime"
+        spawn.await.is_err(),
+        "a stalled child must miss the deadline"
     );
 }

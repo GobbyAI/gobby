@@ -60,7 +60,7 @@ pub async fn handle(native: &NativeWs, request: Request<Body>, peer: SocketAddr)
     if path == BIND {
         let started = Instant::now();
         let response = bind(native, &token, &parts.headers, body).await;
-        if let Some(line) = bind_timing_line(started.elapsed(), unix_ms_now()) {
+        if let Some(line) = bind_timing_line(started.elapsed(), unix_ms(SystemTime::now())) {
             eprintln!("{line}");
         }
         response
@@ -72,20 +72,24 @@ pub async fn handle(native: &NativeWs, request: Request<Body>, peer: SocketAddr)
 /// A bind answered after at least this long is logged, so a slow front door shows in runtime.log.
 const BIND_SLOW: Duration = Duration::from_millis(500);
 
-/// The stderr line for a slow bind, or nothing when the bind was quick.
-fn bind_timing_line(elapsed: Duration, answered_unix_ms: u128) -> Option<String> {
+/// The stderr line for a slow bind, or nothing when the bind was quick. An answer instant that
+/// could not be read, because the clock predates the Unix epoch, is logged as `unavailable`.
+fn bind_timing_line(elapsed: Duration, answered_unix_ms: Option<u128>) -> Option<String> {
     (elapsed >= BIND_SLOW).then(|| {
+        let answered =
+            answered_unix_ms.map_or_else(|| "unavailable".to_owned(), |ms| ms.to_string());
         format!(
-            "native WS bind answered after {}ms (unix_ms={answered_unix_ms})",
+            "native WS bind answered after {}ms (unix_ms={answered})",
             elapsed.as_millis()
         )
     })
 }
 
-fn unix_ms_now() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis())
+/// Milliseconds since the Unix epoch at `at`, or `None` when `at` predates the epoch.
+fn unix_ms(at: SystemTime) -> Option<u128> {
+    at.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|since| since.as_millis())
 }
 
 #[cfg(test)]

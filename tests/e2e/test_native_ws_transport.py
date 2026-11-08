@@ -47,8 +47,8 @@ from tests.e2e.conftest import (
     spawn_daemon_instance,
     stop_terminal_host,
 )
-from tests.e2e.native_ws_probe_bootstrap import RECORDS_FILE
 from tests.e2e.test_external_terminal_attach import _gterm_bin_dir
+from tests.fixtures.native_ws_probe_records import RECORDS_FILE
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.e2e

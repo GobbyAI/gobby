@@ -13,8 +13,6 @@ use gobby_daemon::{
 };
 use gobby_terminals::write_api::WriteRefused;
 
-#[path = "common/hub_lock.rs"]
-mod hub_lock;
 use serde_json::json;
 use std::fs;
 use std::{
@@ -29,6 +27,9 @@ use tokio::{
 };
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
+
+#[path = "common/hub_lock.rs"]
+mod hub_lock;
 
 /// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
 /// the test deadline.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,7 +29,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
-from tests.e2e.native_ws_probe_bootstrap import RECORDS_FILE, recording_bind
+from tests.fixtures.native_ws_probe_records import RECORDS_FILE, recording_bind
 
 pytestmark = pytest.mark.unit
 
@@ -819,10 +818,12 @@ async def test_a_bind_held_past_the_deadline_is_retried_until_the_front_door_ans
         )
         assert publisher is not None
         try:
-            started = time.monotonic()
             await asyncio.wait_for(publisher.start(), 2.0)
-            await _until(lambda: publisher.generation == GEN1)
-            assert time.monotonic() - started < 3.0
+            # Hang guards only. Host load can stretch each attempt, so the held attempts are
+            # asserted by count below, never by elapsed time.
+            await _until(lambda: publisher.generation == GEN1, timeout=5.0)
+            binds = [target for target, _headers in daemon.requests if target == "/_gobby/ws/bind"]
+            assert len(binds) >= 3
             assert await publisher.wait_bound(timeout=0.0) is True
         finally:
             await publisher.stop()
