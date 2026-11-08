@@ -109,6 +109,13 @@ def _poll(session_id: int = SESSION_ID) -> str:
     )
 
 
+def _typed_poll(session_id: int, chars: str) -> str:
+    return (
+        f"const r = await tools.write_stdin({{session_id:{session_id},chars:{json.dumps(chars)},"
+        "yield_time_ms:1000}); text(r);"
+    )
+
+
 def _open_session(
     launch: str,
     polls: int,
@@ -268,13 +275,75 @@ def test_session_already_ambiguous_does_not_admit_a_later_unattributed_launch(
     assert "cannot prove its working directory" in (response.reason or "")
 
 
-def test_attributed_session_collision_blocks_later_literal_cwd_proof(
+def test_attributed_session_collision_keeps_later_literal_cwd_proof_open(
     event_handlers: EventHandlers, tmp_path: Path
 ) -> None:
-    """Two attributed sessions on one id leave that id ambiguous; the proof gate must read it."""
+    """Attributed sessions name their commands, so an id collision between them must not block."""
     workdir = tmp_path / "task"
     records = _open_session(_launch(PYTEST, workdir), 0, waited=True)
     records += _open_session(_launch(PYTEST, workdir), 0, waited=True, tag="s0-")
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    event, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
+def test_unattributed_launch_colliding_with_attributed_session_blocks_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """The collision drops an unattributed launch, so the proof must stay closed."""
+    workdir = tmp_path / "task"
+    records = _open_session(_launch(PYTEST, workdir), 0, waited=True)
+    records += _open_session(_computed_launch(PYTEST, workdir), 0, waited=True, tag="s0-")
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_typed_input_does_not_relabel_an_unattributed_session(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """Typed input names no launch: a session whose command is unreadable stays unattributed."""
+    workdir = tmp_path / "task"
+    records = _open_session(_computed_launch(PYTEST, workdir), 0, waited=True)
+    records += [
+        _cell("typed", _typed_poll(SESSION_ID, "echo hi\n")),
+        _cell_output("typed", _yielded("typed-cell")),
+    ]
+    records += _wait_result("typed-wait", "typed-cell", _still_running(SESSION_ID))
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+
+
+def test_direct_typed_input_does_not_relabel_an_unattributed_session(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A direct write_stdin is typed input too, so it must not name an unreadable launch."""
+    workdir = tmp_path / "task"
+    records = _open_session(_computed_launch(PYTEST, workdir), 0, waited=True)
+    typed_arguments = json.dumps(
+        {"session_id": SESSION_ID, "chars": "echo hi\n", "yield_time_ms": 1000}
+    )
+    records += [
+        _record(
+            {
+                "type": "function_call",
+                "name": "write_stdin",
+                "call_id": "typed",
+                "arguments": typed_arguments,
+            }
+        ),
+        _record(
+            {
+                "type": "function_call_output",
+                "call_id": "typed",
+                "output": [{"type": "input_text", "text": _still_running(SESSION_ID)}],
+            }
+        ),
+    ]
     records.append(_cell("ruff", _literal(RUFF, workdir)))
     _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
     assert response.decision == "block"
