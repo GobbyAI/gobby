@@ -625,6 +625,35 @@ async def test_timeout_warning_reports_loop_stall_overrun(
 
 
 @pytest.mark.asyncio
+async def test_slow_git_child_warns_once_with_argv_phase_and_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("WARNING", logger="gobby.utils.daemon_git")
+    monkeypatch.setattr(daemon_git, "_SLOW_GIT_WARNING_SECONDS", 0.2)
+    _write_fake_git(tmp_path)
+
+    result = await DaemonGitService().run(
+        ["status"], cwd=tmp_path, timeout=5, env=_git_env(tmp_path, GIT_TEST_DELAY="1")
+    )
+
+    assert isinstance(result, GitOk)
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "gobby.utils.daemon_git"
+        and record.levelname == "WARNING"
+        and record.getMessage().startswith("Git command is slow")
+    ]
+    assert len(warnings) == 1
+    assert "argv=git status" in warnings[0]
+    assert f"cwd={tmp_path}" in warnings[0]
+    assert "phase=running" in warnings[0]
+    assert re.search(r" pid=\d+ ", warnings[0])
+    elapsed = re.search(r"elapsed_seconds=([\d.]+)", warnings[0])
+    assert elapsed is not None and float(elapsed.group(1)) >= 0.2
+
+
+@pytest.mark.asyncio
 async def test_nonstream_timeout_waits_for_worker_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

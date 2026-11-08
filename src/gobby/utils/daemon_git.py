@@ -84,6 +84,9 @@ _MAX_STREAM_STDERR_BYTES = 64 * 1024
 # A killed Git leader is reaped in milliseconds; past this bound the caller stops waiting.
 _UNREAPED_CLEANUP_GRACE_SECONDS = 3.0
 _REAP_POLL_SECONDS = 0.01
+# A Git child still running after this long gets one diagnostic warning. Diagnostics only:
+# no deadline or kill changes.
+_SLOW_GIT_WARNING_SECONDS: float = 60.0
 # Completions of Git children that outlived their kill, collected per caller scope.
 _UNREAPED_CHILDREN: ContextVar[list[asyncio.Future[Any]] | None] = ContextVar(
     "gobby_unreaped_git_children", default=None
@@ -246,6 +249,13 @@ class _ProcessControl:
     def expired_diagnostic(self) -> str | None:
         with self.lock:
             return self.timeout_diagnostic
+
+    def slow_diagnostic(self) -> str | None:
+        """Snapshot the phase while the Git child is unfinished; None once it has finished."""
+        with self.lock:
+            if self.phase == "finished":
+                return None
+        return self.diagnostic(include_cleanup=False)
 
     def attach(self, process: _GitProcess) -> None:
         with self.lock:
@@ -522,6 +532,8 @@ class DaemonGitService:
         control.deadline_at = control.started_at + timeout
         deadline_timer = threading.Timer(timeout, control.expire)
         deadline_timer.daemon = True
+        slow_timer = threading.Timer(_SLOW_GIT_WARNING_SECONDS, _warn_if_slow, (control, argv, cwd))
+        slow_timer.daemon = True
         worker_thread = threading.Thread(
             target=worker,
             args=(loop, completion, control),
@@ -530,9 +542,11 @@ class DaemonGitService:
         )
         try:
             deadline_timer.start()
+            slow_timer.start()
             worker_thread.start()
         except RuntimeError as exc:
             deadline_timer.cancel()
+            slow_timer.cancel()
             return GitFailed("failed", argv, None, "", str(exc))
 
         try:
@@ -593,6 +607,14 @@ class DaemonGitService:
             raise
         finally:
             deadline_timer.cancel()
+            slow_timer.cancel()
+
+
+def _warn_if_slow(control: _ProcessControl, argv: tuple[str, ...], cwd: str | None) -> None:
+    """Log one diagnostic warning when a Git child is still unfinished at the threshold."""
+    diagnostic = control.slow_diagnostic()
+    if diagnostic is not None:
+        logger.warning("Git command is slow: cwd=%s argv=%s %s", cwd, " ".join(argv), diagnostic)
 
 
 def _run_git_worker(
