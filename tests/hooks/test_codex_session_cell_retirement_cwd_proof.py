@@ -168,6 +168,19 @@ def test_unwaited_polls_do_not_accumulate_pending_cells(
     assert current_tool_cwd(event.data) == workdir
 
 
+def test_finished_long_session_does_not_poison_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """Overflow latches for the whole rollout, so a finished long session must not leave it set."""
+    workdir = tmp_path / "task"
+    records = _open_session(_launch(PYTEST, workdir), POLLS_PAST_CAP, waited=True)
+    records += [_cell("final", _poll()), _exited_output("final")]
+    records.append(_cell("ruff", _literal(RUFF, workdir)))
+    event, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
 def test_exited_session_releases_its_unattributed_launch(
     event_handlers: EventHandlers, tmp_path: Path
 ) -> None:
