@@ -730,7 +730,8 @@ Each `SpawnRequest` field (`src/gobby/agents/spawn_models.py`) that the
 - `session_manager`, `run_manager`, `cleanup_agent`, `daemon_config`,
   `terminal_manager`, `terminal_runtime_registry`, `write_coordinator`,
   `prepared_spawn`, `phase_timings_ms`, `spawn_started_at`, `cancel_event`,
-  `placement_binder`: in-process handles and timings, not data.
+  `placement_binder`, `placement_releaser`: in-process handles and timings, not
+  data.
 
 ## Internal route
 
