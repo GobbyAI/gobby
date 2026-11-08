@@ -25,7 +25,13 @@ def credential_roots() -> list[Path]:
     ]
     canonical = operator_bootstrap_path()
     if canonical is not None:
-        roots.append(canonical)
+        roots.extend(
+            [
+                canonical,
+                break_glass_path(canonical.parent),
+                break_glass_staging_path(canonical.parent),
+            ]
+        )
     return roots
 
 

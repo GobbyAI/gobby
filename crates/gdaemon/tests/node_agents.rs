@@ -1702,6 +1702,51 @@ fn srt_trusted_credential_authorities_add_to_default_denials() -> Result<()> {
 }
 
 #[test]
+fn srt_gobby_home_override_denies_bound_and_canonical_break_glass_paths() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let case = srt_entries(&corpus, "cases")?
+        .iter()
+        .find(|case| case["platform"] == srt_host_platform())
+        .context("no host corpus case")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(root.path())?;
+    tree.materialize(&case["inputs"])?;
+    let mut inputs = srt_policy_inputs(&tree, &case["inputs"])?;
+    // Both homes sit under SRT's implicit npm-log write grant so the emitted
+    // write denies remain observable as well as the read denies.
+    let default_write = inputs.home.join(".npm/_logs");
+    // The hub supplies the resolved GOBBY_HOME override through this field;
+    // child environment entries are not credential-path authority.
+    inputs.gobby_home = default_write.join("runtime-home");
+    let bound_home = default_write.join("bound-daemon-home");
+    let canonical_home = default_write.join("canonical-operator-home");
+    inputs.credential_authority_roots = vec![
+        bound_home.join("startup.yaml"),
+        bound_home.join("break_glass"),
+        bound_home.join(".break_glass-staging"),
+        canonical_home.join("bootstrap.yaml"),
+        canonical_home.join("break_glass"),
+        canonical_home.join(".break_glass-staging"),
+    ];
+    let actual: Value = serde_json::from_slice(&resolve_srt_policy(&inputs)?.settings)?;
+    for operation in ["denyRead", "denyWrite"] {
+        let paths = actual["filesystem"][operation]
+            .as_array()
+            .context("credential deny paths")?;
+        for name in ["break_glass", ".break_glass-staging"] {
+            for authority_home in [&bound_home, &canonical_home] {
+                assert!(
+                    paths.contains(&json!(authority_home.join(name))),
+                    "{operation}: missing {}",
+                    authority_home.join(name).display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn srt_trusted_credential_authority_grants_are_refused() -> Result<()> {
     let corpus = srt_corpus()?;
     let case = srt_entries(&corpus, "cases")?

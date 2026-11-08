@@ -156,6 +156,8 @@ def _case(
                 "{bound_home}/break_glass",
                 "{bound_home}/.break_glass-staging",
                 "{home}/.gobby/bootstrap.yaml",
+                "{home}/.gobby/break_glass",
+                "{home}/.gobby/.break_glass-staging",
             ],
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
@@ -625,6 +627,8 @@ def test_corpus_credential_authorities_are_isolated(
     expected = authorities | {
         str(Path(layout["bound_home"]) / "break_glass"),
         str(Path(layout["bound_home"]) / ".break_glass-staging"),
+        str(Path(layout["home"]) / ".gobby" / "break_glass"),
+        str(Path(layout["home"]) / ".gobby" / ".break_glass-staging"),
     }
     document: dict[str, Any] = json.loads(settings)
     # The renderer omits write denies for already-unwritable paths. Check the

@@ -125,6 +125,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -1456,7 +1458,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -1624,6 +1628,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -2951,7 +2957,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -3130,6 +3138,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -4456,7 +4466,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -4625,6 +4637,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -5957,7 +5971,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -6130,6 +6146,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -7458,7 +7476,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -7626,6 +7646,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -8960,7 +8982,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -9138,6 +9162,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -10516,7 +10542,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -10695,6 +10723,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -12073,7 +12103,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -12256,6 +12288,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -13587,7 +13621,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -13759,6 +13795,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -15133,7 +15171,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -15312,6 +15352,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -16690,7 +16732,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -16872,6 +16916,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -18297,7 +18343,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": "fixture-worker",
@@ -18472,6 +18520,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -19850,7 +19900,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": "custom-admin",
@@ -20027,6 +20079,8 @@
               "{bound_home}/break_glass",
               "{bound_home}/.break_glass-staging",
               "{home}/.gobby/bootstrap.yaml",
+              "{home}/.gobby/break_glass",
+              "{home}/.gobby/.break_glass-staging",
               "{gobby_home}/gcode-runtime",
               "{gobby_home}/runtime/managed-executions",
               "{gobby_home}/runtime/srt-sock",
@@ -21405,7 +21459,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": "persistent-seat",
@@ -23101,7 +23157,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
@@ -23157,7 +23215,9 @@
           "{bound_bootstrap}",
           "{bound_home}/break_glass",
           "{bound_home}/.break_glass-staging",
-          "{home}/.gobby/bootstrap.yaml"
+          "{home}/.gobby/bootstrap.yaml",
+          "{home}/.gobby/break_glass",
+          "{home}/.gobby/.break_glass-staging"
         ],
         "daemon_port": 60887,
         "definition": null,
