@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
+from pathlib import Path
 
 from gobby.fleet_health.state import fleet_state_path
 
@@ -33,4 +36,13 @@ def write_fleet_state(
         "thresholds_source": "defaults",
         "watcher_pid": 1,
     }
-    path.write_text(json.dumps(document), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
+    ) as file:
+        staged = Path(file.name)
+        try:
+            json.dump(document, file)
+            file.close()
+            os.replace(staged, path)
+        finally:
+            staged.unlink(missing_ok=True)
