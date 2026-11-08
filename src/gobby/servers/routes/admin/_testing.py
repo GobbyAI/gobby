@@ -48,6 +48,10 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         Returns:
             Registration confirmation
         """
+        from gobby.storage.project_checkouts import (
+            CheckoutRootTakenError,
+            LocalProjectCheckoutManager,
+        )
         from gobby.storage.projects import LocalProjectManager
 
         # Guard: Only available in test mode
@@ -88,21 +92,21 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 )
                 checkout = (machine_id, root)
 
-            # Create the project with the specific ID; checkout is a separate row.
-            inserted = db.execute(
-                """
-                INSERT INTO projects (id, name)
-                VALUES (%s, %s)
-                ON CONFLICT (id) DO NOTHING
-                RETURNING id
-                """,
-                (request.project_id, request.name),
-            ).fetchone()
-            if inserted is not None and checkout is not None:
-                from gobby.storage.project_checkouts import LocalProjectCheckoutManager
-
-                machine_id, root = checkout
-                LocalProjectCheckoutManager(db).register(machine_id, request.project_id, root)
+            # The projects row and its checkout row commit together, so a refused
+            # checkout root rolls the insert back instead of leaving a stray project.
+            with db.transaction():
+                inserted = db.execute(
+                    """
+                    INSERT INTO projects (id, name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING id
+                    """,
+                    (request.project_id, request.name),
+                ).fetchone()
+                if inserted is not None and checkout is not None:
+                    machine_id, root = checkout
+                    LocalProjectCheckoutManager(db).register(machine_id, request.project_id, root)
 
             if inserted is None:
                 existing = project_manager.get(request.project_id)
@@ -126,6 +130,10 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "response_time_ms": response_time_ms,
             }
 
+        except CheckoutRootTakenError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error registering test project: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -382,6 +390,8 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "response_time_ms": response_time_ms,
                 }
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error setting test session usage: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e

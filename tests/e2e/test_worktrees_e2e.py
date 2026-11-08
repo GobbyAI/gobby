@@ -106,10 +106,6 @@ def git_repo_with_origin(
     WorktreeGitManager.create_worktree fetches from origin, so we need
     to set up a bare repo as origin for the test.
     """
-    gobby_dir = e2e_project_dir / ".gobby"
-    gobby_dir.mkdir(parents=True, exist_ok=True)
-    project_json = gobby_dir / "project.json"
-
     # Create a bare repo to serve as "origin"
     origin_path = tmp_path_factory.mktemp("origin")
     subprocess.run(
@@ -198,11 +194,11 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    project_id = "00000000-0000-4000-8000-000000000003"
+    # The e2e_project_dir fixture and the daemon seed already own this checkout root
+    # under the project id in its marker. Registering a second id for the same root
+    # is refused, so reuse the marker's identity; the call then reports already_exists.
+    project_id = read_project_id(e2e_project_dir)
     project_name = e2e_project_dir.name
-    # The register endpoint proves the checkout marker before it inserts anything,
-    # so the marker must name this project id before the call.
-    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
     cli_events.register_test_project(
         project_id=project_id,
         name=project_name,
