@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import signal
 import socket
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import launch_daemon
+import provision_environment
 import pytest
 import runtime_gobby
 from launch_daemon import SrtRunner, daemon_argv, launch, srt_policy, srt_wrapped_argv
@@ -93,6 +96,9 @@ def test_srt_wrapped_argv_follows_the_runtime_wrap_shape() -> None:
 
 class _FakeProcess:
     pid = 4242
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
 
 
 class _FakeSocket:
@@ -400,3 +406,62 @@ def test_a_non_python_package_file_on_one_side_only_fails_naming_it(tmp_path: Pa
             runtime_gobby.hash_package_files(epic / "gobby"),
             runtime_gobby.hash_package_files(venv / "gobby"),
         )
+
+
+@pytest.mark.parametrize("failing_record", ["daemon-launch-attempt-1.json", "active-launches.json"])
+def test_launch_stops_an_unrecorded_daemon_and_removes_its_partial_records(
+    staged_root: Path,
+    tmp_path: Path,
+    spawned: list[list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    failing_record: str,
+) -> None:
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "killpg", lambda pid, number: signals.append((pid, number)))
+    real_write = provision_environment._write_json
+
+    def write_then_fail(path: Path, value: Any, *, mode: int = 0o644) -> None:
+        real_write(path, value, mode=mode)
+        if path.name == failing_record:
+            raise OSError("disk full after the record was partly written")
+
+    monkeypatch.setattr(launch_daemon, "_write_json", write_then_fail)
+
+    with pytest.raises(OSError, match="disk full"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert signals == [(4242, signal.SIGTERM)]
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert not (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_launch_kills_a_daemon_that_ignores_sigterm(
+    staged_root: Path,
+    tmp_path: Path,
+    spawned: list[list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StubbornProcess:
+        pid = 4242
+
+        def wait(self, timeout: float | None = None) -> int:
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(cmd="daemon", timeout=timeout)
+            return -9
+
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "killpg", lambda pid, number: signals.append((pid, number)))
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kwargs: _StubbornProcess())
+    real_write = provision_environment._write_json
+
+    def fail_on_receipt(path: Path, value: Any, *, mode: int = 0o644) -> None:
+        if path.name == "daemon-launch-attempt-1.json":
+            raise OSError("receipt write failed")
+        real_write(path, value, mode=mode)
+
+    monkeypatch.setattr(launch_daemon, "_write_json", fail_on_receipt)
+
+    with pytest.raises(OSError, match="receipt write failed"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]

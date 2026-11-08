@@ -24,6 +24,7 @@ from typing import Any
 from runtime_boundary import (
     EvidenceError,
     assert_owned_runtime,
+    file_record,
     require,
     symlink_record,
     write_once,
@@ -41,6 +42,12 @@ BASE_SHA = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_SHA = "8b24ac26699aac8b24254a647aa70b208287b492"
 GOBBY_SHA = "0bf234a92e1266e310db2f7bf9245f0bc69a08bb"
 TASK_REF = "#22948"
+PROBE_CRATE = "gobby-core"
+PROBE_NAME = "managed_bearer_probe"
+PROBE_SOURCE = f"crates/gcore/examples/{PROBE_NAME}.rs"
+PROBE_BINARY = f"probes/{PROBE_NAME}"
+PROBE_MANIFEST = "manifests/bearer-probe.json"
+PROBE_TARGET = "build/probe-target"
 
 SOURCE_EXCLUSIONS = (
     ".gobby/project.json",
@@ -608,6 +615,60 @@ def ensure_images(images: Mapping[str, str], run: ImageRunner) -> None:
             raise EvidenceError(f"docker pull failed for {name} image {reference}: {detail}")
 
 
+CargoRunner = Callable[[list[str], Path], subprocess.CompletedProcess[bytes]]
+
+
+def _cargo_run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(argv, cwd=cwd, check=False, capture_output=True)
+
+
+def build_probe(root: Path, probe_source: Path, run: CargoRunner) -> dict[str, Any]:
+    """Build the bearer probe from the pinned tree plus its one recorded example overlay.
+
+    The pin predates the example, and gobby-core is identical between the pin and the candidate,
+    so the overlay is the only source delta. Cargo writes only under the runtime root's target dir.
+    """
+    archived = root / "sources" / "gobby" / PROBE_SOURCE
+    binary = root / PROBE_BINARY
+    require(not archived.exists(), f"the pinned tree already contains {PROBE_SOURCE}")
+    require(not binary.exists(), f"refusing to overwrite {binary}")
+    require(
+        probe_source.is_file() and not probe_source.is_symlink(),
+        f"probe source is not a plain file: {probe_source}",
+    )
+    archived.parent.mkdir(parents=True, exist_ok=True)
+    archived.write_bytes(probe_source.read_bytes())
+    argv = [
+        "cargo",
+        "build",
+        "--locked",
+        "--target-dir",
+        str(root / PROBE_TARGET),
+        "-p",
+        PROBE_CRATE,
+        "--example",
+        PROBE_NAME,
+    ]
+    built = run(argv, root / "sources" / "gobby")
+    if built.returncode != 0:
+        detail = built.stderr.decode("utf-8", errors="replace").strip()
+        raise EvidenceError(f"cargo build failed for {PROBE_NAME}: {detail}")
+    artifact = root / PROBE_TARGET / "debug" / "examples" / PROBE_NAME
+    require(artifact.is_file(), f"cargo built no artifact at {artifact}")
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(artifact.read_bytes())
+    binary.chmod(0o700)
+    manifest = {
+        "pinned_commit": GOBBY_SHA,
+        "example_in_pin": False,
+        "example_source": file_record(root, archived),
+        "binary": file_record(root, binary),
+        "cargo_argv": argv,
+    }
+    _write_json(root / PROBE_MANIFEST, manifest)
+    return manifest
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
@@ -625,6 +686,9 @@ def _parse_args() -> argparse.Namespace:
     compose.add_argument("--postgres-image", required=True)
     compose.add_argument("--qdrant-image", required=True)
     compose.add_argument("--falkordb-image", required=True)
+    probe = subparsers.add_parser("build-probe")
+    probe.add_argument("--owner-session", required=True)
+    probe.add_argument("--probe-source", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -651,6 +715,8 @@ def main() -> int:
             },
             _docker_command,
         )
+    elif args.command == "build-probe":
+        build_probe(root, args.probe_source.resolve(), _cargo_run)
     else:  # pragma: no cover - argparse enforces subcommands
         raise EvidenceError(args.command)
     return 0

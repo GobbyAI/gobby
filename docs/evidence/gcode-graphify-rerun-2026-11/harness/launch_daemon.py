@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -192,6 +193,21 @@ def resolve_srt_runner(root: Path, attempt: str) -> SrtRunner:
     return SrtRunner(node=installation.node, runner=installation.runner, monitor_socket=monitor)
 
 
+STOP_GRACE_SECONDS = 10
+
+
+def _stop_unrecorded_launch(process: subprocess.Popen[bytes]) -> None:
+    """Stop a daemon no receipt indexes. The srt wrapper leads its own session group."""
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    except ProcessLookupError:
+        process.wait()
+
+
 def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None) -> None:
     require(
         attempt and all(char.isalnum() or char in "-_" for char in attempt),
@@ -241,31 +257,38 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    _write_json(
-        receipt,
-        {
-            "pid": process.pid,
-            "argv": argv,
-            "daemon_argv": daemon,
-            "sandbox": {
-                "backend": "srt",
-                "node": str(srt.node),
-                "runner": str(srt.runner),
-                "policy": str(policy_path),
-                "violations": str(violations_path),
-                "monitor_socket_env": MONITOR_SOCKET_ENV if srt.monitor_socket else None,
-                "monitor_socket": srt.monitor_socket,
-                "run_key": attempt if srt.monitor_socket else None,
+    try:
+        _write_json(
+            receipt,
+            {
+                "pid": process.pid,
+                "argv": argv,
+                "daemon_argv": daemon,
+                "sandbox": {
+                    "backend": "srt",
+                    "node": str(srt.node),
+                    "runner": str(srt.runner),
+                    "policy": str(policy_path),
+                    "violations": str(violations_path),
+                    "monitor_socket_env": MONITOR_SOCKET_ENV if srt.monitor_socket else None,
+                    "monitor_socket": srt.monitor_socket,
+                    "run_key": attempt if srt.monitor_socket else None,
+                },
+                "cwd": str(root / "gobby-home"),
+                "log": str(log_path),
+                "path": env["PATH"],
+                "provider_clis_available": False,
+                "owner_task": "#22948",
             },
-            "cwd": str(root / "gobby-home"),
-            "log": str(log_path),
-            "path": env["PATH"],
-            "provider_clis_available": False,
-            "owner_task": "#22948",
-        },
-        mode=0o600,
-    )
-    _write_json(active, {"daemon": file_record(root, receipt)}, mode=0o600)
+            mode=0o600,
+        )
+        _write_json(active, {"daemon": file_record(root, receipt)}, mode=0o600)
+    except BaseException:
+        # A daemon that no index names must not outlive the failed launch; drop partial records too.
+        _stop_unrecorded_launch(process)
+        receipt.unlink(missing_ok=True)
+        active.unlink(missing_ok=True)
+        raise
     print(f"owned daemon PID {process.pid}; launch receipt {receipt}")
 
 

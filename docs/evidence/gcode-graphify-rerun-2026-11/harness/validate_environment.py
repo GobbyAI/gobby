@@ -29,6 +29,8 @@ from provision_environment import (
     GOBBY_SHA,
     NETWORK,
     PORTS,
+    PROBE_BINARY,
+    PROBE_MANIFEST,
     SOURCE_EXCLUSIONS,
     VOLUMES,
     build_manifest,
@@ -50,9 +52,7 @@ GRAPHIFY_ENTRYPOINT = "tools/graphify/venv/bin/graphify"
 GCODE_CONTRACT_VERSION = 12
 SEPTEMBER_ROOT = Path("/Users/josh/Projects/wiki-bakeoff-code-2026-09")
 BINARY_SET_DIR = "gobby-home/bin"
-AUTH_PROBE = "probes/managed_bearer_probe"
-PROBE_SOURCE = "crates/gcore/examples/managed_bearer_probe.rs"
-REPO_ROOT = Path(__file__).resolve().parents[4]
+AUTH_PROBE = PROBE_BINARY
 ALLOWED_EXAMPLE_ENV = {".env.example", "Buylist/.env.example", "Restocks/.env.example"}
 SECRET_PATTERNS = {
     "private-key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -666,6 +666,34 @@ def validate_live_processes(root: Path, launches: dict[str, Any]) -> None:
         require(listeners == {("127.0.0.1", port) for port in ports}, name)
 
 
+def bearer_verdicts(
+    valid: Mapping[str, Any], tampered: Mapping[str, Any], config_revision: int
+) -> dict[str, Any]:
+    """Derive the receipt's probe verdicts from the probes' own output, never from a status."""
+    require(valid.get("verdict") == "ok", f"valid bearer probe was refused: {valid.get('verdict')}")
+    require(
+        valid.get("config_revision") == config_revision,
+        "valid bearer probe did not return the grant's config_revision",
+    )
+    require(
+        tampered.get("verdict") == "invalid_signature",
+        "tampered bearer probe was not refused for its signature",
+    )
+    return {
+        "valid_probe": {"verdict": "ok", "config_revision_match": True},
+        "tampered_probe": {"verdict": "invalid_signature"},
+    }
+
+
+def bearer_probe_provenance(root: Path) -> dict[str, Any]:
+    """Bind the probe that runs to the source and binary that provisioning built and recorded."""
+    manifest = _load_json(contained_file(root, PROBE_MANIFEST))
+    verify_file_record(root, manifest["example_source"])
+    binary = file_record(root, AUTH_PROBE)
+    require(binary == manifest["binary"], "the bearer probe binary differs from the build record")
+    return {"example_source": manifest["example_source"], "binary": binary}
+
+
 def probe_live_environment(root: Path) -> dict[str, Any]:
     import psycopg
     import redis
@@ -709,16 +737,10 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     postgres_user = connection["user"]
     require(isinstance(postgres_dsn, str), "check failed: isinstance(postgres_dsn, str)")
     require(isinstance(postgres_user, str), "check failed: isinstance(postgres_user, str)")
+    provenance = bearer_probe_provenance(root)
     valid = auth_probe(root, cache, "valid")
-    require(
-        valid["verdict"] == "ok" and valid["config_revision"] == grant["config_revision"],
-        "valid bearer probe did not return the grant's config_revision",
-    )
     tampered = auth_probe(root, cache, "tampered")
-    require(
-        tampered["verdict"] == "invalid_signature",
-        "tampered bearer probe was not refused for its signature",
-    )
+    verdicts = bearer_verdicts(valid, tampered, grant["config_revision"])
     with psycopg.connect(postgres_dsn, connect_timeout=5) as conn:
         identity = conn.execute(
             "SELECT current_database(), current_user, current_schema()"
@@ -778,16 +800,10 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
         "issued_at": grant["issued_at"],
         "expires_at": grant["expires_at"],
         "project_id": project_id,
-        "valid_probe": {
-            "verdict": valid["verdict"],
-            "config_revision_match": valid["config_revision"] == grant["config_revision"],
-        },
-        "tampered_probe": {"verdict": tampered["verdict"]},
-        "auth_probe_binary": file_record(root, AUTH_PROBE),
-        "auth_probe_source": {
-            "path": PROBE_SOURCE,
-            "sha256": hashlib.sha256((REPO_ROOT / PROBE_SOURCE).read_bytes()).hexdigest(),
-        },
+        "valid_probe": verdicts["valid_probe"],
+        "tampered_probe": verdicts["tampered_probe"],
+        "auth_probe_binary": provenance["binary"],
+        "auth_probe_source": provenance["example_source"],
         "postgres_identity": list(identity),
         "postgres_role": postgres_user,
         "qdrant_url": qdrant["url"],

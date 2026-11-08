@@ -16,7 +16,14 @@ from typing import Any
 
 import pytest
 import record_installations
-from provision_environment import GOBBY_SHA, external_state_snapshot
+from provision_environment import (
+    GOBBY_SHA,
+    PROBE_BINARY,
+    PROBE_MANIFEST,
+    PROBE_SOURCE,
+    build_probe,
+    external_state_snapshot,
+)
 from runtime_boundary import EvidenceError, file_record, write_once
 from validate_environment import (
     AUTH_PROBE,
@@ -24,6 +31,8 @@ from validate_environment import (
     _validate_installation_checks,
     _validate_source_manifest,
     auth_probe,
+    bearer_probe_provenance,
+    bearer_verdicts,
     validate_external_changes,
     validate_gcode_receipt,
     validate_graphify_receipt,
@@ -592,3 +601,81 @@ def test_auth_probe_needs_no_local_token_file_or_header(
     assert verdict == {"mode": "valid", "verdict": "ok", "config_revision": 7}
     assert len(argvs) == 1
     assert not any("local_cli_token" in arg or "Local-Token" in arg for arg in argvs[0])
+
+
+def test_bearer_verdicts_record_the_live_ok_and_the_refused_tamper() -> None:
+    valid = {"mode": "valid", "verdict": "ok", "config_revision": 7}
+    tampered = {"mode": "tampered", "verdict": "invalid_signature"}
+
+    assert bearer_verdicts(valid, tampered, 7) == {
+        "valid_probe": {"verdict": "ok", "config_revision_match": True},
+        "tampered_probe": {"verdict": "invalid_signature"},
+    }
+
+
+def test_bearer_verdicts_refuse_a_refusal_code_in_place_of_the_valid_ok() -> None:
+    valid = {"mode": "valid", "verdict": "invalid_signature"}
+    tampered = {"mode": "tampered", "verdict": "invalid_signature"}
+
+    with pytest.raises(EvidenceError, match="valid bearer probe was refused"):
+        bearer_verdicts(valid, tampered, 7)
+
+
+def test_bearer_verdicts_refuse_a_config_revision_that_is_not_the_grants() -> None:
+    valid = {"mode": "valid", "verdict": "ok", "config_revision": 6}
+    tampered = {"mode": "tampered", "verdict": "invalid_signature"}
+
+    with pytest.raises(EvidenceError, match="config_revision"):
+        bearer_verdicts(valid, tampered, 7)
+
+
+def test_bearer_verdicts_refuse_a_tampered_grant_that_the_daemon_accepts() -> None:
+    valid = {"mode": "valid", "verdict": "ok", "config_revision": 7}
+    tampered = {"mode": "tampered", "verdict": "ok", "config_revision": 7}
+
+    with pytest.raises(EvidenceError, match="tampered bearer probe"):
+        bearer_verdicts(valid, tampered, 7)
+
+
+def _fake_cargo(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    artifact = Path(argv[argv.index("--target-dir") + 1]) / "debug/examples/managed_bearer_probe"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"\x7fELF bearer probe")
+    return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+
+def _built_probe(tmp_path: Path) -> Path:
+    root = tmp_path / "runtime"
+    (root / "sources/gobby/crates/gcore/examples").mkdir(parents=True)
+    (root / "manifests").mkdir(parents=True)
+    source = tmp_path / "candidate.rs"
+    source.write_bytes(b"fn main() {}\n")
+    build_probe(root, source, _fake_cargo)
+    return root
+
+
+def test_provenance_accepts_the_binary_and_source_the_build_recorded(tmp_path: Path) -> None:
+    root = _built_probe(tmp_path)
+    manifest = json.loads((root / PROBE_MANIFEST).read_text(encoding="utf-8"))
+
+    provenance = bearer_probe_provenance(root)
+
+    assert provenance["binary"] == file_record(root, AUTH_PROBE) == manifest["binary"]
+    assert provenance["example_source"] == manifest["example_source"]
+
+
+def test_provenance_refuses_a_probe_binary_replaced_after_the_build(tmp_path: Path) -> None:
+    root = _built_probe(tmp_path)
+    (root / PROBE_BINARY).write_bytes(b"replacement probe")
+
+    with pytest.raises(EvidenceError, match="differs from the build record"):
+        bearer_probe_provenance(root)
+
+
+def test_provenance_refuses_an_example_source_changed_after_the_build(tmp_path: Path) -> None:
+    root = _built_probe(tmp_path)
+    example = root / "sources/gobby" / PROBE_SOURCE
+    example.write_bytes(example.read_bytes().replace(b"main", b"mein"))
+
+    with pytest.raises(EvidenceError, match="artifact hash changed"):
+        bearer_probe_provenance(root)
