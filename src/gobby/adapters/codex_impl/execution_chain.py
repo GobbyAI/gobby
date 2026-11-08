@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_code
+from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, may_type_input, static_code
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls, repeated_spans
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
@@ -340,6 +340,12 @@ def _decode_write_stdin_arguments(arguments: Any) -> dict[str, Any] | None:
     return decoded
 
 
+def write_stdin_sends_input(arguments: Any) -> bool:
+    """Whether JSON or object write_stdin arguments may type; absent or "" chars only polls."""
+    decoded = _decode_write_stdin_arguments(arguments)
+    return decoded is None or decoded.get("chars") not in (None, "")
+
+
 def _iter_output_text(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -628,6 +634,7 @@ class ExecutionChainCorrelator:
         self._sessions: dict[str, PendingExecution] = {}
         self._ambiguous_cells: dict[str, None] = {}
         self._ambiguous_sessions: dict[str, None] = {}
+        self._sticky_unattributed: dict[str, None] = {}
         self._live_sequence = 0
         self._overflowed = False
         self._pending_overflowed = False
@@ -650,6 +657,7 @@ class ExecutionChainCorrelator:
         elif name in FUNCTIONS_EXEC_NAMES:
             command = extract_functions_exec_command(arguments)
             session_id = extract_functions_write_stdin_session_id(arguments)
+            owned: str | None = None
             if command is not None:
                 execution = PendingExecution(
                     call_id,
@@ -664,6 +672,7 @@ class ExecutionChainCorrelator:
             ):
                 execution = self._sessions.get(session_id)
                 if execution is not None:
+                    owned = session_id
                     # Each poll cell prints its own way, so trust follows this cell.
                     execution = replace(
                         execution, expects_serialized_result=_prints_whole_tool_results(arguments)
@@ -675,13 +684,22 @@ class ExecutionChainCorrelator:
             # merely mentions exec_command in its text stays out of the chain.
             elif allow_unattributed and may_reach_shell(arguments):
                 execution = PendingExecution(call_id)
+            # Cell code that may type into a shell no execution owns, whatever its shape.
+            if (
+                may_type_input(arguments, owned)
+                if isinstance(arguments, str)
+                else execution is None and write_stdin_sends_input(arguments)
+            ):
+                self._mark_sticky_unattributed()
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
+            typed = extract_direct_write_stdin_command(arguments)
             if session_id is not None and session_id not in self._ambiguous_sessions:
                 execution = self._sessions.get(session_id)
-                typed = extract_direct_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
+            if execution is None and write_stdin_sends_input(arguments):
+                self._mark_sticky_unattributed()
         elif name in WAIT_NAMES:
             decoded = arguments
             if isinstance(arguments, str):
@@ -882,6 +900,11 @@ class ExecutionChainCorrelator:
         """
         self._calls.clear()
 
+    def _mark_sticky_unattributed(self) -> None:
+        """Typed input may reach a shell no execution owns: mark exactly the pending cells."""
+        pending = self._cells.values()
+        self._sticky_unattributed = dict.fromkeys(cell.outer_call_id for cell in pending)
+
     def snapshot_state(self) -> dict[str, Any]:
         return {
             "calls": {key: value.to_state() for key, value in self._calls.items()},
@@ -889,6 +912,7 @@ class ExecutionChainCorrelator:
             "sessions": {key: value.to_state() for key, value in self._sessions.items()},
             "ambiguous_cells": list(self._ambiguous_cells),
             "ambiguous_sessions": list(self._ambiguous_sessions),
+            "sticky_unattributed": list(self._sticky_unattributed),
             "complete": not self._overflowed,
             "pending_complete": not self._pending_overflowed,
         }
@@ -901,6 +925,7 @@ class ExecutionChainCorrelator:
         self._sessions = self._hydrate_map(state.get("sessions"))
         self._ambiguous_cells = self._hydrate_ambiguities(state.get("ambiguous_cells"))
         self._ambiguous_sessions = self._hydrate_ambiguities(state.get("ambiguous_sessions"))
+        self._sticky_unattributed = self._hydrate_ambiguities(state.get("sticky_unattributed"))
 
     def _hydrate_map(self, value: Any) -> dict[str, PendingExecution]:
         if not isinstance(value, dict):

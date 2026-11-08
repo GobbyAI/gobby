@@ -119,3 +119,9 @@ def test_exit_watchdog_freezes_the_session_heap_before_it_arms(
     hang_guard.pytest_unconfigure(config)
 
     assert calls == ["freeze", "arm"]
+
+
+def test_import_heap_is_frozen_before_tests_run() -> None:
+    # Exit forces full GC passes over every tracked object. The import-time heap is
+    # ~370k objects, so under load five such passes overran the exit watchdog (#25804).
+    assert gc.get_freeze_count() > 0
