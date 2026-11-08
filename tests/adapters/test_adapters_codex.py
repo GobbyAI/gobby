@@ -3622,11 +3622,10 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         assert "hookSpecificOutput" not in result
 
-    def test_additional_context_waits_oversized_response_context_behind_the_note(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The note ships; oversized response.context waits, named as not carried without a session."""
+    def test_oversized_response_context_behind_a_note_without_a_queue_raises(self) -> None:
+        """Without a session queue the note cannot ship beside a waiting response.context."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
         adapter = CodexHooksAdapter()
         unique_head = "UNIQUE_CODEX_LARGE_7f3a9c"
@@ -3636,18 +3635,14 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             context=unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000),
         )
 
-        with caplog.at_level(logging.WARNING, logger="gobby.adapters.codex_impl.hooks_adapter"):
-            result = adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
+        assert raised.value.labels == ["response.context"]
 
-        ctx = result["hookSpecificOutput"]["additionalContext"]
-        assert ctx == (
-            "Session-critical note\n\ncontext not carried, no session queue: response.context"
-        )
-        assert unique_head not in ctx
-        assert "additionalContext queue unavailable" in caplog.text
-
-    def test_session_metadata_precedes_oversized_response_context(self) -> None:
-        """Session metadata remains visible when response.context is over budget."""
+    def test_session_metadata_with_oversized_response_context_without_a_queue_raises(
+        self,
+    ) -> None:
+        """Without a queue the metadata cannot ship beside a waiting response.context."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -3664,14 +3659,11 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             },
         )
 
-        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
-        ctx = result["hookSpecificOutput"]["additionalContext"]
-        assert len(ctx) <= ADDITIONAL_CONTEXT_LIMIT
-        assert ctx.startswith("Gobby Session ID: #100 (abc-123)")
-        assert "codex-ext-id" in ctx
-        assert unique_head not in ctx
-        assert ctx.endswith("context not carried, no session queue: response.context")
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            adapter.translate_from_hook_response(response, hook_type="SessionStart")
+        assert raised.value.labels == ["response.context"]
 
 
 class TestCodexHooksAdapterHandleNative:
@@ -3724,7 +3716,7 @@ class TestCodexHooksAdapterHandleNative:
         store = MagicMock()
         store.save.return_value = "result-codex-native-1"
         unique_head = "UNIQUE_CODEX_NATIVE_7f3a9c"
-        full = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000)
+        full = unique_head + "\n\n" + ("x" * 99 + "\n\n") * 130
         mock_hook_manager = MagicMock()
         mock_hook_manager._database = object()
         mock_hook_manager.handle.return_value = HookResponse(

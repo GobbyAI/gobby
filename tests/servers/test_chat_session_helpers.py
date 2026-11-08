@@ -191,22 +191,18 @@ class TestHookResponseConverters:
         assert res["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
 
-    def test_prompt_output_pages_context_it_cannot_ship_and_names_it(self) -> None:
-        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+    def test_prompt_output_without_a_queue_raises_and_names_the_context_it_cannot_carry(
+        self,
+    ) -> None:
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
-        unique_head = "UNIQUE_CHAT_HELPER_7f3a9c"
-        context = unique_head + "x" * (ADDITIONAL_CONTEXT_LIMIT + 50)
-        res = _response_to_prompt_output(
-            {
-                "context": context,
-                "metadata": {"session_id": "sess-1", "project_id": "proj-1"},
-            },
-        )
-        hook_specific = res.get("hookSpecificOutput")
-        assert isinstance(hook_specific, dict)
-        ctx = hook_specific.get("additionalContext")
-        assert isinstance(ctx, str)
-        # No store means no queue: page 2 is named as not carried, never cut.
-        assert len(ctx) <= ADDITIONAL_CONTEXT_LIMIT
-        assert ctx.startswith("[response.context (page 1/2)]\n" + unique_head)
-        assert ctx.endswith("context not carried, no session queue: response.context (page 2/2)")
+        context = "UNIQUE_CHAT_HELPER_7f3a9c" + "\n\n" + ("x" * 99 + "\n\n") * 130
+        # No store means no queue: the overflow raises before anything ships.
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            _response_to_prompt_output(
+                {
+                    "context": context,
+                    "metadata": {"session_id": "sess-1", "project_id": "proj-1"},
+                },
+            )
+        assert raised.value.labels == ["response.context (page 2/2)"]
