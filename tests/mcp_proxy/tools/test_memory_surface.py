@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -18,6 +19,26 @@ from gobby.mcp_proxy.tools.memory_surface import SURFACE_MIN_SCORE, TURN_MIN_PRO
 from gobby.storage.memories import MemoryType
 
 pytestmark = pytest.mark.unit
+
+
+async def test_cancelled_surface_logs_partial_stages(caplog: pytest.LogCaptureFixture) -> None:
+    from gobby.memory import stage_timing
+
+    registry, manager = _registry()
+
+    async def cancelled_search(**_kwargs: Any) -> list[SimpleNamespace]:
+        stage_timing.record("falkor_pool", 0.125)
+        raise asyncio.CancelledError
+
+    manager.search_memories = AsyncMock(side_effect=cancelled_search)
+    with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.memory_surface"):
+        with pytest.raises(asyncio.CancelledError):
+            await registry.call(
+                "surface_memories",
+                {"text": "Handoff contract", "trigger": "task", "session_id": SESSION_ID},
+            )
+    assert any("falkor_pool=125ms/1" in record.getMessage() for record in caplog.records)
+
 
 SESSION_ID = "11111111-1111-4111-8111-111111110042"
 PROJECT_ID = "11111111-1111-4111-8111-111111110001"
@@ -118,6 +139,36 @@ async def test_surface_truncates_overlong_text() -> None:
     assert kwargs["query"] == text[:2000]
     assert kwargs["embed_text"] == kwargs["query"]
     assert len(kwargs["query"]) == 2000
+
+
+async def test_surface_logs_the_stage_breakdown_of_each_recall(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every recall logs where its time went, so a slow turn start can be attributed."""
+    from gobby.memory import stage_timing
+
+    registry, memory_manager = _registry(candidates=[_memory(1)])
+
+    async def search_with_stages(**_kwargs: Any) -> list[SimpleNamespace]:
+        stage_timing.record("falkor_server", 0.0125)
+        return [_memory(1)]
+
+    memory_manager.search_memories = AsyncMock(side_effect=search_with_stages)
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.memory_surface"):
+        await registry.call(
+            "surface_memories",
+            {"text": "Handoff contract", "trigger": "task", "session_id": SESSION_ID},
+        )
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "gobby.mcp_proxy.tools.memory_surface"
+    ]
+    assert any(
+        "trigger=task" in message and "falkor_server=12ms/1" in message for message in messages
+    )
 
 
 async def test_surface_fails_open(caplog: pytest.LogCaptureFixture) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
+from gobby.plans.parser import PlanKind, parse_plan
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.tasks import LocalTaskManager
@@ -80,6 +81,7 @@ def test_update_plan_hash_regenerates_manifest(temp_db: HubDatabase, tmp_path: P
 
     assert hasattr(manager, "generate_coverage_manifest")
     assert updated.plan_hash != record.plan_hash
+    assert updated.plan_hash is not None
     assert updated.plan_hash in manifest.read_text(encoding="utf-8")
 
 
@@ -161,3 +163,66 @@ def test_strategy_plan_registers_without_coverage_manifest(
 
     with pytest.raises(ValueError, match="does not carry a coverage manifest"):
         manager.regenerate_coverage_manifest("strategy-300", project_id=project_id)
+
+
+def test_update_plan_hash_reads_and_writes_the_named_linked_checkout(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    manager = LocalPlanManager(temp_db)
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    project_id = _project(temp_db, main)
+    root_task_ref = _root_task_ref(temp_db, project_id)
+    record = manager.create_plan(
+        project_id=project_id,
+        plan_id="task-200-red",
+        plan_path=_write_plan(main),
+        root_task_ref=root_task_ref,
+    )
+    branch_plan = _write_plan(linked)
+    branch_plan.write_text(
+        branch_plan.read_text(encoding="utf-8") + "\nBranch-only edit.\n",
+        encoding="utf-8",
+    )
+    branch_hash = parse_plan(
+        branch_plan, plan_kind=PlanKind.implementation, parse_mode="draft"
+    ).source_hash
+    main_manifest = coverage_manifest_path(
+        main, project_id=project_id, root_task_ref=root_task_ref, plan_id="task-200-red"
+    )
+    linked_manifest = coverage_manifest_path(
+        linked, project_id=project_id, root_task_ref=root_task_ref, plan_id="task-200-red"
+    )
+
+    updated = manager.update_plan_hash("task-200-red", project_id=project_id, checkout_root=linked)
+
+    assert branch_hash != record.plan_hash
+    assert updated.plan_hash == branch_hash
+    assert branch_hash in linked_manifest.read_text(encoding="utf-8")
+    assert branch_hash not in main_manifest.read_text(encoding="utf-8")
+
+
+def test_regenerate_manifest_from_linked_checkout_names_the_linked_manifest(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    manager = LocalPlanManager(temp_db)
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    project_id = _project(temp_db, main)
+    root_task_ref = _root_task_ref(temp_db, project_id)
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-200-red",
+        plan_path=_write_plan(main),
+        root_task_ref=root_task_ref,
+    )
+    _write_plan(linked)
+
+    path = manager.regenerate_coverage_manifest(
+        "task-200-red", project_id=project_id, checkout_root=linked
+    )
+
+    assert path == coverage_manifest_path(
+        linked, project_id=project_id, root_task_ref=root_task_ref, plan_id="task-200-red"
+    )
+    assert path.is_file()

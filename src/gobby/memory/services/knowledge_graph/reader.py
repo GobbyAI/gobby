@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from gobby.memory import stage_timing
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorTimeoutError
 from gobby.memory.scoring import temporal_decay
 
@@ -213,7 +214,8 @@ class KnowledgeGraphReader:
                 try:
                     mem_rows = await self._falkor.query(
                         "UNWIND $entity_keys AS entity_key "
-                        "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+                        "MATCH (e:_Entity {entity_key: entity_key}) WITH entity_key, e "
+                        "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                         "OR ($include_global AND e.is_global = true)) "
                         "AND ((m.project_id = $project_id AND m.is_global = false) "
@@ -427,9 +429,13 @@ class KnowledgeGraphReader:
             if cached_rows is not None:
                 rows = cached_rows
             else:
+                # Bind the indexed source before expanding relationships. A WITH
+                # projecting only the UNWIND key still permits expansion without
+                # an entity-key index scan.
                 rows = await self._falkor.query(
                     "UNWIND $source_keys AS source_key "
-                    "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity) "
+                    "MATCH (start:_Entity {entity_key: source_key}) WITH source_key, start "
+                    "MATCH (start)-[r]-(neighbor:_Entity) "
                     "WHERE ((start.project_id = $project_id AND start.is_global = false) "
                     "OR ($include_global AND start.is_global = true)) "
                     "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
@@ -545,7 +551,7 @@ class KnowledgeGraphReader:
         excluded_keys = list(dict.fromkeys([*seed_keys, *related_entity_keys]))
         try:
             rows = await self._falkor.query(
-                "UNWIND $source_keys AS source_key "
+                "UNWIND $source_keys AS source_key WITH source_key "
                 "MATCH (source:_Entity {entity_key: source_key}) "
                 "WHERE ((source.project_id = $project_id AND source.is_global = false) "
                 "OR ($include_global AND source.is_global = true)) "
@@ -620,20 +626,22 @@ class KnowledgeGraphReader:
                     related_entity_keys,
                     components_by_entity,
                     admission_score_by_entity,
-                ) = await self._find_related_entity_keys(
-                    seed_keys,
-                    max_hops,
-                    limit,
-                    project_id,
-                    include_global,
-                    rows_cache=rows_cache,
+                ) = await stage_timing.timed_await(
+                    "graph_neighbors",
+                    self._find_related_entity_keys(
+                        seed_keys,
+                        max_hops,
+                        limit,
+                        project_id,
+                        include_global,
+                        rows_cache=rows_cache,
+                    ),
                 )
-                cluster_entity_keys = await self._find_cluster_entity_keys(
-                    seed_keys,
-                    seed_keys,
-                    related_entity_keys,
-                    project_id,
-                    include_global,
+                cluster_entity_keys = await stage_timing.timed_await(
+                    "graph_cluster",
+                    self._find_cluster_entity_keys(
+                        seed_keys, seed_keys, related_entity_keys, project_id, include_global
+                    ),
                 )
                 memory_entity_keys = list(
                     dict.fromkeys([*related_entity_keys, *cluster_entity_keys])
@@ -642,30 +650,36 @@ class KnowledgeGraphReader:
                     self._record_traversal_success()
                     return RelatedMemoryTraversal()
 
-                rows = await self._falkor.query(
-                    "UNWIND $entity_keys AS entity_key "
-                    "MATCH (e:_Entity {entity_key: entity_key})"
-                    "-[:MENTIONED_IN]->(m:Memory) "
-                    "WHERE ((e.project_id = $project_id AND e.is_global = false) "
-                    "OR ($include_global AND e.is_global = true)) "
-                    "AND ((m.project_id = $project_id AND m.is_global = false) "
-                    "OR ($include_global AND m.is_global = true)) "
-                    "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
-                    "ORDER BY updated_at DESC LIMIT $limit",
-                    {
-                        "entity_keys": memory_entity_keys,
-                        "limit": limit,
-                        "project_id": project_id,
-                        "include_global": include_global,
-                    },
+                rows = await stage_timing.timed_await(
+                    "graph_memory_links",
+                    self._falkor.query(
+                        "UNWIND $entity_keys AS entity_key "
+                        "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+                        "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
+                        "WHERE ((e.project_id = $project_id AND e.is_global = false) "
+                        "OR ($include_global AND e.is_global = true)) "
+                        "AND ((m.project_id = $project_id AND m.is_global = false) "
+                        "OR ($include_global AND m.is_global = true)) "
+                        "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
+                        "ORDER BY updated_at DESC LIMIT $limit",
+                        {
+                            "entity_keys": memory_entity_keys,
+                            "limit": limit,
+                            "project_id": project_id,
+                            "include_global": include_global,
+                        },
+                    ),
                 )
                 memory_ids = [r["memory_id"] for r in rows if r.get("memory_id")]
-                component_map = await self._attribute_edge_components(
-                    memory_ids=memory_ids,
-                    components_by_entity=components_by_entity,
-                    admission_score_by_entity=admission_score_by_entity,
-                    project_id=project_id,
-                    include_global=include_global,
+                component_map = await stage_timing.timed_await(
+                    "graph_attributes",
+                    self._attribute_edge_components(
+                        memory_ids=memory_ids,
+                        components_by_entity=components_by_entity,
+                        admission_score_by_entity=admission_score_by_entity,
+                        project_id=project_id,
+                        include_global=include_global,
+                    ),
                 )
                 self._record_traversal_success()
                 return RelatedMemoryTraversal(memory_ids=memory_ids, component_map=component_map)
@@ -714,7 +728,8 @@ class KnowledgeGraphReader:
 
         rows = await self._falkor.query(
             "UNWIND $entity_keys AS entity_key "
-            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+            "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+            "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
             "WHERE m.memory_id IN $memory_ids "
             "AND ((e.project_id = $project_id AND e.is_global = false) "
             "OR ($include_global AND e.is_global = true)) "
@@ -861,7 +876,8 @@ class KnowledgeGraphReader:
         try:
             rows = await self._falkor.query(
                 "UNWIND $entity_keys AS entity_key "
-                "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+                "MATCH (e:_Entity {entity_key: entity_key}) WITH e "
+                "MATCH (e)-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE ((e.project_id = $project_id AND e.is_global = false) "
                 "OR ($include_global AND e.is_global = true)) "
                 "AND ((m.project_id = $project_id AND m.is_global = false) "

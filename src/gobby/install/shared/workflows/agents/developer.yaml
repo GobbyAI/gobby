@@ -1,5 +1,5 @@
 name: developer
-version: "3.0.0"
+version: "4.1.0"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -38,8 +38,6 @@ task_attestation_writes:
 - test-before
 - implementation
 - test-after
-- self-review
-- validation
 task_attestation_scope:
   own_claim_only: true
 respect_task_protections: true
@@ -52,16 +50,18 @@ prompts:
     apply its red-green-refactor cycle to every change. For frontend or UI work, load impeccable and read
     .impeccable.md before design edits. Preserve foreign work and commit only owned paths.
     Read the task with get_task(brief=false) and work against every validation criterion:
-    plan the change and self-review the candidate against each one.
+    plan the change so the candidate meets each one.
+    Before handing off for review, run every non-E2E test related to the change; all must pass.
+    Do not run E2E tests: E2E runs once, after review and security approve, on the reviewed
+    SHA. Run E2E only while fixing a failed E2E gate the lead returned to you.
 
     ## Evidence and claim flow
     Use record_attestation with result approved or rejected, following each kind's guidance.
-    Record test-before after the failing test, then implementation, test-after,
-    self-review and validation. Explain justified test non-applicability in evidence.
-    Reference the full candidate Git SHA in implementation, test-after, self-review
-    and validation. Link the commit before the final validation attestation.
-    Validation evidence carries stage: implement and criteria: [{criterion, met, how}],
-    covering every task.validation_criteria item. Run focused checks and required audits.
+    Record test-before after the failing test, then implementation and test-after.
+    Explain justified test non-applicability in evidence. Reference the full candidate
+    Git SHA in implementation and test-after. Link the commit before recording test-after.
+    Run focused checks and required audits. Review and validation attestations come from
+    an independent seat; a developer never records them for its own work.
 
     The pipeline's claim_flow moves the claim transactionally to the reviewer when
     implement evidence is complete. Send the reviewer the exact SHA, evidence and
@@ -95,16 +95,18 @@ prompts:
     apply its red-green-refactor cycle to every change. For frontend or UI work, load impeccable and read
     .impeccable.md before design edits. Preserve foreign work and commit only owned paths.
     Read the task with get_task(brief=false) and work against every validation criterion:
-    plan the change and self-review the candidate against each one.
+    plan the change so the candidate meets each one.
+    Before handing off for review, run every non-E2E test related to the change; all must pass.
+    Do not run E2E tests: E2E runs once, after review and security approve, on the reviewed
+    SHA. Run E2E only while fixing a failed E2E gate the lead returned to you.
 
     ## Evidence and claim flow
     Use record_attestation with result approved or rejected, following each kind's guidance.
-    Record test-before after the failing test, then implementation, test-after,
-    self-review and validation. Explain justified test non-applicability in evidence.
-    Reference the full candidate Git SHA in implementation, test-after, self-review
-    and validation. Link the commit before the final validation attestation.
-    Validation evidence carries stage: implement and criteria: [{criterion, met, how}],
-    covering every task.validation_criteria item. Run focused checks and required audits.
+    Record test-before after the failing test, then implementation and test-after.
+    Explain justified test non-applicability in evidence. Reference the full candidate
+    Git SHA in implementation and test-after. Link the commit before recording test-after.
+    Run focused checks and required audits. Review and validation attestations come from
+    an independent seat; a developer never records them for its own work.
 
     The pipeline's claim_flow moves the claim transactionally to the reviewer when
     implement evidence is complete. Send the reviewer the exact SHA, evidence and
@@ -133,6 +135,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+    - "tag:task-closure-implementer-review"
     - tag:default
     - tag:runbook
     - tag:worker-safety
@@ -166,14 +169,3 @@ task_attestation_kinds:
     - approved
     - rejected
     guidance: Describe the passing rerun and exact command on the full candidate SHA.
-  self-review:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
-  validation:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Give stage implement and criteria [{criterion, met, how}] against task.validation_criteria
-      on the implementation candidate before handing it to the reviewer.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -373,14 +373,37 @@ class CascadeConsumerConfig(_DecisionConsumerConfig):
         return self
 
 
-class DecisionsConfig(BaseModel):
-    """Decision classifier endpoint and its consumers (``ai.decisions``)."""
+DecisionKind = Literal["choice", "noul", "score", "box"]
+DECISION_KINDS: tuple[DecisionKind, ...] = ("choice", "noul", "score", "box")
+_ALL_DECISION_WIRES: frozenset[str] = frozenset(get_args(DecisionsWireAPI))
+# Box needs image input, which only OpenRouter's decisions wire carries.
+DECISION_WIRES: dict[DecisionKind, frozenset[str]] = {
+    "choice": _ALL_DECISION_WIRES,
+    "noul": _ALL_DECISION_WIRES,
+    "score": _ALL_DECISION_WIRES,
+    "box": frozenset({"openrouter-decisions"}),
+}
+
+
+def decision_wire_refusal(wire_api: str, kind: DecisionKind) -> str | None:
+    """Return why ``wire_api`` cannot serve ``kind``, or ``None`` when it can."""
+    serving = DECISION_WIRES[kind]
+    if wire_api in serving:
+        return None
+    return (
+        f"{kind} cannot run on wire_api {wire_api!r}; "
+        f"route {kind} to a backend that can serve it: {', '.join(sorted(serving))}"
+    )
+
+
+class DecisionEndpointConfig(BaseModel):
+    """One decision endpoint: wire, model, identity and request limits."""
 
     model_config = ConfigDict(extra="forbid")
 
     api_base: str | None = Field(
         default=None,
-        description="Decision endpoint base URL; unset leaves the decide capability unavailable.",
+        description="Decision endpoint base URL; unset means this endpoint serves no decision type.",
     )
     wire_api: DecisionsWireAPI = Field(
         default="systemone",
@@ -435,26 +458,6 @@ class DecisionsConfig(BaseModel):
         ge=0,
         description="Seconds the capability stays unavailable after a failed request.",
     )
-    community_label: ChoiceConsumerConfig = Field(
-        default_factory=ChoiceConsumerConfig,
-        description="Code-index community label gating.",
-    )
-    community_label_carry: RerankConsumerConfig = Field(
-        default_factory=RerankConsumerConfig,
-        description="Code-index stale community label carry check.",
-    )
-    community_label_sufficiency: ScoreConsumerConfig = Field(
-        default_factory=ScoreConsumerConfig,
-        description="Code-index deterministic community label sufficiency check.",
-    )
-    tool_rerank: RerankConsumerConfig = Field(
-        default_factory=RerankConsumerConfig,
-        description="MCP tool search reranking.",
-    )
-    found_work: CascadeConsumerConfig = Field(
-        default_factory=CascadeConsumerConfig,
-        description="Found-work classification.",
-    )
 
     @field_validator("api_base")
     @classmethod
@@ -480,7 +483,7 @@ class DecisionsConfig(BaseModel):
         return 32000 if self.wire_api == "openrouter-decisions" else None
 
     @model_validator(mode="after")
-    def validate_decisions(self) -> DecisionsConfig:
+    def validate_decisions(self) -> DecisionEndpointConfig:
         if self.long_context and self.wire_api == "workers-ai":
             raise ValueError("long_context requires systemone or openrouter-decisions")
         if self.wire_api == "openrouter-decisions" and not self.long_context:
@@ -509,6 +512,77 @@ class DecisionsConfig(BaseModel):
             raise ValueError("max_request_bytes must be at least 4 * max_input_tokens + 3")
         if self.identity_contract == "model_card" and self.wire_api != "systemone":
             raise ValueError("identity_contract model_card requires wire_api systemone")
+        return self
+
+
+class DecisionOverrides(BaseModel):
+    """Per-type endpoints; a type with no entry uses the ``ai.decisions`` endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    choice: DecisionEndpointConfig | None = None
+    noul: DecisionEndpointConfig | None = None
+    score: DecisionEndpointConfig | None = None
+    box: DecisionEndpointConfig | None = None
+
+    def endpoint(self, kind: DecisionKind) -> DecisionEndpointConfig | None:
+        match kind:
+            case "choice":
+                return self.choice
+            case "noul":
+                return self.noul
+            case "score":
+                return self.score
+            case "box":
+                return self.box
+
+
+class DecisionsConfig(DecisionEndpointConfig):
+    """Default decision endpoint (``ai.decisions``), per-type overrides and consumers."""
+
+    overrides: DecisionOverrides = Field(
+        default_factory=DecisionOverrides,
+        description="Per-type endpoint entries keyed by choice, noul, score and box.",
+    )
+    community_label: ChoiceConsumerConfig = Field(
+        default_factory=ChoiceConsumerConfig,
+        description="Code-index community label gating.",
+    )
+    community_label_carry: RerankConsumerConfig = Field(
+        default_factory=RerankConsumerConfig,
+        description="Code-index stale community label carry check.",
+    )
+    community_label_sufficiency: ScoreConsumerConfig = Field(
+        default_factory=ScoreConsumerConfig,
+        description="Code-index deterministic community label sufficiency check.",
+    )
+    tool_rerank: RerankConsumerConfig = Field(
+        default_factory=RerankConsumerConfig,
+        description="MCP tool search reranking.",
+    )
+    found_work: CascadeConsumerConfig = Field(
+        default_factory=CascadeConsumerConfig,
+        description="Found-work classification.",
+    )
+
+    def endpoint_for(self, kind: DecisionKind) -> DecisionEndpointConfig | None:
+        """Return the endpoint that serves ``kind``, or ``None`` when nothing routes it."""
+        override = self.overrides.endpoint(kind)
+        if override is not None:
+            return override
+        return self if self.api_base is not None else None
+
+    @model_validator(mode="after")
+    def validate_routes(self) -> DecisionsConfig:
+        for kind in DECISION_KINDS:
+            entry = self.overrides.endpoint(kind)
+            if entry is None:
+                continue
+            if entry.api_base is None or entry.model is None:
+                raise ValueError(f"overrides.{kind} needs api_base and model")
+            refusal = decision_wire_refusal(entry.wire_api, kind)
+            if refusal is not None:
+                raise ValueError(refusal)
         return self
 
 

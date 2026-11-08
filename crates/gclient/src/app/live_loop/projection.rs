@@ -23,6 +23,7 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
     let index = chrome.active_index();
     let viewer = &mut chrome.viewer;
     let set = chrome.project_tabs.set_mut();
+    let model = workspace.workspace_model();
     for tab in &mut set.tabs {
         let stale: Vec<_> = tab
             .slots
@@ -36,7 +37,14 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
                 tab.slots.remove(&slot);
             }
         }
-        if !tab.slots.is_empty() && !tab.slots.contains_key(&viewer.focus_of(tab)) {
+        // A focused pane the daemon still holds keeps its focus while its
+        // terminal resolves; only a focus the model no longer backs moves.
+        let focus = viewer.focus_of(tab);
+        let pending = viewer
+            .panes
+            .daemon_id(focus)
+            .is_some_and(|pane| model.is_some_and(|model| model.pane(pane).is_some()));
+        if !tab.slots.is_empty() && !tab.slots.contains_key(&focus) && !pending {
             if let Some(slot) = tab
                 .layout
                 .pane_ids()
