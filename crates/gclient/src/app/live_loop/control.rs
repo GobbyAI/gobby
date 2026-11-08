@@ -544,14 +544,19 @@ pub(super) fn apply_outage_grant(
             pane.clear_pending_input();
             chrome.notify(Toast::warning(HELD_BY_PEER));
         }
+        // A live pane never draws its status, so each dropped key is reported
+        // by a toast as well.
         Ok(GrantOutcome::Refused(_)) if superseded => {}
         Ok(GrantOutcome::Refused(_)) => {
-            pane.apply_host_grant(Some(false));
+            if !pane.apply_host_grant(Some(false)) {
+                chrome.notify(Toast::error(HOST_GRANT_UNAVAILABLE));
+            }
         }
         Err(_) if superseded => {}
         Err(_) => {
             pane.apply_host_grant(Some(false));
             pane.status_message = Some(CONTROL_UNREACHABLE.to_string());
+            chrome.notify(Toast::error(CONTROL_UNREACHABLE));
         }
     }
 }

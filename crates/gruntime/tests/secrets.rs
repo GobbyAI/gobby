@@ -482,41 +482,25 @@ async fn decrypts_envelope_stamped_ahead_of_the_local_clock() -> Result<()> {
     .await
 }
 
-/// Writes Rust's half of the committed vector. Run once with `--run-ignored only`
-/// after the implementation is green; the placeholder guard keeps it single-use.
+/// The committed Rust half of the vector stays openable by the current store;
+/// `tests/storage/test_secret_seal_vector.py` opens the same token from Python.
 #[tokio::test]
-#[ignore = "regenerates the committed Rust half of secret_seal_vector.json"]
-async fn generate_rust_seal_vector() -> Result<()> {
+async fn opens_rust_sealed_vector() -> Result<()> {
     let vector = vector()?;
-    let mut token = String::new();
     database_case(async |db| {
         let home = TempDir::new()?;
         write_kek(home.path(), text(&vector, "kek")?)?;
         db.seed_key_file_row(text(&vector, "wrapped_dek")?).await?;
         let store = SecretStore::new(pool(&db.url)?, home.path().to_path_buf());
-        token = store
-            .seal(
-                text(&vector, "rust_plaintext")?.as_bytes(),
+
+        let opened = store
+            .open_sealed(
+                text(&vector, "rust_token")?,
                 text(&vector, "rust_aad")?.as_bytes(),
             )
             .await?;
+        assert_eq!(opened, text(&vector, "rust_plaintext")?.as_bytes());
         Ok(())
     })
-    .await?;
-
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/secret_seal_vector.json"
-    );
-    let fixture = fs::read_to_string(path)?;
-    let pending = r#""rust_token":"pending native seal generation""#;
-    ensure!(
-        fixture.matches(pending).count() == 1,
-        "the fixture must still carry the pending Rust token placeholder exactly once"
-    );
-    fs::write(
-        path,
-        fixture.replacen(pending, &format!(r#""rust_token":"{token}""#), 1),
-    )?;
-    Ok(())
+    .await
 }

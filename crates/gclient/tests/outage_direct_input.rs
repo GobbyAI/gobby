@@ -10,6 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::draw::DrawRecorder;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use gobby_client::app::run_live_loop;
 use gobby_client::daemon::LiveDaemon;
@@ -356,6 +357,7 @@ async fn outage_click_moves_focus_and_types_through_a_grant_from_the_host() {
 
 #[tokio::test]
 async fn outage_typing_waits_for_the_grant_reply_before_any_input() {
+    // test-quality: allow SLEEP_IN_TEST -- absence window: no key may reach the PTY while the host holds the grant reply (100 ms observation)
     let mock = MockDaemon::start(TOKEN).await;
     mock.use_unique_attachment_ids();
     let mut host = DirectHost::start("epoch-1").await;
@@ -416,7 +418,8 @@ async fn refused_outage_grant_shows_the_grant_status_and_sends_no_input() {
     host.serve_gterm_control(CONTROL_TOKEN);
     let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
     let cells = content_cells(&workspace);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (backend, _draws, frames) = DrawRecorder::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
@@ -433,7 +436,16 @@ async fn refused_outage_grant_shows_the_grant_status_and_sends_no_input() {
             grant_for(&host, &other).is_some()
         })
         .await;
-        sleep(Duration::from_millis(100)).await;
+        // The refusal offers take-back, so the focused title turns from
+        // `· Focused` to `· Read-only`; no earlier frame draws Read-only.
+        wait_until("the refused pane to draw as Read-only", || {
+            frames
+                .lock()
+                .expect("recorded frames")
+                .last()
+                .is_some_and(|frame| frame.contains("· Read-only"))
+        })
+        .await;
         drop(input_tx);
         (other, reconnect)
     };

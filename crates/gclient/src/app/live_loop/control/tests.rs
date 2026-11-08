@@ -5,10 +5,10 @@ use serde_json::json;
 use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
-use super::super::outage_grant::GrantOutcome;
+use super::super::outage_grant::{GrantOutcome, CONTROL_UNREACHABLE};
 use super::{apply_control_outcome, apply_outage_grant};
 use crate::app::live_control::ControlOutcome;
-use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
+use crate::app::{Backend, ControlState, Pane, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
 use crate::daemon::LiveDaemon;
 use crate::frame_source::{AttachLocator, PaneFrameSource, UnixSocketFrameSource};
 use crate::ui::Chrome;
@@ -191,4 +191,67 @@ async fn a_refused_host_grant_under_the_current_lease_gives_the_pane_back() {
     assert_eq!(pane.control, ControlState::Observe);
     assert!(pane.take_back, "the pane offers take-back");
     assert!(!pane.direct_input());
+}
+
+/// Runs `grant` against a direct pane holding three queued keys under lease 0,
+/// and returns the toast titles it raised and the keys still queued.
+async fn outage_grant_answer(grant: std::io::Result<GrantOutcome>) -> (Vec<String>, usize) {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let pane = cut_pane_with_keys().await;
+    let attachment = pane.attachment_id().to_owned();
+    workspace.panes.insert(PaneId(1), pane);
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        PaneId(1),
+        &attachment,
+        0,
+        grant,
+    );
+
+    let titles = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.clone())
+        .collect();
+    let queued = workspace
+        .panes
+        .get_mut(&PaneId(1))
+        .expect("pane")
+        .take_pending_input()
+        .len();
+    (titles, queued)
+}
+
+/// A key whose grant the host's control socket could not be asked for is not
+/// sent, and the pane's status alone is never drawn on a live pane, so a toast
+/// says so.
+#[tokio::test]
+async fn an_unreachable_host_grant_says_the_queued_keys_were_not_sent() {
+    let (titles, queued) =
+        outage_grant_answer(Err(std::io::Error::other("no control socket"))).await;
+
+    assert_eq!(queued, 0, "the unreachable grant drops the queued keys");
+    assert_eq!(
+        titles,
+        [CONTROL_UNREACHABLE],
+        "the dropped keys are reported"
+    );
+}
+
+/// The host refusing the grant drops the queued keys too, so the refusal is
+/// reported the way a take without a host grant is.
+#[tokio::test]
+async fn a_refused_host_grant_says_the_queued_keys_were_not_sent() {
+    let (titles, queued) =
+        outage_grant_answer(Ok(GrantOutcome::Refused("input_not_granted".into()))).await;
+
+    assert_eq!(queued, 0, "the refused grant drops the queued keys");
+    assert_eq!(titles, [HOST_GRANT_UNAVAILABLE], "the refusal is reported");
 }

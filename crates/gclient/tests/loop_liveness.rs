@@ -838,6 +838,7 @@ const KEY_BOUND: Duration = Duration::from_millis(500);
 /// keystroke awaits the daemon (memory b59e4ce9).
 #[tokio::test]
 async fn keystroke_latency_is_the_same_whether_the_daemon_is_healthy_slowed_or_absent() {
+    // test-quality: allow SLEEP_IN_TEST -- timing behavior: with the daemon's take reply slowed by SLOW_REPLY (1s of wall time), keystroke latency to the host stays under KEY_BOUND, measured with Instant
     for reply in [TakeReply::Healthy, TakeReply::Slowed, TakeReply::Absent] {
         let mock = MockDaemon::start("local-token").await;
         let mut host = StallingHost::start().await;
@@ -1038,13 +1039,20 @@ async fn a_host_grant_survives_a_daemon_take_timeout_after_it() {
         probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
         host.wait_for_input(b"x").await;
         assert_eq!(grants.lock().expect("grant log").len(), 1);
-        tokio::time::sleep(CONTROL_REQUEST_DEADLINE + Duration::from_millis(500)).await;
-        assert!(
-            websocket_requests(&mock, "terminal_detach")
-                .iter()
-                .all(|body| body.get("terminal_id") != Some(&json!("terminal-b"))),
-            "the timed-out take tore down the host-granted pane"
-        );
+        // The loop applies the take's timeout and reports it in an error toast.
+        wait_within(
+            CONTROL_REQUEST_DEADLINE + LIVENESS_DEADLINE,
+            "the take's timeout toast",
+            || {
+                probe
+                    .frames
+                    .lock()
+                    .expect("recorded frames")
+                    .last()
+                    .is_some_and(|frame| frame.contains("did not answer terminal_take_control"))
+            },
+        )
+        .await;
         probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
         let typed = std::time::Instant::now();
         host.wait_for_input(b"y").await;
@@ -1052,6 +1060,12 @@ async fn a_host_grant_survives_a_daemon_take_timeout_after_it() {
             typed.elapsed() < KEY_BOUND,
             "y waited {:?} behind the timed-out take",
             typed.elapsed()
+        );
+        assert!(
+            websocket_requests(&mock, "terminal_detach")
+                .iter()
+                .all(|body| body.get("terminal_id") != Some(&json!("terminal-b"))),
+            "the timed-out take tore down the host-granted pane"
         );
         assert_eq!(
             grants.lock().expect("grant log").len(),

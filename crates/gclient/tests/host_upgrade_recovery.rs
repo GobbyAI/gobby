@@ -10,6 +10,7 @@ use super::mock_daemon;
 
 use std::time::Duration;
 
+use super::draw::DrawRecorder;
 use crossterm::event::{KeyCode, KeyModifiers};
 use gobby_client::app::{run_live_loop, AttachState};
 use gobby_client::daemon::LiveDaemon;
@@ -388,7 +389,8 @@ async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
         .pane_for_terminal(terminal_id)
         .expect("direct pane");
     mock.enqueue_take_control_reply_without_host_grant(1);
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (backend, _draws, frames) = DrawRecorder::new(48, 12);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
@@ -404,8 +406,16 @@ async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
         .await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         // The grant is asked of the host's control socket, which this host
-        // does not serve, so the key waits on an answer that says no.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // does not serve, so the ask fails and a toast reports the dropped key
+        // (clipped at this width, so its leading words are matched).
+        wait_until("the toast for the key the outage could not send", || {
+            frames
+                .lock()
+                .expect("recorded frames")
+                .last()
+                .is_some_and(|frame| frame.contains("terminal control"))
+        })
+        .await;
         drop(input_tx);
         reconnect
     };

@@ -555,7 +555,7 @@ async fn token_rotation_and_lost_replies_never_replay_writes() -> anyhow::Result
     let authority = fx.authority();
     let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
     let waiter = tokio::spawn(async move { route.handle(&authority, acquire).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    await_count("parked acquires", 1, || fx.route.acquiring()).await?;
     assert!(
         !waiter.is_finished(),
         "a second acquire waits behind the live hold"
@@ -873,7 +873,7 @@ async fn queued_writes_are_refused_once_their_token_retires() -> anyhow::Result<
     let queued = write_call(t, "automatic", "queued", step("text", b"b"), &Value::Null);
     let authority = fx.authority();
     let waiter = tokio::spawn(async move { route.handle(&authority, queued).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    await_count("queued writes", 1, || fx.route.queued(t)).await?;
 
     let _rotated = fx.token.install("token-2".into());
     release.send(()).expect("runtime still waiting");
@@ -935,16 +935,15 @@ async fn a_delayed_sequence_step_is_refused_once_its_token_retires() -> anyhow::
             {"write": step("text", b"b")},
         ],
     });
+    let (entered, release) = fx.native.hold_next();
     let route = fx.route.clone();
     let authority = fx.authority();
     let runner = tokio::spawn(async move { route.handle(&authority, sequence).await });
-    for _ in 0..500 {
-        if !fx.native.payloads().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    // Step 0 passed its token check and is inside the runtime; the fence is
+    // checked again only before the write after the delay.
+    entered.await?;
     let _rotated = fx.token.install("token-2".into());
+    release.send(()).expect("runtime still waiting");
 
     let reply = runner.await?;
     assert_eq!(reply["failed_step"], 2, "{reply}");
@@ -971,7 +970,7 @@ async fn an_abandoned_queued_write_never_reaches_the_runtime() -> anyhow::Result
     let queued = write_call(t, "operator", "abandoned", step("text", b"b"), &lease);
     let authority = fx.authority();
     let caller = tokio::spawn(async move { route.handle(&authority, queued).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    await_count("queued writes", 1, || fx.route.queued(t)).await?;
     caller.abort();
     let _ = caller.await;
 
@@ -1010,7 +1009,7 @@ async fn acquire_waits_behind_unheld_work_in_flight() -> anyhow::Result<()> {
     let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
     let authority = fx.authority();
     let acquirer = tokio::spawn(async move { route.handle(&authority, acquire).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    await_count("parked acquires", 1, || fx.route.acquiring()).await?;
     release.send(()).expect("runtime still waiting");
     assert_eq!(runner.await?, json!({"status": "delivered"}));
 
@@ -1033,7 +1032,7 @@ async fn a_second_acquire_waits_for_the_active_hold_to_release() -> anyhow::Resu
     let route = fx.route.clone();
     let authority = fx.authority();
     let second = tokio::spawn(async move { route.handle(&authority, acquire).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    await_count("parked acquires", 1, || fx.route.acquiring()).await?;
     assert!(
         !second.is_finished(),
         "a second acquire waits behind the active hold"
@@ -1067,7 +1066,7 @@ async fn a_waiter_from_a_retired_token_is_refused_and_takes_no_hold() -> anyhow:
     let old = fx.authority();
     let waiting = acquire.clone();
     let waiter = tokio::spawn(async move { route.handle(&old, waiting).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    await_count("parked acquires", 1, || fx.route.acquiring()).await?;
     assert!(
         !waiter.is_finished(),
         "a second acquire waits behind the held gate"
@@ -1211,6 +1210,18 @@ async fn await_latch(fx: &Fixture, key: &str) -> anyhow::Result<()> {
     anyhow::bail!("the latch {key} was never persisted")
 }
 
+/// Waits for `count` to read `expected`, so a test moves on only once its call
+/// is parked behind the terminal gate.
+async fn await_count(what: &str, expected: usize, count: impl Fn() -> usize) -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while count() != expected {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("{what} never reached {expected} within 5s"))
+}
+
 /// Waits until the host has been submitted `payload`.
 async fn await_payload(native: &FakeRuntime, payload: &str) -> anyhow::Result<()> {
     for _ in 0..1000 {
@@ -1227,6 +1238,7 @@ async fn await_payload(native: &FakeRuntime, payload: &str) -> anyhow::Result<()
 #[tokio::test]
 async fn an_enter_only_wake_is_refused_when_its_token_retires_during_the_pace() -> anyhow::Result<()>
 {
+    // test-quality: allow SLEEP_IN_TEST -- timing behavior: a token retired inside the 300ms wake pace sends no Enter; the rotation lands 20ms after the latch persists, inside that pace (a refusal before the pace reports identically, so only timing places it there)
     let fx = fixture().await?;
     let t = fx.terminal;
     let wake = json!({

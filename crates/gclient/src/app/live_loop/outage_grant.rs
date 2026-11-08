@@ -20,7 +20,7 @@ const PROTOCOL_VERSION: u64 = 1;
 const EXCHANGE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Status for a key whose grant the host's control socket could not be asked
-/// for. The key is not sent, and the pane says so.
+/// for. The key is not sent, and a toast says so.
 pub(super) const CONTROL_UNREACHABLE: &str =
     "terminal control unavailable while the daemon is down; input not sent";
 

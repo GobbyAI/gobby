@@ -11,10 +11,16 @@ use std::{
 };
 
 const READY: &str = "FD_CONSTRUCTOR_CHILD_READY";
+const CHILD_MARKER: &str = "GOBBY_TEST_FD_CONSTRUCTOR_CHILD";
 
+/// Child half of `constructor_closes_inherited_pipe_before_test_harness`: runs only
+/// when that parent spawns it with `CHILD_MARKER` set, then stays alive until the
+/// parent releases stdin or kills it.
 #[test]
-#[ignore = "subprocess helper: stays alive until its parent releases stdin or kills it"]
 fn inherited_fd_sleeper() -> Result<()> {
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        return Ok(());
+    }
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{READY}")?;
     stdout.flush()?;
@@ -43,10 +49,10 @@ fn constructor_closes_inherited_pipe_before_test_harness() -> Result<()> {
         .args([
             "--exact",
             "node_agents::fd_constructor_tests::inherited_fd_sleeper",
-            "--ignored",
             "--nocapture",
             "--quiet",
         ])
+        .env(CHILD_MARKER, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
