@@ -3,7 +3,7 @@
 # passes its body, then nextest reports leaked handles after the 10s leak-timeout. Sweeps of 20 and 60
 # clean runs have not reproduced it; the observed rate is about one leak per 86 full-binary runs.
 #
-# Runs the full host_lifecycle binary up to ITERATIONS times under nextest and stops at the
+# Runs the host_lifecycle tests in the suite binary up to ITERATIONS times under nextest and stops at the
 # first LEAK-FAIL (exit 1). Any other failing run exits 2. A clean sweep exits 0.
 #
 # Usage: host_lifecycle_leak.sh [iterations] [test-threads]
@@ -18,8 +18,8 @@ export GOBBY_TERMINALS_TEST_DATABASE_URL
 
 run=1
 while [ "$run" -le "$iterations" ]; do
-    out=$(cargo nextest run -p gobby-terminals --test host_lifecycle --no-fail-fast \
-        --test-threads "$threads" 2>&1)
+    out=$(cargo nextest run -p gobby-terminals --test suite -E 'test(/^host_lifecycle::/)' \
+        --no-fail-fast --test-threads "$threads" 2>&1)
     status=$?
     id=$(printf '%s\n' "$out" | sed -n 's/.*Nextest run ID \([0-9a-f-]*\).*/\1/p' | head -n 1)
     if printf '%s\n' "$out" | grep -q 'LEAK-FAIL'; then

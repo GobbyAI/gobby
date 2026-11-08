@@ -383,7 +383,18 @@ def test_reviewer_rust_compare(
         launch,
         workspace,
         environment,
-        ["cargo", "nextest", "run", "--offline", "-p", "gobby-daemon", "--test", "compare"],
+        [
+            "cargo",
+            "nextest",
+            "run",
+            "--offline",
+            "-p",
+            "gobby-daemon",
+            "--test",
+            "suite",
+            "-E",
+            "test(/^compare::/)",
+        ],
         timeout=1100,
     )
     assert result.returncode == 0, result.stderr[-20000:]
