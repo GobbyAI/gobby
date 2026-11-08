@@ -27,6 +27,7 @@ from gobby.storage.worktree_notes import WorktreeNote, WorktreeNoteStore
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.tasks.close_receipts import CLOSE_RECEIPT_AUTHOR_TYPE, LANDING
 from gobby.tasks.state_semantics import TASK_HOLD_STATES
+from gobby.utils.spawn import run as spawn_run
 
 _GIT_TIMEOUT_SECONDS = 10.0
 _NEEDS_DECISION_LABEL = "needs-decision"
@@ -463,7 +464,7 @@ def _task_refs(db: HubDatabase, task_ids: Sequence[str]) -> dict[str, _TaskRef]:
 
 def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(
+        return spawn_run(
             ["git", "-C", str(cwd), *args],
             capture_output=True,
             text=True,
