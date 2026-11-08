@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -106,13 +107,9 @@ def git_repo_with_origin(
     WorktreeGitManager.create_worktree fetches from origin, so we need
     to set up a bare repo as origin for the test.
     """
-    # Remove the pre-existing project.json created by e2e_project_dir
-    # This allows the daemon to auto-initialize the project properly
-    # (creating it in the database, not just the file)
-    gobby_dir = e2e_project_dir / ".gobby"
-    project_json = gobby_dir / "project.json"
-    if project_json.exists():
-        project_json.unlink()
+    # Keep the project.json that e2e_project_dir wrote. Its marker names the seeded
+    # E2E project, which the seed already registered at this checkout root.
+    # Removing the marker makes the register route fail marker validation.
 
     # Create a bare repo to serve as "origin"
     origin_path = tmp_path_factory.mktemp("origin")
@@ -202,18 +199,29 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    project_id = "00000000-0000-4000-8000-000000000003"
-    project_name = e2e_project_dir.name
+    # The seeded E2E project id and name, matching the marker written by e2e_project_dir.
+    project_id = "00000000-0000-0000-0000-000000000e2e"
     cli_events.register_test_project(
         project_id=project_id,
-        name=project_name,
+        name="E2E Test Project",
         repo_path=str(e2e_project_dir),
     )
     wait_for_project_registration(daemon_instance, project_id)
 
-    # Write project.json with the created project's ID
-    project_json = gobby_dir / "project.json"
-    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
+    # Worktree creation pins its overlay on this checkout's code index, which the
+    # daemon builds in production. E2E disables index maintenance, so build it here
+    # with the daemon's own gcode binary and environment.
+    gcode = Path(daemon_instance.env[NATIVE_BIN_DIR_ENV]) / native_bin_name("gcode")
+    indexed = subprocess.run(
+        [str(gcode), "index", "--full", "--quiet"],
+        cwd=str(e2e_project_dir),
+        env=daemon_instance.env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert indexed.returncode == 0, indexed.stderr or indexed.stdout
 
     return e2e_project_dir
 
