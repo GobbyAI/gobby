@@ -72,6 +72,11 @@ async def test_detached_pipeline_start_refuses_before_any_run_is_recorded() -> N
     message = str(refusal.value)
     assert "daemon health is unstable" in message
     assert "probe_failed:refused" in message
+    # The typed fields travel with the exception, not only in its message.
+    assert refusal.value.refusal is not None
+    assert refusal.value.refusal.code == "fleet_unhealthy"
+    assert refusal.value.refusal.state == "unstable"
+    assert refusal.value.refusal.reasons == ("probe_failed:refused",)
     execution_manager.create_execution.assert_not_called()
     execution_manager.update_execution_status.assert_not_called()
 
@@ -125,12 +130,12 @@ async def test_pipeline_launch_refuses_while_the_fleet_is_unstable() -> None:
     pipeline.name = "fixture-pipeline"
     pipeline.steps = []
 
-    # The refusal is recorded as a failed execution, then re-raised like other guard refusals.
-    with pytest.raises(PipelineStepRefusal, match="fleet_unhealthy"):
+    # A refused fresh run leaves no execution record, the same as a detached start.
+    with pytest.raises(PipelineStepRefusal, match="fleet_unhealthy") as refusal:
         await executor.execute(pipeline=pipeline, inputs={}, project_id="proj-1")
 
+    assert refusal.value.refusal is not None
+    assert refusal.value.refusal.code == "fleet_unhealthy"
     tool_proxy.call_tool.assert_not_called()
-    update = execution_manager.update_execution_status.call_args
-    assert update is not None
-    assert update.kwargs["status"] == ExecutionStatus.FAILED
-    assert "fleet_unhealthy" in update.kwargs["outputs_json"]
+    execution_manager.create_execution.assert_not_called()
+    execution_manager.update_execution_status.assert_not_called()
