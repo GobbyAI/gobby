@@ -1,10 +1,13 @@
 """Runner lifecycle, maintenance, and entrypoint tests."""
 
 import asyncio
+import concurrent.futures
 import logging
+import multiprocessing
 import os
 import signal
 import sys
+import threading
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from datetime import datetime
@@ -22,15 +25,18 @@ import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
+import gobby.tasks.transcript_evidence_pool as transcript_evidence_pool
 from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig, BootstrapConfigError, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
+from gobby.runner_init import embedding_lease
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.cron_models import CronRunStatus
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseRenewTransient
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals import composer_ledger
 from gobby.terminals.composer_ledger import ComposerLedger
@@ -1604,6 +1610,158 @@ class TestShutdownDaemonServices:
         assert marker.exists() is True
 
     @pytest.mark.asyncio
+    async def test_restart_shutdown_leaves_no_transcript_pool_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A restart must reap the live transcript pool before interpreter exit joins it."""
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        await transcript_evidence_pool.prewarm_transcript_evidence_pool()
+        assert multiprocessing.active_children(), "precondition: the pool has live workers"
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            cast(GobbyRunner, runner),
+            cast(Server, server),
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert multiprocessing.active_children() == []
+
+    @pytest.mark.asyncio
+    async def test_shutdown_stops_embedding_lease_renewal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A live lease renewal must end with shutdown, not depend on config teardown."""
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
+        renew_attempted = threading.Event()
+
+        def renew_transiently() -> None:
+            renew_attempted.set()
+            raise EmbeddingGenerationLeaseRenewTransient("renewal store unavailable")
+
+        lease = SimpleNamespace(
+            generation=1,
+            revision=1,
+            renew=renew_transiently,
+            remaining_seconds=lambda: 1000.0,
+            fence=lambda: None,
+            activate=lambda: None,
+        )
+        handle = embedding_lease._ManagedEmbeddingLease(
+            cast(Any, lease),
+            asyncio.get_running_loop(),
+            read_completed_record=lambda: None,
+            request_rebuild=lambda record: None,
+        )
+        handle.activate()
+        try:
+            assert await asyncio.to_thread(renew_attempted.wait, 5.0), (
+                "precondition: the renewal thread is running"
+            )
+            runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+            server = SimpleNamespace(should_exit=False)
+
+            async def completed_server() -> None:
+                return None
+
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, server),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+            assert handle.renewal is not None
+            done, _ = concurrent.futures.wait([handle.renewal], timeout=5.0)
+            assert done, "the lease renewal task survived shutdown"
+        finally:
+            handle.dispose()
+
+    @pytest.mark.asyncio
+    async def test_restart_deadline_overrun_leaves_no_transcript_pool_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A restart whose cleanup overruns the overall deadline must still reap the pool."""
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        # An expired finalizer arms a process-wide exit backstop that outlives this test;
+        # restoring the flag here keeps later tests from taking the forced-exit path.
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_expiry_exit_backstop_required", False)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_OVERALL_SHUTDOWN_DEADLINE_SECONDS", 1.0)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS", 0.5)
+
+        async def stalled_barrier() -> None:
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_settle_terminal_delivery_barrier",
+            stalled_barrier,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        await transcript_evidence_pool.prewarm_transcript_evidence_pool()
+        assert multiprocessing.active_children(), "precondition: the pool has live workers"
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            cast(GobbyRunner, runner),
+            cast(Server, server),
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert multiprocessing.active_children() == []
+
+    @pytest.mark.asyncio
     async def test_shutdown_marker_is_removed_when_pid_cleanup_fails(
         self,
         tmp_path: Path,
@@ -1712,6 +1870,243 @@ class TestShutdownDaemonServices:
         runner.database.close.assert_called_once_with()
         cleanup_pid_file.assert_called_once_with()
         assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_deadline_overrun_still_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(runner_lifecycle_shutdown, "get_shutdown_marker_path", lambda: marker)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_OVERALL_SHUTDOWN_DEADLINE_SECONDS", 0.2)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()
+        )
+
+        async def stalled_cleanup(*_args: object, **_kwargs: object) -> None:
+            # A cleanup step that never settles: the overall deadline cuts it short.
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_async_shutdown_cleanup", stalled_cleanup
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        reap_remaining_child_processes = AsyncMock()
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        await asyncio.wait_for(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, server),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap_remaining_child_processes,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            ),
+            timeout=10.0,
+        )
+
+        reap_remaining_child_processes.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        assert "Async shutdown cleanup exceeded 0.2s overall deadline" in caplog.text
+        assert "Shutdown complete" in caplog.text, "the finalizer tail runs after the reap"
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_caller_cancellation_still_stops_pool_and_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: tmp_path / "shutdown_intent_active.json",
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "gobby.runner_background_services.shutdown_background_services",
+            lambda: calls.append("pool"),
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        entered = asyncio.Event()
+
+        async def stalled_stop() -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+        runner.lifecycle_manager.stop = stalled_stop
+        reap = AsyncMock(side_effect=lambda **_kwargs: calls.append("reap"))
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, SimpleNamespace(should_exit=False)),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=cleanup_pid_file,
+            )
+        )
+        async with asyncio.timeout(10):
+            await entered.wait()
+        shutdown.cancel()
+        outcome = await asyncio.gather(shutdown, return_exceptions=True)
+
+        # The caller's cancellation is re-raised only after the pool stops and the reap runs.
+        assert isinstance(outcome[0], asyncio.CancelledError)
+        assert calls == ["pool", "reap"]
+        reap.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_error_before_cleanup_still_stops_pool_and_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: tmp_path / "shutdown_intent_active.json",
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "gobby.runner_background_services.shutdown_background_services",
+            lambda: calls.append("pool"),
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_stop_code_index_workers",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        reap = AsyncMock(side_effect=lambda **_kwargs: calls.append("reap"))
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, SimpleNamespace(should_exit=False)),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=cleanup_pid_file,
+            )
+
+        # The pool stops before the reap, and the finalizer tail still runs.
+        assert calls == ["pool", "reap"]
+        reap.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_caller_cancellation_during_hold_notice_still_stops_pool_and_reaps_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: tmp_path / "shutdown_intent_active.json",
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "gobby.runner_background_services.shutdown_background_services",
+            lambda: calls.append("pool"),
+        )
+        entered = asyncio.Event()
+
+        async def stalled_hold_notice(_runner: object) -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "send_hold_notice_if_restarting", stalled_hold_notice
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        reap = AsyncMock(side_effect=lambda **_kwargs: calls.append("reap"))
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast(Server, SimpleNamespace(should_exit=False)),
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=cleanup_pid_file,
+            )
+        )
+        async with asyncio.timeout(10):
+            await entered.wait()
+        shutdown.cancel()
+        outcome = await asyncio.gather(shutdown, return_exceptions=True)
+
+        # A cancel at the first await still stops the pool and reaps children.
+        assert isinstance(outcome[0], asyncio.CancelledError)
+        assert calls == ["pool", "reap"]
+        reap.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancelled_step_is_named_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+
+        async def stalled_step() -> None:
+            await asyncio.Event().wait()
+
+        # The overall deadline cancels the step in flight; its name must reach the log.
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.05):
+                await runner_lifecycle_shutdown._best_effort(stalled_step, "Stalled shutdown step")
+
+        assert "Stalled shutdown step was cancelled while in flight" in caplog.text
 
     @pytest.mark.asyncio
     async def test_mid_sequence_exception_preserves_full_cleanup_tail(
@@ -1829,7 +2224,13 @@ class TestShutdownDaemonServices:
                 cleanup_pid_file=cleanup_pid_file,
             )
 
-        reap_remaining_child_processes.assert_not_awaited()
+        # A caller cancel still stops the pool and reaps children. Telemetry sits in the
+        # cleanup that the cancel skips, so it stays uncalled.
+        reap_remaining_child_processes.assert_awaited_once_with(
+            preserve_agents=True,
+            preserved_agent_pids=set(),
+            preserve_srt_monitor=True,
+        )
         shutdown_telemetry.assert_not_called()
         runner.database.close.assert_called_once_with()
         cleanup_pid_file.assert_called_once_with()
@@ -1896,9 +2297,14 @@ class TestShutdownDaemonServices:
             coverage_executor,
             db_executor,
         ]
-        assert shutdown_calls[0][1]["join_timeout_seconds"] is None
+        # The worktree join is bounded: a delete that outlives it is logged and left
+        # for the next start.
+        assert (
+            shutdown_calls[0][1]["join_timeout_seconds"]
+            == runner_shutdown_storage._WORKTREE_DELETE_JOIN_SECONDS
+        )
 
-    async def test_overall_deadline_still_drains_active_worktree_delete_before_database_close(
+    async def test_overall_deadline_joins_a_worktree_delete_that_settles_within_its_bound(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -5427,6 +5833,51 @@ class TestAgentRestartRecoveryHelpers:
 
         assert events[:3] == ["close", "health", "drain"]
         assert events[-1] == "executor"
+
+    @pytest.mark.asyncio
+    async def test_async_cleanup_names_each_stalled_step_and_still_reaps(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        async def stalled(**_kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        reap = AsyncMock()
+        runner = cast(
+            GobbyRunner,
+            SimpleNamespace(
+                config_runtime=SimpleNamespace(close=stalled),
+                definition_revision_listener=SimpleNamespace(close=stalled),
+                terminal_host_manager=SimpleNamespace(stop=stalled),
+                _drain_terminals_on_shutdown=False,
+            ),
+        )
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_CLEANUP_STEP_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_TERMINAL_HOST_STOP_TIMEOUT_SECONDS", 0.05)
+        settle = AsyncMock()
+        audit = AsyncMock()
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_settle_terminal_delivery_barrier", settle)
+        monkeypatch.setattr("gobby.telemetry.rule_allow_audit.shutdown_rule_allow_audit", audit)
+
+        async with asyncio.timeout(5):
+            await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
+                runner,
+                shutdown_intent=ShutdownIntent.STOP,
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=lambda: None,
+            )
+
+        # Each stalled step is bounded and named in order, and the cleanup still reaps.
+        timed_out = [r.getMessage() for r in caplog.records if "timed out" in r.getMessage()]
+        assert timed_out == [
+            "Config runtime shutdown timed out",
+            "Definition revision listener shutdown timed out",
+            "gterm host stop timed out",
+        ]
+        assert settle.await_count == 1
+        assert audit.await_count == 1
+        assert reap.await_count == 1
 
     @pytest.mark.asyncio
     async def test_async_shutdown_flushes_the_composer_ledger_after_the_host_stops(
