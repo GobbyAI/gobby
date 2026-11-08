@@ -1,5 +1,7 @@
 """Check child environment isolation without importing or starting the daemon."""
 
+from __future__ import annotations
+
 import hashlib
 import io
 import json
@@ -7,6 +9,8 @@ import os
 import subprocess
 import sys
 import types
+import urllib.error
+import urllib.request
 from importlib.abc import MetaPathFinder
 from pathlib import Path
 
@@ -15,6 +19,7 @@ import prepare_identity
 import pytest
 import runtime_gobby
 from prepare_daemon import isolated_environment, record_preparation
+from runtime_boundary import EvidenceError
 from runtime_gobby import known_config_values
 
 
@@ -141,6 +146,95 @@ def _bootstrap(root: Path) -> None:
     )
 
 
+class _Listing:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> _Listing:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _provider_answers(monkeypatch: pytest.MonkeyPatch, body: bytes) -> list[str]:
+    requested: list[str] = []
+
+    class _Opener:
+        def open(self, url: str, timeout: float) -> _Listing:
+            requested.append(url)
+            return _Listing(body)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_h: _Opener())
+    return requested
+
+
+def test_the_configured_embedding_provider_is_ollama_with_its_model_and_dimension() -> None:
+    assert prepare_daemon.EMBEDDING_VALUES == {
+        "ai.embeddings.model": "qwen3-embedding:0.6b-q8_0",
+        "ai.embeddings.api_base": "http://localhost:11434/v1",
+        "ai.embeddings.dim": 1024,
+    }
+
+
+def test_readiness_passes_when_the_configured_provider_lists_the_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listing = json.dumps({"data": [{"id": "qwen3-embedding:0.6b-q8_0"}]}).encode()
+    requested = _provider_answers(monkeypatch, listing)
+
+    prepare_daemon.embedding_readiness("http://localhost:11434/v1", "qwen3-embedding:0.6b-q8_0")
+
+    assert requested == ["http://localhost:11434/v1/models"]
+
+
+def test_readiness_refuses_a_provider_that_does_not_list_the_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _provider_answers(monkeypatch, json.dumps({"data": [{"id": "nomic-embed-text"}]}).encode())
+
+    with pytest.raises(EvidenceError, match="qwen3-embedding:0.6b-q8_0"):
+        prepare_daemon.embedding_readiness("http://localhost:11434/v1", "qwen3-embedding:0.6b-q8_0")
+
+
+def test_readiness_refuses_a_listing_whose_ids_are_not_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listing = {"data": [{"id": ["qwen3-embedding:0.6b-q8_0"]}]}
+    _provider_answers(monkeypatch, json.dumps(listing).encode())
+
+    with pytest.raises(EvidenceError, match="does not list"):
+        prepare_daemon.embedding_readiness("http://localhost:11434/v1", "qwen3-embedding:0.6b-q8_0")
+
+
+def test_readiness_refuses_an_unreachable_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Refused:
+        def open(self, url: str, timeout: float) -> _Listing:
+            raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_h: _Refused())
+
+    with pytest.raises(EvidenceError, match="unreachable"):
+        prepare_daemon.embedding_readiness("http://localhost:11434/v1", "qwen3-embedding:0.6b-q8_0")
+
+
+def test_prepare_checks_the_embedding_provider_before_it_writes_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(api_base: str, model: str) -> None:
+        raise EvidenceError("embedding provider refused")
+
+    monkeypatch.setattr(prepare_daemon, "embedding_readiness", refused)
+
+    with pytest.raises(EvidenceError, match="refused"):
+        prepare_daemon.prepare(tmp_path)
+
+    assert not (tmp_path / "gobby-home").exists()
+
+
 def test_prepare_runs_every_gobby_step_under_the_runtime_interpreter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -149,6 +243,7 @@ def test_prepare_runs_every_gobby_step_under_the_runtime_interpreter(
     _forbid_in_process_gobby(monkeypatch)
     monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
     monkeypatch.setattr(prepare_daemon, "preserve_image_probe", lambda _dsn: None)
+    monkeypatch.setattr(prepare_daemon, "embedding_readiness", lambda _api, _model: None)
     runtime = str(root / "tools/gobby/venv/bin/python")
 
     prepare_daemon.prepare(root)

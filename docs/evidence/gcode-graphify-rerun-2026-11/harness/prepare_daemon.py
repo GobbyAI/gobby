@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import subprocess
+import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -14,6 +16,41 @@ import yaml
 from provision_environment import DEFAULT_RUNTIME_ROOT, PORTS, _write_json, _write_text
 from runtime_boundary import EvidenceError, assert_owned_runtime, contained_file, require
 from validate_environment import _load_env_file
+
+# The embedding provider the isolated daemon is configured to use. The orchestrator ruling
+# (gobby#19309, 86a74419) fixes these values. They are written into the isolated config;
+# operator config is never read.
+EMBEDDING_MODEL = "qwen3-embedding:0.6b-q8_0"
+EMBEDDING_API_BASE = "http://localhost:11434/v1"
+EMBEDDING_DIM = 1024
+EMBEDDING_VALUES: dict[str, str | int] = {
+    "ai.embeddings.model": EMBEDDING_MODEL,
+    "ai.embeddings.api_base": EMBEDDING_API_BASE,
+    "ai.embeddings.dim": EMBEDDING_DIM,
+}
+
+
+def embedding_readiness(api_base: str, model: str) -> None:
+    """Refuse unless the configured embedding provider answers and lists the model.
+
+    The probe sends no key, uses no proxy, and never logs the response body.
+    """
+    url = f"{api_base.rstrip('/')}/models"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=10) as response:
+            body = response.read()
+    except (OSError, http.client.HTTPException) as error:
+        raise EvidenceError(f"embedding provider unreachable at {url}: {error}") from error
+    try:
+        listed = json.loads(body)
+    except ValueError as error:
+        raise EvidenceError(f"embedding provider at {url} did not answer with JSON") from error
+    entries = listed.get("data") if isinstance(listed, dict) else None
+    # A list, not a set: a listed id may be any JSON value, and only equality is needed here.
+    listed_ids = [entry.get("id") for entry in entries or [] if isinstance(entry, dict)]
+    if model not in listed_ids:
+        raise EvidenceError(f"embedding provider at {url} does not list model {model!r}")
 
 
 def isolated_environment(root: Path, ambient: dict[str, str]) -> dict[str, str]:
@@ -119,6 +156,7 @@ def run_runtime_gobby(
 
 
 def prepare(root: Path) -> None:
+    embedding_readiness(EMBEDDING_API_BASE, EMBEDDING_MODEL)
     # These changes affect this isolated setup process only, never its parent session.
     clean = isolated_environment(root, dict(os.environ))
     for name in tuple(os.environ):
@@ -173,10 +211,7 @@ def prepare(root: Path) -> None:
                 "databases.qdrant.port": PORTS["qdrant_http"],
                 "databases.falkordb.host": "127.0.0.1",
                 "databases.falkordb.port": PORTS["falkordb"],
-                "ai.embeddings.model": "text-embedding-nomic-embed-text-v1.5@f16",
-                "ai.embeddings.api_base": "http://127.0.0.1:1234/v1",
-                "ai.embeddings.dim": 768,
-                "ai.embeddings.query_prefix": "search_query: ",
+                **EMBEDDING_VALUES,
             },
             "falkordb_password": credentials["BAKEOFF_FALKORDB_PASSWORD"],
         },

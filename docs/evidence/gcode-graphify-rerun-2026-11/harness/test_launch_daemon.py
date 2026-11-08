@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import email.message
 import errno
 import hashlib
+import io
 import json
 import os
 import signal
 import socket
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +24,7 @@ from launch_daemon import (
     SrtRunner,
     backend_environment,
     daemon_argv,
+    daemon_health_failure,
     launch,
     srt_policy,
     srt_wrapped_argv,
@@ -64,7 +69,7 @@ def test_failed_launch_keeps_its_records_when_the_daemon_never_becomes_healthy(
 ) -> None:
     process = _FakeProcess()
     _patch_launch(monkeypatch, process)
-    monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: False)
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", lambda url: "no answer")
 
     with pytest.raises(EvidenceError, match="not healthy") as caught:
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
@@ -81,12 +86,26 @@ def test_failed_launch_keeps_its_records_when_the_wrapper_exits_before_the_daemo
     process = _FakeProcess()
     process.returncode = 1
     _patch_launch(monkeypatch, process)
-    monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: False)
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", lambda url: "no answer")
 
     with pytest.raises(EvidenceError, match="exited before"):
         launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_a_daemon_that_stays_degraded_is_refused_and_names_its_components(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_launch(monkeypatch, _FakeProcess())
+    monkeypatch.setattr(
+        launch_daemon,
+        "daemon_health_failure",
+        lambda url: "status 'degraded'; degraded components: llm_service",
+    )
+
+    with pytest.raises(EvidenceError, match="llm_service"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
 
 def test_launch_probes_the_health_route_on_the_bootstrap_daemon_port(
@@ -95,15 +114,101 @@ def test_launch_probes_the_health_route_on_the_bootstrap_daemon_port(
     urls: list[str] = []
     _patch_launch(monkeypatch, _FakeProcess())
 
-    def healthy(url: str) -> bool:
+    def healthy(url: str) -> None:
         urls.append(url)
-        return True
 
-    monkeypatch.setattr(launch_daemon, "daemon_healthy", healthy)
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", healthy)
 
     launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
     assert urls == ["http://127.0.0.1:59480/api/health"]
+
+
+HEALTH_URL = "http://127.0.0.1:59480/api/health"
+
+
+class _HealthAnswer:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    def __enter__(self) -> _HealthAnswer:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _answer_health(monkeypatch: pytest.MonkeyPatch, status: int, body: bytes) -> None:
+    class _Opener:
+        def open(self, url: str, timeout: float) -> _HealthAnswer:
+            return _HealthAnswer(status, body)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+
+
+def test_a_health_answer_passes_only_when_its_status_is_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    _answer_health(monkeypatch, 200, b'{"status": "ok", "degraded_services": []}')
+
+    assert daemon_health_failure(HEALTH_URL) is None
+
+
+def test_a_degraded_200_fails_and_names_its_degraded_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {
+        "status": "degraded",
+        "degraded_services": ["llm_service", "memory_embeddings"],
+        "install_dir": "/operator/checkout",
+    }
+    _answer_health(monkeypatch, 200, json.dumps(body).encode())
+
+    failure = daemon_health_failure(HEALTH_URL)
+
+    assert failure is not None
+    assert "llm_service" in failure
+    assert "memory_embeddings" in failure
+    assert "/operator/checkout" not in failure
+
+
+def test_an_incompatible_hook_runtime_fails_and_names_its_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {
+        "status": "degraded",
+        "degraded_services": [],
+        "hook_runtime": {"state": "stale_version", "compatible": False},
+    }
+    _answer_health(monkeypatch, 200, json.dumps(body).encode())
+
+    failure = daemon_health_failure(HEALTH_URL)
+
+    assert failure is not None
+    assert "stale_version" in failure
+
+
+def test_a_200_whose_body_is_not_json_is_not_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    _answer_health(monkeypatch, 200, b"<html>not the health route</html>")
+
+    assert daemon_health_failure(HEALTH_URL) is not None
+
+
+def test_an_http_error_status_is_not_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Refusing:
+        def open(self, url: str, timeout: float) -> _HealthAnswer:
+            raise urllib.error.HTTPError(
+                url, 503, "Service Unavailable", email.message.Message(), io.BytesIO()
+            )
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Refusing())
+
+    failure = daemon_health_failure(HEALTH_URL)
+
+    assert failure is not None
+    assert "503" in failure
 
 
 def test_srt_policy_allows_writes_only_under_the_runtime_root() -> None:
@@ -283,7 +388,7 @@ def wrapper_leads_its_group(monkeypatch: pytest.MonkeyPatch) -> None:
     """Launches lead their own group and answer healthy unless a test says otherwise."""
     monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(launch_daemon, "_pause", lambda seconds: None)
-    monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: True)
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", lambda url: None)
 
 
 class _FakeSocket:

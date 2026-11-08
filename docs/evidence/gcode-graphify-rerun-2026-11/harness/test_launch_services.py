@@ -115,11 +115,11 @@ def test_observe_refuses_when_the_daemon_is_not_alive_and_healthy(
     root = _observable_root(tmp_path, monkeypatch)
     probed: list[str] = []
 
-    def unhealthy(url: str) -> bool:
+    def unhealthy(url: str) -> str:
         probed.append(url)
-        return False
+        return "no answer"
 
-    monkeypatch.setattr(launch_daemon, "daemon_healthy", unhealthy)
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", unhealthy)
 
     with pytest.raises(EvidenceError, match="daemon is not alive and healthy"):
         launch_services.observe(root, {}, "attempt-1")
@@ -133,11 +133,10 @@ def test_observe_passes_when_the_containers_and_the_daemon_are_healthy(
     root = _observable_root(tmp_path, monkeypatch)
     probed: list[str] = []
 
-    def healthy(url: str) -> bool:
+    def healthy(url: str) -> None:
         probed.append(url)
-        return True
 
-    monkeypatch.setattr(launch_daemon, "daemon_healthy", healthy)
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", healthy)
 
     launch_services.observe(root, {}, "attempt-1")
 

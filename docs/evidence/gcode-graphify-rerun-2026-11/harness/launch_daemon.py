@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -90,31 +91,66 @@ def daemon_health_url(root: Path) -> str:
     return f"http://127.0.0.1:{config['daemon_port']}{HEALTH_PATH}"
 
 
-def daemon_healthy(url: str) -> bool:
-    """A 200 from the health route through a direct connection, never a proxy from the ambient env."""
+def daemon_health_failure(url: str) -> str | None:
+    """Return None only for HTTP 200 with JSON status "ok"; otherwise the reason.
+
+    The probe goes direct, never through a proxy from the ambient env. It reads the body for
+    its status and component names only, and never echoes it.
+    """
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         with opener.open(url, timeout=2) as response:
-            return response.status == 200
-    except (OSError, http.client.HTTPException):
-        return False
+            status, body = response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return f"HTTP {error.code}"
+    except (OSError, http.client.HTTPException) as error:
+        return f"no answer ({error})"
+    if status != 200:
+        return f"HTTP {status}"
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return "HTTP 200 with a body that is not JSON"
+    if not isinstance(payload, dict):
+        return "HTTP 200 with a JSON body that is not an object"
+    if payload.get("status") == "ok":
+        return None
+    named = ", ".join(_degraded_components(payload)) or "none named"
+    return f"status {payload.get('status')!r}; degraded components: {named}"
+
+
+def _degraded_components(payload: dict[str, Any]) -> list[str]:
+    services = payload.get("degraded_services")
+    names = [str(name) for name in services] if isinstance(services, list) else []
+    hook_runtime = payload.get("hook_runtime")
+    if isinstance(hook_runtime, dict) and hook_runtime.get("compatible") is False:
+        names.append(f"hook_runtime {hook_runtime.get('state')}")
+    return names
 
 
 def require_daemon_healthy(root: Path) -> None:
     url = daemon_health_url(root)
-    require(daemon_healthy(url), f"the daemon is not alive and healthy at {url}; step stops")
+    failure = daemon_health_failure(url)
+    require(
+        failure is None,
+        f"the daemon is not alive and healthy at {url}: {failure}; step stops",
+    )
 
 
 def _await_daemon_healthy(process: subprocess.Popen[bytes], url: str) -> None:
+    failure: str | None = None
     for _ in range(HEALTH_ATTEMPTS):
         if process.poll() is not None:
             raise EvidenceError(
                 f"the daemon wrapper exited before it was healthy (returncode {process.returncode})"
             )
-        if daemon_healthy(url):
+        failure = daemon_health_failure(url)
+        if failure is None:
             return
         _pause(HEALTH_POLL_SECONDS)
-    raise EvidenceError(f"the daemon is not healthy at {url} after {HEALTH_ATTEMPTS} probes")
+    raise EvidenceError(
+        f"the daemon is not healthy at {url} after {HEALTH_ATTEMPTS} probes; last probe: {failure}"
+    )
 
 
 def srt_policy(root: Path, home: Path) -> dict[str, Any]:
