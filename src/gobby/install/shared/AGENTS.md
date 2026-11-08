@@ -46,9 +46,10 @@ definition; an empty list admits every sender. The daemon's system sender and
 the operator's own unspawned terminal are exempt. The bundled Orchestrator
 requires `message_restricted_seats`, granted to the Assistant, Triage,
 DevOps and Orchestrator definitions. A refused direct send returns
-`message_recipient_not_allowed`; fanout withholds that recipient. Triage sends
-every message to the Orchestrator with `wake=true`, including digests. Omitted
-`wake` follows the ordinary direct-target default for every definition.
+`message_recipient_not_allowed`; fanout withholds that recipient. Omitted
+`wake` follows the ordinary direct-target default for every definition. A seat on a
+node-hosted terminal never takes a typed wake; its message stays queued until its
+next tool call.
 
 Use a targetless `project` broadcast for coordination inside the current repository.
 Use targetless `global` only for machine-local coordination across projects. The

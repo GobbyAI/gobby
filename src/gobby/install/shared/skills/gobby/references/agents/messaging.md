@@ -66,7 +66,7 @@ recipient can read it; anyone else sees `attachment_not_found`.
 For a developer review, address the task's assigned developer through the declared
 report route. Orchestrator rulings and dispositions go through Triage, which retrieves
 the complete document with `get_attachment` and forwards it to the target seat with
-`send_attachment` and `wake=true`. Forwarding creates new message IDs; give those
+`send_attachment`. Forwarding creates new message IDs; give those
 recipient-addressed IDs to the developer, since only each message's sender and recipient
 may retrieve it.
 
@@ -121,5 +121,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 2.4.1_
+_Version: 2.4.2_
 _Last verified: 2026-11-06_
