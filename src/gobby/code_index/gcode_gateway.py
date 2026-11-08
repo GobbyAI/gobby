@@ -17,6 +17,7 @@ from pathlib import Path, PurePath, PureWindowsPath
 from time import perf_counter
 from typing import Any
 
+from gobby.code_index.gcode_reconcile import GcodeReconcileMixin
 from gobby.code_index.gcode_versions import (
     GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION,
     MIN_GCODE_GRAPH_VERSION,
@@ -407,7 +408,7 @@ def _classify_gcode_command_error(
     return GcodeCommandError(command, returncode, stderr_text, stdout=stdout_text)
 
 
-class GcodeGateway:
+class GcodeGateway(GcodeReconcileMixin):
     """Small async subprocess wrapper for gcode projection commands."""
 
     def __init__(
