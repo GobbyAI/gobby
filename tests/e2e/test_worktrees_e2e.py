@@ -106,13 +106,9 @@ def git_repo_with_origin(
     WorktreeGitManager.create_worktree fetches from origin, so we need
     to set up a bare repo as origin for the test.
     """
-    # Remove the pre-existing project.json created by e2e_project_dir
-    # This allows the daemon to auto-initialize the project properly
-    # (creating it in the database, not just the file)
     gobby_dir = e2e_project_dir / ".gobby"
+    gobby_dir.mkdir(parents=True, exist_ok=True)
     project_json = gobby_dir / "project.json"
-    if project_json.exists():
-        project_json.unlink()
 
     # Create a bare repo to serve as "origin"
     origin_path = tmp_path_factory.mktemp("origin")
@@ -204,16 +200,15 @@ def git_repo_with_origin(
 
     project_id = "00000000-0000-4000-8000-000000000003"
     project_name = e2e_project_dir.name
+    # The register endpoint proves the checkout marker before it inserts anything,
+    # so the marker must name this project id before the call.
+    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
     cli_events.register_test_project(
         project_id=project_id,
         name=project_name,
         repo_path=str(e2e_project_dir),
     )
     wait_for_project_registration(daemon_instance, project_id)
-
-    # Write project.json with the created project's ID
-    project_json = gobby_dir / "project.json"
-    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
 
     return e2e_project_dir
 

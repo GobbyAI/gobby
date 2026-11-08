@@ -67,18 +67,10 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             project_manager = LocalProjectManager(db)
 
-            # Create the project with the specific ID; checkout is a separate row.
-            inserted = db.execute(
-                """
-                INSERT INTO projects (id, name)
-                VALUES (%s, %s)
-                ON CONFLICT (id) DO NOTHING
-                RETURNING id
-                """,
-                (request.project_id, request.name),
-            ).fetchone()
-            if inserted is not None and request.repo_path:
-                from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+            # Prove the checkout marker before any insert, so a refused registration
+            # leaves no projects row behind. Existing projects skip this, as before.
+            checkout: tuple[str, str] | None = None
+            if request.repo_path and project_manager.get(request.project_id) is None:
                 from gobby.storage.workspace_machine_scope import require_local_machine_id
                 from gobby.utils.checkout_root import validate_checkout_root
 
@@ -94,6 +86,22 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                     candidate_path=request.repo_path,
                     expected_marker_id=request.project_id,
                 )
+                checkout = (machine_id, root)
+
+            # Create the project with the specific ID; checkout is a separate row.
+            inserted = db.execute(
+                """
+                INSERT INTO projects (id, name)
+                VALUES (%s, %s)
+                ON CONFLICT (id) DO NOTHING
+                RETURNING id
+                """,
+                (request.project_id, request.name),
+            ).fetchone()
+            if inserted is not None and checkout is not None:
+                from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+                machine_id, root = checkout
                 LocalProjectCheckoutManager(db).register(machine_id, request.project_id, root)
 
             if inserted is None:
