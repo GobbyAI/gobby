@@ -5,6 +5,7 @@ definition, rule or pipeline except the exempt `default` definition.
 """
 
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
@@ -24,7 +25,7 @@ from gobby.tasks.attestations import (
     list_attestations,
     record_attestation,
 )
-from gobby.tasks.closure_policy import ClosureSnapshot, evaluate_closure_policy
+from gobby.tasks.closure_policy import ClosureDecision, ClosureSnapshot, evaluate_closure_policy
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -394,7 +395,7 @@ def test_bundled_closure_gate_blocks_an_implementers_review_and_passes_an_indepe
 
 
 @pytest.mark.parametrize("event", ["task_close", "task_land"])
-def test_legacy_self_review_never_blocks_closure_or_landing(
+def test_legacy_review_never_blocks_closure_or_landing(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     event: Literal["task_close", "task_land"],
@@ -402,6 +403,7 @@ def test_legacy_self_review_never_blocks_closure_or_landing(
     project_id = sample_project["id"]
     _install_bundled_closure_rules(temp_db, project_id)
     implementation_kind, _makers = _declared_authorship()
+    legacy_kind = _legacy_kind()
     seats = AgentSessions(temp_db, project_id)
     # Recorded before enforcement: this implementer's definition does not select the rule.
     implementer = seats.add(
@@ -416,7 +418,7 @@ def test_legacy_self_review_never_blocks_closure_or_landing(
     )
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, implementation_kind)
-    _submit(temp_db, implementer, task.id, "self-review")
+    _submit(temp_db, implementer, task.id, legacy_kind)
     _submit(temp_db, reviewer, task.id, "sign-off")
     rules = RuleDefinitionManager(temp_db).list_effective(project_id)
 
@@ -427,7 +429,7 @@ def test_legacy_self_review_never_blocks_closure_or_landing(
     assert decision.allowed, decision.blockers
 
 
-def test_selecting_implementer_is_refused_a_new_self_review(
+def test_selecting_implementer_is_refused_a_new_review_of_its_work(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     project_id = sample_project["id"]
@@ -444,15 +446,45 @@ def test_selecting_implementer_is_refused_a_new_self_review(
     task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
     _submit(temp_db, implementer, task.id, implementation_kind)
 
+    legacy_kind = _legacy_kind()
     with pytest.raises(AttestationError, match="independent seat"):
-        _submit(temp_db, implementer, task.id, "self-review")
+        _submit(temp_db, implementer, task.id, legacy_kind)
 
     assert [record.kind for record in list_attestations(temp_db, task.id)] == [implementation_kind]
 
 
-# The review kind the independent-review gate reads. Naming it here is the one kind literal
-# this regression needs; the rest of the spike path comes from bundled YAML.
-_INDEPENDENT_REVIEW = "independent-review"
+def _legacy_kind() -> str:
+    """The review kind the authorship gate exempts, read from its rule text.
+
+    A record of that kind, made before enforcement, must not block closure or landing.
+    """
+    _implementation, makers = _declared_authorship()
+    exempted: set[str] = set()
+    for document in _authorship_documents():
+        for body in (document.get("rules") or {}).values():
+            for group in re.findall(r"not in \[([^\]]*)\]", body.get("when") or ""):
+                exempted |= {item.strip().strip("'\"") for item in group.split(",")}
+    legacy = exempted - makers
+    assert len(legacy) == 1, f"expected one exempted legacy kind, got {sorted(legacy)}"
+    (kind,) = legacy
+    return kind
+
+
+def _gate_review_kind(
+    decision: ClosureDecision, documents: list[dict[str, Any]], implementation_kind: str
+) -> str:
+    """The review kind the closure rules behind a blocked decision read, besides implementation."""
+    blockers = set(decision.blockers)
+    kinds: set[str] = set()
+    for document in documents:
+        for body in (document.get("rules") or {}).values():
+            reasons = {effect.get("reason") for effect in body.get("effects") or []}
+            if reasons & blockers:
+                kinds |= set(re.findall(r"latest_attestation\('([^']+)'\)", body.get("when") or ""))
+    kinds.discard(implementation_kind)
+    assert len(kinds) == 1, f"expected one review kind behind the blocker, got {sorted(kinds)}"
+    (kind,) = kinds
+    return kind
 
 
 def _research_spike_definition() -> dict[str, Any]:
@@ -494,7 +526,8 @@ def test_research_spike_closes_on_its_implementation_and_an_independent_review(
     project_id = sample_project["id"]
     spike = _research_spike_definition()
     implementation_kind, _makers = _declared_authorship()
-    _install_rules(temp_db, project_id, _closure_documents_selected_by(spike))
+    documents = _closure_documents_selected_by(spike)
+    _install_rules(temp_db, project_id, documents)
     seats = AgentSessions(temp_db, project_id)
     author = seats.add(
         spike["name"],
@@ -555,13 +588,14 @@ def test_research_spike_closes_on_its_implementation_and_an_independent_review(
     before = evaluate_closure_policy(closing_snapshot(), agent=closer, rules=rules)
     assert not before.allowed
     assert any("candidate review" in reason for reason in before.blockers)
+    review_kind = _gate_review_kind(before, documents, implementation_kind)
 
     record_attestation(
         temp_db,
         task_id=task.id,
         session_id=reviewer,
         submission=AttestationSubmission(
-            kind=_INDEPENDENT_REVIEW, result="approved", summary="Observed.", reference=candidate
+            kind=review_kind, result="approved", summary="Observed.", reference=candidate
         ),
     )
     after = evaluate_closure_policy(closing_snapshot(), agent=closer, rules=rules)
