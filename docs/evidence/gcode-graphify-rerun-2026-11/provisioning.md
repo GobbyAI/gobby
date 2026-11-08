@@ -47,11 +47,11 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
    - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by
      nothing, through probe receipts;
    - asserts zero `code_indexed_file_states` rows for every workspace project.
-4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules and the gobby package under "Gobby modules checked before step 4". It launches the supervised path, `gobby-home/bin/gdaemon serve`, with `GOBBY_BACKEND_COMMAND` set to `tools/gobby/venv/bin/python -m gobby.runner --config <bootstrap>`, so gdaemon runs the backend. The step records the launch in `active-launches.json`, then polls `GET http://127.0.0.1:<daemon_port>/api/healthz` (120 probes, one second apart). It fails unless the daemon answers 200 and the wrapper is still alive. A failed launch stops its srt wrapper group and keeps its records (`receipts/daemon-launch-<attempt>.json`, `receipts/active-launches.json`, `logs/install/daemon-<attempt>.log`). Its error carries the note `cleanup unproven`, because gdaemon starts its backend in a process group the harness cannot observe. Any kept record blocks every later launch, whatever its attempt name, before the port probe runs. The refusal names every kept record, the recorded process group (the srt wrapper's), and the clear command: confirm with `ps -axo pid,pgid,comm` that no gdaemon or backend process remains, then `rm -- <every named record>`. The backend's process group is not recorded.
+4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules and the gobby package under "Gobby modules checked before step 4". It launches the supervised path, `gobby-home/bin/gdaemon serve`, with `GOBBY_BACKEND_COMMAND` set to `tools/gobby/venv/bin/python -m gobby.runner --config <bootstrap>`, so gdaemon runs the backend. The step records the launch in `active-launches.json`, then polls `GET http://127.0.0.1:<daemon_port>/api/health` (120 probes, one second apart). It fails unless the daemon answers 200 and the wrapper is still alive. A failed launch stops its srt wrapper group and keeps its records (`receipts/daemon-launch-<attempt>.json`, `receipts/active-launches.json`, `logs/install/daemon-<attempt>.log`). Its error carries the note `cleanup unproven`, because gdaemon starts its backend in a process group the harness cannot observe. Any kept record blocks every later launch, whatever its attempt name, before the port probe runs. The refusal names every kept record, the recorded process group (the srt wrapper's), and the clear command: confirm with `ps -axo pid,pgid,comm` that no gdaemon or backend process remains, then `rm -- <every named record>`. The backend's process group is not recorded.
 5. `record_installations.py --owner-session <session> --attempt <id>`.
 6. `launch_services.py observe --owner-session <session> --attempt <id>` writes the after-snapshot
    if absent. It fails unless the containers are healthy and the daemon is alive and healthy at its
-   `/api/healthz` route.
+   `/api/health` route.
 7. `c0.py <attempt> --owner-session <session>`: the C0 run, described below.
 8. `validate_environment.py --live`.
 
@@ -181,7 +181,7 @@ is checked at step 8 by `validate_environment.py --live`, through `schema_head.s
 - `code_indexed_file_states` and its `project_id` column are assumed from the plan. Verify the
   table name against the schema before the first provision.
 - `teardown` removes data as well as containers. It runs only in leaf 2.2.
-- The supervised daemon launch (`gdaemon serve` with `GOBBY_BACKEND_COMMAND`), the `/api/healthz`
+- The supervised daemon launch (`gdaemon serve` with `GOBBY_BACKEND_COMMAND`), the `/api/health`
   probe on the daemon port, and the graphify help placement of `--max-workers` have not run live.
   The cause of the C0 interpreter denial is inferred from the symlink layout; the runtime root's
   violations log was not readable here. Each is confirmed only by a live run.

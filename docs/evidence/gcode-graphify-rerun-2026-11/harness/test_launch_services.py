@@ -124,7 +124,7 @@ def test_observe_refuses_when_the_daemon_is_not_alive_and_healthy(
     with pytest.raises(EvidenceError, match="daemon is not alive and healthy"):
         launch_services.observe(root, {}, "attempt-1")
 
-    assert probed == ["http://127.0.0.1:59480/api/healthz"]
+    assert probed == ["http://127.0.0.1:59480/api/health"]
 
 
 def test_observe_passes_when_the_containers_and_the_daemon_are_healthy(
@@ -141,7 +141,7 @@ def test_observe_passes_when_the_containers_and_the_daemon_are_healthy(
 
     launch_services.observe(root, {}, "attempt-1")
 
-    assert probed == ["http://127.0.0.1:59480/api/healthz"]
+    assert probed == ["http://127.0.0.1:59480/api/health"]
 
 
 def test_every_project_must_hold_zero_indexed_rows() -> None:

@@ -60,7 +60,8 @@ GOBBY_STEP_MODULES = (
 GOBBY_PACKAGE = "gobby"
 
 
-HEALTH_PATH = "/api/healthz"
+# The backend's public liveness route; the auth middleware exempts it, so the probe sends no key.
+HEALTH_PATH = "/api/health"
 HEALTH_ATTEMPTS = 120
 HEALTH_POLL_SECONDS = 1
 

@@ -103,7 +103,7 @@ def test_launch_probes_the_health_route_on_the_bootstrap_daemon_port(
 
     launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
 
-    assert urls == ["http://127.0.0.1:59480/api/healthz"]
+    assert urls == ["http://127.0.0.1:59480/api/health"]
 
 
 def test_srt_policy_allows_writes_only_under_the_runtime_root() -> None:
