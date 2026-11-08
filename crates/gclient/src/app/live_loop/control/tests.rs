@@ -10,8 +10,63 @@ use super::{apply_control_outcome, apply_outage_grant};
 use crate::app::live_control::ControlOutcome;
 use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
 use crate::daemon::LiveDaemon;
-use crate::frame_source::{AttachLocator, PaneFrameSource, UnixSocketFrameSource};
+use crate::frame_source::{
+    AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
+};
 use crate::ui::Chrome;
+
+#[tokio::test]
+async fn a_roster_refresh_requests_control_for_new_focus_or_a_pending_attachment() {
+    for pending_attachment in [false, true] {
+        let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+            .expect("unconnected daemon handle");
+        let mut workspace = Workspace::live(daemon);
+        let pane_id = PaneId(1);
+        let mut pane = Pane::new(pane_id, "terminal-1", Backend::Native, "epoch-1");
+        if pending_attachment {
+            pane.defer_attach("waiting", "host not ready", tokio::time::Instant::now());
+            workspace.focus = Some(pane_id);
+        }
+        workspace.panes.insert(pane_id, pane);
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(pane_id, "terminal-1");
+
+        super::super::request_focused_control(&mut workspace, &chrome);
+
+        let requested = workspace.pending_control.expect("focus asks for control");
+        assert_eq!(requested.pane_id, pane_id);
+        assert!(!requested.takeover, "roster focus never displaces a peer");
+    }
+}
+
+/// A roster answer is a read: it must not take control back from an
+/// already-focused pane that recovery left observing.
+#[tokio::test]
+async fn a_roster_refresh_keeps_an_existing_live_focus_observing() {
+    for transport in [Transport::Direct, Transport::Proxy] {
+        let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+            .expect("unconnected daemon handle");
+        let mut workspace = Workspace::live(daemon);
+        let pane_id = PaneId(1);
+        let mut pane = Pane::new(pane_id, "terminal-1", Backend::Native, "epoch-1");
+        pane.install_frame_source(PaneFrameSource::Scripted(ScriptedFrameSource::new(
+            transport,
+        )));
+        assert!(pane.is_live());
+        assert_eq!(pane.control, ControlState::Observe);
+        workspace.panes.insert(pane_id, pane);
+        workspace.focus = Some(pane_id);
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(pane_id, "terminal-1");
+
+        super::super::request_focused_control(&mut workspace, &chrome);
+
+        assert!(
+            workspace.pending_control.is_none(),
+            "an unchanged live focus must keep observing after a roster refresh: {transport:?}"
+        );
+    }
+}
 
 /// A direct frame source whose socket is cut after the handshake, so every
 /// host write through it fails the way a write to a departed host does.
