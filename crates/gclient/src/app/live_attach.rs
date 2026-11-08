@@ -572,12 +572,18 @@ async fn request_proxy_source(
         .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
         .to_string();
     claim_writer_lease(daemon, terminal_id, &attachment).await?;
-    let mut source = ProxyFrameSource::from_attachment(
+    let mut source = match ProxyFrameSource::from_attachment(
         daemon.clone(),
         terminal_id,
         attachment.clone(),
         receiver,
-    )?;
+    ) {
+        Ok(source) => source,
+        Err(error) => {
+            ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment).await;
+            return Err(error);
+        }
+    };
     let rows = reply
         .get("rows")
         .and_then(Value::as_u64)
@@ -588,9 +594,13 @@ async fn request_proxy_source(
         .and_then(Value::as_u64)
         .and_then(|value| u16::try_from(value).ok())
         .unwrap_or(80);
-    source
+    if let Err(error) = source
         .send(&ClientMessage::SetViewport { rows, cols })
-        .await?;
+        .await
+    {
+        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment).await;
+        return Err(error);
+    }
     Ok(ProxyAttachOutcome::Attached(reply, attachment, source))
 }
 

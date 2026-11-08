@@ -1,17 +1,20 @@
 //! Semantic-frame relay over the daemon terminal WebSocket.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io::Cursor;
+use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use gobby_terminal::protocol::{read_message, ClientMessage, ServerMessage, MAX_FRAME_SIZE};
 use serde_json::{json, Value};
 use tokio::sync::broadcast::error::TryRecvError;
+use tokio::time::{timeout_at, Instant};
 use uuid::Uuid;
 
 use super::{FrameError, FrameSource, Transport};
-use crate::daemon::{Daemon, DaemonEvent, EventReceiver, LiveDaemon};
+use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, LiveDaemon};
 
 #[derive(Debug)]
 pub struct ProxyFrameSource {
@@ -20,6 +23,37 @@ pub struct ProxyFrameSource {
     attachment_id: String,
     receiver: EventReceiver,
     buffered: VecDeque<ServerMessage>,
+}
+
+async fn detach_with_retry<N, F>(terminal_id: &str, attachment_id: &str, mut notify: N)
+where
+    N: FnMut(Value) -> F,
+    F: Future<Output = Result<(), DaemonError>>,
+{
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let message = json!({
+        "type": "terminal_detach",
+        "request_id": Uuid::new_v4().to_string(),
+        "terminal_id": terminal_id,
+        "attachment_id": attachment_id,
+    });
+    while Instant::now() < deadline {
+        match timeout_at(deadline, notify(message.clone())).await {
+            Ok(Ok(())) => return,
+            Ok(Err(DaemonError::Timeout { request })) if request == "terminal_detach" => {
+                tokio::task::yield_now().await;
+            }
+            // Other notification errors mean the socket is gone or the
+            // attachment is already finalized, so no retry is needed.
+            Ok(Err(_)) => return,
+            Err(_) => break,
+        }
+    }
+    tracing::warn!(
+        %attachment_id,
+        %terminal_id,
+        "terminal detach cleanup deadline expired"
+    );
 }
 
 /// Claims the writer lease for a daemon-written pane. The daemon trusts no
@@ -43,14 +77,7 @@ pub(crate) async fn claim_writer_lease(
         // The attachment already exists on the daemon. A claim that timed out in the
         // write queue may still be written, and the detach queues behind it on the same
         // channel. A closed socket is cleaned up by the daemon's disconnect handling.
-        let _ = daemon
-            .notify(json!({
-                "type": "terminal_detach",
-                "request_id": Uuid::new_v4().to_string(),
-                "terminal_id": terminal_id,
-                "attachment_id": attachment_id,
-            }))
-            .await;
+        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, attachment_id).await;
         return Err(FrameError::Other(error.to_string()));
     }
     Ok(())
@@ -89,7 +116,26 @@ impl ProxyFrameSource {
             .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
             .to_string();
         claim_writer_lease(&daemon, &terminal_id, &attachment_id).await?;
-        Self::from_attachment(daemon, terminal_id, attachment_id, receiver)
+        let source = Self::from_attachment(
+            daemon.clone(),
+            terminal_id.as_str(),
+            attachment_id.as_str(),
+            receiver,
+        );
+        if source.is_err() {
+            Self::detach_failed_attachment(&daemon, &terminal_id, &attachment_id).await;
+        }
+        source
+    }
+
+    pub(crate) async fn detach_failed_attachment(
+        daemon: &LiveDaemon,
+        terminal_id: &str,
+        attachment_id: &str,
+    ) {
+        // Queue cleanup behind the claim on the same connection. If the socket
+        // has closed, daemon disconnect handling finalizes its attachments.
+        detach_with_retry(terminal_id, attachment_id, |message| daemon.notify(message)).await;
     }
 
     pub fn from_attachment(
@@ -291,4 +337,35 @@ fn json_u32(payload: &Value, field: &str) -> Result<u32, FrameError> {
         .and_then(Value::as_u64)
         .ok_or_else(|| FrameError::Protocol(format!("event omitted {field}")))?;
     u32::try_from(value).map_err(|_| FrameError::Protocol(format!("event {field} exceeded u32")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_detach_timeout_retries_once_with_the_same_attachment_id() {
+        let mut attempts = Vec::new();
+        detach_with_retry("terminal-retry", "attachment-retry", |message| {
+            attempts.push(message);
+            std::future::ready(if attempts.len() == 1 {
+                Err(DaemonError::Timeout {
+                    request: "terminal_detach".into(),
+                })
+            } else {
+                Ok(())
+            })
+        })
+        .await;
+        assert_eq!(
+            attempts.len(),
+            2,
+            "one retry after the first notify timeout"
+        );
+        for attempt in &attempts {
+            assert_eq!(attempt["type"], json!("terminal_detach"));
+            assert_eq!(attempt["terminal_id"], json!("terminal-retry"));
+            assert_eq!(attempt["attachment_id"], json!("attachment-retry"));
+        }
+    }
 }

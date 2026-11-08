@@ -1002,6 +1002,103 @@ async fn proxy_attach_claims_the_writer_lease_without_a_takeover() {
 }
 
 #[tokio::test]
+async fn initial_proxy_lag_detaches_before_retry_claim_and_write() {
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let release = mock.hold_ws("terminal_attach", |_| true);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let pending = tokio::spawn(ProxyFrameSource::attach(
+        daemon.clone(),
+        "terminal-initial-lag",
+    ));
+    timeout(
+        IO_TIMEOUT,
+        mock.wait_for_request(|request| {
+            request.body.as_ref().and_then(|body| body.get("type"))
+                == Some(&json!("terminal_attach"))
+        }),
+    )
+    .await
+    .expect("first attach waiting for its reply");
+
+    // The receiver exists before the attach request. Keep its reply held while
+    // overflowing the 256-event bus, then prove the reader consumed every event.
+    let mut framed = Vec::new();
+    write_message(&mut framed, &semantic_frame("initial")).expect("encode buffered frame");
+    let payload = STANDARD.encode(&framed[4..]);
+    for _ in 0..257 {
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-initial-lag",
+            "attachment_id": "attachment-1",
+            "encoding": "bincode-b64",
+            "payload": payload,
+        }))
+        .await;
+    }
+    timeout(
+        IO_TIMEOUT,
+        daemon.send(json!({
+            "type": "subscribe", "events": [], "request_id": "initial-lag-barrier"
+        })),
+    )
+    .await
+    .expect("reader barrier answered")
+    .expect("reader barrier");
+    release.notify_one();
+    let failed = timeout(IO_TIMEOUT, pending)
+        .await
+        .expect("failed attach completed")
+        .expect("attach task joined");
+    assert!(matches!(failed, Err(FrameError::Lag)));
+
+    let retry = ProxyFrameSource::attach(daemon.clone(), "terminal-initial-lag")
+        .await
+        .expect("retry attachment");
+    assert_eq!(retry.attachment_id(), "attachment-2");
+    daemon
+        .notify(json!({
+            "type": "terminal_input",
+            "terminal_id": "terminal-initial-lag",
+            "attachment_id": retry.attachment_id(),
+            "client_write_seq": 1,
+            "data": "retry-b",
+        }))
+        .await
+        .expect("retry write queued");
+    timeout(
+        IO_TIMEOUT,
+        daemon.send(json!({
+            "type": "subscribe", "events": [], "request_id": "retry-write-barrier"
+        })),
+    )
+    .await
+    .expect("wire barrier answered")
+    .expect("wire barrier");
+    let requests: Vec<Value> = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .collect();
+    let detached: Vec<_> = requests
+        .iter()
+        .filter(|body| body.get("type") == Some(&json!("terminal_detach")))
+        .collect();
+    assert_eq!(
+        detached.len(),
+        1,
+        "failed initial attach must release its lease"
+    );
+    assert_eq!(detached[0]["attachment_id"], json!("attachment-1"));
+    // Replay the real wire order through production lease admission: B's
+    // takeover:false claim must succeed, and its input must be admitted.
+    mock_daemon::lease_admission::assert_tmux_write_admission(&requests, "terminal-initial-lag");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn proxy_source_decodes_cell_frames() {
     let mock = mock_daemon::MockDaemon::start("local-token").await;
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
