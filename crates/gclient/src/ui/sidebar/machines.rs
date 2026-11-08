@@ -89,8 +89,7 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
             let is_local = machine == local;
             let on_machine = || {
                 model
-                    .agents
-                    .iter()
+                    .rollup_agents()
                     .filter(move |agent| agent.machine_id == machine)
             };
             // An unreachable local daemon is a machine with no live agents. A
