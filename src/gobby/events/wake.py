@@ -164,9 +164,7 @@ class WakeDispatcher:
         lifecycle_refresh: LifecycleRefresh | None = None,
         activity_probe: ActivityProbe | None = None,
         attention_manager: AttentionStateManager | None = None,
-        remote_wake_sender: NativeBatchSender | None = None,
     ) -> None:
-        self._remote_wake_sender = remote_wake_sender
         self._session_manager = session_manager
         self._ism_manager = ism_manager
         self._tmux_sender = tmux_sender
@@ -785,7 +783,8 @@ class WakeDispatcher:
         ``release_composer``; any other read retires it (``composer_attention``).
 
         A node terminal's composer is the node's report, read from the hub store.
-        Only an empty one takes the wake; the activity probe and turn checks are
+        Only an empty one passes this check, and target_gate then withholds every
+        node terminal, so no node wake types. The activity probe and turn checks are
         local-only and do not run for it.
         """
         if terminal is not None and not is_local_machine(terminal.machine_id):

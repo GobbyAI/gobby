@@ -3,8 +3,9 @@
 A wake types into a local terminal only where send_keys could: a live agent CLI in the
 foreground, no credential prompt on screen, and an idle agent composer. The send_keys gate
 owns those rules, so the wake calls it rather than keeping a second probe. A node terminal
-is exempt: the hub reads no local pane or process for it, so its composer report, read in
-the composer check, is the only signal the hub has.
+is never typed into: the hub reads no local pane or process for it, and its composer report
+is only a stored copy that can go stale, so the wake is withheld and the message waits for
+the seat's next tool call.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from gobby.hub.machine_routing import is_local_machine
 
 if TYPE_CHECKING:
     from gobby.events.wake import WakeDispatcher
+
+NODE_TERMINAL_WITHHELD = "node_terminal_withheld"
 
 
 async def target_gate(
@@ -30,7 +33,14 @@ async def target_gate(
     composer probe already read it.
     """
     if terminal is not None and not is_local_machine(terminal.machine_id):
-        return None
+        return {
+            "session_id": session_id,
+            "delivered": False,
+            "method": "terminal",
+            "skipped": NODE_TERMINAL_WITHHELD,
+            "decline_reason": NODE_TERMINAL_WITHHELD,
+            "ism_persisted": True,
+        }
     # Imported lazily: the send_keys package imports terminal and agent modules that
     # themselves import the events package.
     from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import (
