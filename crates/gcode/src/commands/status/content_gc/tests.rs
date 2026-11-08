@@ -1,8 +1,14 @@
 use super::*;
+use std::io::Write as _;
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
+use crate::config::QdrantConfig;
 use crate::index::hasher;
+use crate::vector::code_symbols::tests::{accept_with_timeout, read_http_request};
 
 // Commits every change under `root` with a fixed identity and no hooks.
 fn commit_fixture(root: &Path) {
@@ -1726,6 +1732,113 @@ mod serial_db {
             grant_ai: None,
             index_scope: crate::config::ProjectIndexScope::Single,
         }
+    }
+
+    /// Answers one Qdrant request with success and returns the raw request it received.
+    fn serve_qdrant_delete(listener: &TcpListener) -> String {
+        let mut stream =
+            accept_with_timeout(listener, Duration::from_secs(30)).expect("qdrant delete request");
+        let request = read_http_request(&mut stream);
+        let body = r#"{"result":{"operation_id":1,"status":"completed"},"status":"ok"}"#;
+        write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("respond to qdrant");
+        request
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn collected_version_deletes_its_qdrant_symbol_points() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-qdrant");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        let expired_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "gc-hash-old",
+            60,
+            true,
+        );
+        seed_symbol(&mut conn, &project_id, "src/lib.rs", "gc-hash-old");
+
+        let mut discovered = discover_content_gc(&test_context(&database_url, &project_id), 17)
+            .expect("discover GC candidates");
+        let [candidate] = discovered.as_mut_slice() else {
+            panic!("expected one collectable version, got {}", discovered.len());
+        };
+        assert_eq!(candidate.id, expired_id);
+        assert_eq!(
+            candidate.symbol_ids.len(),
+            1,
+            "the collected version must carry its symbol point"
+        );
+        // No FalkorDB is configured here; this test pins the Qdrant deletion only.
+        candidate.has_graph_facts = false;
+        let symbol_ids = candidate.symbol_ids.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind qdrant service");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking qdrant service");
+        let url = format!("http://{}", listener.local_addr().expect("service address"));
+        let service = thread::spawn(move || serve_qdrant_delete(&listener));
+        let qdrant_context = |project_id: &str| {
+            let mut ctx = test_context(&database_url, project_id);
+            ctx.qdrant = Some(QdrantConfig {
+                url: Some(url.clone()),
+                api_key: None,
+            });
+            ctx
+        };
+        let totals = prune_content_versions_with(
+            &qdrant_context(&project_id),
+            &discovered,
+            || false,
+            |project_id| Ok(qdrant_context(project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .expect("prune content versions");
+        assert_eq!(
+            (
+                totals.deleted_versions,
+                totals.failed_versions,
+                totals.skipped_versions,
+                totals.busy_projects,
+            ),
+            (1, 0, 0, 0),
+            "the collected version is deleted"
+        );
+        let request = service.join().expect("qdrant service thread");
+
+        assert!(
+            request.starts_with("POST ") && request.contains("/points/delete"),
+            "collecting the version must delete its Qdrant points: {request}"
+        );
+        let (_, body) = request
+            .split_once("\r\n\r\n")
+            .expect("request has a header end");
+        let body: serde_json::Value = serde_json::from_str(body).expect("delete body is JSON");
+        assert_eq!(
+            body["points"],
+            serde_json::json!(symbol_ids),
+            "content GC must delete exactly the collected version's symbol points"
+        );
+        assert_eq!(content_row_count(&mut conn, &expired_id), 0);
     }
 
     fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {

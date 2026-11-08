@@ -67,7 +67,10 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         # gcode: vector prune on sync, missing-vector repair and the landing lock wait changed in #25810 under installed 1.9.108.
         ("gcode", "1.9.109"),
         # gcode: explicit-file repair scope, pinned-overlay scroll guard and the bounded hook lock wait changed in #25810 under installed 1.9.109.
+        # gcode: explicit-file repair scope, pinned-overlay scroll guard and the bounded hook lock wait changed in #25810 under installed 1.9.110.
         ("gcode", "1.9.110"),
+        # gcode: timed-out index lock paths persist for the next index run, changed in #25810 under installed 1.9.110.
+        ("gcode", "1.9.111"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
     ],

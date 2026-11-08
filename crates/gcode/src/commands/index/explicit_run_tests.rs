@@ -1,10 +1,13 @@
 //! An explicit-file index run repairs vectors through `run_index_locked`, the entry point the
 //! CLI and trigger paths share. The repair stays scoped to the files the run names.
 
-use super::run_index_locked;
+use super::{run_index_locked, run_with_lock_policy};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope, QdrantConfig};
 use crate::db;
-use crate::index::indexer::{IndexOptions, IndexRequest, index_files};
+use crate::index::indexer::{IndexOptions, IndexRequest, IndexTimings, index_files};
+use crate::index_lock::{self, IndexLockPolicy};
+use crate::index_pending;
+use crate::output::Format;
 use crate::vector::code_symbols::tests::{accept_with_timeout, read_http_request};
 use serde_json::{Value, json};
 use std::io::Write;
@@ -114,6 +117,104 @@ fn explicit_file_run_repairs_only_the_files_it_names() {
     );
 }
 
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn timed_out_explicit_paths_are_indexed_by_the_next_run() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_root = project_tempdir();
+    let gobby_home = project_tempdir();
+    let project_id = unique_test_project_id("gcode-explicit-run-queue");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    write_file(project_root.path(), KEPT, b"pub fn kept() -> u8 { 1 }\n");
+    write_file(project_root.path(), OTHER, b"pub fn other() -> u8 { 2 }\n");
+    let ctx = test_context(
+        database_url,
+        project_root.path().to_path_buf(),
+        project_id.clone(),
+    );
+    let explicit_run = |rel: &str| IndexRequest {
+        project_root: project_root.path().to_path_buf(),
+        path_filter: None,
+        explicit_files: vec![project_root.path().join(rel)],
+        full: false,
+        require_cpp_semantics: false,
+        sync_projections: false,
+    };
+
+    temp_env::with_var("GOBBY_HOME", Some(gobby_home.path()), || {
+        let queue_dir = index_pending::pending_dir(&project_id).expect("queue dir");
+        // Another holder keeps KEPT locked past the bounded wait of the explicit run.
+        let holder = index_lock::lock_project_files(
+            &ctx,
+            &[PathBuf::from(KEPT)],
+            IndexLockPolicy::maintenance_try(),
+        )
+        .expect("hold KEPT");
+        assert_eq!(holder.acquired_files, vec![PathBuf::from(KEPT)]);
+
+        let timed_out = run_with_lock_policy(
+            &ctx,
+            explicit_run(KEPT),
+            IndexLockPolicy::Wait {
+                max_wait: Duration::from_millis(200),
+            },
+            false,
+            Format::Text,
+            &mut IndexTimings::new("command.context"),
+        );
+        drop(holder);
+
+        let queued = index_pending::take(&queue_dir).expect("take queued batches");
+        assert_eq!(
+            queued
+                .iter()
+                .map(|batch| batch.paths.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![PathBuf::from(KEPT)]],
+            "the timed-out run must queue exactly the path it could not lock"
+        );
+        let error = timed_out.expect_err("a timed-out bounded wait fails the run");
+        assert!(
+            error.is::<index_lock::LockWaitTimeout>(),
+            "the failure must be the lock timeout: {error:#}"
+        );
+
+        run_with_lock_policy(
+            &ctx,
+            explicit_run(OTHER),
+            IndexLockPolicy::Wait {
+                max_wait: Duration::from_secs(30),
+            },
+            false,
+            Format::Text,
+            &mut IndexTimings::new("command.context"),
+        )
+        .expect("the next index run");
+        assert!(
+            file_indexed(&mut conn, &project_id, KEPT),
+            "the next run must index the path the timed-out run queued"
+        );
+        assert!(
+            file_indexed(&mut conn, &project_id, OTHER),
+            "the next run must index its own path"
+        );
+        assert!(
+            index_pending::take(&queue_dir)
+                .expect("take after the next run")
+                .is_empty(),
+            "the drained batch must be settled once its paths are indexed"
+        );
+    });
+}
+
 /// Answers the vector-store requests of one run. Each request ends the wait for the next;
 /// the first waits long enough for the run to reach the repair.
 fn serve_qdrant(listener: &TcpListener) -> Vec<String> {
@@ -162,6 +263,17 @@ fn mark_versions_synced(conn: &mut postgres::Client, project_id: &str) {
         &[&project_id],
     )
     .expect("mark versions synced");
+}
+
+fn file_indexed(conn: &mut postgres::Client, project_id: &str, rel: &str) -> bool {
+    let project_id = db::id_param(project_id).expect("project id param");
+    conn.query_opt(
+        "SELECT 1 FROM code_indexed_files
+         WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &rel],
+    )
+    .expect("read code_indexed_files")
+    .is_some()
 }
 
 fn vectors_synced(conn: &mut postgres::Client, project_id: &str, rel: &str) -> bool {
