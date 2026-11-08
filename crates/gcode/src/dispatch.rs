@@ -165,7 +165,7 @@ fn service_config_selection(
         | Command::Path { .. }
         | Command::BlastRadius { .. } => ServiceConfigSelection::falkordb_only(),
         Command::Vector {
-            command: VectorCommand::Reconcile,
+            command: VectorCommand::Reconcile { .. },
         } => ServiceConfigSelection::qdrant_only(),
         Command::Vector { .. } | Command::Embeddings { .. } => ServiceConfigSelection::vectors(),
         Command::Search { .. } => ServiceConfigSelection::hybrid_search(),
@@ -446,6 +446,7 @@ fn run() -> anyhow::Result<()> {
             require_cpp_semantics,
             sync_projections,
             skip_if_locked,
+            lock_wait_seconds,
         } => commands::index::run(
             &ctx,
             &cwd,
@@ -455,6 +456,7 @@ fn run() -> anyhow::Result<()> {
             require_cpp_semantics,
             sync_projections,
             skip_if_locked,
+            lock_wait_seconds,
             format,
         ),
         Command::Repair => commands::repair::run(&ctx, format),
@@ -542,8 +544,19 @@ fn run() -> anyhow::Result<()> {
             commands::vector::rebuild(&ctx, full, format)
         }
         Command::Vector {
-            command: VectorCommand::Reconcile,
-        } => commands::vector::reconcile::run(&ctx, format),
+            command:
+                VectorCommand::Reconcile {
+                    apply,
+                    expect_digest,
+                    receipt,
+                },
+        } => commands::vector::reconcile::run_command(
+            &ctx,
+            apply,
+            expect_digest.as_deref(),
+            receipt.as_deref().map(std::path::Path::new),
+            format,
+        ),
         Command::Embeddings {
             command: EmbeddingsCommand::Doctor,
         } => commands::embeddings_doctor::run(&ctx),

@@ -533,11 +533,16 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: false,
                 positionals: vec![],
-                flags: vec![format_flag()],
+                flags: vec![
+                    FlagContract::switch("--apply"),
+                    FlagContract::value("--expect-digest", "DIGEST"),
+                    FlagContract::value("--receipt", "FILE"),
+                    format_flag(),
+                ],
                 json_output_keys: vector_reconcile_keys(),
                 ..CommandContract::new(
                     "vector reconcile",
-                    "Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing.",
+                    "Inventory code-symbol vectors against PostgreSQL. Dry run unless --apply, which deletes orphan vectors under the maintenance lease.",
                 )
             },
             CommandContract {
@@ -637,7 +642,7 @@ pub fn contract() -> CliContract {
             },
             ExitCodeContract {
                 code: 3,
-                meaning: "`index --skip-if-locked` yielded to a concurrent indexer",
+                meaning: "`index` yielded without indexing: the index lock stayed busy past its wait, or a timed-out wait queued its work for the next index run",
             },
             ExitCodeContract {
                 code: 10,

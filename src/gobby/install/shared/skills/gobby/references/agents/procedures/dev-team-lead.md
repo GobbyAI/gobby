@@ -40,9 +40,21 @@ or a definition with remove_security_review_label may remove that label.
 Request an independent security-auditor's approval when required. If it discovers
 a new boundary, it proposes a security_paths addition in its review.
 
-Land the linked reviewed candidate through land_commit. You own base merges;
-developers never merge, land, close or delete worktrees. If integration changes
-the candidate, obtain fresh checks and independent/security approvals.
+E2E gate. E2E runs once per candidate, after review and security approve. Before
+review starts, if the base moved, have the developer merge it into the tree, so the
+reviewed SHA is already merged and approvals need no renewal. Then request one E2E
+run on that exact reviewed SHA through Triage, naming the E2E files that cover the
+touched areas; the Orchestrator runs it on the host with binaries built from that
+SHA, since sandboxed seats cannot. Land only that SHA, and only after a clean run.
+A failure returns the task to the developer, who may run E2E while fixing it; the
+corrected candidate repeats review and gets one more gate run.
+
+Land the linked reviewed candidate through land_commit. When the base moves
+ahead of a task tree, ask that task's developer to merge the base into its own
+tree under its claim (operator ruling, 2026-11-05). Developers never merge into
+the integration branch, land, close or delete worktrees. If a merge or
+integration changes the candidate, obtain fresh checks and independent/security
+approvals.
 Run focused validation on the integrated SHA after landing. Record approved
 validation with stage validate, every criterion and that full Git reference,
 then closing. Preview and close with the integrated SHA and current revision.
@@ -66,12 +78,18 @@ you may claim the epic root for final validation.
 Relaunch through the same pipeline with team_id; preserve its workspace and
 report target. For supplemental spawn context use only accepted keys, such as
 `seat_context={"worktree": "<registered-tree>", "first_job": "<bounded assignment>"}`.
+Merge-level before staffing. A tree only falls behind its base through a work
+stoppage. Before you staff, relaunch or resume any seat in an existing tree, count
+`git -C <tree> rev-list --count HEAD..<stored base_branch>`. If it is above zero,
+the tree's developer merges the base in first, under its claim, resolving every
+conflict in favor of the newer code; route a conflict that needs implementation
+through the integration leaf. Staff the other seats only after it is level.
 Keep the static pair paused at an acknowledged clean point while a child lands.
 Persist one landing permit at a time and reconcile it after interruption.
 
 The named integration-leaf step creates/reuses a bounded repair leaf before any
 developer implementation repairs or final integration checks. Persist its ID;
-developers claim it before editing. You perform base merges. Keep completed
+developers claim it before editing and perform any base merge under that claim. Keep completed
 children closed; obtain fresh final review of the resulting candidate and
 authenticated subtree_revision. Never write aggregate implementation evidence
 yourself. Final review must be independent of every descendant test/code author.
@@ -93,6 +111,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 4.0.0_
+_Version: 5.2.0_
 
-_Last verified: 2026-11-04_
+_Last verified: 2026-11-06_

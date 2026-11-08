@@ -476,6 +476,18 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "fe7e5507c77bffaa5724bc2a47466f79d2476a4d4e4d87e71724d18beb032ace",
         sql: include_str!("../../assets/schema/migrations/489_session_startup_marks.sql"),
     },
+    EmbeddedMigration {
+        version: 490,
+        filename: "490_grant_plan_coverage_reads.sql",
+        checksum: "531bf6fd9c8f37232a2deefa28c2433639d6b0a9d04f7612d1ee632ecf4ec6de",
+        sql: include_str!("../../assets/schema/migrations/490_grant_plan_coverage_reads.sql"),
+    },
+    EmbeddedMigration {
+        version: 491,
+        filename: "491_code_index_reconcile_receipts.sql",
+        checksum: "f450128071ac171b519d75b47c94770023288ef49d901b2d6cbb5887a83c65b6",
+        sql: include_str!("../../assets/schema/migrations/491_code_index_reconcile_receipts.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

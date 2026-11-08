@@ -7,10 +7,15 @@ The machine-readable contract lives at `tests/contracts/gcode.contract.json`.
 
 `contract_version`: 13
 
-Version 13 replaces `vector cleanup-orphans` with the read-only dry run
-`vector reconcile`. It scrolls Qdrant, reads PostgreSQL read-only, takes no
-project lock, and deletes nothing. Its JSON reports orphan and missing classes
-with an `inventory_digest`. Deletion has no command in this contract version.
+Version 13 replaces `vector cleanup-orphans` with `vector reconcile`. Without
+`--apply` it is a dry run: it scrolls Qdrant, reads PostgreSQL read-only, takes
+no project lock, and deletes nothing. Its JSON reports orphan and missing classes
+with an `inventory_digest`. `--apply --expect-digest <digest> --receipt <file>`
+deletes orphan vectors and resets synced missing versions under the maintenance
+lease. It refuses on a digest mismatch, a busy lease, or an unsafe receipt. The
+receipt must be a private file outside the repository root, and it records each
+step so an interrupted run can be inspected. The apply JSON adds `receipt`,
+`deleted_points`, `versions_reset`, and `complete`.
 
 Version 12 retires the Ask command while retaining deterministic `evidence`.
 

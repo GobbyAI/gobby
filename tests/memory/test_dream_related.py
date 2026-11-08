@@ -1022,7 +1022,7 @@ async def test_trickling_response_aborted_at_absolute_deadline() -> None:
 
 
 @pytest.mark.unit
-async def test_uninitialized_client_blocking_init_fails_vector_channel() -> None:
+async def test_uninitialized_client_blocking_init_obeys_vector_deadline() -> None:
     store = VectorStore(url="http://qdrant:6333", collection_name="blocking-init")
     blocker = asyncio.Event()
 
@@ -1033,12 +1033,42 @@ async def test_uninitialized_client_blocking_init_fails_vector_channel() -> None
     client = MagicMock()
     client.collection_exists = AsyncMock(side_effect=blocked_exists)
     client.close = AsyncMock()
+    with patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as client_factory:
+        with pytest.raises(TimeoutError):
+            await store.search_by_stored_vectors([_candidate().id], limit=2, timeout=0.02)
+    await store.close()
+
+    assert client.collection_exists.await_count == 1
+    assert "timeout" not in client.collection_exists.await_args.kwargs
+    assert client_factory.call_args.kwargs["timeout"] == 5
+    client.close.assert_awaited_once()
+
+
+@pytest.mark.unit
+async def test_vector_channel_deadline_is_classified_and_drained() -> None:
     session = RelatedEvidenceSession()
+    real_timeout = asyncio.timeout
+    vector_deadlines: list[asyncio.Timeout] = []
+
+    def controlled_timeout(_delay: float | None) -> asyncio.Timeout:
+        deadline = real_timeout(None)
+        task = asyncio.current_task()
+        if task is not None and task.get_name().startswith("dream-related-vector-unit-"):
+            vector_deadlines.append(deadline)
+        return deadline
+
+    async def blocked_search(*_args: object, **_kwargs: object) -> dict[str, object]:
+        assert len(vector_deadlines) == 1
+        vector_deadlines[0].reschedule(asyncio.get_running_loop().time())
+        await asyncio.Event().wait()
+        return {}
+
+    store = MagicMock()
+    store.search_by_stored_vectors = AsyncMock(side_effect=blocked_search)
     with (
-        patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as client_factory,
-        patch.object(related_module, "RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS", 0.02),
+        patch.object(asyncio, "timeout", side_effect=controlled_timeout),
         patch.object(related_module, "RELATED_EVIDENCE_RETRY_ATTEMPTS", 1),
-        patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),
+        patch.object(related_module, "_keyword_hits_bulk", AsyncMock(return_value={})),
     ):
         with pytest.raises(RelatedEvidenceChannelError) as excinfo:
             await gather_related_evidence(
@@ -1050,14 +1080,12 @@ async def test_uninitialized_client_blocking_init_fails_vector_channel() -> None
                 scope=RetrievalScope.project_only("project-a"),
             )
     await session.aclose()
-    await store.close()
 
     assert excinfo.value.channel == "vector"
-    assert client.collection_exists.await_count == 1
-    assert "timeout" not in client.collection_exists.await_args.kwargs
-    assert client_factory.call_args.kwargs["timeout"] == 5
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
+    assert vector_deadlines[0].expired()
     assert not session._tasks
-    client.close.assert_awaited_once()
+    store.search_by_stored_vectors.assert_awaited_once()
 
 
 @pytest.mark.integration

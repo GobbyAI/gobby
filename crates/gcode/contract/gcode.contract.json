@@ -2229,10 +2229,34 @@
     },
     {
       "name": "vector reconcile",
-      "summary": "Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing.",
+      "summary": "Inventory code-symbol vectors against PostgreSQL. Dry run unless --apply, which deletes orphan vectors under the maintenance lease.",
       "daemon_consumed": false,
       "positionals": [],
       "flags": [
+        {
+          "name": "--apply",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--expect-digest",
+          "takes_value": true,
+          "value_name": "DIGEST",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--receipt",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
         {
           "name": "--format",
           "takes_value": true,
@@ -2254,7 +2278,11 @@
         "pg_symbols",
         "orphans",
         "missing",
-        "inventory_digest"
+        "inventory_digest",
+        "receipt",
+        "deleted_points",
+        "versions_reset",
+        "complete"
       ]
     },
     {
@@ -2457,7 +2485,7 @@
     },
     {
       "code": 3,
-      "meaning": "`index --skip-if-locked` yielded to a concurrent indexer"
+      "meaning": "`index` yielded without indexing: the index lock stayed busy past its wait, or a timed-out wait queued its work for the next index run"
     },
     {
       "code": 10,

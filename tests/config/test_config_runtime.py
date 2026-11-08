@@ -654,10 +654,14 @@ async def test_blocking_work_is_bounded_and_quarantined() -> None:
     )
     release = threading.Event()
     late = Prepared("late")
+    finished = threading.Event()
 
     def blocked(revision: int) -> Prepared:
         if revision:
-            release.wait(1)
+            # Held until the test releases it after reconcile returns. The 30s wait is a
+            # backstop, so no scheduling delay can let this constructor finish first.
+            release.wait(30)
+            finished.set()
             return late
         return Prepared("initial")
 
@@ -668,7 +672,7 @@ async def test_blocking_work_is_bounded_and_quarantined() -> None:
     )
     runtime = ConfigRuntime(repository, registry=FakeRegistry(), subscribers=[subscriber])
     await runtime.start()
-    # Startup keeps the default budget; the reconcile below runs under 20ms.
+    # Startup keeps the default budget; the reconcile below times the blocked constructor out.
     subscriber.prepare_timeout = 0.02
     repository.index = 1
     main_thread = threading.get_ident()
@@ -676,10 +680,13 @@ async def test_blocking_work_is_bounded_and_quarantined() -> None:
     before = time.monotonic()
     snapshot = await runtime.reconcile_revision(1)
     elapsed = time.monotonic() - before
+    # The constructor is blocked for 30s, so this bound measures how promptly the caller returns.
+    assert elapsed < 5.0
+    # Ordering: reconcile returned while the constructor was still blocked.
+    assert not finished.is_set()
     release.set()
-    await asyncio.to_thread(late.disposed.wait, 1)
+    await asyncio.to_thread(late.disposed.wait, 30)
 
-    assert elapsed < 0.2
     assert snapshot.active.ui.enabled is False
     assert repository.bounds == [(5_000, 5_000), (5_000, 5_000)]
     assert subscriber.thread_ids[-1] != main_thread

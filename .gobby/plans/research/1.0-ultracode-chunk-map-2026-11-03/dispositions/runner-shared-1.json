@@ -183,8 +183,8 @@
   {
    "ref": "#25629",
    "disposition": "start_gate",
-   "target": "#25629 closes on 0.5.0 with Josh's map approval and the map-approval commit carrying docs/port/ (start_gate[9] and [15]), before the cut",
-   "rationale": "Prefill null (orphan). This is the chunk-map research spike itself: its deliverable is the map, and its validation needs a disposition for every open #21542 node and Josh's approval (audit). It finishes on 0.5.0 with Josh's one approval (start_gate[9], ruling 5) and the map-approval commit that carries docs/port/ (start_gate[15]) before the cut, and coverage_selfcheck lists it as start gate.",
+   "target": "#25629 closes on 0.5.0 with Josh's map approval (start_gate[9], ruling 23), before the cut; the map-approval commit carrying docs/port/ (start_gate[15]) follows in start_gate[20]'s order, under its own task",
+   "rationale": "Prefill null (orphan). This is the chunk-map research spike itself: its deliverable is the map, and its validation needs a disposition for every open #21542 node and Josh's approval (audit). It finishes on 0.5.0 with Josh's one approval (start_gate[9], ruling 5), given on 2026-11-05 (ruling 23). The map-approval commit that carries docs/port/ (start_gate[15]) follows in start_gate[20]'s order, because its line-cite recheck has to run right before it, and coverage_selfcheck lists this node as start gate.",
    "prefill_disposition": null,
    "prefill_target": null,
    "changed": true

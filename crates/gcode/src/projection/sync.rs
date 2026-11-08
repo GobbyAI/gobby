@@ -546,7 +546,7 @@ fn sync_graph_files(
     Ok(report)
 }
 
-fn sync_vector_files(
+pub(crate) fn sync_vector_files(
     ctx: &Context,
     file_paths: &[String],
     progress: Option<&mut dyn ProjectionProgressSink>,
@@ -566,6 +566,17 @@ fn sync_vector_files(
             ));
         }
     };
+    sync_vector_files_with_lifecycle(ctx, lifecycle, file_paths, progress)
+}
+
+/// Projects the named files' vectors through an explicit lifecycle. The embedding route
+/// is the caller's choice; `sync_vector_files` builds it from the context.
+pub(crate) fn sync_vector_files_with_lifecycle(
+    ctx: &Context,
+    lifecycle: CodeSymbolVectorLifecycle,
+    file_paths: &[String],
+    progress: Option<&mut dyn ProjectionProgressSink>,
+) -> anyhow::Result<ProjectionSyncReport> {
     let conn = db::connect_readwrite(&ctx.database_url)?;
     let mut state = VectorProjectionState {
         ctx,
@@ -712,6 +723,13 @@ impl VectorProjectionState<'_> {
             return Ok(ProjectionFileSyncOutcome::SkippedSourceChanged);
         }
         sync?;
+        code_symbols::prune_stale_file_points(
+            &self.lifecycle,
+            &mut self.conn,
+            &self.ctx.project_id,
+            file_path,
+            &symbols,
+        )?;
         if db::mark_vectors_synced(
             &mut self.conn,
             &self.ctx.project_id,
@@ -728,7 +746,7 @@ impl VectorProjectionState<'_> {
     }
 }
 
-fn vector_lifecycle_from_context(
+pub(crate) fn vector_lifecycle_from_context(
     ctx: &Context,
 ) -> Result<CodeSymbolVectorLifecycle, VectorLifecycleError> {
     let qdrant = ctx

@@ -1,5 +1,6 @@
 mod embedding;
 mod lifecycle;
+mod prune;
 mod qdrant;
 mod repository;
 mod search;
@@ -8,6 +9,7 @@ mod vector_text;
 
 pub use embedding::{EmbeddingSource, embedding_source_from_context, probe_embedding_dim};
 pub use lifecycle::{CodeSymbolVectorLifecycle, RebuiltSymbol};
+pub use prune::prune_stale_file_points;
 pub(crate) use qdrant::count_symbol_vectors;
 pub use qdrant::{PointIdentity, collection_name, delete_symbol_vectors, scroll_point_identities};
 #[cfg(test)]

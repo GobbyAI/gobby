@@ -20,6 +20,7 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.releases import activation
 from gobby.runner_pid_file import ProbeState
 from gobby.storage import schema_contract, schema_divergence
 from gobby.storage.schema_contract import SchemaContractError
@@ -529,7 +530,11 @@ def _restart_preflight(
     The ``subprocess.run`` stub dispatches on argv so the real ``plan_schema`` step runs:
     ``schema version --json`` answers the identity probe and ``schema plan`` answers the
     read-only plan. The plan step is never stubbed out wholesale.
+
+    The activation guard admits this unspawned operator pane through its credential seam, so the
+    restart reaches the schema logic under test. No test reads the real bootstrap credential.
     """
+    monkeypatch.setattr(activation, "operator_credential_readable", lambda: True)
     monkeypatch.setattr(
         schema_divergence,
         "resolve_native_bin",

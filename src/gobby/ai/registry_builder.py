@@ -21,7 +21,13 @@ from gobby.ai.registry import (
     _normalize_binding_model,
     _normalize_provider,
 )
-from gobby.config.ai import DecisionsConfig, GenerationEndpointConfig
+from gobby.config.ai import (
+    DECISION_KINDS,
+    DecisionKind,
+    DecisionsConfig,
+    GenerationEndpointConfig,
+    decision_wire_refusal,
+)
 from gobby.config.feature_base import (
     candidate_labels,
     iter_feature_default_configs,
@@ -170,27 +176,55 @@ _DECISION_PROVIDERS = {
 }
 
 
+def _decision_route(decisions: DecisionsConfig, kind: DecisionKind) -> dict[str, Any]:
+    """The backend that serves one decision type, or the reason none does."""
+    endpoint = decisions.endpoint_for(kind)
+    if endpoint is None or endpoint.model is None:
+        return {"available": False, "reason": f"no decisions endpoint serves {kind}"}
+    refusal = decision_wire_refusal(endpoint.wire_api, kind)
+    if refusal is not None:
+        return {"available": False, "reason": refusal}
+    return {
+        "available": True,
+        "provider": _DECISION_PROVIDERS[endpoint.wire_api],
+        "wire_api": endpoint.wire_api,
+        "model": endpoint.model,
+        "max_input_tokens": endpoint.max_input_tokens,
+    }
+
+
 def _decision_binding(config: DaemonConfig | None) -> CapabilityBinding:
     decisions = config.ai.decisions if config is not None else DecisionsConfig()
-    provider = _DECISION_PROVIDERS[decisions.wire_api]
-    if decisions.api_base is None or decisions.model is None:
+    routes = {kind: _decision_route(decisions, kind) for kind in DECISION_KINDS}
+    served = [route["model"] for route in routes.values() if route["available"]]
+    # The default endpoint names the binding's provider while it serves a type; otherwise the
+    # first served override does.
+    default_serves = any(
+        decisions.endpoint_for(kind) is decisions and routes[kind]["available"]
+        for kind in DECISION_KINDS
+    )
+    if default_serves or not served:
+        provider = _DECISION_PROVIDERS[decisions.wire_api]
+    else:
+        provider = next(route["provider"] for route in routes.values() if route["available"])
+    if not served:
         return CapabilityBinding.unavailable(
             AICapability.DECIDE,
             provider,
             adapter_style=AIAdapterStyle.LLM_PROVIDER,
-            reason="Decision capability requires ai.decisions.api_base and ai.decisions.model.",
+            reason=(
+                "Decision capability requires ai.decisions.api_base and model, "
+                "or an ai.decisions.overrides entry for a type."
+            ),
+            metadata={"routes": routes},
         )
     return CapabilityBinding(
         capability=AICapability.DECIDE,
         provider=provider,
         adapter_style=AIAdapterStyle.LLM_PROVIDER,
         available=True,
-        models=(decisions.model,),
-        metadata={
-            "wire_api": decisions.wire_api,
-            "max_input_tokens": decisions.max_input_tokens,
-            "api_base_configured": True,
-        },
+        models=tuple(dict.fromkeys(served)),
+        metadata={"routes": routes},
     )
 
 

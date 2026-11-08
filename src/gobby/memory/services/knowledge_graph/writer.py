@@ -163,7 +163,7 @@ class KnowledgeGraphWriter:
         for index in range(0, len(set_rows), CLUSTER_WRITE_BATCH_SIZE):
             set_batch = set_rows[index : index + CLUSTER_WRITE_BATCH_SIZE]
             await self._falkor.query(
-                "UNWIND $rows AS row "
+                "UNWIND $rows AS row WITH row "
                 "MATCH (e:_Entity {entity_key: row.entity_key}) "
                 f"WHERE {proj_e} "
                 "SET e.cluster_id = row.cluster_id",
@@ -176,7 +176,7 @@ class KnowledgeGraphWriter:
         for index in range(0, len(clear_keys), CLUSTER_WRITE_BATCH_SIZE):
             clear_batch = clear_keys[index : index + CLUSTER_WRITE_BATCH_SIZE]
             await self._falkor.query(
-                "UNWIND $entity_keys AS entity_key "
+                "UNWIND $entity_keys AS entity_key WITH entity_key "
                 "MATCH (e:_Entity {entity_key: entity_key}) "
                 f"WHERE {proj_e} "
                 "REMOVE e.cluster_id",
@@ -194,7 +194,7 @@ class KnowledgeGraphWriter:
             return []
 
         outbound_rows = await self._falkor.query(
-            "UNWIND $keys AS key "
+            "UNWIND $keys AS key WITH key "
             "MATCH (a:_Entity {entity_key: key}) "
             "MATCH (a)-[r]->(b:_Entity) "
             "WHERE type(r) <> 'CO_OCCURS' "
@@ -202,7 +202,7 @@ class KnowledgeGraphWriter:
             {"keys": entity_keys},
         )
         inbound_rows = await self._falkor.query(
-            "UNWIND $keys AS key "
+            "UNWIND $keys AS key WITH key "
             "MATCH (b:_Entity {entity_key: key}) "
             "MATCH (a:_Entity)-[r]->(b) "
             "WHERE type(r) <> 'CO_OCCURS' "
@@ -283,7 +283,7 @@ class KnowledgeGraphWriter:
         if not entity_keys:
             return
         await self._falkor.query(
-            "UNWIND $entity_keys AS entity_key "
+            "UNWIND $entity_keys AS entity_key WITH entity_key "
             "MATCH (e:_Entity {entity_key: entity_key}), "
             "(m:Memory {memory_id: $memory_id}) "
             "MERGE (e)-[:MENTIONED_IN]->(m)",
@@ -319,7 +319,7 @@ class KnowledgeGraphWriter:
 
         pair_params = [{"a": a, "b": b} for a, b in pairs]
         support_rows = await self._falkor.query(
-            "UNWIND $pairs AS p "
+            "UNWIND $pairs AS p WITH p "
             "MATCH (a:_Entity {entity_key: p.a}), (b:_Entity {entity_key: p.b}) "
             f"WHERE {proj_a} AND {proj_b} "
             "OPTIONAL MATCH (a)-[:MENTIONED_IN]->(m:Memory)<-[:MENTIONED_IN]-(b) "
@@ -356,7 +356,7 @@ class KnowledgeGraphWriter:
         if write_rows:
             weight_clause = ", r.weight = p.weight" if weighted else ""
             await self._falkor.query(
-                "UNWIND $rows AS p "
+                "UNWIND $rows AS p WITH p "
                 "MATCH (a:_Entity {entity_key: p.a}), (b:_Entity {entity_key: p.b}) "
                 f"WHERE {proj_a} AND {proj_b} "
                 "MERGE (a)-[r:CO_OCCURS]->(b) "
@@ -365,7 +365,7 @@ class KnowledgeGraphWriter:
             )
         if delete_rows:
             await self._falkor.query(
-                "UNWIND $rows AS p "
+                "UNWIND $rows AS p WITH p "
                 "MATCH (a:_Entity {entity_key: p.a})-[r:CO_OCCURS]->"
                 "(b:_Entity {entity_key: p.b}) "
                 f"WHERE {proj_a} AND {proj_b} "

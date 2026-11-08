@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+from gobby.storage.daemon_resume_keys import SPAWN_LEASE_RUN_KEY
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import (
     DISPATCH_TTL_SECONDS,
@@ -296,6 +297,15 @@ class TaskSpawnLease:
             return None
         try:
             self._mutex.attach(run_id)
+            # Durable record that this run's own spawn holds the lease. The row can be lost;
+            # restart recovery restores only for the run named here.
+            from gobby.storage.agents import LocalAgentRunManager
+
+            db = self._db
+            if db is None:
+                # A lease this spawn owns is only ever taken with a database.
+                raise RuntimeError("spawn lease owner has no database")
+            LocalAgentRunManager(db).merge_resume_metadata(run_id, {SPAWN_LEASE_RUN_KEY: run_id})
         except Exception as exc:
             logger.warning("Failed to attach direct spawn mutex to run %s", run_id, exc_info=True)
             return str(exc)

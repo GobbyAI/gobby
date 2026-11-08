@@ -305,7 +305,7 @@ async def seed_graph(client: Any, ids: list[str], base: list[float]) -> None:
         for neighbor in range(64)
     ]
     await client.query(
-        "UNWIND $rows AS row MATCH (s:_Entity {entity_key:row.seed}) "
+        "UNWIND $rows AS row WITH row MATCH (s:_Entity {entity_key:row.seed}) "
         "CREATE (n:_Entity {entity_key:row.key, name:row.key, entity_type:'concept', "
         "project_id:$project, is_global:false}) "
         "CREATE (s)-[:SUPPORTS {weight:row.weight,support:2,updated_at:1767225600000}]->(n)",
@@ -321,7 +321,7 @@ async def seed_graph(client: Any, ids: list[str], base: list[float]) -> None:
         for index, mid in enumerate(ids)
     ]
     await client.query(
-        "UNWIND $rows AS row MATCH (s:_Entity {entity_key:row.seed}), "
+        "UNWIND $rows AS row WITH row MATCH (s:_Entity {entity_key:row.seed}), "
         "(n:_Entity {entity_key:row.neighbor}) "
         "CREATE (m:Memory {memory_id:row.id, project_id:$project, is_global:false,updated_at:row.updated}) "
         "CREATE (s)-[:MENTIONED_IN]->(m) CREATE (n)-[:MENTIONED_IN]->(m)",

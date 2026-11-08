@@ -77,6 +77,7 @@ def test_code_index_config_maintenance_defaults() -> None:
     assert config.nightly_repair_timezone is None
     assert config.nightly_repair_timeout_seconds == 8 * 60 * 60
     assert config.nightly_repair_concurrency == 1
+    assert config.nightly_reconcile_apply is False
     assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
 
 

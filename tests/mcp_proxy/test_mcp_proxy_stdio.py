@@ -754,7 +754,6 @@ class TestDaemonProxy:
             "POST",
             "/api/sessions/%231/variables/set",
             json={"name": "resume_state", "value": value, "scope": "session"},
-            session_id="#1",
         )
 
     @pytest.mark.asyncio
@@ -780,7 +779,6 @@ class TestDaemonProxy:
             "POST",
             "/api/sessions/%231/variables/set",
             json={"name": "skills_routed", "value": True, "scope": "step"},
-            session_id="#1",
         )
 
     @pytest.mark.asyncio

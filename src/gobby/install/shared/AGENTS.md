@@ -38,8 +38,8 @@ Recipient admission comes from installed agent definitions. A recipient's
 `message_sender_capabilities` requires any listed capability from the sender's
 definition; an empty list admits every sender. The daemon's system sender and
 the operator's own unspawned terminal are exempt. The bundled Orchestrator
-requires `message_restricted_seats`, granted to the Assistant, Triage and
-Orchestrator definitions. A refused direct send returns
+requires `message_restricted_seats`, granted to the Assistant, Triage,
+DevOps and Orchestrator definitions. A refused direct send returns
 `message_recipient_not_allowed`; fanout withholds that recipient. Triage sends
 every message to the Orchestrator with `wake=true`, including digests. Omitted
 `wake` follows the ordinary direct-target default for every definition.

@@ -19,6 +19,10 @@ pub struct RosterEntry {
     pub lifecycle_status: Option<String>,
     /// Applied seat title, independent of the session's current task title.
     pub definition_title: Option<String>,
+    /// The seat's definition identity, which the needs-you log names. The display
+    /// title never stands in for it; absent means the default definition.
+    #[serde(default)]
+    pub definition_name: Option<String>,
     /// Set only while the subject is blocked; the daemon sends `null` otherwise.
     pub attention: Option<Attention>,
     pub task: Option<TaskRef>,

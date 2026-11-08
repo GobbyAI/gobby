@@ -204,10 +204,11 @@ header. A live capture's diagnostic ceiling is not a ship-config opt-in. See the
 
 ## Decision Consumers
 
-Two consumers read the `ai.decisions` endpoint described in
-[configuration.md](configuration.md#decision-classifier-aidecisions). Each has
-a `mode`, which defaults to `off`. `enforce` also requires `evaluated_model` and
-`evaluated_backend`, the recorded evaluation that justifies it.
+Two consumers read the `ai.decisions` endpoints described in
+[configuration.md](configuration.md#decision-classifier-aidecisions). Each question
+runs on the endpoint configured for its type: Choice, Noul, Score, or Box. Each
+consumer has a `mode`, which defaults to `off`. `enforce` also requires
+`evaluated_model` and `evaluated_backend`, the recorded evaluation that justifies it.
 
 **Tool rerank** (`ai.decisions.tool_rerank`) reranks MCP tool search. Its
 incumbent is the LLM rerank on the `recommend_tools` route.

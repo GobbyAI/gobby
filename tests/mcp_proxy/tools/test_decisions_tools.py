@@ -136,6 +136,16 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> FakeWire:
     return fake
 
 
+# Box cannot run on the systemone default, so it is routed to its own openrouter-decisions endpoint.
+BOX_ON_OPENROUTER: dict[str, Any] = {
+    "box": {
+        "wire_api": "openrouter-decisions",
+        "api_base": "https://openrouter.ai/api",
+        "model": "jev-latest",
+    }
+}
+
+
 def _config(**overrides: Any) -> DecisionsConfig:
     values: dict[str, Any] = {"api_base": "https://decide.test", "model": "jev-latest"}
     values.update(overrides)
@@ -159,7 +169,7 @@ async def test_evaluate_round_trips_every_decision_shape(
     wire: FakeWire, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="gobby.ai.decisions")
-    registry = _registry(_config())
+    registry = _registry(_config(overrides=BOX_ON_OPENROUTER))
     image = tmp_path / "logo.png"
     image.write_bytes(_png())
 
@@ -170,54 +180,93 @@ async def test_evaluate_round_trips_every_decision_shape(
 
     assert choice == {
         "success": True,
-        "type": "choice",
         "answers": {
             "lane": {
-                "choice": "fix",
-                "probabilities": {"fix": 1.0, "defer": 0.0},
-                "confidence": 0.5,
+                "type": "choice",
+                "success": True,
+                "answer": {
+                    "choice": "fix",
+                    "probabilities": {"fix": 1.0, "defer": 0.0},
+                    "confidence": 0.5,
+                },
+                "response_model": "jev-latest",
+                "backend_identity": None,
             }
         },
-        "response_model": "jev-latest",
-        "backend_identity": None,
     }
     assert noul == {
         "success": True,
-        "type": "noul",
-        "answers": {"real": {"probability": 0.25}},
-        "response_model": "jev-latest",
-        "backend_identity": None,
+        "answers": {
+            "real": {
+                "type": "noul",
+                "success": True,
+                "answer": {"probability": 0.25},
+                "response_model": "jev-latest",
+                "backend_identity": None,
+            }
+        },
     }
     assert score == {
         "success": True,
-        "type": "score",
         "answers": {
             "severity": {
-                "score": 0.0,
-                "probabilities": {"0": 1.0, "1": 0.0, "2": 0.0},
-                "confidence": 0.5,
+                "type": "score",
+                "success": True,
+                "answer": {
+                    "score": 0.0,
+                    "probabilities": {"0": 1.0, "1": 0.0, "2": 0.0},
+                    "confidence": 0.5,
+                },
+                "response_model": "jev-latest",
+                "backend_identity": None,
             }
         },
-        "response_model": "jev-latest",
-        "backend_identity": None,
     }
     assert box == {
         "success": True,
-        "type": "box",
         "answers": {
             "logo": {
-                "box": {"top": 0.1, "bottom": 0.4, "left": 0.2, "right": 0.6},
-                "confidence": 0.9,
+                "type": "box",
+                "success": True,
+                "answer": {
+                    "box": {"top": 0.1, "bottom": 0.4, "left": 0.2, "right": 0.6},
+                    "confidence": 0.9,
+                },
+                "response_model": "jev-latest",
+                "backend_identity": None,
             }
         },
-        "response_model": "jev-latest",
-        "backend_identity": None,
     }
     posted = [
         next(iter(json.loads(r.content)["questions"].values()))["type"] for r in wire.requests
     ]
     assert posted == ["choice", "noul", "score", "box"]
     assert "consumer=mcp_evaluate" in caplog.text
+
+
+async def test_evaluate_partial_failure_stays_on_its_questions(
+    wire: FakeWire, tmp_path: Path
+) -> None:
+    image = tmp_path / "logo.png"
+    image.write_bytes(_png())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "openrouter.ai":
+            return httpx.Response(401)
+        return _respond_with_answers(request)
+
+    wire.handler = handler
+    registry = _registry(_config(overrides=BOX_ON_OPENROUTER))
+
+    result = await _evaluate(registry, {"lane": CHOICE, "logo": _box(image)})
+
+    assert result["success"] is True
+    assert "reason" not in result
+    assert result["answers"]["lane"]["success"] is True
+    assert result["answers"]["logo"]["type"] == "box"
+    assert result["answers"]["logo"]["success"] is False
+    assert result["answers"]["logo"]["reason"] == "http_status"
+    assert "answer" not in result["answers"]["logo"]
 
 
 async def test_evaluate_choice_and_noul_round_trip(wire: FakeWire) -> None:
@@ -227,7 +276,8 @@ async def test_evaluate_choice_and_noul_round_trip(wire: FakeWire) -> None:
     noul = await _evaluate(registry, {"real": NOUL})
 
     assert choice["success"] is True
-    assert noul["answers"] == {"real": {"probability": 0.25}}
+    assert noul["success"] is True
+    assert noul["answers"]["real"]["answer"] == {"probability": 0.25}
     choice_body, noul_body = (json.loads(request.content) for request in wire.requests)
     assert choice_body["state"] == STATE
     assert choice_body["questions"] == {
@@ -244,6 +294,19 @@ async def test_evaluate_choice_and_noul_round_trip(wire: FakeWire) -> None:
     assert wire.client_kwargs[0]["timeout"] == 2.0
 
 
+async def test_evaluate_accepts_mixed_types_in_one_call(wire: FakeWire) -> None:
+    registry = _registry(_config())
+
+    result = await _evaluate(registry, {"real": NOUL, "lane": CHOICE})
+
+    assert result["success"] is True
+    assert list(result["answers"]) == ["real", "lane"]
+    assert result["answers"]["real"]["type"] == "noul"
+    assert result["answers"]["lane"]["type"] == "choice"
+    # Both types route to the default endpoint, so they share one request.
+    assert len(wire.requests) == 1
+
+
 INVALID_REQUESTS = [
     pytest.param({"state": ["finding"]}, id="state-not-object"),
     pytest.param({"questions": {}}, id="empty-question-map"),
@@ -251,7 +314,6 @@ INVALID_REQUESTS = [
     pytest.param({"questions": {"a/b": NOUL}}, id="key-outside-pattern"),
     pytest.param({"questions": {"q": "The finding is real."}}, id="question-not-object"),
     pytest.param({"questions": {"q": {**NOUL, "extra": 1}}}, id="extra-question-key"),
-    pytest.param({"questions": {"a": NOUL, "b": CHOICE}}, id="mixed-types"),
     pytest.param({"questions": {"q": {"type": "rank", "instructions": "x"}}}, id="unknown-type"),
     pytest.param({"questions": {"q": {"instructions": "x"}}}, id="missing-type"),
     pytest.param({"questions": {"q": {"type": "noul"}}}, id="instructions-missing"),
@@ -368,8 +430,9 @@ async def test_evaluate_box_on_workers_ai_fails_before_dialing(
     result = await _evaluate(_registry(config), {"lane": _box(image)})
 
     assert result["success"] is False
-    assert result["reason"] == "invalid_request"
-    assert result["error"].startswith("invalid_request: ")
+    assert result["reason"] == "unconfigured"
+    assert "box cannot run on wire_api 'workers-ai'" in result["detail"]
+    assert result["error"].startswith("unconfigured: ")
     assert wire.requests == []
 
 
@@ -427,7 +490,7 @@ async def test_evaluate_reports_unconfigured_without_building_service(
 
     assert result["success"] is False
     assert result["reason"] == "unconfigured"
-    assert result["detail"] == "decisions api_base and model must both be set"
+    assert result["detail"] == "no decisions endpoint is configured for any type"
     assert result["error"].startswith("unconfigured: ")
     assert wire.requests == []
     assert decisions._service_cache is None
@@ -504,7 +567,7 @@ async def test_evaluate_propagates_caller_cancellation(wire: FakeWire) -> None:
         await task
     assert task.cancelled()
     service = decisions.get_decision_service(_config())
-    assert service._cooldown_until == 0.0
+    assert service._cooldowns == {}
 
 
 def test_decisions_registry_is_registered() -> None:
@@ -536,17 +599,21 @@ async def test_pipeline_step_passes_answers_and_fails_closed(wire: FakeWire) -> 
 
     output = await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: proxy)
 
+    # The pipeline strips the top-level success field; the answers reach later steps as data.
     assert output == {
-        "type": "choice",
         "answers": {
             "lane": {
-                "choice": "fix",
-                "probabilities": {"fix": 1.0, "defer": 0.0},
-                "confidence": 0.5,
+                "type": "choice",
+                "success": True,
+                "answer": {
+                    "choice": "fix",
+                    "probabilities": {"fix": 1.0, "defer": 0.0},
+                    "confidence": 0.5,
+                },
+                "response_model": "jev-latest",
+                "backend_identity": None,
             }
         },
-        "response_model": "jev-latest",
-        "backend_identity": None,
     }
 
     wire.handler = _status(401)

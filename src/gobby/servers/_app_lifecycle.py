@@ -78,12 +78,15 @@ def create_lifespan(
 
                 gcode_gateway = code_indexer.gcode_gateway
                 if gcode_gateway is not None:
-                    hook_manager_kwargs["code_index_trigger"] = CodeIndexTrigger(
+                    trigger = CodeIndexTrigger(
                         loop=asyncio.get_running_loop(),
                         gcode_gateway=gcode_gateway,
                         daemon_config_breaker=code_indexer.daemon_config_breaker,
                         launch_source=code_indexer,
                     )
+                    hook_manager_kwargs["code_index_trigger"] = trigger
+                    # Landings hand the paths they could not index to this same trigger.
+                    code_indexer.index_trigger = trigger
                 else:
                     logger.warning(
                         "CodeIndexTrigger unavailable because the gcode gateway is not configured"

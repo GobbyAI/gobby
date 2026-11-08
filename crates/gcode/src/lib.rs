@@ -16,6 +16,7 @@ mod git;
 mod graph;
 pub mod index;
 pub(crate) mod index_lock;
+pub(crate) mod index_pending;
 mod models;
 pub mod node;
 mod output;

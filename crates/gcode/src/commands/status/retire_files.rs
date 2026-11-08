@@ -4,14 +4,13 @@ mod backend;
 mod manifest;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use postgres::Client;
 use serde::{Deserialize, Serialize};
 
+use crate::commands::receipt;
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph;
@@ -196,7 +195,7 @@ fn validate_context(conn: &mut Client, ctx: &Context, manifest: &Manifest) -> an
         gobby_core::machine::read_local_machine_id()? == manifest.machine_id,
         "manifest machine differs from this machine"
     );
-    manifest::no_symlinks(&manifest.root_path)?;
+    receipt::no_symlinks(&manifest.root_path)?;
     ensure!(
         ctx.project_root.canonicalize()? == manifest.root_path,
         "manifest root differs from canonical command root"
@@ -496,34 +495,8 @@ fn validate_projections(
 }
 
 fn validate_receipt_path(path: &Path, receipt: &Receipt) -> anyhow::Result<()> {
-    manifest::no_symlinks(path)?;
-    let parent = path
-        .parent()
-        .context("receipt requires a parent directory")?;
-    let filename = path.file_name().context("receipt requires a file name")?;
-    ensure!(
-        parent.canonicalize()?.join(filename) == path,
-        "receipt path must be canonical"
-    );
-    ensure!(
-        !path.starts_with(&receipt.root_path),
-        "receipt must stay outside repository indexing"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = fs::metadata(parent)?;
-        // SAFETY: getuid has no arguments and no memory-safety preconditions.
-        let uid = unsafe { libc::getuid() };
-        ensure!(
-            metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o077 == 0,
-            "receipt parent must be a private owned directory"
-        );
-    }
-    if path.exists() {
-        let file = File::open(path)?;
-        manifest::require_private_file(&file)?;
-        let previous: Receipt = serde_json::from_reader(BufReader::new(file))?;
+    receipt::validate_location(path, Path::new(&receipt.root_path))?;
+    if let Some(previous) = receipt::read_existing::<Receipt>(path)? {
         ensure!(
             previous.manifest_digest == receipt.manifest_digest
                 && previous.backends == receipt.backends
@@ -539,18 +512,7 @@ fn validate_receipt_path(path: &Path, receipt: &Receipt) -> anyhow::Result<()> {
 
 fn write_receipt(path: &Path, receipt: &Receipt) -> anyhow::Result<()> {
     validate_receipt_path(path, receipt)?;
-    let parent = path.parent().context("receipt requires parent")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    {
-        let mut writer = BufWriter::new(file.as_file_mut());
-        serde_json::to_writer(&mut writer, receipt)?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
-    }
-    file.as_file().sync_all()?;
-    file.persist(path).map_err(|error| error.error)?;
-    File::open(parent)?.sync_all()?;
-    Ok(())
+    receipt::write_atomic(path, receipt)
 }
 
 #[cfg(test)]

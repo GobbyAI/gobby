@@ -6,15 +6,15 @@
 01 : text/panel_bg*120
 02 | Machines                                                                                   ⍾ alpha    │ ⍾ second   │ + |
 02 : text/surface0*1 subtext0/surface0+b*8 text/surface0*24 text/panel_bg*1 text/surface0*57 text/selection+b*1 yellow/selection+b*1 text/selection+b*10 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 line/surface0*1 overlay1/surface0*3
-03 | ⍾ scripted                       ─────────────────────────┐┌ ○ term-beta · Focused ───────────────────────────────────┐|
-03 : text/selection*1 yellow/selection*1 overlay0/selection+d*1 text/selection+b*8 text/selection*22 text/panel_bg*1 yellow/panel_bg*26 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*36
+03 | ⍾ ⍾1 scripted                    ─────────────────────────┐┌   term-beta · Focused ───────────────────────────────────┐|
+03 : text/selection*1 yellow/selection*4 overlay0/selection+d*1 text/selection+b*8 text/selection*19 text/panel_bg*1 yellow/panel_bg*26 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*36
 04 |                                                           ││                                                          │|
 04 : text/panel_bg*34 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 05 | Projects                                                  ││                                                          │|
 05 : text/surface0*1 subtext0/surface0+b*8 text/surface0*24 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-06 |▸⍾ alpha (main ↑2 ↓1)           ▸                          ││                                                          │|
-06 : accent/selection*1 yellow/selection*1 overlay0/selection+d*1 accent/selection+b*5 text/selection*2 identifier/selection*4 green/selection*3 text/selection*15 accent/selection*1 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-07 | ○ beta (~)                                                ││                                                          │|
+06 |▸⍾ ⍾1 alpha (main ↑2 ↓1)        ▸                          ││                                                          │|
+06 : accent/selection*1 yellow/selection*4 overlay0/selection+d*1 accent/selection+b*5 text/selection*2 identifier/selection*4 green/selection*3 text/selection*12 accent/selection*1 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+07 |   beta (~)                                                ││                                                          │|
 07 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 accent/panel_bg+b*4 subtext0/panel_bg*2 identifier/panel_bg*1 subtext0/panel_bg*1 text/panel_bg*23 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 08 |                                                           ││                                                          │|
 08 : text/panel_bg*34 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
@@ -50,11 +50,11 @@
 23 : text/panel_bg*34 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 24 | Terminals                                                 ││                                                          │|
 24 : text/surface0*1 subtext0/surface0+b*9 text/surface0*23 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-25 | ○ term-beta              gclient                          ││                                                          │|
+25 |   term-beta              gclient                          ││                                                          │|
 25 : text/selection*1 overlay0/selection*1 overlay0/selection+d*1 text/selection+b*9 text/selection*21 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 26 |                                                           ││                                                          │|
 26 : text/selection*33 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-27 | ○ term-gamma             gclient                          ││                                                          │|
+27 |   term-gamma             gclient                          ││                                                          │|
 27 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 text/panel_bg*23 subtext0/panel_bg*7 text/panel_bg*1 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 28 |                                                           ││                                                          │|
 28 : text/panel_bg*34 text/unfocused*25 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1

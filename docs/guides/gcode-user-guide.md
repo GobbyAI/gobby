@@ -433,10 +433,10 @@ and the optional `full_reindex` report; queued work is not completed projection
 work. Run `gcode index --full` explicitly after extractor changes without a
 version bump. Nightly daemon maintenance uses this repair command.
 
-### Prune And Projection Cleanup
+### Prune And Content Retention
 
-Remove stale project records from the PostgreSQL hub and reconcile graph/vector
-projections against `code_indexed_files`:
+Remove stale project records and unreferenced content versions from the
+PostgreSQL hub:
 
 ```bash
 gcode prune
@@ -444,29 +444,102 @@ gcode prune --force
 ```
 
 Pruning is operator maintenance. Plain `gcode prune` delegates a global sweep
-to the daemon, including stale project reconciliation and unreferenced content
-retention. Explicit `gcode --project <path-or-name> prune` scopes the work to
-that project. Destructive sets require confirmation unless `--force` is given.
-`--retention-days` defaults to 1 and must be positive; `--max-seconds` requires
-explicit `--project` and can defer content versions to a later run. Inspect
-failure and deferred counts before claiming cleanup finished.
+to the daemon. Explicit `gcode --project <path-or-name> prune` scopes the work
+to that project. A sweep invalidates stale projects, which clears their graph
+and vector projections, and runs content GC. Destructive sets require
+confirmation unless `--force` is given. `--retention-days` defaults to 1 and
+must be positive; `--max-seconds` requires explicit `--project` and can defer
+content versions to a later run. Inspect failure and deferred counts before
+claiming cleanup finished.
 
-Projection-specific cleanup is available when only one store needs
-reconciliation:
+Content GC considers a version only when no machine's file state and no
+overlay pin references it, and its last reference is older than
+`--retention-days`. Recent Git history then protects a version only at
+its own path: a version is kept when a commit inside the retention window
+reached that same content at that same path. A path is eligible for history
+protection only while it passes the current excludes and is not a hidden path
+outside the hidden allowlist. When `respect_gitignore` is on, a path that still
+exists must also not be gitignored; a missing path skips the gitignore check.
+Size limits do not apply, so missing and oversized files can still be kept by
+history. A path that fails these checks is collected without a history
+lookup. A root whose checkout is gone keeps all its versions. A history lookup
+error keeps the eligible versions of that root. GC deletes each collected version's graph and
+vector projections before its hub rows, then runs one graph orphan sweep per
+project whose graph facts it deleted. Prune never sweeps orphaned vector
+points; that is `gcode vector reconcile`.
+
+### Projection Reconciliation
+
+Reconcile one projection store against PostgreSQL:
 
 ```bash
 gcode graph cleanup-orphans
-gcode vector cleanup-orphans
+gcode vector reconcile
 ```
 
 `gcode graph cleanup-orphans` scans project-scoped `CodeFile.path` and
 `CodeSymbol.file_path` values, deletes graph projection data for paths missing
-from PostgreSQL, and runs project orphan cleanup once. `gcode vector
-cleanup-orphans` scans `code_symbols_{project_id}` Qdrant payloads filtered by
-`project_id`, then deletes vector points for paths missing from PostgreSQL.
-Top-level `gcode prune` reports graph and vector cleanup failures independently
-for each project so an unavailable FalkorDB does not block Qdrant cleanup, and
-an unavailable Qdrant does not block graph cleanup.
+from PostgreSQL, and runs project orphan cleanup once.
+
+`gcode vector reconcile` is a read-only inventory by default. It scrolls the
+project's `code_symbols_{project_id}` Qdrant collection, then reads PostgreSQL
+read-only. It takes no project lock and deletes nothing. A point is an orphan
+only when its ID is absent from `code_symbols` for the project. Each orphan is
+reported under the first matching class; classes are evidence, never deletion
+authority:
+
+| Orphan class | Point shape |
+|--------------|-------------|
+| `legacy_payload` | Payload has no `file_path` |
+| `legacy_id_scheme` | ID matches the retired path-keyed ID scheme |
+| `reparsed_version` | ID matches a known content version at its path, but that symbol is gone |
+| `unattributed` | Anything else |
+
+The dry run also lists content versions with at least one symbol point missing
+from Qdrant, split by the hub-wide `vectors_synced` flag and by whether any
+machine's file state references the version:
+
+| Missing class | `vectors_synced` | Referenced |
+|---------------|------------------|------------|
+| `synced_missing_current` | true | yes |
+| `synced_missing_retained` | true | no |
+| `pending_current` | false | yes |
+| `pending_retained` | false | no |
+
+`inventory_digest` is `sha256:` over the sorted orphan point IDs and the sorted
+`synced_missing_*` version IDs. Pending versions are reported but excluded
+from the digest, because apply leaves them alone. Run the dry run twice; a
+digest that changes between runs means the index is still moving.
+
+Apply runs only as operator-reviewed maintenance, with the digest of a
+reviewed dry run of the same project:
+
+```bash
+gcode --project <root> vector reconcile --format json
+gcode --project <root> vector reconcile --apply \
+  --expect-digest sha256:<digest> --receipt <private-dir>/reconcile-apply.json --format json
+```
+
+`--apply`, `--expect-digest`, and `--receipt` require each other. Apply takes
+the project's maintenance lease without waiting, rebuilds the inventory under
+it, and refuses unless the rebuilt digest equals `--expect-digest`. The receipt
+path must be canonical with no symlinks, sit outside the repository root, and
+live in a directory owned by you with no group or other permissions. An
+existing receipt must be an owner-only file from the same project, collection,
+and digest. A busy lease, a digest mismatch, or a refused receipt exits before
+any mutation; take a fresh dry run.
+
+Apply writes the receipt before each mutation. It first resets
+`vectors_synced` on every `synced_missing_*` version in one transaction, then
+deletes orphan points in batches of 256. The reset makes those versions
+repairable; reconcile itself never embeds. A version drains through the sync
+worker of a machine whose file state references it, so `pending_current`
+falls as those workers run. A retained version stays `pending_retained` until
+a machine adopts it, which is not a failure. Apply JSON reports
+`"mode": "apply"` with `receipt`, `deleted_points`, `versions_reset`, and
+`complete`. A nonzero exit is
+unconfirmed whatever the receipt reads, including `complete: true`: read the
+receipt and its stderr, then take a fresh dry run before any further apply.
 
 ### Exact Content Retirement
 
@@ -557,7 +630,7 @@ vector collections:
 gcode vector clear
 gcode vector clear --project-id <PROJECT_ID> --drop-collection
 gcode vector rebuild
-gcode vector cleanup-orphans
+gcode vector reconcile
 ```
 
 `--drop-collection` deletes the project's whole `code_symbols_{project_id}`
@@ -787,4 +860,4 @@ availability, peer errors, and drift. It does not grant permission to reveal
 keys or mutate collections. Diagnose daemon configuration before rebuilding
 vectors.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-11-06_

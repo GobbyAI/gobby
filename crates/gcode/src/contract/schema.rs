@@ -395,6 +395,11 @@ pub(super) fn vector_reconcile_keys() -> Vec<&'static str> {
         "orphans",
         "missing",
         "inventory_digest",
+        // Apply-mode keys: the dry run emits none of these.
+        "receipt",
+        "deleted_points",
+        "versions_reset",
+        "complete",
     ]
 }
 

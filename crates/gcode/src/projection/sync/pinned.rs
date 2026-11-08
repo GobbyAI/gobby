@@ -52,7 +52,7 @@ impl Stage {
 
 /// Binds `$1` machine, `$2` overlay, `$3` path. A pin is shadowed when this
 /// machine owns an overlay file-state row for the same path.
-const UNSHADOWED: &str = "NOT EXISTS (
+pub(crate) const UNSHADOWED: &str = "NOT EXISTS (
     SELECT 1 FROM code_indexed_file_states s
     WHERE s.machine_id = p.machine_id
       AND s.project_id = p.overlay_project_id
@@ -219,11 +219,19 @@ pub(crate) fn sync_vector_attempt(
         }
         Err(err) => return Err(err.into()),
     };
-    if finish_attempt(conn, Stage::Vector, overlay_project_id, file_path, attempt)? {
-        Ok(PinnedVectorSync::Synced(output))
-    } else {
-        Ok(PinnedVectorSync::Superseded)
+    // Prune only after the fence: a superseded attempt must not delete points that a
+    // newer attempt wrote for the same path.
+    if !finish_attempt(conn, Stage::Vector, overlay_project_id, file_path, attempt)? {
+        return Ok(PinnedVectorSync::Superseded);
     }
+    code_symbols::prune_stale_file_points(
+        lifecycle,
+        conn,
+        overlay_project_id,
+        file_path,
+        &symbols,
+    )?;
+    Ok(PinnedVectorSync::Synced(output))
 }
 
 /// Writes the pinned source version's graph facts into this overlay's graph

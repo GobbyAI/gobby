@@ -444,6 +444,28 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_eq!(check_expression, "false");
         }
     }
+    // Migration 490 scopes plan-coverage reads of tasks and task_dependencies to the seat's
+    // current project. task_dependencies reaches the project through its tasks row.
+    for table in ["tasks", "task_dependencies"] {
+        let policies = actual
+            .remove(table)
+            .expect("plan-coverage reads must carry the scoped gcode read policy");
+        let operations: Vec<(String, String)> = policies
+            .iter()
+            .map(|(name, command, _, _)| (name.clone(), command.clone()))
+            .collect();
+        assert_eq!(
+            operations,
+            [("gobby_gcode_project_read".to_owned(), "SELECT".to_owned())]
+        );
+        for (_, _, using_expression, _) in policies {
+            assert!(
+                using_expression.contains("current_project_id")
+                    || using_expression.contains("FROM tasks"),
+                "{table} read policy is not project-scoped: {using_expression}"
+            );
+        }
+    }
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"

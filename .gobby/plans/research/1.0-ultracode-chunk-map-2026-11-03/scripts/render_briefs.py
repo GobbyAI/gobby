@@ -21,6 +21,7 @@ Nothing is paraphrased: every sentence comes from the map, the rulings file or t
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import sys
@@ -28,13 +29,29 @@ from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I drops the script's folder from sys.path
-from mapcheck import load_nodes, norm_ref
+# -I drops the script's folder from sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+mapcheck = importlib.import_module("mapcheck")  # sibling module, loaded after the path insert
+load_nodes = mapcheck.load_nodes
+norm_ref = mapcheck.norm_ref
 
-LEAKS = ("/private/tmp", "scratchpad/", "tree-audit", "phase2", "v2-work", "fold-", "map-synth",
-         "dispositions-nodes", "wf-", "check-C", "verify-V")
-RULING_LIST = re.compile(r"\brulings?\s+(\d+(?:\s*-\s*\d+)?(?:\s*(?:,\s*and|,|and)\s*\d+"
-                         r"(?:\s*-\s*\d+)?)*)")
+LEAKS = (
+    "/private/tmp",
+    "scratchpad/",
+    "tree-audit",
+    "phase2",
+    "v2-work",
+    "fold-",
+    "map-synth",
+    "dispositions-nodes",
+    "wf-",
+    "check-C",
+    "verify-V",
+)
+RULING_LIST = re.compile(
+    r"\brulings?\s+(\d+(?:\s*-\s*\d+)?(?:\s*(?:,\s*and|,|and)\s*\d+"
+    r"(?:\s*-\s*\d+)?)*)"
+)
 DEC = re.compile(r"(?<![A-Za-z0-9-])D(\d{1,3})(?![0-9A-Za-z-])")
 NODE_KINDS = {"family", "engine", "runner", "hubnode"}
 
@@ -98,16 +115,18 @@ class Records:
     def cited(self, text: str) -> tuple[list[str], list[str], list[int]]:
         dec = {f"D{n}" for n in DEC.findall(text)} & set(self.decisions)
         ass = {a for a in self.assumptions if word_in(a, text)}
-        return (sorted(dec, key=lambda d: int(d[1:])), sorted(ass),
-                sorted(ruling_numbers(text)))
+        return (sorted(dec, key=lambda d: int(d[1:])), sorted(ass), sorted(ruling_numbers(text)))
 
     def render(self, dec: list[str], ass: list[str], rul: list[int], title: str) -> list[str]:
         lines = [f"## {title}", ""] if dec or ass or rul else []
         for did in dec:
             d = self.decisions[did]
-            lines += [f"### {did}: {d['question']}", "",
-                      f"Default ({d.get('resolved_by') or 'unresolved'}): {d['recommended_default']}",
-                      ""]
+            lines += [
+                f"### {did}: {d['question']}",
+                "",
+                f"Default ({d.get('resolved_by') or 'unresolved'}): {d['recommended_default']}",
+                "",
+            ]
         if ass:
             lines += ["### Assumptions", ""]
             for aid in ass:
@@ -123,13 +142,30 @@ class Records:
 
 def protocol_doc(m: dict, rec: Records) -> tuple[str, str]:
     cp, lc = m["chunk_protocol"], m["live_checkout_constraints"]
-    lines = ["# The chunk protocol", "",
-             "Every chunk follows this protocol; each chunk task's brief holds what is specific "
-             "to that chunk. docs/port/map-v2.md holds every decision and assumption, and "
-             "docs/port/rulings.md every operator ruling.", "", "## Steps", ""]
+    lines = [
+        "# The chunk protocol",
+        "",
+        "Every chunk follows this protocol; each chunk task's brief holds what is specific "
+        "to that chunk. docs/port/map-v2.md holds every decision and assumption, and "
+        "docs/port/rulings.md every operator ruling.",
+        "",
+        "## Steps",
+        "",
+    ]
     lines += [f"{i}. {s}" for i, s in enumerate(cp["steps"], 1)]
-    lines += ["", cp["note"], "", "## Branching", "", m["branching"], "",
-              "## Live checkout constraints", "", lc["intro"], ""]
+    lines += [
+        "",
+        cp["note"],
+        "",
+        "## Branching",
+        "",
+        m["branching"],
+        "",
+        "## Live checkout constraints",
+        "",
+        lc["intro"],
+        "",
+    ]
     lines += [f"- {item}" for item in lc["items"]]
     lines += ["", "## Rollback and packaging", "", m["rollback_and_packaging"], ""]
     body = "\n".join(lines)
@@ -155,8 +191,10 @@ def main() -> int:
     chunks = {c["id"]: c for c in m["chunks"]}
     rec = Records(m, rulings)
     prefixes = sorted({cid.split("-")[0] for cid in chunks if "-" in cid})
-    id_like = re.compile(rf"(?<![A-Za-z0-9-])((?:{'|'.join(prefixes)})-[A-Z0-9]+"
-                         rf"(?:-[A-Z0-9]+)*)(?![A-Za-z0-9-])")
+    id_like = re.compile(
+        rf"(?<![A-Za-z0-9-])((?:{'|'.join(prefixes)})-[A-Z0-9]+"
+        rf"(?:-[A-Z0-9]+)*)(?![A-Za-z0-9-])"
+    )
     protocol, protocol_body = protocol_doc(m, rec)
     gap_lines: list[str] = []
     for n in sorted(ruling_numbers(protocol_body) - set(rulings)):
@@ -174,53 +212,86 @@ def main() -> int:
             if str(c.get(field) or "").strip().upper() in {"", "TBD", "PENDING", "?"}:
                 gaps.append(f"ERROR empty {field}")
         gaps += [f"ERROR unknown depends_on {d}" for d in c["depends_on"] if d not in chunks]
-        gaps += [f"ERROR unknown decision_ref {d}" for d in c["decision_refs"]
-                 if d not in rec.decisions]
-        gaps += [f"WARN tree_node {r} is not an open node" for r in c["tree_nodes"]
-                 if r not in nodes]
+        gaps += [
+            f"ERROR unknown decision_ref {d}" for d in c["decision_refs"] if d not in rec.decisions
+        ]
+        gaps += [
+            f"WARN tree_node {r} is not an open node" for r in c["tree_nodes"] if r not in nodes
+        ]
         dec, ass, rul = rec.cited(own)
-        gaps += [f"WARN text cites {d} outside decision_refs" for d in dec
-                 if d not in c["decision_refs"]]
-        gaps += [f"ERROR cites ruling {n}, which the rulings file lacks" for n in rul
-                 if n not in rulings]
+        gaps += [
+            f"WARN text cites {d} outside decision_refs" for d in dec if d not in c["decision_refs"]
+        ]
+        gaps += [
+            f"ERROR cites ruling {n}, which the rulings file lacks" for n in rul if n not in rulings
+        ]
         for tok in sorted(set(id_like.findall(own)) - set(chunks)):
             if not any(other.startswith(tok + "-") for other in chunks):  # a family name
                 gaps.append(f"WARN chunk-like id {tok} is not a chunk")
-        dec = sorted(set(dec) | (set(c["decision_refs"]) & set(rec.decisions)),
-                     key=lambda d: int(d[1:]))
+        dec = sorted(
+            set(dec) | (set(c["decision_refs"]) & set(rec.decisions)), key=lambda d: int(d[1:])
+        )
         mine = sorted(by_target.get(cid, []), key=lambda t: t[0])
-        elsewhere = [(ref, items[0]) for ref, items in sorted(disp.items())
-                     if items[0]["target"] != cid and cid in owner(ref)[0]]
+        elsewhere = [
+            (ref, items[0])
+            for ref, items in sorted(disp.items())
+            if items[0]["target"] != cid and cid in owner(ref)[0]
+        ]
         if c["kind"] in NODE_KINDS and not mine:
             gaps.append("WARN no open node is dispositioned to this chunk")
-        lines = [f"# {cid}: {c['title']}", "", f"Kind: {c['kind']}. Size: {c['size']}", "",
-                 f"Reference base: {base}.", "",
-                 "Follow docs/port/protocol.md, the protocol every chunk follows; this brief "
-                 f"holds what is specific to {cid}. docs/port/map-v2.md holds every decision and "
-                 "assumption, and docs/port/rulings.md every operator ruling.", "",
-                 "## Depends on", ""]
-        lines += [f"- {d}: {chunks[d]['title'] if d in chunks else '(unknown)'}"
-                  for d in c["depends_on"]] or ["None."]
+        lines = [
+            f"# {cid}: {c['title']}",
+            "",
+            f"Kind: {c['kind']}. Size: {c['size']}",
+            "",
+            f"Reference base: {base}.",
+            "",
+            "Follow docs/port/protocol.md, the protocol every chunk follows; this brief "
+            f"holds what is specific to {cid}. docs/port/map-v2.md holds every decision and "
+            "assumption, and docs/port/rulings.md every operator ruling.",
+            "",
+            "## Depends on",
+            "",
+        ]
+        lines += [
+            f"- {d}: {chunks[d]['title'] if d in chunks else '(unknown)'}" for d in c["depends_on"]
+        ] or ["None."]
         lines += ["", "## Goal", "", c["goal"], "", "## Scope", ""]
         if c["ledger_selectors"]:
             lines += ["Ledger selectors (this chunk owns every ledger row they match):", ""]
             lines += [f"- `{s}`" for s in c["ledger_selectors"]] + [""]
-        lines += [f"Engines: {'; '.join(c['engines']) or 'none'}.", "",
-                  f"Seam gaps: {'; '.join(c['seam_gaps']) or 'none'}.", "", "## Tree nodes", ""]
+        lines += [
+            f"Engines: {'; '.join(c['engines']) or 'none'}.",
+            "",
+            f"Seam gaps: {'; '.join(c['seam_gaps']) or 'none'}.",
+            "",
+            "## Tree nodes",
+            "",
+        ]
         carried = [(r, x) for r, x in mine if x["disposition"] == "chunk"]
         replaced = [(r, x) for r, x in mine if x["disposition"] == "superseded"]
         if carried:
-            lines += ["This chunk carries the work of these open nodes of the #21542 tree; its "
-                      "task supersedes them (D31), except a node its goal closes as done. Read each node before the debt-not-to-port "
-                      "pass:", ""]
-            lines += [f"- {r} {(nodes.get(r) or {}).get('title', '(not an open node)')}"
-                      for r, _ in carried]
+            lines += [
+                "This chunk carries the work of these open nodes of the #21542 tree; its "
+                "task supersedes them (D31), except a node its goal closes as done. Read each node before the debt-not-to-port "
+                "pass:",
+                "",
+            ]
+            lines += [
+                f"- {r} {(nodes.get(r) or {}).get('title', '(not an open node)')}"
+                for r, _ in carried
+            ]
         if replaced:
             lines += [""] if carried else []
-            lines += ["This chunk's design replaces the planned approach of these open nodes; "
-                      "they close as superseded by its task (D31):", ""]
-            lines += [f"- {r} {(nodes.get(r) or {}).get('title', '(not an open node)')}"
-                      for r, _ in replaced]
+            lines += [
+                "This chunk's design replaces the planned approach of these open nodes; "
+                "they close as superseded by its task (D31):",
+                "",
+            ]
+            lines += [
+                f"- {r} {(nodes.get(r) or {}).get('title', '(not an open node)')}"
+                for r, _ in replaced
+            ]
         if not mine:
             lines.append("No open node is dispositioned to this chunk.")
         if elsewhere:
@@ -228,22 +299,47 @@ def main() -> int:
             for ref, x in elsewhere:
                 title = (nodes.get(ref) or {}).get("title", "")
                 lines.append(f"- {ref} {title} ({x['disposition']} {x['target']})")
-        lines += ["", "## Oracle", "", c["oracle"], "", "## Python edits", "", c["python_edits"],
-                  "", "## Registration", "", c["registration"], "", "## Risks", "", c["risks"], ""]
+        lines += [
+            "",
+            "## Oracle",
+            "",
+            c["oracle"],
+            "",
+            "## Python edits",
+            "",
+            c["python_edits"],
+            "",
+            "## Registration",
+            "",
+            c["registration"],
+            "",
+            "## Risks",
+            "",
+            c["risks"],
+            "",
+        ]
         lines += rec.render(dec, ass, rul, "Records this brief cites")
         text = "\n".join(lines)
         gaps += [f"ERROR leak: brief contains {leak!r}" for leak in LEAKS if leak in text]
         (out_dir / f"{cid}.md").write_text(text)
-        index[cid] = {"chars": len(text), "decisions": dec, "rulings": rul, "assumptions": ass,
-                      "nodes": [r for r, _ in mine], "gaps": gaps}
+        index[cid] = {
+            "chars": len(text),
+            "decisions": dec,
+            "rulings": rul,
+            "assumptions": ass,
+            "nodes": [r for r, _ in mine],
+            "gaps": gaps,
+        }
         gap_lines += [f"{cid} {g}" for g in gaps]
     (out_dir / "_index.json").write_text(json.dumps(index, indent=1) + "\n")
     (out_dir / "_gaps.md").write_text("\n".join(gap_lines) + "\n")
     sizes = sorted(v["chars"] for k, v in index.items() if k != "protocol.md")
     n_err = sum(1 for g in gap_lines if " ERROR " in g)
-    print(f"protocol.md chars={len(protocol)}; briefs={len(sizes)} chars min/median/max="
-          f"{sizes[0]}/{sizes[len(sizes) // 2]}/{sizes[-1]} total={sum(sizes)} "
-          f"gaps={len(gap_lines)} errors={n_err}")
+    print(
+        f"protocol.md chars={len(protocol)}; briefs={len(sizes)} chars min/median/max="
+        f"{sizes[0]}/{sizes[len(sizes) // 2]}/{sizes[-1]} total={sum(sizes)} "
+        f"gaps={len(gap_lines)} errors={n_err}"
+    )
     return 0
 
 

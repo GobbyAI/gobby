@@ -92,6 +92,13 @@ pub fn sync_file(
         }
         Err(err) => return Err(err.into()),
     };
+    code_symbols::prune_stale_file_points(
+        &lifecycle,
+        &mut conn,
+        &ctx.project_id,
+        &file_path,
+        &symbols,
+    )?;
     if !db::mark_vectors_synced(
         &mut conn,
         &ctx.project_id,

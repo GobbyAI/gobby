@@ -18,10 +18,16 @@ from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
     from gobby.ai.decisions import DecisionResult, DecisionService, NoulAnswer
-    from gobby.config.ai import DecisionsConfig
+    from gobby.config.ai import DecisionEndpointConfig, DecisionsConfig
     from gobby.config.features import RecommendToolsConfig
 
 logger = logging.getLogger("gobby.mcp.server")
+
+
+def _noul_endpoint(config: DecisionsConfig) -> DecisionEndpointConfig:
+    """The Noul endpoint; the default when unrouted, which refuses Noul."""
+    return config.endpoint_for("noul") or config
+
 
 # Search mode type
 SearchMode = Literal["llm", "semantic", "hybrid"]
@@ -98,14 +104,13 @@ async def _dispatch(
     batches: list[dict[str, str]],
 ) -> list[DecisionResult[NoulAnswer]]:
     """Run every batch under one deadline; one failed batch cancels the rest."""
+    timeout = _noul_endpoint(config).timeout_seconds
     try:
-        async with asyncio.timeout(config.timeout_seconds):
+        async with asyncio.timeout(timeout):
             async with asyncio.TaskGroup() as group:
                 calls = [
                     group.create_task(
-                        service.noul(
-                            _CONSUMER, state, batch, timeout_seconds=config.timeout_seconds
-                        )
+                        service.noul(_CONSUMER, state, batch, timeout_seconds=timeout)
                     )
                     for batch in batches
                 ]
@@ -207,7 +212,7 @@ def _record_shadow(
     decisions_shadow.record(
         _CONSUMER,
         {
-            "model": config.model,
+            "model": _noul_endpoint(config).model,
             "state": {"request": task_description},
             "propositions": propositions,
             "candidate_keys": {candidate_id: key for key, candidate_id in key_to_id.items()},
@@ -224,8 +229,8 @@ def _record_shadow(
             },
             "backend_identity": outcome.backend_identity,
             "response_model": outcome.response_model,
-            "wire_api": config.wire_api,
-            "endpoint_host": urlparse(config.api_base or "").hostname,
+            "wire_api": _noul_endpoint(config).wire_api,
+            "endpoint_host": urlparse(_noul_endpoint(config).api_base or "").hostname,
             "latency_ms": outcome.latency_ms,
             "estimated_tokens": outcome.estimated_tokens,
         },
@@ -363,10 +368,13 @@ class RecommendationService:
     def _decisions_config(self) -> DecisionsConfig | None:
         return self._decisions_resolver() if self._decisions_resolver is not None else None
 
-    def _warn_mismatch(self, config: DecisionsConfig) -> None:
-        """Log an evaluated-backend mismatch once per cooldown window (Decision 10)."""
+    def _warn_mismatch(self, endpoint: DecisionEndpointConfig) -> None:
+        """Log an evaluated-backend mismatch once per cooldown window (Decision 10).
+
+        The window belongs to the endpoint that serves Noul, the tool rerank type.
+        """
         now = time.monotonic()
-        if now - self._mismatch_warning_at >= config.failure_cooldown_seconds:
+        if now - self._mismatch_warning_at >= endpoint.failure_cooldown_seconds:
             logger.warning("evaluated_backend_mismatch: tool rerank decision runs as shadow")
             self._mismatch_warning_at = now
 
@@ -477,7 +485,7 @@ class RecommendationService:
         candidates = semantic_result["recommendations"]
         propositions, key_to_id = _propositions(candidates)
         service = get_decision_service(config)
-        if policy.mode == "enforce" and policy.evaluated_model == config.model:
+        if policy.mode == "enforce" and policy.evaluated_model == _noul_endpoint(config).model:
             outcome = await _classify(service, config, task_description, propositions, key_to_id)
             if (
                 outcome.status == "ok"
@@ -492,7 +500,7 @@ class RecommendationService:
                     top_k,
                 )
             if outcome.status == "ok":
-                self._warn_mismatch(config)
+                self._warn_mismatch(_noul_endpoint(config))
             incumbent, incumbent_ok = await self._llm_rerank(
                 task_description, top_k, semantic_result
             )
@@ -508,7 +516,7 @@ class RecommendationService:
             )
             return incumbent
         if policy.mode == "enforce":
-            self._warn_mismatch(config)
+            self._warn_mismatch(_noul_endpoint(config))
         return await self._shadow_rerank(
             service,
             config,

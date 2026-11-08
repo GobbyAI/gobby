@@ -22,6 +22,9 @@ TERMINAL_ID_KEY = "daemon_stop_resume_terminal_id"
 SPAWN_KEY_KEY = "daemon_stop_resume_spawn_key"
 RESUMED_FROM_RUN_ID_KEY = "resumed_from_run_id"
 PRE_BIND_SESSION_STATUS_KEY = "daemon_stop_resume_pre_bind_session_status"
+DISPATCH_LEASE_HELD_KEY = "daemon_stop_dispatch_lease_held"
+# Holds the id of the run whose own spawn attached the task's spawn lease; cleared on release.
+SPAWN_LEASE_RUN_KEY = "spawn_lease_run_id"
 _RESUME_METADATA_COLUMNS = frozenset({"ar.resume_metadata_json"})
 
 

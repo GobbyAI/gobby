@@ -119,11 +119,17 @@ pub struct PointIdentity {
     pub byte_start: Option<usize>,
 }
 
-/// Scrolls every point in the project's collection. A missing collection is empty.
+/// Scrolls point identities for one project. `file_paths` limits the scroll to points
+/// whose `file_path` payload is in the list; `None` scrolls the whole collection. An
+/// empty list returns no points without a request, and a missing collection is empty.
 pub fn scroll_point_identities(
     qdrant: &QdrantConfig,
     project_id: &str,
+    file_paths: Option<&[String]>,
 ) -> Result<Vec<PointIdentity>, VectorLifecycleError> {
+    if file_paths.is_some_and(<[String]>::is_empty) {
+        return Ok(Vec::new());
+    }
     let client = qdrant_http_client()?;
     let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
     let mut points = Vec::new();
@@ -135,6 +141,14 @@ pub fn scroll_point_identities(
             "with_vector": false,
             "limit": QDRANT_SCROLL_LIMIT,
         });
+        if let Some(paths) = file_paths {
+            body["filter"] = json!({
+                "must": [
+                    {"key": "project_id", "match": {"value": project_id}},
+                    {"key": "file_path", "match": {"any": paths}},
+                ],
+            });
+        }
         if let Some(next_offset) = offset.take() {
             body["offset"] = next_offset;
         }

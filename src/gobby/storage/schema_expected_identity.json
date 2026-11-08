@@ -1,8 +1,8 @@
 {
-  "assets_root_hash": "f6d4c594f1625ba11039f850733101c9230a69eaee7b93464e5a7a7ed22d32a9",
+  "assets_root_hash": "4a477d57a7831f59a8185432da7ed0e1ce72b7e17ddadeb1f020adf596d47c90",
   "baseline_checksum": "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a",
   "baseline_version": 420,
-  "latest_checksum": "fe7e5507c77bffaa5724bc2a47466f79d2476a4d4e4d87e71724d18beb032ace",
-  "latest_version": 489,
+  "latest_checksum": "f450128071ac171b519d75b47c94770023288ef49d901b2d6cbb5887a83c65b6",
+  "latest_version": 491,
   "runner_protocol": 1
 }

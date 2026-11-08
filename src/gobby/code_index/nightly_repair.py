@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -12,6 +13,11 @@ from uuid import uuid4
 from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
+from gobby.code_index.nightly_reconcile import (
+    OUTCOME_COMPLETED,
+    ReconcileGateway,
+    reconcile_project,
+)
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
@@ -22,6 +28,7 @@ from gobby.utils.datetime import resolve_local_timezone
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.config.code_index import CodeIndexConfig
+    from gobby.config.values import ConfigRuntimeReader
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +44,51 @@ class CronRegistrationProtocol(Protocol):
 class CodeIndexNightlyRepairer:
     """Runs one gcode repair pass across all indexed projects."""
 
-    def __init__(self, context: CodeIndexContext) -> None:
+    def __init__(
+        self,
+        context: CodeIndexContext,
+        *,
+        apply_enabled: Callable[[], bool] | None = None,
+    ) -> None:
         self._context = context
         self._running = False
+        # Read once per run so the config-store switch takes effect without a deploy.
+        self._apply_enabled: Callable[[], bool] = apply_enabled or (lambda: False)
+
+    async def _reconcile(
+        self,
+        *,
+        run_id: str,
+        project_id: str,
+        root: Path,
+        gateway: ReconcileGateway,
+        apply_enabled: bool,
+        receipt_dir: Path,
+        timeout: float,
+        env: Mapping[str, str],
+    ) -> None:
+        """Reconcile one project after a completed repair and record its receipt."""
+        receipt = await reconcile_project(
+            run_id=run_id,
+            project_id=project_id,
+            root=root,
+            gateway=gateway,
+            apply_enabled=apply_enabled,
+            receipt_dir=receipt_dir,
+            timeout=timeout,
+            env=env,
+        )
+        await self._context.run_db(
+            self._context.storage.record_nightly_reconcile_receipt,
+            receipt,
+        )
+        if receipt.outcome != OUTCOME_COMPLETED:
+            logger.warning(
+                "Code index nightly reconcile failed for %s after %d retries: %s",
+                project_id,
+                receipt.retries,
+                receipt.error,
+            )
 
     async def run_once(self) -> str:
         if self._running:
@@ -65,6 +114,8 @@ class CodeIndexNightlyRepairer:
         concurrency = max(1, int(config.nightly_repair_concurrency))
         semaphore = asyncio.Semaphore(concurrency)
         run_id = uuid4().hex
+        apply_enabled = self._apply_enabled()
+        receipt_dir = Path(config.maintenance_log_file).expanduser().parent / "reconcile-receipts"
 
         async def repair_project(project: Any) -> str:
             project_id = str(project.id)
@@ -88,6 +139,17 @@ class CodeIndexNightlyRepairer:
                         factory, project_id, timeout_seconds=timeout
                     ) as launch:
                         result = await gateway.nightly_repair(root, timeout=timeout, env=launch.env)
+                        if result.success:
+                            await self._reconcile(
+                                run_id=run_id,
+                                project_id=project_id,
+                                root=root,
+                                gateway=gateway,
+                                apply_enabled=apply_enabled,
+                                receipt_dir=receipt_dir,
+                                timeout=timeout,
+                                env=launch.env,
+                            )
                     if result.timed_out:
                         status = "timed_out"
                     elif result.success:
@@ -214,3 +276,19 @@ def _reconcile_enabled_state(
         enabled=True,
         next_run_at=next_run.isoformat() if next_run else None,
     )
+
+
+def nightly_reconcile_apply_switch(config_runtime: ConfigRuntimeReader) -> Callable[[], bool]:
+    """Return a reader of the config-store apply key that runs on every nightly run.
+
+    Config that has not started reads as off, so the run stays a dry run.
+    """
+
+    def _enabled() -> bool:
+        try:
+            section = config_runtime.snapshot.active_section("code_index")
+        except RuntimeError:
+            return False
+        return bool(section.nightly_reconcile_apply)
+
+    return _enabled

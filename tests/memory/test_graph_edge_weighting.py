@@ -11,7 +11,7 @@ import sys
 import types
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,6 +22,7 @@ from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.services.knowledge_graph import service as service_mod
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.clustering import ClusterRunResult
+from gobby.memory.services.knowledge_graph.models import _GraphEntity
 from gobby.memory.services.knowledge_graph.reader import (
     _STRUCTURAL_RELATIONSHIP_TYPES,
     KnowledgeGraphReader,
@@ -266,14 +267,14 @@ async def test_fetch_existing_relations_uses_index_anchored_directional_queries(
     await writer.fetch_existing_relations(["a", "b"])
 
     outbound = (
-        "UNWIND $keys AS key "
+        "UNWIND $keys AS key WITH key "
         "MATCH (a:_Entity {entity_key: key}) "
         "MATCH (a)-[r]->(b:_Entity) "
         "WHERE type(r) <> 'CO_OCCURS' "
         "RETURN a.name AS source, type(r) AS rel_type, b.name AS target"
     )
     inbound = (
-        "UNWIND $keys AS key "
+        "UNWIND $keys AS key WITH key "
         "MATCH (b:_Entity {entity_key: key}) "
         "MATCH (a:_Entity)-[r]->(b) "
         "WHERE type(r) <> 'CO_OCCURS' "
@@ -866,3 +867,75 @@ async def test_related_expansion_cache_is_request_scoped() -> None:
     assert first.memory_ids == second.memory_ids == ["memory-1"]
     # Independent per-request memos -> one hop query each, no cross-request reuse.
     assert len(falkor.find("related_entity_key")) == 2
+
+
+async def test_write_entity_clusters_materializes_rows_before_indexed_match() -> None:
+    falkor = RecordingFalkor()
+    writer = KnowledgeGraphWriter(cast(FalkorClient, falkor))
+
+    await writer.write_entity_clusters(
+        {"entity-a": 0, "entity-b": None}, project_id="project-1", is_global=False
+    )
+
+    set_cypher, _ = falkor.find("SET e.cluster_id = row.cluster_id")[0]
+    assert (
+        "UNWIND $rows AS row WITH row MATCH (e:_Entity {entity_key: row.entity_key})"
+    ) in set_cypher
+    clear_cypher, _ = falkor.find("REMOVE e.cluster_id")[0]
+    assert (
+        "UNWIND $entity_keys AS entity_key WITH entity_key "
+        "MATCH (e:_Entity {entity_key: entity_key})"
+    ) in clear_cypher
+
+
+async def test_link_entities_to_memory_materializes_rows_before_indexed_match() -> None:
+    falkor = RecordingFalkor()
+    writer = KnowledgeGraphWriter(cast(FalkorClient, falkor))
+    entity = _GraphEntity(
+        entity_key="entity-a",
+        name="A",
+        entity_type="tool",
+        project_id="project-1",
+        is_global=False,
+        normalized_name="a",
+    )
+
+    await writer.link_entities_to_memory([entity], "mem-1", "project-1", False)
+
+    link_cypher, _ = falkor.find("MERGE (e)-[:MENTIONED_IN]->(m)")[0]
+    assert (
+        "UNWIND $entity_keys AS entity_key WITH entity_key "
+        "MATCH (e:_Entity {entity_key: entity_key})"
+    ) in link_cypher
+
+
+async def test_cooccurrence_support_and_write_materialize_pairs_before_indexed_match() -> None:
+    falkor = RecordingFalkor(_support_responder(2))
+    writer = KnowledgeGraphWriter(cast(FalkorClient, falkor))
+
+    await writer.merge_cooccurrence_edges(
+        [("a", "b")], "proj-1", False, {"a": [1.0, 0.0], "b": [1.0, 0.0]}
+    )
+
+    support_cypher, _ = falkor.find("count(DISTINCT")[0]
+    assert (
+        "UNWIND $pairs AS p WITH p MATCH (a:_Entity {entity_key: p.a}), "
+        "(b:_Entity {entity_key: p.b})"
+    ) in support_cypher
+    write_cypher, _ = falkor.find("MERGE (a)-[r:CO_OCCURS]->(b)")[0]
+    assert (
+        "UNWIND $rows AS p WITH p MATCH (a:_Entity {entity_key: p.a}), "
+        "(b:_Entity {entity_key: p.b})"
+    ) in write_cypher
+
+
+async def test_cooccurrence_delete_materializes_pairs_before_indexed_match() -> None:
+    falkor = RecordingFalkor(_support_responder(0))
+    writer = KnowledgeGraphWriter(cast(FalkorClient, falkor))
+
+    await writer.merge_cooccurrence_edges([("a", "b")], "proj-1", False, {"a": [1.0], "b": [1.0]})
+
+    delete_cypher, _ = falkor.find("DELETE r")[0]
+    assert "UNWIND $rows AS p WITH p MATCH (a:_Entity {entity_key: p.a})-[r:CO_OCCURS]->" in (
+        delete_cypher
+    )

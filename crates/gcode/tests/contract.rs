@@ -163,7 +163,7 @@ fn contract_is_version_thirteen_without_ask() {
             },
             {
                 "code": 3,
-                "meaning": "`index --skip-if-locked` yielded to a concurrent indexer"
+                "meaning": "`index` yielded without indexing: the index lock stayed busy past its wait, or a timed-out wait queued its work for the next index run"
             },
             {
                 "code": 10,

@@ -101,6 +101,41 @@ A separate sync worker polls pending files and delegates to `gcode vector
 sync-file` and `gcode graph sync-file`. Rust owns both projections; the daemon
 coordinates their queues, timeouts, and retry/backoff.
 
+## Workspace Pins
+
+A workspace pin is a snapshot of the effective file selectors for the workspace's
+selected base commit. Each selector names a source project, path, and content
+hash. A pin inherits only clean indexed ancestor files whose Git blob ID equals
+the selected commit's tree entry. Dirty, untracked, ignored, or mismatched
+ancestor paths become indexing gaps that the workspace indexes itself. A pin
+inherits none of its parent's uncommitted content.
+
+- **Agent spawns** pin the marker in `ensure_isolation_code_index` immediately
+  before `gcode index`. Spawn timing reports that step as `code_overlay_index`.
+- **Pinned reads.** Search, graph, and vector reads in the workspace see only the
+  source versions that its pin or its own selectors name. The pin is a content-GC
+  root until the child overlay is purged.
+- **Cold fallback.** A semantic selection miss exits zero and records a cold pin,
+  which holds no inherited rows. The workspace then indexes locally and never
+  reads moving-parent rows. External URL clones take this path because they have
+  no live ancestor index.
+- **Pin storage failure.** A failed pin write stops the code-index preflight with
+  `gcode_pin_failed`. Indexing or reading under the prior pin is never a fallback.
+- **Projection recovery.** When a source projection moves, its stale graph and
+  vector rows stop serving reads immediately. The daemon sync worker reprojects
+  only the missing pinned paths, at their pinned versions, into the child's
+  projection namespace. PostgreSQL and BM25 text search stay usable during
+  recovery and report degraded state. A recovery completion for a re-pinned,
+  shadowed, or purged pin is discarded.
+
+### Ask
+
+The `ask` command was retired in gcode contract version 12
+([CLI contract](../contracts/gcode-cli.md)). Its live-index contract was that it
+read the caller's live index, and its commit IDs never selected an index. No
+gcode command provides that contract now. Use
+[evidence](#evidence-and-repository-questions) for deterministic citations.
+
 ## CLI Reference
 
 All commands accept these global options unless noted:
@@ -193,7 +228,8 @@ These commands require the Gobby daemon and graph support:
 | `gcode graph view` | Render scoped call, import, or class-hierarchy views |
 | `gcode graph report` | Generate a report with explicit degradation |
 | `gcode graph cleanup-orphans` | Reconcile missing-file graph projections |
-| `gcode vector sync-file`, `clear`, `rebuild`, `cleanup-orphans` | Operate only the code-symbol vector projection |
+| `gcode vector sync-file`, `clear`, `rebuild` | Operate only the code-symbol vector projection |
+| `gcode vector reconcile` | Dry-run vector inventory; operator `--apply --expect-digest --receipt` under the maintenance lease |
 
 `gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
 blast-radius` supports `--depth`.
@@ -446,4 +482,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-10-26_
+_Last verified: 2026-11-06_

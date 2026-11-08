@@ -576,6 +576,7 @@ Targets:
 
 Consumers unchanged:
 - `crates/gcode/src/index/indexer/pipeline.rs` — no-edit-reason: adoption and `--full` routing are unchanged.
+- `crates/gcode/src/index/indexer/primary.rs` — no-edit-reason: calls `write_parsed_file_facts` (:516), whose signature is unchanged.
 - `crates/gcode/src/vector/code_symbols/embedding.rs` — no-edit-reason: `vector_text_for_symbol` is already `pub`.
 - `crates/gcode/src/index/indexer/local_imports.rs` — no-edit-reason: inheritance promotion keeps `dirty_graph_sync_for_file` and its file-state join.
 - `crates/gcode/src/graph/code_graph/write/mutation.rs` — no-edit-reason: the symbol fields the graph writes define the graph comparison key and are read only.
@@ -729,13 +730,8 @@ Targets:
 - `crates/gcode/src/commands/vector/reconcile.rs`
 - `crates/gcode/src/commands/vector/reconcile/tests.rs`
 - `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs`
-- `crates/gcode/src/commands/vector.rs::cleanup_orphans`
-- `crates/gcode/src/commands/vector.rs::print_orphan_cleanup`
-- `crates/gcode/src/vector/code_symbols/qdrant.rs::cleanup_orphan_file_vectors`
-- `crates/gcode/src/vector/code_symbols/qdrant.rs::list_project_vector_file_paths`
-- `crates/gcode/src/vector/code_symbols/qdrant.rs::collect_file_paths_from_scroll_page`
-- `crates/gcode/src/vector/code_symbols/qdrant.rs::VectorOrphanCleanup`
-- `crates/gcode/src/vector/code_symbols/qdrant.rs::delete_file_vectors`
+- `crates/gcode/src/commands/vector.rs`
+- `crates/gcode/src/vector/code_symbols/qdrant.rs`
 - `crates/gcode/src/vector/code_symbols.rs::*` — scope-reason: swap the cleanup re-exports for `scroll_point_identities` and `PointIdentity`
 - `crates/gcode/src/vector/code_symbols/tests/deletion.rs::*` — scope-reason: remove the three tests of the deleted functions
 - `crates/gcode/src/cli.rs::VectorCommand`
@@ -748,7 +744,7 @@ Targets:
 - `docs/reference-audit/code-index.json::*` — scope-reason: the `vector cleanup-orphans` audit entry becomes `vector reconcile` (operator, `recovery.md`)
 - `src/gobby/install/shared/skills/gobby/references/code-index/graphs.md`
 - `src/gobby/install/shared/skills/gobby/references/code-index/recovery.md`
-- `crates/gcode/tests/contract.rs::contract_is_version_twelve_without_ask`
+- `crates/gcode/tests/contract.rs::contract_is_version_thirteen_without_ask`
 - `crates/gcode/src/cli/tests/projection.rs::*` — scope-reason: the parse test for `vector cleanup-orphans` becomes `vector reconcile`
 - `crates/gcode/src/cli/tests/top_level.rs::*` — scope-reason: the command list at :384 names `reconcile`
 - `crates/gcode/src/dispatch/tests.rs::*` — scope-reason: the service test at :71 names `reconcile`
@@ -858,15 +854,18 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 `kind: deliverable`
 
 Targets:
-- `crates/gcode/src/commands/vector/reconcile.rs`
-- `crates/gcode/src/commands/vector/reconcile/tests.rs`
-- `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs`
-- `crates/gcode/src/commands/receipt.rs`
+- `crates/gcode/src/commands/vector/reconcile.rs::*` — scope-reason: the apply path, maintenance lease and receipt checks join the dry-run inventory
+- `crates/gcode/src/commands/vector/reconcile/tests.rs::*` — scope-reason: apply-mode unit tests join the digest tests
+- `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::*` — scope-reason: apply-mode serial-db tests join the dry-run tests
+- `crates/gcode/src/commands/receipt.rs::validate_location`
+- `crates/gcode/src/commands/receipt.rs::read_existing`
+- `crates/gcode/src/commands/receipt.rs::write_atomic`
 - `crates/gcode/src/commands/mod.rs::*` — scope-reason: declare `pub(crate) mod receipt;`
 - `crates/gcode/src/commands/status/retire_files.rs::validate_receipt_path`
 - `crates/gcode/src/commands/status/retire_files.rs::write_receipt`
-- `crates/gcode/src/commands/status/retire_files/manifest.rs::no_symlinks`
-- `crates/gcode/src/commands/status/retire_files/manifest.rs::require_private_file`
+- `crates/gcode/src/commands/receipt.rs::no_symlinks`
+- `crates/gcode/src/commands/receipt.rs::require_private_file`
+- `crates/gcode/src/commands/status/retire_files/manifest.rs::*` — scope-reason: drop the local `no_symlinks` and `require_private_file` definitions and import them from `receipt`
 - `crates/gcode/src/cli.rs::VectorCommand`
 - `crates/gcode/src/dispatch.rs::*` — scope-reason: the `Reconcile` arm passes the new flags
 - `crates/gcode/src/contract.rs::*` — scope-reason: the `vector reconcile` entry gains three flags
@@ -1043,7 +1042,7 @@ Targets:
 - `crates/gcode/src/commands/status/content_gc/history.rs`
 - `crates/gcode/src/commands/status/content_gc/history/tests.rs`
 - `crates/gcode/src/commands/status/content_gc.rs::discover_content_gc`
-- `crates/gcode/src/commands/status/content_gc.rs::recent_content_hashes_in_git_history`
+- `crates/gcode/src/commands/status/content_gc.rs`
 - `crates/gcode/src/commands/status/content_gc/tests.rs::*` — scope-reason: replace `recent_git_blob_protects_matching_content` and add the path-level discovery test
 
 Consumers unchanged:
@@ -1135,6 +1134,8 @@ Consumers unchanged:
 - `crates/gcode/src/index/indexer/freshness_probe.rs` — no-edit-reason: calls `passes_path_filters` and `effective_excludes` unchanged; only their visibility widens.
 - `crates/gcode/src/index/indexer/overlay.rs` — no-edit-reason: calls `effective_excludes` unchanged.
 - `crates/gcode/src/index/indexer/tests/explicit_routing.rs` — no-edit-reason: exercises `effective_excludes` through indexing unchanged.
+- `crates/gcode/src/commands/grep.rs` — no-edit-reason: calls `classify_explicit_file_with_options` (:340) and `effective_excludes` (:329) with unchanged signatures; only `effective_excludes` visibility widens.
+- `crates/gcode/src/index/indexer/scan.rs` — no-edit-reason: calls `effective_excludes` (:121, :178) unchanged; only its visibility widens.
 
 **Research context:** see As-Is Facts (classifier). The daemon runs prune per
 project root (`--project <root>`), so `prune.rs` has the resolved `Context`.
@@ -1262,28 +1263,56 @@ and a read-through against the shipped `gcode vector reconcile --help`.
 - 4.1.3 - The prune text states path-keyed, eligibility-gated history
   retention. behavior: "its own path" in `docs/guides/gcode-user-guide.md`.
 
-## D1 Hourly reconcile apply (depends: 2.2)
+## D1 Nightly reconcile apply (depends: 2.2)
 `kind: deferred`
 
-The daemon's hourly prune (`src/gobby/code_index/prune.py`, through
-`gcode_gateway.py`) runs `vector reconcile` and applies with the digest it
-just observed. This waits until the Live Maintenance Procedure has run once
-and its receipt has been reviewed, because the first apply removes a
-historical backlog that needs human review. Automating it also needs a
-decision on receipt storage for unattended runs.
+Operator rulings, 2026-11-06 (Josh via the Assistant gobby#19874), verbatim
+where quoted. Vectors self-heal on pull, and a nightly reconcile is the
+backstop that catches what slips through. The pull-path gaps found while
+checking that model are bugs owned by #25810, not by this section. "Give it a
+dry run, test it, then flip a switch and make it live."
+
+- Schedule: the existing nightly code-index job
+  (`src/gobby/code_index/nightly_repair.py`, cron `0 2 * * *`) runs
+  `gcode vector reconcile` for each project after `gcode repair`. No hourly
+  run.
+- Apply switch: one key in Gobby's config store ("Config store like
+  everything else config"), default off. With it off, the run is a dry run
+  that records its counts. With it on, the run applies with the digest it just
+  observed. Flipping the key needs no deploy.
+- No volume cap ("lose the cap and re-run on failure"). A failed run (read
+  error, digest race, apply error) is retried, and the failure is recorded.
+- Inputs that are empty or unreadable replace the cap as the safety guard
+  ("Yes"):
+  - empty vector collection: regenerate, by re-embedding every symbol;
+  - empty symbol table: rebuild it from the code first (full index), then
+    reconcile, so the run never deletes every vector only to re-embed them;
+  - failed or partial read (connection drop, timeout, zero rows from an
+    errored read): a failure to retry, never treated as empty. A failed read
+    never deletes.
+- Receipts: a hub database table ("Database. Good rule of thumb is database
+  over local storage."). One row per run: project, mode (dry run or apply),
+  digest, per-class counts, outcome, retry count and timestamps.
+- Rollout: ship with the switch off, check the nightly dry-run counts, then
+  turn the switch on. Go-live also waits for the Live Maintenance Procedure's
+  first reviewed apply (#25766), so the historical backlog is deleted under
+  review and not by the first unattended run.
 
 ```yaml
 deferral:
-  task_ref: "created-at-expansion"
-  reason: "Unattended apply is gated on the first reviewed live apply and its receipt; receipt storage for unattended runs needs its own decision."
+  task_ref: "#23584"
+  reason: "Built after this epic lands on 0.5.0; go-live follows the dry-run check and the #25766 first reviewed apply."
   owner: "orchestrator"
   original_acceptance_items:
     - D1.1
 ```
 
-- D1.1 - The hourly prune runs reconcile for each project. It applies only
-  orphan deletion and flag reset, with a receipt under the daemon's private
-  state directory, and reports counts in the prune result.
+- D1.1 - The nightly code-index job runs `vector reconcile` for each project.
+  It is a dry run while the config-store apply key is off and applies when the
+  key is on, with no volume cap. It retries failed runs; regenerates an empty
+  collection; rebuilds an empty symbol table before reconciling; treats a
+  failed or partial read as a retryable failure, never as empty; and writes
+  one receipt row per run to a hub table.
 
 ## Live Maintenance Procedure
 `kind: framing`

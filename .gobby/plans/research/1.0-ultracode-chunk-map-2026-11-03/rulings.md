@@ -265,3 +265,9 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     to the #25662 non-blocking queue under Josh's friction paradigm; #25629 does not act on it.
     Also from Josh via the Orchestrator: no further scratch repos; cherrytest and cpx-probe-tmp stay
     for Josh, because hooks refused the Orchestrator's delete.
+23. Map approved (Josh, 2026-11-05 ~09:05 CT, through the Assistant, relayed by the Orchestrator
+    gobby#19309, message 9a491ad0): "chunk map is approved, but we can't begin until all worktrees
+    except 0.5.0 and wiki are resolved" and "and the tmux purge is complete." The relay names no
+    row answered differently, so the approval takes every default (ruling 5). It widens ruling 6's
+    worktree condition: every linked worktree counts except 0.5.0 and wiki, whenever it was opened.
+    No port work starts and no chunk task is created until the start gate clears.
