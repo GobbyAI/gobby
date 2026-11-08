@@ -24,6 +24,7 @@ pytest_plugins = [
     "tests.fixtures.e2e_run_cleanup",
     "tests.fixtures.socket_paths",
     "tests.fixtures.hang_guard",
+    "tests.fixtures.collection_scopes",
 ]
 
 
