@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from c0_poller import IndexPoller, clean_file_count, corpus_project_id, index_row_count
 from c0_runner import (
@@ -27,6 +28,19 @@ from runtime_boundary import assert_owned_runtime
 from validate_environment import SEPTEMBER_ROOT
 
 CLEAN_MANIFEST_RELATIVE = "manifests/corpora/gcode/C1.json"
+GRAPHIFY_INTERPRETER = "tools/graphify/venv/bin/python"
+
+
+def c0_policy(root: Path, home: Path, interpreter: Path) -> dict[str, Any]:
+    """The daemon's SRT policy plus read-only access to the interpreter's base install.
+
+    The venv interpreter is a symlink into a uv-managed base outside the runtime root; SRT denies
+    that read under the root-only allowRead, so C0 alone adds the base install, read-only.
+    """
+    policy = srt_policy(root, home)
+    base = interpreter.resolve().parent.parent
+    policy["filesystem"]["allowRead"] = [*policy["filesystem"]["allowRead"], str(base)]
+    return policy
 
 
 def sandboxed_runner(root: Path, attempt: str) -> Runner:
@@ -36,7 +50,7 @@ def sandboxed_runner(root: Path, attempt: str) -> Runner:
     violations = root / f"logs/c0/{attempt}/violations.jsonl"
     policy.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     violations.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _write_json(policy, srt_policy(root, Path.home()), mode=0o600)
+    _write_json(policy, c0_policy(root, Path.home(), root / GRAPHIFY_INTERPRETER), mode=0o600)
     violations.touch(mode=0o600, exist_ok=False)
 
     def runner(argv: list[str], cwd: Path, env: dict[str, str]) -> CommandResult:

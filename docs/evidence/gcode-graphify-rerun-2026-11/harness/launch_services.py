@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import launch_daemon
 import prepare_daemon
 import prepare_identity
 from binary_set import install_binary_set
@@ -113,6 +114,7 @@ def observe(root: Path, image_ids: dict[str, str], attempt: str) -> None:
         _write_json(after, external_state_snapshot(DEFAULT_SOURCE_REPO), mode=0o600)
     copy_attempt_violations(root, attempt, monitor_dir=_shared_monitor_dir())
     require(healthy, "owned services not healthy; retain logs and ownership")
+    launch_daemon.require_daemon_healthy(root)
     print("all three owned services healthy; live containment checks passed")
 
 

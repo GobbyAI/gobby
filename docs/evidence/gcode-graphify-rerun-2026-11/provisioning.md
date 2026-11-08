@@ -47,10 +47,11 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
    - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by
      nothing, through probe receipts;
    - asserts zero `code_indexed_file_states` rows for every workspace project.
-4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules and the gobby package under "Gobby modules checked before step 4".
+4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules and the gobby package under "Gobby modules checked before step 4". It launches the supervised path, `gobby-home/bin/gdaemon serve`, with `GOBBY_BACKEND_COMMAND` set to `tools/gobby/venv/bin/python -m gobby.runner --config <bootstrap>`, so gdaemon runs the backend. The step records the launch in `active-launches.json`, then polls `GET http://127.0.0.1:<daemon_port>/api/healthz` (120 probes, one second apart). It fails and unwinds the launch unless the daemon answers 200 and the wrapper is still alive.
 5. `record_installations.py --owner-session <session> --attempt <id>`.
 6. `launch_services.py observe --owner-session <session> --attempt <id>` writes the after-snapshot
-   if absent.
+   if absent. It fails unless the containers are healthy and the daemon is alive and healthy at its
+   `/api/healthz` route.
 7. `c0.py <attempt> --owner-session <session>`: the C0 run, described below.
 8. `validate_environment.py --live`.
 
@@ -118,14 +119,20 @@ this machine before step 2. Otherwise the orchestrator picks new digests.
 
 `c0.py` checks ownership of the runtime, then runs every command under the SRT wrapper. Its policy is
 `srt/c0-settings-<attempt>.json`, and violations go to `logs/c0/<attempt>/violations.jsonl`.
+The policy is the daemon's SRT policy plus read-only `allowRead` of the graphify interpreter's
+resolved base install (`c0_policy` in `c0.py`). The venv `python` is a symlink into a uv-managed base
+outside the runtime root, and SRT denied that read without it.
 
 1. **Graphify concurrency probe.** `graphify --help` and `graphify extract --help` are captured under
-   `logs/c0/<attempt>/probe/`. If the extract help lists `--max-workers`, the extract command gets
-   `--max-workers 1`. The value and its evidence come from September's `run-records.jsonl`
-   line 3, where `GRAPHIFY_NATIVE_CONCURRENCY` is `"1"` and `command_argv` contains
-   `--max-workers 1`. If the flag is absent, the receipt records `source: unsupported` and the
-   extract runs with default workers. This run sets the flag only. `GRAPHIFY_NATIVE_CONCURRENCY`
-   is not set (orchestrator ruling 4b, via gobby#19309).
+   `logs/c0/<attempt>/probe/`, with each stdout, its stderr and its return code in
+   `graphify-probes.json`. Both must return 0, or the probe stops before deciding. Graphify 0.9.103's
+   `extract --help` only points to the top-level help, so the flag is read from either output. If the
+   top-level or the extract help lists `--max-workers`, the extract command gets `--max-workers 1`.
+   The value and its evidence come from September's `run-records.jsonl` line 3, where
+   `GRAPHIFY_NATIVE_CONCURRENCY` is `"1"` and `command_argv` contains `--max-workers 1`. If neither
+   output lists the flag, the receipt records `source: unsupported` and the extract runs with default
+   workers. This run sets the flag only. `GRAPHIFY_NATIVE_CONCURRENCY` is not set (orchestrator ruling
+   4b, via gobby#19309).
 2. **Frozen manifest.** `command-manifest.json` lists each exact argv and the gcode pin, which is the
    archived crate version. The first gcode command is the cold index,
    `gcode --project <C0> --format json index <C0> --full --sync-projections`.
@@ -174,6 +181,10 @@ is checked at step 8 by `validate_environment.py --live`, through `schema_head.s
 - `code_indexed_file_states` and its `project_id` column are assumed from the plan. Verify the
   table name against the schema before the first provision.
 - `teardown` removes data as well as containers. It runs only in leaf 2.2.
+- The supervised daemon launch (`gdaemon serve` with `GOBBY_BACKEND_COMMAND`), the `/api/healthz`
+  probe on the daemon port, and the graphify help placement of `--max-workers` have not run live.
+  The cause of the C0 interpreter denial is inferred from the symlink layout; the runtime root's
+  violations log was not readable here. Each is confirmed only by a live run.
 - `prepare_daemon.py` drops config keys the registry no longer defines. This has a test
   (`test_known_config_values_drops_unregistered_keys`), but no RED run was captured before the
   implementation. The lead has been told.
@@ -189,8 +200,9 @@ is checked at step 8 by `validate_environment.py --live`, through `schema_head.s
   guards the read path. Every other stable path keeps its SHA-256. The isolated runtime's own
   `gobby-home/bootstrap.yaml` and `local_cli_token` are unchanged; they sit inside the runtime root.
 - Graphify concurrency is set by the probe, not by an environment variable. Only `--max-workers 1`
-  is passed, and only when this run's `extract --help` lists the flag. `GRAPHIFY_NATIVE_CONCURRENCY`
-  is not set.
+  is passed, and only when this run's top-level or extract help lists the flag. The top-level help
+  is checked because the 0.9.103 extract help does not list it. `GRAPHIFY_NATIVE_CONCURRENCY` is not
+  set.
 - gcode schema identity: `schema-identity --json` has a different shape from the archived six-key
   identity, so C0 records it unchecked. The six archived keys are the only identity gate.
   `schema_head.check_schema_head` projects the gdaemon identity onto those keys. A missing key fails

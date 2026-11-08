@@ -32,3 +32,22 @@ def test_c0_refuses_a_runtime_owned_by_another_session(
 
     assert not (root / "c0").exists()
     assert not (root / "receipts").exists()
+
+
+def test_c0_policy_reads_the_graphify_interpreter_base_and_nothing_more_writable(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "uv/cpython-3.13/bin/python3.13"
+    base.parent.mkdir(parents=True)
+    base.write_text("")
+    root = tmp_path / "runtime"
+    interpreter = root / "tools/graphify/venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to(base)
+
+    policy = c0.c0_policy(root, tmp_path / "home", interpreter)
+
+    install = base.resolve().parent.parent
+    assert str(install) in policy["filesystem"]["allowRead"]
+    assert str(root) in policy["filesystem"]["allowRead"]
+    assert policy["filesystem"]["allowWrite"] == [str(root)]

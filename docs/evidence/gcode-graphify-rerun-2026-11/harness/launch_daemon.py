@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import importlib.util
+import json
 import os
 import shutil
 import signal
@@ -12,6 +14,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,14 +59,60 @@ GOBBY_STEP_MODULES = (
 GOBBY_PACKAGE = "gobby"
 
 
+HEALTH_PATH = "/api/healthz"
+HEALTH_ATTEMPTS = 120
+HEALTH_POLL_SECONDS = 1
+
+
 def daemon_argv(root: Path, bootstrap: Path) -> list[str]:
-    return [
+    """The product's supervised entry: gdaemon takes the lease and spawns the Python backend."""
+    return [str(root / "gobby-home/bin/gdaemon"), "serve"]
+
+
+def backend_environment(root: Path, bootstrap: Path) -> dict[str, str]:
+    """gdaemon spawns this argv as its backend (GOBBY_BACKEND_COMMAND, a JSON argv array)."""
+    argv = [
         str(root / "tools/gobby/venv/bin/python"),
         "-m",
         "gobby.runner",
         "--config",
         str(bootstrap),
     ]
+    return {"GOBBY_BACKEND_COMMAND": json.dumps(argv)}
+
+
+def daemon_health_url(root: Path) -> str:
+    import yaml
+
+    config = yaml.safe_load((root / "gobby-home/bootstrap.yaml").read_text())
+    return f"http://127.0.0.1:{config['daemon_port']}{HEALTH_PATH}"
+
+
+def daemon_healthy(url: str) -> bool:
+    """A 200 from the health route through a direct connection, never a proxy from the ambient env."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=2) as response:
+            return response.status == 200
+    except (OSError, http.client.HTTPException):
+        return False
+
+
+def require_daemon_healthy(root: Path) -> None:
+    url = daemon_health_url(root)
+    require(daemon_healthy(url), f"the daemon is not alive and healthy at {url}; step stops")
+
+
+def _await_daemon_healthy(process: subprocess.Popen[bytes], url: str) -> None:
+    for _ in range(HEALTH_ATTEMPTS):
+        if process.poll() is not None:
+            raise EvidenceError(
+                f"the daemon wrapper exited before it was healthy (returncode {process.returncode})"
+            )
+        if daemon_healthy(url):
+            return
+        _pause(HEALTH_POLL_SECONDS)
+    raise EvidenceError(f"the daemon is not healthy at {url} after {HEALTH_ATTEMPTS} probes")
 
 
 def srt_policy(root: Path, home: Path) -> dict[str, Any]:
@@ -292,6 +341,8 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
         "check failed: config['daemon_port'] == 59480 and config['websocket_port'] == 59481",
     )
     env = isolated_environment(root, dict(os.environ))
+    backend = backend_environment(root, bootstrap)
+    env.update(backend)
     if srt.monitor_socket is not None:
         env[MONITOR_SOCKET_ENV] = srt.monitor_socket
         env["GOBBY_SRT_RUN_KEY"] = attempt
@@ -342,6 +393,7 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
                 },
                 "argv": argv,
                 "daemon_argv": daemon,
+                "backend": backend,
                 "sandbox": {
                     "backend": "srt",
                     "node": str(srt.node),
@@ -361,6 +413,7 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
             mode=0o600,
         )
         _write_json(active, {"daemon": file_record(root, receipt)}, mode=0o600)
+        _await_daemon_healthy(process, daemon_health_url(root))
     except BaseException as error:
         # A daemon that no index names must not outlive the failed launch; partial records go with it.
         _unwind_failed_launch(process, verified, (receipt, active), error)

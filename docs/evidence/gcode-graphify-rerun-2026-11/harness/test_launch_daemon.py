@@ -15,7 +15,14 @@ import launch_daemon
 import provision_environment
 import pytest
 import runtime_gobby
-from launch_daemon import SrtRunner, daemon_argv, launch, srt_policy, srt_wrapped_argv
+from launch_daemon import (
+    SrtRunner,
+    backend_environment,
+    daemon_argv,
+    launch,
+    srt_policy,
+    srt_wrapped_argv,
+)
 from runtime_boundary import EvidenceError, file_record, verify_file_record
 
 ROOT = Path("/runtime/root")
@@ -35,14 +42,66 @@ OPERATOR_DENY_READS = [
 ]
 
 
-def test_daemon_argv_runs_the_venv_gobby_runner_on_the_bootstrap_config() -> None:
-    assert daemon_argv(ROOT, BOOTSTRAP) == [
+def test_daemon_argv_is_the_supervised_gdaemon_serve_under_the_runtime_home() -> None:
+    assert daemon_argv(ROOT, BOOTSTRAP) == ["/runtime/root/gobby-home/bin/gdaemon", "serve"]
+
+
+def test_gdaemon_runs_the_venv_gobby_runner_as_its_backend_on_the_bootstrap_config() -> None:
+    environment = backend_environment(ROOT, BOOTSTRAP)
+
+    assert json.loads(environment["GOBBY_BACKEND_COMMAND"]) == [
         "/runtime/root/tools/gobby/venv/bin/python",
         "-m",
         "gobby.runner",
         "--config",
         "/runtime/root/gobby-home/bootstrap.yaml",
     ]
+
+
+def test_launch_fails_and_unwinds_when_the_daemon_never_becomes_healthy(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    _patch_launch(monkeypatch, process)
+    monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: False)
+
+    with pytest.raises(EvidenceError, match="not healthy"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert process.group_signals
+    assert not (staged_root / "receipts/daemon-launch-attempt-1.json").exists()
+    assert not (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_launch_fails_when_the_wrapper_exits_before_the_daemon_is_healthy(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess()
+    process.returncode = 1
+    _patch_launch(monkeypatch, process)
+    monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: False)
+
+    with pytest.raises(EvidenceError, match="exited before"):
+        launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert not (staged_root / "receipts/active-launches.json").exists()
+
+
+def test_launch_probes_the_health_route_on_the_bootstrap_daemon_port(
+    staged_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    urls: list[str] = []
+    _patch_launch(monkeypatch, _FakeProcess())
+
+    def healthy(url: str) -> bool:
+        urls.append(url)
+        return True
+
+    monkeypatch.setattr(launch_daemon, "daemon_healthy", healthy)
+
+    launch(staged_root, "attempt-1", SRT, home=tmp_path / "home")
+
+    assert urls == ["http://127.0.0.1:59480/api/healthz"]
 
 
 def test_srt_policy_allows_writes_only_under_the_runtime_root() -> None:
@@ -86,11 +145,8 @@ def test_srt_wrapped_argv_follows_the_runtime_wrap_shape() -> None:
         "--violations",
         "/runtime/root/logs/violations.jsonl",
         "--",
-        "/runtime/root/tools/gobby/venv/bin/python",
-        "-m",
-        "gobby.runner",
-        "--config",
-        "/runtime/root/gobby-home/bootstrap.yaml",
+        "/runtime/root/gobby-home/bin/gdaemon",
+        "serve",
     ]
 
 
@@ -181,9 +237,10 @@ def _fail_after_writing(monkeypatch: pytest.MonkeyPatch, record: str) -> None:
 
 @pytest.fixture(autouse=True)
 def wrapper_leads_its_group(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Launches lead their own group unless a test says otherwise; stop polls do not sleep."""
+    """Launches lead their own group and answer healthy unless a test says otherwise."""
     monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(launch_daemon, "_pause", lambda seconds: None)
+    monkeypatch.setattr(launch_daemon, "daemon_healthy", lambda url: True)
 
 
 class _FakeSocket:

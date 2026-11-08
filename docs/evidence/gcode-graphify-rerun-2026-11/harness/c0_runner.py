@@ -87,21 +87,25 @@ def september_max_workers(september_root: Path) -> tuple[int, str]:
 
 
 def decide_graphify_concurrency(
+    top_help: CommandResult,
+    top_path: Path,
     extract_help: CommandResult,
     help_path: Path,
     september_value: int,
     september_evidence: str,
 ) -> dict[str, Any]:
-    """Freeze September's --max-workers only when this release's extract help lists the flag."""
+    """Freeze September's --max-workers when this release's top-level or extract help lists it."""
+    require(top_help.returncode == 0, "graphify --help probe failed")
     require(extract_help.returncode == 0, "graphify extract --help probe failed")
-    for number, line in enumerate(extract_help.stdout.splitlines(), start=1):
-        if MAX_WORKERS_LINE.search(line):
-            return {
-                "value": september_value,
-                "source": "september",
-                "flag": GRAPHIFY_CONCURRENCY_FLAG,
-                "evidence": [f"{help_path}:{number}", september_evidence],
-            }
+    for path, result in ((top_path, top_help), (help_path, extract_help)):
+        for number, line in enumerate(result.stdout.splitlines(), start=1):
+            if MAX_WORKERS_LINE.search(line):
+                return {
+                    "value": september_value,
+                    "source": "september",
+                    "flag": GRAPHIFY_CONCURRENCY_FLAG,
+                    "evidence": [f"{path}:{number}", september_evidence],
+                }
     return {"value": None, "source": "unsupported", "flag": None, "evidence": [str(help_path)]}
 
 
@@ -120,11 +124,24 @@ def probe_graphify_concurrency(
     probe_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     top_help = runner([graphify, "--help"], corpus, env)
     extract_help = runner([graphify, "extract", "--help"], corpus, env)
-    write_once(probe_dir / "graphify-help.stdout", top_help.stdout, mode=0o600)
+    top_path = probe_dir / "graphify-help.stdout"
     extract_path = probe_dir / "graphify-extract-help.stdout"
+    write_once(top_path, top_help.stdout, mode=0o600)
     write_once(extract_path, extract_help.stdout, mode=0o600)
+    write_once(probe_dir / "graphify-help.stderr", top_help.stderr, mode=0o600)
+    write_once(probe_dir / "graphify-extract-help.stderr", extract_help.stderr, mode=0o600)
+    returns = {
+        "graphify-help": {"returncode": top_help.returncode, "stderr": top_help.stderr},
+        "graphify-extract-help": {
+            "returncode": extract_help.returncode,
+            "stderr": extract_help.stderr,
+        },
+    }
+    write_once(probe_dir / "graphify-probes.json", json.dumps(returns, indent=2), mode=0o600)
     value, evidence = september_max_workers(september_root)
-    return decide_graphify_concurrency(extract_help, extract_path, value, evidence)
+    return decide_graphify_concurrency(
+        top_help, top_path, extract_help, extract_path, value, evidence
+    )
 
 
 def concurrency_receipt_ok(receipt: object) -> bool:

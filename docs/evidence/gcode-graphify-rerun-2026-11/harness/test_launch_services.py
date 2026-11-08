@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import launch_daemon
 import launch_services
 import pytest
 from launch_services import assert_no_indexed_rows, prepare, start_services, step_complete
@@ -94,6 +95,53 @@ def test_step_is_skipped_only_when_its_receipt_verifies(tmp_path: Path) -> None:
 
     with pytest.raises(EvidenceError, match="artifact hash changed"):
         step_complete(receipt, changed)
+
+
+def _observable_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "runtime"
+    (root / "gobby-home").mkdir(parents=True)
+    (root / "gobby-home/bootstrap.yaml").write_text("daemon_port: 59480\n")
+    after = root / "isolation/external-state.after.json"
+    after.parent.mkdir(parents=True)
+    after.write_text("{}")
+    monkeypatch.setattr(launch_services, "record_services", lambda root, image_ids: True)
+    monkeypatch.setattr(launch_services, "copy_attempt_violations", lambda *args, **kwargs: None)
+    return root
+
+
+def test_observe_refuses_when_the_daemon_is_not_alive_and_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _observable_root(tmp_path, monkeypatch)
+    probed: list[str] = []
+
+    def unhealthy(url: str) -> bool:
+        probed.append(url)
+        return False
+
+    monkeypatch.setattr(launch_daemon, "daemon_healthy", unhealthy)
+
+    with pytest.raises(EvidenceError, match="daemon is not alive and healthy"):
+        launch_services.observe(root, {}, "attempt-1")
+
+    assert probed == ["http://127.0.0.1:59480/api/healthz"]
+
+
+def test_observe_passes_when_the_containers_and_the_daemon_are_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _observable_root(tmp_path, monkeypatch)
+    probed: list[str] = []
+
+    def healthy(url: str) -> bool:
+        probed.append(url)
+        return True
+
+    monkeypatch.setattr(launch_daemon, "daemon_healthy", healthy)
+
+    launch_services.observe(root, {}, "attempt-1")
+
+    assert probed == ["http://127.0.0.1:59480/api/healthz"]
 
 
 def test_every_project_must_hold_zero_indexed_rows() -> None:

@@ -81,6 +81,11 @@ EXTRACT_HELP_WITH_FLAG = (
     "  --max-workers N  AST extraction subprocess count (default: cpu_count)\n"
 )
 EXTRACT_HELP_WITHOUT_FLAG = "usage: graphify extract PATH\n  --code-only\n"
+EXTRACT_HELP_POINTER = "Run 'graphify --help' for full usage.\n"
+TOP_LEVEL_MAX_WORKERS_LINE = (
+    "  --max-workers N  AST extraction subprocess count (default: cpu_count)\n"
+)
+TOP_HELP_PATH = Path("/runtime/logs/c0/attempt-1/probe/graphify-help.stdout")
 SEPTEMBER_EXTRACT_OUTPUT = (
     "[graphify extract] AST extraction on 119 code files...\n"
     "  AST extraction: 100/119 uncached files (84%)\n"
@@ -312,7 +317,12 @@ def test_the_probe_pins_september_only_when_this_releases_extract_help_lists_the
     help_path = Path("/runtime/logs/c0/attempt-1/probe/graphify-extract-help.stdout")
 
     decided = decide_graphify_concurrency(
-        _ok(EXTRACT_HELP_WITH_FLAG), help_path, 1, "/september/run-records.jsonl:3"
+        _ok(GRAPHIFY_HELP),
+        TOP_HELP_PATH,
+        _ok(EXTRACT_HELP_WITH_FLAG),
+        help_path,
+        1,
+        "/september/run-records.jsonl:3",
     )
 
     assert decided == {
@@ -323,11 +333,88 @@ def test_the_probe_pins_september_only_when_this_releases_extract_help_lists_the
     }
 
 
+def test_the_probe_reads_the_flag_from_top_level_help_when_extract_help_only_points_there(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    september = _stage_september(tmp_path / "september")
+    graphify = str(root / GRAPHIFY_BINARY)
+    top_help = GRAPHIFY_HELP + "\n" + TOP_LEVEL_MAX_WORKERS_LINE
+    answers = {
+        (graphify, "--help"): _ok(top_help),
+        (graphify, "extract", "--help"): _ok(EXTRACT_HELP_POINTER),
+    }
+
+    def fake_runner(argv: list[str], cwd: Path, env: dict[str, str]) -> CommandResult:
+        return answers[tuple(argv)]
+
+    receipt = probe_graphify_concurrency(
+        root, "attempt-1", fake_runner, september_root=september, env={}
+    )
+
+    probe_dir = root / "logs/c0/attempt-1/probe"
+    line = next(
+        number
+        for number, text in enumerate(top_help.splitlines(), start=1)
+        if "--max-workers" in text
+    )
+    assert receipt["source"] == "september"
+    assert receipt["flag"] == "--max-workers"
+    assert receipt["evidence"][0] == f"{probe_dir / 'graphify-help.stdout'}:{line}"
+
+
+def test_the_probe_records_stderr_and_return_codes_before_refusing_a_failed_help(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    september = _stage_september(tmp_path / "september")
+    graphify = str(root / GRAPHIFY_BINARY)
+    denied = CommandResult(stdout="", stderr="PermissionError: denied /venv", returncode=1)
+    answers = {
+        (graphify, "--help"): _ok(GRAPHIFY_HELP),
+        (graphify, "extract", "--help"): denied,
+    }
+
+    def fake_runner(argv: list[str], cwd: Path, env: dict[str, str]) -> CommandResult:
+        return answers[tuple(argv)]
+
+    with pytest.raises(EvidenceError, match="probe failed"):
+        probe_graphify_concurrency(root, "attempt-1", fake_runner, september_root=september, env={})
+
+    probe_dir = root / "logs/c0/attempt-1/probe"
+    assert (probe_dir / "graphify-extract-help.stderr").read_text() == (
+        "PermissionError: denied /venv"
+    )
+    assert json.loads((probe_dir / "graphify-probes.json").read_text()) == {
+        "graphify-help": {"returncode": 0, "stderr": ""},
+        "graphify-extract-help": {"returncode": 1, "stderr": "PermissionError: denied /venv"},
+    }
+
+
+def test_a_failed_top_level_help_probe_stops_the_concurrency_decision() -> None:
+    failed = CommandResult(stdout="", stderr="boom", returncode=2)
+
+    with pytest.raises(EvidenceError, match="probe failed"):
+        decide_graphify_concurrency(
+            failed,
+            TOP_HELP_PATH,
+            _ok(EXTRACT_HELP_WITH_FLAG),
+            Path("/runtime/help"),
+            1,
+            "/september/records:3",
+        )
+
+
 def test_the_probe_falls_back_to_default_workers_when_the_flag_is_absent() -> None:
     help_path = Path("/runtime/logs/c0/attempt-1/probe/graphify-extract-help.stdout")
 
     decided = decide_graphify_concurrency(
-        _ok(EXTRACT_HELP_WITHOUT_FLAG), help_path, 1, "/september/run-records.jsonl:3"
+        _ok(GRAPHIFY_HELP),
+        TOP_HELP_PATH,
+        _ok(EXTRACT_HELP_WITHOUT_FLAG),
+        help_path,
+        1,
+        "/september/run-records.jsonl:3",
     )
 
     assert decided == {
@@ -342,7 +429,14 @@ def test_a_failed_extract_help_probe_stops_the_concurrency_decision() -> None:
     failed = CommandResult(stdout="", stderr="boom", returncode=2)
 
     with pytest.raises(EvidenceError, match="probe failed"):
-        decide_graphify_concurrency(failed, Path("/runtime/help"), 1, "/september/records:3")
+        decide_graphify_concurrency(
+            _ok(GRAPHIFY_HELP),
+            TOP_HELP_PATH,
+            failed,
+            Path("/runtime/help"),
+            1,
+            "/september/records:3",
+        )
 
 
 def test_september_concurrency_is_the_c0_extract_records_value_and_its_line(tmp_path: Path) -> None:
