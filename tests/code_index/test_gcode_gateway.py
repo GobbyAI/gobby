@@ -78,6 +78,47 @@ async def test_vector_rebuild_hands_the_caller_env_and_timeout_to_the_child(
     assert timeouts[-1] == 5.0
 
 
+async def test_maintenance_index_full_forces_the_full_index_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A forced maintenance index reaches the child as --full, after the existing args."""
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok"}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    await gateway.maintenance_index(tmp_path, full=True)
+
+    assert calls[1] == (
+        "/tmp/gcode",
+        "index",
+        "--project",
+        str(tmp_path),
+        "--skip-if-locked",
+        "--full",
+    )
+
+
+async def test_maintenance_index_default_keeps_the_incremental_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Routine maintenance stays incremental: no --full unless the caller asks for it."""
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok"}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    await gateway.maintenance_index(tmp_path)
+
+    assert calls[1] == ("/tmp/gcode", "index", "--project", str(tmp_path), "--skip-if-locked")
+
+
 async def test_managed_gcode_pin_matches_prune_budget_floor() -> None:
     assert GCODE_PIN == MIN_GCODE_PRUNE_BUDGET_VERSION
 

@@ -106,6 +106,7 @@ class ScriptedGateway:
         self.rebuild_calls = 0
         self.rebuild_timeouts: list[float | None] = []
         self.rebuild_envs: list[Mapping[str, str] | None] = []
+        self.index_full_flags: list[bool] = []
 
     async def vector_reconcile(
         self,
@@ -134,11 +135,13 @@ class ScriptedGateway:
         self,
         project_root: Path,
         *,
+        full: bool = False,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         self.calls.append("index")
         self.index_calls += 1
+        self.index_full_flags.append(full)
         return _result({"success": True})
 
     async def vector_rebuild(
@@ -319,6 +322,7 @@ async def test_empty_symbol_table_is_indexed_before_reconcile(tmp_path: Path) ->
     receipt = await _run(gateway, tmp_path, apply_enabled=True)
 
     assert gateway.index_calls == 1
+    assert gateway.index_full_flags == [True]
     assert gateway.rebuild_calls == 0
     assert gateway.calls == ["dry", "index", "dry", "apply"]
     assert gateway.apply_digests == ["built"]
