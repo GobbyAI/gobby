@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -310,6 +311,53 @@ async def test_missing_checkout_probe_refusal_restores_the_prior_status(
     assert result.success is False
     assert result.error == "Cannot verify missing worktree without its source branch"
     assert rows.rows["wt-1"].status == "merged"
+
+
+def _detach_landed(worktree: Path) -> None:
+    """Detach a landed worktree's HEAD and remove its checkout, leaving only the Git registration."""
+    _git(worktree, "checkout", "--detach")
+    shutil.rmtree(worktree)
+
+
+async def test_cancelled_missing_detached_deletion_mutates_no_git_state(
+    landed: tuple[Path, Path],
+) -> None:
+    repo, worktree = landed
+    _detach_landed(worktree)
+    git = WorktreeGitManager(repo)
+    rows = _Rows(_row("wt-1", worktree, branch=None))
+    boundary = DestructiveBoundary()
+    assert boundary.cancel_before_mutation()
+
+    result = await _transaction(
+        git, rows, _request(DeletionSurface.TEARDOWN, merged_into="main"), boundary
+    )
+
+    assert result.abandoned is True
+    assert str(worktree) in _git(repo, "worktree", "list", "--porcelain")
+    assert rows.rows["wt-1"].status == "active"
+
+
+async def test_interrupt_after_detached_registration_removal_is_finished_by_recovery(
+    landed: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, worktree = landed
+    _detach_landed(worktree)
+    git = WorktreeGitManager(repo)
+    rows = _Rows(_row("wt-1", worktree, branch=None))
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr("gobby.worktrees.deletion.cleanup_checkout_cargo_target_dir", _interrupt)
+        with pytest.raises(_Interrupted):
+            await _transaction(git, rows, _request(DeletionSurface.TEARDOWN, merged_into="main"))
+
+    assert str(worktree) not in _git(repo, "worktree", "list", "--porcelain")
+    assert rows.rows["wt-1"].status == "deleting"
+
+    results = await _recover(git, rows)
+
+    assert [result.success for result in results] == [True]
+    assert "wt-1" not in rows.rows
 
 
 async def test_git_failure_after_the_git_call_keeps_the_record_deleting(

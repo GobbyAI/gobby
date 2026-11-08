@@ -782,15 +782,13 @@ async def _recover_deleting_worktrees_after_start(runner: GobbyRunner) -> None:
         return
     recover = deleting_worktree_recovery(runner.database, runner.worktree_delete_executor, stopping)
     try:
-        results = await recover()
+        # Each refused record logs its own id, path and reason as it is refused.
+        await recover()
     except Exception:
         # Admission closes at shutdown start; a pass cut short there is the next start's to finish.
         if not stopping():
             logger.exception("Worktree delete recovery failed")
         return
-    refused = sum(1 for result in results if not result.success)
-    if refused:
-        logger.warning("Worktree delete recovery refused %d record(s); they stay deleting", refused)
 
 
 async def init_subsystems(

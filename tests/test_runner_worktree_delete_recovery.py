@@ -38,10 +38,11 @@ async def test_startup_pass_uses_the_runner_database_and_executor(
 ) -> None:
     runner = _runner()
     built: list[tuple[object, object]] = []
-    refusals = [WorktreeDeletionResult(success=False, error="uncommitted changes")]
+    passes: list[int] = []
 
     async def recover() -> list[WorktreeDeletionResult]:
-        return refusals
+        passes.append(1)
+        return [WorktreeDeletionResult(success=False, error="uncommitted changes")]
 
     def factory(
         database: object, executor: object, should_stop: Callable[[], bool]
@@ -56,7 +57,9 @@ async def test_startup_pass_uses_the_runner_database_and_executor(
         await subsystems._recover_deleting_worktrees_after_start(cast(GobbyRunner, runner))
 
     assert built == [(runner.database, runner.worktree_delete_executor)]
-    assert "recovery refused 1 record(s)" in caplog.text
+    assert passes == [1]
+    # Each refused record logs its own id, path and reason from its deletion; no startup count.
+    assert "recovery refused" not in caplog.text
 
 
 @pytest.mark.asyncio
