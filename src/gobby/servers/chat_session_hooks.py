@@ -151,27 +151,35 @@ class ChatSessionHooksMixin:
                 persist = self._additional_context_persist()
                 extra_parts: list[ContextPart] = []
 
-                # Plan feedback and first-prompt history are one-shot. Only a prompt that ships
-                # consumes them; a blocked prompt leaves them pending for the next one.
-                if resp is None or resp.get("decision") != "block":
-                    plan_ctx = getattr(self, "_consume_plan_mode_context", lambda: None)()
+                # Plan feedback and first-prompt history are one-shot, owed to a prompt that ships.
+                # A blocked prompt owes nothing. Otherwise they are cleared only after the output
+                # and its receipt succeed, so any raise before then leaves them for the retry.
+                owes_one_shot = resp is None or resp.get("decision") != "block"
+                history_owed = owes_one_shot and self._needs_history_injection
+                if owes_one_shot:
+                    # Inject conversation history on first prompt of a recreated session.
+                    history_ctx: str | None = None
+                    if history_owed:
+                        history_ctx = await cast(Any, self)._load_history_context()
+
+                    # Read plan feedback after the last await, so the clear below drops only
+                    # feedback this output carries; nothing can add feedback in between.
+                    plan_ctx = getattr(self, "_plan_mode_context", lambda: None)()
                     if plan_ctx:
                         extra_parts.append(("plan_mode", str(plan_ctx)))
-
-                    # Inject conversation history on first prompt of a recreated session.
-                    if self._needs_history_injection:
-                        self._needs_history_injection = False
-                        history_ctx = await cast(Any, self)._load_history_context()
-                        if history_ctx:
-                            extra_parts.append(("history", history_ctx))
+                    if history_ctx:
+                        extra_parts.append(("history", history_ctx))
 
                 output = _response_to_prompt_output(resp, persist=persist, extra_parts=extra_parts)
 
                 if output.get("decision") != "block":
                     acknowledge = getattr(self, "_on_prompt_delivered", None)
                     if acknowledge is not None:
-                        self._on_prompt_delivered = None
                         acknowledge()
+                        self._on_prompt_delivered = None
+                    getattr(self, "_clear_plan_feedback", lambda: None)()
+                    if history_owed:
+                        self._needs_history_injection = False
                 return output
 
             hooks["UserPromptSubmit"] = [

@@ -32,7 +32,7 @@ from gobby.hooks.receipt_effects import (
     take_worker_staging,
     worker_staging_scope,
 )
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, UnpageableContextError
 from gobby.servers.chat_session_helpers import (
     _bound_resp_context,
     _response_to_post_tool_output,
@@ -352,9 +352,11 @@ class _ChatHooks(ChatSessionHooksMixin):
     async def _load_history_context(self) -> str:
         return "<history>earlier turns</history>"
 
-    def _consume_plan_mode_context(self) -> str | None:
-        feedback, self._pending_plan = self._pending_plan, None
-        return feedback
+    def _plan_mode_context(self) -> str | None:
+        return self._pending_plan
+
+    def _clear_plan_feedback(self) -> None:
+        self._pending_plan = None
 
     def _needs_tool_approval(self, tool_name: str, tool_input: dict[str, Any]) -> bool:
         return False
@@ -467,6 +469,101 @@ async def test_a_blocked_prompt_leaves_one_shot_prompt_context_for_the_next_prom
     assert "revise step 2" in context
     assert chat._needs_history_injection is False
     assert chat._pending_plan is None
+
+
+def _owe_one_shot_context(chat: _ChatHooks) -> None:
+    chat._needs_history_injection = True
+    chat._pending_plan = "revise step 2"
+
+
+def _delivered_context(output: dict[str, Any]) -> str:
+    return cast(str, output["hookSpecificOutput"]["additionalContext"])
+
+
+async def test_a_prompt_whose_output_raises_keeps_its_one_shot_context_for_the_retry(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run with no paging boundary cannot ship, so the output raises before anything is owed."""
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-000000000009")
+    chat = _ChatHooks(temp_db, session_id)
+    _owe_one_shot_context(chat)
+
+    with pytest.raises(UnpageableContextError):
+        await chat.prompt("allow", [("rule:unbreakable", "x" * (ADDITIONAL_CONTEXT_LIMIT * 2))])
+
+    context = _delivered_context(await chat.prompt("allow", [("rule:ordinary", "be brief")]))
+    assert "<history>earlier turns</history>" in context
+    assert "revise step 2" in context
+    assert "be brief" in context
+    assert chat._needs_history_injection is False
+    assert chat._pending_plan is None
+
+
+async def test_a_prompt_whose_history_load_raises_keeps_its_one_shot_context_for_the_retry(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000a")
+    chat = _ChatHooks(temp_db, session_id)
+    _owe_one_shot_context(chat)
+    loads = 0
+
+    async def flaky_history() -> str:
+        nonlocal loads
+        loads += 1
+        if loads == 1:
+            raise RuntimeError("history store unavailable")
+        return "<history>earlier turns</history>"
+
+    monkeypatch.setattr(chat, "_load_history_context", flaky_history)
+    with pytest.raises(RuntimeError, match="history store unavailable"):
+        await chat.prompt("allow", [])
+
+    context = _delivered_context(await chat.prompt("allow", []))
+    assert "<history>earlier turns</history>" in context
+    assert "revise step 2" in context
+    assert loads == 2
+    assert chat._pending_plan is None
+
+
+async def test_plan_feedback_that_arrives_while_history_loads_ships_before_it_is_cleared(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000c")
+    chat = _ChatHooks(temp_db, session_id)
+    chat._needs_history_injection = True
+
+    async def history_while_feedback_arrives() -> str:
+        chat._pending_plan = "late feedback"
+        return "<history>earlier turns</history>"
+
+    monkeypatch.setattr(chat, "_load_history_context", history_while_feedback_arrives)
+    context = _delivered_context(await chat.prompt("allow", []))
+    assert "late feedback" in context
+    assert chat._pending_plan is None
+
+
+async def test_a_prompt_whose_receipt_fails_keeps_its_one_shot_context_and_its_acknowledgment(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000b")
+    chat = _ChatHooks(temp_db, session_id)
+    _owe_one_shot_context(chat)
+    acknowledgments: list[str] = []
+
+    def acknowledge() -> None:
+        acknowledgments.append("receipt")
+        if len(acknowledgments) == 1:
+            raise RuntimeError("receipt commit failed")
+
+    chat._on_prompt_delivered = acknowledge
+    with pytest.raises(RuntimeError, match="receipt commit failed"):
+        await chat.prompt("allow", [])
+
+    context = _delivered_context(await chat.prompt("allow", []))
+    assert "<history>earlier turns</history>" in context
+    assert "revise step 2" in context
+    assert acknowledgments == ["receipt", "receipt"]
+    assert chat._on_prompt_delivered is None
 
 
 async def test_a_tool_call_with_nothing_fresh_still_drains_the_queue(
