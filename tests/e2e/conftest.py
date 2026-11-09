@@ -897,6 +897,11 @@ E2E_HOST_OWNER_FILE = "e2e-owner.pid"
 E2E_HOST_SETTLE_SECONDS = 1.0
 
 
+def keep_e2e_artifacts() -> bool:
+    """Test-only: ``GOBBY_E2E_KEEP_ARTIFACTS=1`` keeps the project and socket dirs for diagnosis."""
+    return os.environ.get("GOBBY_E2E_KEEP_ARTIFACTS") == "1"
+
+
 def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
     """Create a fresh directory named ``prefix`` plus three hex digits.
 
@@ -992,14 +997,15 @@ def _reap_orphaned_terminal_hosts() -> None:
 def e2e_project_dir() -> Generator[Path]:
     """Create an isolated project directory for E2E tests.
 
-    ``ignore_cleanup_errors=True`` protects against ENOTEMPTY on macOS when a
+    The cleanup's ``ignore_errors=True`` protects against ENOTEMPTY on macOS when a
     daemon subprocess (or one of its helpers — gcode, CLI tools, etc.) still
     holds file descriptors inside the tree at teardown. terminate_process_tree
     gives children a few seconds to exit, but the kernel may still report a
     directory as non-empty briefly after. Without this flag, the whole test
     errors at teardown even though the assertions already passed.
     """
-    with tempfile.TemporaryDirectory(prefix="gobby_e2e_", ignore_cleanup_errors=True) as tmpdir:
+    tmpdir = tempfile.mkdtemp(prefix="gobby_e2e_")
+    try:
         project_dir = Path(tmpdir).resolve()
         gobby_dir = project_dir / ".gobby"
         gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -1060,6 +1066,9 @@ def e2e_project_dir() -> Generator[Path]:
                 shutil.copy2(wf_file, target_workflows / wf_file.name)
 
         yield project_dir
+    finally:
+        if not keep_e2e_artifacts():
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
@@ -1206,7 +1215,8 @@ front_door:
     yield config_path, http_port, ws_port
 
     stop_terminal_host(terminal_host_socket_dir)
-    shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
+    if not keep_e2e_artifacts():
+        shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
