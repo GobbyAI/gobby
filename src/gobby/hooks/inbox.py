@@ -31,8 +31,14 @@ from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.replay_decision import acknowledge_and_apply_receipt, decide_replay
 from gobby.hooks.replay_fence import defer_live_hook
 from gobby.utils import daemon_url as daemon_address
-from gobby.utils.local_token import daemon_bootstrap_path, read_local_api_token
-from gobby.utils.session_context import SESSION_SELECTOR_HEADERS
+from gobby.utils.local_token import (
+    daemon_bootstrap_path,
+    derive_managed_signing_key,
+    issue_session_api_token,
+    read_local_api_token,
+)
+from gobby.utils.machine_id import get_machine_id
+from gobby.utils.session_context import SESSION_ID_HEADER, SESSION_SELECTOR_HEADERS
 
 logger = logging.getLogger(__name__)
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
@@ -56,6 +62,17 @@ def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
         for path in inbox_dir.iterdir()
         if path.is_file() and path.suffix == ".json" and not path.name.endswith(".tmp")
     )
+
+
+def _hub_database(app: Any) -> Any | None:
+    """Return the hub database the daemon app exposes, or None when it exposes none."""
+    state = getattr(app, "state", None)
+    db = getattr(state, "database", None)
+    if db is None:
+        # The daemon app exposes the hub database as state.server.services.database.
+        server = getattr(state, "server", None)
+        db = getattr(getattr(server, "services", None), "database", None)
+    return db
 
 
 def _consume_inbox_delivery_receipt(
@@ -92,11 +109,7 @@ def _consume_inbox_delivery_receipt(
     generation = envelope.get("delivery_generation")
     state = getattr(app, "state", None)
     hook_manager = getattr(state, "hook_manager", None)
-    db = getattr(state, "database", None)
-    if db is None:
-        # The daemon app exposes the hub database as state.server.services.database.
-        server = getattr(state, "server", None)
-        db = getattr(getattr(server, "services", None), "database", None)
+    db = _hub_database(app)
     if db is None:
         logger.warning(
             "No hub database resolvable from the app; dropping delivery receipt %s "
@@ -258,21 +271,79 @@ def _mark_carrying_envelopes_processed(
             )
 
 
-async def _post_envelope(
+def _replay_session_token(app: Any, envelope: dict[str, Any], operator_token: str) -> str | None:
+    """Mint the envelope's own session credential so its replay keeps the session binding.
+
+    The envelope's session header is what binds a replayed hook to its session, and the
+    machine bearer may not select one. The daemon holds the hub database and the managed
+    signing key, so it presents a credential that names only that session. A session it
+    cannot find returns None, and the replay stays unbound.
+    """
+    session_id = _envelope_session_id(envelope)
+    machine_id = get_machine_id()
+    if session_id is None or not machine_id:
+        return None
+    try:
+        db = _hub_database(app)
+        if db is None:
+            logger.warning(
+                "No hub database resolvable; replaying envelope for session %s unbound",
+                session_id,
+            )
+            return None
+        # Only this machine's sessions: the hub may hold other machines' sessions too.
+        row = db.fetchone(
+            "SELECT id, project_id FROM sessions WHERE id = %s AND machine_id = %s",
+            (session_id, machine_id),
+        )
+    except Exception as exc:
+        logger.warning("Session lookup failed for replayed envelope %s: %s", session_id, exc)
+        return None
+    if row is None:
+        return None
+    return issue_session_api_token(
+        derive_managed_signing_key(operator_token),
+        session_id=str(row["id"]),
+        project_id=str(row["project_id"]),
+        machine_id=machine_id,
+    )
+
+
+def _replay_headers(
     envelope: dict[str, Any],
     *,
-    envelope_id: str | None = None,
-) -> httpx.Response:
-    """Replay an inbox envelope through the real hook ingress route."""
+    envelope_id: str | None,
+    bearer: str,
+    bind_session: bool,
+) -> dict[str, str]:
+    """Build the envelope's headers for a replay that presents ``bearer``.
+
+    A session-bound bearer keeps the session selector, since it names exactly that
+    session and no run. Every other replay drops the selectors: the machine bearer may
+    not select a session, and the envelope body names its session.
+    """
     headers = envelope.get("headers")
-    # The replay speaks as the machine caller, which may not select a session by
-    # header. The envelope body names its session, so drop the selectors here.
     dropped = {"authorization", *(name.lower() for name in SESSION_SELECTOR_HEADERS)}
+    if bind_session:
+        dropped.discard(SESSION_ID_HEADER.lower())
     request_headers = (
         {str(key): str(value) for key, value in headers.items() if str(key).lower() not in dropped}
         if isinstance(headers, dict)
         else {}
     )
+    request_headers["Authorization"] = f"Bearer {bearer}"
+    if envelope_id:
+        request_headers[ENVELOPE_ID_HEADER] = envelope_id
+    return request_headers
+
+
+async def _post_envelope(
+    envelope: dict[str, Any],
+    *,
+    envelope_id: str | None = None,
+    app: Any | None = None,
+) -> httpx.Response:
+    """Replay an inbox envelope through the real hook ingress route."""
     # Inbox replay runs inside the daemon and drains envelopes for every
     # session, so it must authenticate as the operator. An inherited
     # GOBBY_AGENT_API_TOKEN (daemon_auth_headers prefers it) would scope the
@@ -280,9 +351,17 @@ async def _post_envelope(
     operator_token = read_local_api_token()
     if not operator_token:
         return httpx.Response(503)
-    request_headers["Authorization"] = f"Bearer {operator_token}"
-    if envelope_id:
-        request_headers[ENVELOPE_ID_HEADER] = envelope_id
+    session_token = (
+        await asyncio.to_thread(_replay_session_token, app, envelope, operator_token)
+        if app is not None
+        else None
+    )
+    request_headers = _replay_headers(
+        envelope,
+        envelope_id=envelope_id,
+        bearer=session_token or operator_token,
+        bind_session=session_token is not None,
+    )
 
     # Shared operator keys are verified by gdaemon, not the Python backend.
     # Use this daemon's bound bootstrap, never an inherited client URL override.
@@ -308,7 +387,12 @@ async def _post_envelope(
                 response = await client.post(
                     "/api/hooks/execute",
                     json=envelope,
-                    headers={**request_headers, "Authorization": f"Bearer {refreshed_token}"},
+                    headers=_replay_headers(
+                        envelope,
+                        envelope_id=envelope_id,
+                        bearer=refreshed_token,
+                        bind_session=False,
+                    ),
                 )
         return response
 
@@ -485,7 +569,7 @@ async def _drain_hook_inbox_once_locked(
             logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
 
         try:
-            response = await _post_envelope(envelope, envelope_id=envelope_id)
+            response = await _post_envelope(envelope, envelope_id=envelope_id, app=app)
         except Exception as exc:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue
