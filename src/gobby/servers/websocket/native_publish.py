@@ -146,12 +146,13 @@ class NativePublisher:
             return
         self._sampler = self._spawn(self._sample_loop_lag())
 
-    def fail_bind_into_rebind(self, exc: BaseException) -> None:
+    def fail_bind_into_rebind(self, exc: BaseException) -> bool:
         """Log a retryable bind failure and enter the bounded rebind loop."""
         if self._stopped or not isinstance(exc, (_BindFailed, httpx.HTTPError, TimeoutError)):
-            return
+            return False
         logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
         self._schedule_rebind(immediate=False)
+        return True
 
     async def bind(self, label: str = "bind") -> str:
         token = await self._await_token()

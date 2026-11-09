@@ -907,8 +907,38 @@ async def test_server_start_rebinds_after_a_transient_bind_failure(
         await _until(lambda: publisher.generation == GEN1)
     finally:
         await publisher.stop()
-    shutdown.assert_awaited_once()
+    shutdown.assert_not_awaited()
     assert any("Native WS bind failed" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_server_start_rebind_keeps_lifecycle_publication(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recovered startup bind leaves lifecycle publication and idle cleanup live."""
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.01)
+    daemon = _Daemon()
+    daemon.bind_status = [503]
+    publisher = _publisher(daemon)
+    registry = TerminalLeaseRegistry()
+    server = WebSocketServer(CONFIG, MagicMock(), AsyncMock(return_value="u"))
+    server.native_publisher = publisher
+    server.lease_registry = registry
+    with pytest.raises(Exception, match="bind answered 503"):
+        await server.start()
+    try:
+        assert await publisher.wait_bound(timeout=2.0) is True
+
+        async def record(_stamped: dict[str, Any]) -> None:
+            return None
+
+        pending = {"type": "terminal_event", "event": "pending"}
+        stamped = await asyncio.wait_for(registry.publish_lifecycle(pending, record), 1.0)
+        assert stamped["event"] == "pending"
+        assert server._cleanup_task is not None
+        assert not server._cleanup_task.done()
+    finally:
+        await server.stop()
 
 
 @pytest.mark.parametrize(
