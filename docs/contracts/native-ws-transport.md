@@ -228,9 +228,16 @@ When a publisher is attached:
 - `WebSocketServer.stop()` drains terminals before `publisher.stop()`, so no fanout
   starts after the stop.
 - Each publish POST carries at most 1 MiB of encoded operations (`MAX_BATCH_BYTES`). This
-  bounds each request's latency under the 2 s `REQUEST_TIMEOUT`; it is a mitigation, not
+  bounds each request's latency under the 15 s `REQUEST_TIMEOUT`; it is a mitigation, not
   a demonstrated cause of the timeouts. A failed publish logs its batch size and elapsed
   time. The 128 MiB publish limit above is gdaemon's bound.
+- A publish or bind that outlives `REQUEST_TIMEOUT` is ambiguous: its generation retires,
+  the door unbinds, and the publisher rebinds on `REBIND_INTERVAL`. The 15 s deadline
+  covers the host-load loop stalls seen in the logs; it does not cure a sustained bind
+  stall.
+- `spawn_agent` admission waits up to `front_door_wait()` (40 s) for a rebind before it
+  refuses with "native WS front door unbound", so a transient unbind does not fail a
+  pipeline spawn step. An unbind that outlasts the wait still refuses.
 
 Python-only mode (no publisher) is unchanged.
 
