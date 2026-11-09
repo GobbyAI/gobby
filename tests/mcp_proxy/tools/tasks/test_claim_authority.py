@@ -329,6 +329,41 @@ async def test_team_manager_hands_off_a_claim_after_its_tree_lands(world: TeamWo
 
 
 @pytest.mark.asyncio
+async def test_relaunched_team_manager_hands_off_a_claim_after_its_tree_lands(
+    world: TeamWorld,
+) -> None:
+    """A manager relaunched by team_id joins its team's binding and keeps authority after landing."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    task = _task(world, TITLE)
+    runbook = world.child(task)
+    binding = await world.admit(runbook, task)
+    relaunch = world.child(task)
+    await world.admit(relaunch, task, team_id=binding.team_id)
+    manager = _spawned_manager(world, relaunch, task)
+    holder = world.case.session("fixture-worker", parent=runbook.id)
+    recipient = world.case.session("fixture-definition-c02389e4", parent=runbook.id)
+    tasks.claim_task(task.id, holder)
+    assert binding.worktree_id is not None
+    LocalWorktreeManager(db).mark_merged(binding.worktree_id)
+
+    result = await _call(
+        tasks,
+        manager,
+        "hand_off_task_claim",
+        {
+            "task_id": task.id,
+            "holder_session_ref": holder,
+            "recipient_session_ref": recipient,
+            "reason": "Re-seat after the relaunched team's tree landed.",
+        },
+    )
+
+    assert result.get("success") is True, result
+    assert tasks.get_task(task.id).claimed_by_session_id == recipient
+
+
+@pytest.mark.asyncio
 async def test_team_manager_releases_a_claim_within_its_own_team(world: TeamWorld) -> None:
     db = world.case.db
     tasks = LocalTaskManager(db)
