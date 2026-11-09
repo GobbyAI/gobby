@@ -150,7 +150,7 @@ async def spawn_agent_impl(
     project_path_explicit: bool = True,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
-    refusal = native_front_door_refusal()
+    refusal = await native_front_door_refusal()
     if refusal is not None:
         return refusal
     spawn_started_at = start_spawn_phase()

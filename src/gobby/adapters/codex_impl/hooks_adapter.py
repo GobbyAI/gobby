@@ -125,8 +125,9 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
-    # receipts must not poison a new command's cwd proof; unresolved calls and
-    # yielded cells can still launch it, so their overflow remains fail closed.
+    # receipts must not poison a new command's cwd proof; unresolved calls, yielded
+    # cells, and unattributed sessions that can still be typed into stay fail closed
+    # through pending_complete. The chain latches that overflow when it drops one.
     if not chain["pending_complete"] or chain["ambiguous_cells"]:
         return _PendingLookup(None, "pending calls overflowed or are ambiguous")
     pending = {
@@ -141,6 +142,13 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         return _PendingLookup(
             None, "typed input reached an unmapped session; a pending cell is unattributed"
         )
+    # An open session whose launch command is unreadable can still take typed input and run
+    # it, so it blocks every proof. An attributed session names its command and stays out.
+    pending.update(
+        (entry["outer_call_id"], entry)
+        for entry in chain["sessions"].values()
+        if entry["literal_command"] is None
+    )
     invocations = [
         {**entry, "literal_command": call["cmd"], "workdir": call.get("workdir")}
         for entry in pending.values()
