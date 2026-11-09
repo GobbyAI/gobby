@@ -70,7 +70,7 @@ assert encode_record(record) == raw
 "#;
     let output = Command::new("uv")
         .env("UV_PROJECT_ENVIRONMENT", repo_venv())
-        .args(["run", "python", "-c", script])
+        .args(["run", "--no-sync", "python", "-c", script])
         .arg(String::from_utf8(encoded)?)
         .env("GOBBY_TEST_PROTECT", "1")
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
@@ -377,7 +377,7 @@ print(json.dumps(cases))
 "#;
     let output = Command::new("uv")
         .env("UV_PROJECT_ENVIRONMENT", repo_venv())
-        .args(["run", "python", "-c", prepare])
+        .args(["run", "--no-sync", "python", "-c", prepare])
         .arg(dir.path())
         .current_dir(&root)
         .output()?;
@@ -434,7 +434,7 @@ for case in json.loads(sys.argv[1]):
 "#;
     let output = Command::new("uv")
         .env("UV_PROJECT_ENVIRONMENT", repo_venv())
-        .args(["run", "python", "-c", verify])
+        .args(["run", "--no-sync", "python", "-c", verify])
         .arg(serde_json::to_string(&cases)?)
         .current_dir(root)
         .output()?;
@@ -495,7 +495,7 @@ assert probe_daemon_lock(p).state is ProbeState.LIVE_RESERVATION
 "#;
     let output = Command::new("uv")
         .env("UV_PROJECT_ENVIRONMENT", repo_venv())
-        .args(["run", "python", "-c", script])
+        .args(["run", "--no-sync", "python", "-c", script])
         .arg(&path)
         .env(
             "DATABASE_URL",

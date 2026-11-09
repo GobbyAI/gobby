@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
-from typing import Any, Literal
+from dataclasses import replace
+from typing import Any
 
 from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, may_type_input, static_code
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls, repeated_spans
+from gobby.adapters.codex_impl.pending_execution import ExecutionResolution, PendingExecution
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.hooks.normalization import normalize_tool_display_fields
@@ -266,6 +267,14 @@ def _normalize_session_id(value: Any) -> str | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return str(value)
     return None
+
+
+def _typed_into(execution: PendingExecution, typed: str | None) -> PendingExecution:
+    # Typed input names the command of a session whose launch is readable. An unattributed
+    # launch stays unattributed: what is typed into it does not say what it is running.
+    if typed and execution.literal_command is not None:
+        return replace(execution, literal_command=typed)
+    return execution
 
 
 def extract_functions_write_stdin_session_id(arguments: Any) -> str | None:
@@ -560,70 +569,6 @@ def extract_wait_cell_id(data: Mapping[str, Any]) -> str | None:
     return _normalize_session_id(tool_input.get("cell_id"))
 
 
-@dataclass(frozen=True)
-class PendingExecution:
-    """One original shell execution carried through wait and stdin polling."""
-
-    outer_call_id: str
-    literal_command: str | None = None
-    cell_id: str | None = None
-    session_id: str | None = None
-    direct: bool = False
-    expects_serialized_result: bool = False
-    workdir: str | None = None
-    # Set per registered call: a poll's mode can differ from the launch it continues.
-    code_mode_call: bool = False
-
-    def to_state(self) -> dict[str, Any]:
-        return {
-            "outer_call_id": self.outer_call_id,
-            "literal_command": self.literal_command,
-            "cell_id": self.cell_id,
-            "session_id": self.session_id,
-            "direct": self.direct,
-            "expects_serialized_result": self.expects_serialized_result,
-            "workdir": self.workdir,
-            "code_mode_call": self.code_mode_call,
-        }
-
-    @classmethod
-    def from_state(cls, value: Any) -> PendingExecution | None:
-        if not isinstance(value, dict):
-            return None
-        outer_call_id = value.get("outer_call_id")
-        if not isinstance(outer_call_id, str) or not outer_call_id:
-            return None
-        optional = {
-            key: value.get(key) for key in ("literal_command", "cell_id", "session_id", "workdir")
-        }
-        if any(item is not None and not isinstance(item, str) for item in optional.values()):
-            return None
-        direct = value.get("direct", False)
-        expects_serialized_result = value.get("expects_serialized_result", False)
-        code_mode_call = value.get("code_mode_call", False)
-        if not all(
-            isinstance(flag, bool) for flag in (direct, expects_serialized_result, code_mode_call)
-        ):
-            return None
-        return cls(
-            outer_call_id=outer_call_id,
-            direct=direct,
-            expects_serialized_result=expects_serialized_result,
-            code_mode_call=code_mode_call,
-            **optional,
-        )
-
-
-@dataclass(frozen=True)
-class ExecutionResolution:
-    """Result of correlating one completed Codex tool-call output."""
-
-    state: Literal["unrelated", "pending", "terminal", "unknown"]
-    execution: PendingExecution | None = None
-    results: tuple[dict[str, Any], ...] = ()
-    reason: str | None = None
-
-
 class ExecutionChainCorrelator:
     """One state machine shared by live notification and transcript reconciliation."""
 
@@ -678,8 +623,8 @@ class ExecutionChainCorrelator:
                         execution, expects_serialized_result=_prints_whole_tool_results(arguments)
                     )
                 typed = extract_functions_write_stdin_command(arguments)
-                if execution is not None and typed:
-                    execution = replace(execution, literal_command=typed)
+                if execution is not None:
+                    execution = _typed_into(execution, typed)
             # Only a cell that can start a shell blocks cwd proof. An MCP-only cell that
             # merely mentions exec_command in its text stays out of the chain.
             elif allow_unattributed and may_reach_shell(arguments):
@@ -696,8 +641,8 @@ class ExecutionChainCorrelator:
             typed = extract_direct_write_stdin_command(arguments)
             if session_id is not None and session_id not in self._ambiguous_sessions:
                 execution = self._sessions.get(session_id)
-                if execution is not None and typed:
-                    execution = replace(execution, literal_command=typed)
+                if execution is not None:
+                    execution = _typed_into(execution, typed)
             if execution is None and write_stdin_sends_input(arguments):
                 self._mark_sticky_unattributed()
         elif name in WAIT_NAMES:
@@ -727,6 +672,7 @@ class ExecutionChainCorrelator:
         )
         if yielded_cell is not None:
             pending = replace(execution, cell_id=yielded_cell)
+            self._retire_cells(execution.outer_call_id, keep=yielded_cell)
             self._set_pending(self._cells, yielded_cell, pending)
             return ExecutionResolution("pending", execution=pending)
 
@@ -793,6 +739,8 @@ class ExecutionChainCorrelator:
         session_id: str,
         results: list[dict[str, Any]],
     ) -> ExecutionResolution:
+        # The cell that produced this envelope has finished its script; only the session remains.
+        self._retire_cells(execution.outer_call_id)
         pending = replace(execution, session_id=session_id)
         self._set_pending(self._sessions, session_id, pending)
         if self._sessions.get(session_id) is pending and len(results) == 1:
@@ -964,6 +912,11 @@ class ExecutionChainCorrelator:
             )
         ):
             pending.pop(key, None)
+            # A dropped unattributed session fails closed: typed input can still reach it.
+            if pending is self._sessions and (
+                existing.literal_command is None or execution.literal_command is None
+            ):
+                self._pending_overflowed = True
             if len(ambiguous) >= self._max_pending and key not in ambiguous:
                 self._overflowed = True
                 if pending is not self._sessions:
@@ -972,12 +925,16 @@ class ExecutionChainCorrelator:
             ambiguous[key] = None
             return
         if ambiguous is not None and key in ambiguous:
+            if pending is self._sessions and execution.literal_command is None:
+                self._pending_overflowed = True
             return
         if key not in pending and len(pending) >= self._max_pending:
             self._overflowed = True
-            if pending is not self._sessions:
+            evicted = pending.pop(next(iter(pending)))
+            # Losing an unresolved cell or call fails closed: it can still launch a command.
+            # Losing a session fails closed only when unattributed: typed input can still reach it.
+            if pending is not self._sessions or evicted.literal_command is None:
                 self._pending_overflowed = True
-            pending.pop(next(iter(pending)))
         pending[key] = execution
 
     def _hydrate_ambiguities(self, value: Any) -> dict[str, None]:
@@ -985,9 +942,20 @@ class ExecutionChainCorrelator:
             return {}
         return {item: None for item in value[: self._max_pending] if isinstance(item, str) and item}
 
+    def _retire_cells(self, outer_call_id: str, keep: str | None = None) -> None:
+        """Drop every cell of one execution except ``keep``: one live cell per execution."""
+        retired = [
+            cell_id
+            for cell_id, cell in self._cells.items()
+            if cell.outer_call_id == outer_call_id and cell_id != keep
+        ]
+        for cell_id in retired:
+            del self._cells[cell_id]
+
     def _clear_execution(self, execution: PendingExecution) -> None:
         if execution.cell_id is not None:
             self._cells.pop(execution.cell_id, None)
+        self._retire_cells(execution.outer_call_id)
         if execution.session_id is not None:
             self._sessions.pop(execution.session_id, None)
 
