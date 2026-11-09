@@ -202,9 +202,8 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    # The isolated checkout is already bound to the E2E project (its marker and seeded
-    # registration), so the test registers against that project rather than a second one.
-    project_id = "00000000-0000-0000-0000-000000000e2e"
+    # Reuse the checkout marker's identity, which the daemon fixture already registered.
+    project_id = read_project_id(e2e_project_dir)
     project_name = e2e_project_dir.name
     cli_events.register_test_project(
         project_id=project_id,
