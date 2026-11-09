@@ -483,10 +483,10 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         sql: include_str!("../../assets/schema/migrations/490_grant_plan_coverage_reads.sql"),
     },
     EmbeddedMigration {
-        version: 493,
-        filename: "493_scope_role_sweeps_to_owning_hub.sql",
-        checksum: "766bf2a98fdcdc08f7f4177cf9b5ee797a310ee1998dc44be1339ea14b7aec1f",
-        sql: include_str!("../../assets/schema/migrations/493_scope_role_sweeps_to_owning_hub.sql"),
+        version: 491,
+        filename: "491_scope_role_sweeps_to_owning_hub.sql",
+        checksum: "427c707184af3a441ec1adcdd7992480492f86479a5742f695519ecab223c0fd",
+        sql: include_str!("../../assets/schema/migrations/491_scope_role_sweeps_to_owning_hub.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

@@ -29,6 +29,11 @@ CREATE FUNCTION gobby_agent_auth.claim_principal_role_owner() RETURNS trigger
     SET createrole_self_grant TO ''
     AS $_$
 BEGIN
+    IF TG_TABLE_SCHEMA IS DISTINCT FROM 'gobby_agent_auth'
+        OR TG_TABLE_NAME IS DISTINCT FROM 'principal_bindings'
+    THEN
+        RAISE EXCEPTION 'role owner claim runs only on gobby_agent_auth.principal_bindings';
+    END IF;
     IF EXISTS (SELECT 1 FROM pg_roles AS role WHERE role.rolname = NEW.role_name)
         AND shobj_description(
             (SELECT role.oid FROM pg_roles AS role WHERE role.rolname = NEW.role_name),
@@ -50,6 +55,33 @@ ALTER FUNCTION gobby_agent_auth.claim_principal_role_owner() OWNER TO gobby_agen
 CREATE TRIGGER principal_bindings_claim_role_owner
     AFTER INSERT ON gobby_agent_auth.principal_bindings
     FOR EACH ROW EXECUTE FUNCTION gobby_agent_auth.claim_principal_role_owner();
+
+-- Roles bound before this migration carry no marker. This hub's issuance path
+-- created each one, so claim it now. A marker another hub already wrote stays.
+DO $_$
+DECLARE
+    bound_role RECORD;
+BEGIN
+    FOR bound_role IN
+        SELECT DISTINCT binding.role_name
+        FROM gobby_agent_auth.principal_bindings AS binding
+        JOIN pg_roles AS role ON role.rolname = binding.role_name
+        WHERE shobj_description(role.oid, 'pg_authid') IS NULL
+        ORDER BY binding.role_name
+    LOOP
+        EXECUTE format(
+            'COMMENT ON ROLE %I IS %L',
+            bound_role.role_name,
+            gobby_agent_auth.role_owner_marker()
+        );
+    END LOOP;
+END
+$_$;
+
+-- The claim runs only as the trigger on principal_bindings. PUBLIC must not
+-- attach it to a table of its own, and the marker is internal to this hub.
+REVOKE ALL ON FUNCTION gobby_agent_auth.claim_principal_role_owner() FROM PUBLIC;
+REVOKE ALL ON FUNCTION gobby_agent_auth.role_owner_marker() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.drain_ephemeral_principals()
  RETURNS integer
