@@ -3,7 +3,7 @@
 Drives the real ``handle_plan_approval_response`` request_changes path: it
 stores feedback and clears the pending prompt (via _clear_pending_plan_prompt,
 added in 1b). On the agent's next plan turn the shared send_message hook then
-(a) injects the feedback into the prompt via _pop_plan_mode_context and
+(a) injects the feedback into the prompt via _plan_mode_context and
 (b) re-broadcasts plan_pending_approval with the REVISED content, re-arming
 has_pending_plan. The revised content drives a new revision in the Plans panel
 history (verified separately in the web usePlans test).
@@ -118,7 +118,7 @@ async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() ->
     )
     [e async for e in session.send_message("Add error handling to step 2")]
 
-    # Feedback reached the revised turn's prompt via _pop_plan_mode_context,
+    # Feedback reached the revised turn's prompt via _plan_mode_context,
     # along with the reminder to re-wrap the revised prose plan in tags.
     feedback_prompts = [p for p in prompts[1:] if "Add error handling to step 2" in p]
     assert feedback_prompts

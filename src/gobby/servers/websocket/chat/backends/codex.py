@@ -188,21 +188,28 @@ class CodexManagedChatSession(
                     source="codex_web_chat",
                 )
             )
-            plan_ctx = self._pop_plan_mode_context()
-            if plan_ctx:
-                context_parts.append(plan_ctx)
-            deferred_context = self._consume_deferred_context()
-            if deferred_context:
-                context_parts.append(deferred_context)
-
+            gate_context: str | None = None
             if self._on_before_agent:
                 resp = await self._on_before_agent({"prompt": prompt, "source": "codex_web_chat"})
                 if resp and resp.get("decision") in {"block", "deny"}:
                     raise RuntimeError(resp.get("reason") or "Prompt blocked by workflow")
                 if resp and resp.get("context"):
-                    context_parts.append(str(resp["context"]))
+                    gate_context = str(resp["context"])
+
+            # Owed plan feedback and deferred context ship with this prompt. They are read after
+            # the last await and cleared once the payload is built, so a block leaves them pending.
+            plan_ctx = self._plan_mode_context()
+            if plan_ctx:
+                context_parts.append(plan_ctx)
+            deferred_context = self._deferred_context()
+            if deferred_context:
+                context_parts.append(deferred_context)
+            if gate_context:
+                context_parts.append(gate_context)
 
             context_prefix = "\n\n".join(part for part in context_parts if part)
+            self._clear_plan_feedback()
+            self._clear_deferred_context()
 
             self.last_activity = datetime.now(UTC)
             self.message_index += 1

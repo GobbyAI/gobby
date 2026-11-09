@@ -303,7 +303,11 @@ class ManagedWebChatPermissionsMixin:
         if self._on_plan_ready is not None:
             await self._on_plan_ready(text, {"plan": text}, None)
 
-    def _pop_plan_mode_context(self) -> str | None:
+    def _plan_mode_context(self) -> str | None:
+        """Return the plan-mode context for the next prompt. Feedback stays pending.
+
+        The caller runs ``_clear_plan_feedback`` once the payload carrying the feedback is built.
+        """
         if self.chat_mode != "plan":
             return None
 
@@ -347,10 +351,17 @@ class ManagedWebChatPermissionsMixin:
                 "wrapped in <proposed_plan> tags again; structured plan tools "
                 "(ExitSpecMode, plan_update) submit plain content."
             )
-            self._plan_feedback = None
 
         parts.append("</plan-mode>")
         return "\n".join(parts)
+
+    def _clear_plan_feedback(self) -> None:
+        """Drop plan feedback once a payload carrying it is built.
+
+        Only the active-plan context carries feedback, so the same condition gates the clear.
+        """
+        if self.chat_mode == "plan" and not self._plan_approved:
+            self._plan_feedback = None
 
     async def _wait_for_tool_approval(
         self, tool_name: str, input_data: dict[str, Any]
@@ -414,7 +425,7 @@ class ManagedWebChatPermissionsMixin:
         Managed CLIs expose no protocol-level mode push (no session/set_mode),
         so on plan approval the user-visible fallback is to broadcast the
         Gobby-side mode change. The plan gate stops re-injecting because
-        chat_mode is no longer "plan" (see _pop_plan_mode_context).
+        chat_mode is no longer "plan" (see _plan_mode_context).
 
         _pending_post_plan_mode is set only by the plan-approval handler, which
         distinguishes an approval from a manual mode switch (where this is a

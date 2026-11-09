@@ -190,13 +190,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                 )
             )
 
-            plan_ctx = self._pop_plan_mode_context()
-            if plan_ctx:
-                context_parts.append(plan_ctx)
-            deferred_context = self._consume_deferred_context()
-            if deferred_context:
-                context_parts.append(deferred_context)
-
+            gate_context: str | None = None
             if self._on_before_agent:
                 response = await self._on_before_agent(
                     {"prompt": prompt, "source": self._web_chat_source()}
@@ -204,11 +198,24 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                 if response and response.get("decision") in {"block", "deny"}:
                     raise RuntimeError(response.get("reason") or "Prompt blocked by workflow")
                 if response and response.get("context"):
-                    context_parts.append(str(response["context"]))
+                    gate_context = str(response["context"])
+
+            # Owed plan feedback and deferred context ship with this prompt. They are read after
+            # the last await and cleared once the payload is built, so a block leaves them pending.
+            plan_ctx = self._plan_mode_context()
+            if plan_ctx:
+                context_parts.append(plan_ctx)
+            deferred_context = self._deferred_context()
+            if deferred_context:
+                context_parts.append(deferred_context)
+            if gate_context:
+                context_parts.append(gate_context)
 
             full_prompt = prompt
             if context_parts:
                 full_prompt = f"{'\n\n'.join(context_parts)}\n\n{prompt}"
+            self._clear_plan_feedback()
+            self._clear_deferred_context()
 
             self._is_first_turn = False
             pending_tool_calls: dict[str, dict[str, Any]] = {}

@@ -664,8 +664,12 @@ class ChatSessionPermissionsMixin:
         return "\n".join(parts)
 
     def _clear_plan_feedback(self) -> None:
-        """Drop plan feedback after the prompt that carried it has been acknowledged."""
-        self._plan_feedback = None
+        """Drop plan feedback after the prompt that carried it has been acknowledged.
+
+        Only the active-plan context carries feedback, so the same condition gates the clear.
+        """
+        if self.chat_mode == "plan" and not self._plan_approved:
+            self._plan_feedback = None
 
     async def _wait_for_tool_approval(
         self, tool_use_id: str, tool_name: str, input_data: dict[str, Any]

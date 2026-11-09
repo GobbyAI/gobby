@@ -350,13 +350,14 @@ class ManagedChatSessionBase:
         if callback is not None:
             callback()
 
-    def _consume_deferred_context(self) -> str | None:
-        """Return and clear queued lifecycle context fragments."""
-        if not self._deferred_contexts:
-            return None
+    def _deferred_context(self) -> str | None:
+        """Return queued lifecycle context fragments. They stay queued until the payload builds."""
         merged = "\n\n".join(part for part in self._deferred_contexts if part)
-        self._deferred_contexts.clear()
         return merged or None
+
+    def _clear_deferred_context(self) -> None:
+        """Drop the queued lifecycle context fragments once a payload carrying them is built."""
+        self._deferred_contexts.clear()
 
     def _resolve_context_window(self) -> int | None:
         """Resolve context window metadata for this provider/model pair."""
