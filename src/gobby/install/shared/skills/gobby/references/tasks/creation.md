@@ -130,6 +130,6 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Version: 2.2.0_
+_Version: 3.0.0_
 
 _Last verified: 2026-11-08_
