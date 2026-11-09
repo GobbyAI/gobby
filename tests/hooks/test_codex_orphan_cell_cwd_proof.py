@@ -445,7 +445,7 @@ RUFF_SHAPES = (
 def test_literal_ruff_check_proves_its_workdir(
     event_handlers: EventHandlers, tmp_path: Path, prior: str, ruff: str
 ) -> None:
-    """Report 756fe608: a literal, read-only ruff check was refused in a Codex developer tree."""
+    """Report 756fe608: a literal, read-only ruff check was refused in a Codex task worktree."""
     workdir = tmp_path / "task"
     records: list[dict[str, Any]] = []
     if prior == "after_yielded_batch":
@@ -580,6 +580,15 @@ TYPING_CELLS = {
         f'text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}})); {UNMAPPED_WRITE}'
     ),
     "beside_literal_exec": _literal("git status", "/opt/elsewhere") + UNMAPPED_WRITE,
+    # A regex literal is inert text only where it is read whole; typing hidden beside one,
+    # or behind a division the reader cannot place, must still latch.
+    "regex_quote_then_typed": f"text(ALL_TOOLS.filter(x=>/'/.test(x))); {UNMAPPED_WRITE}",
+    "regex_slashes_then_typed": f"text(ALL_TOOLS.filter(x=>/a\\/\\/b/.test(x))); {UNMAPPED_WRITE}",
+    "regex_then_quote_then_typed": (
+        f"text(ALL_TOOLS.filter(x=>/'/.test(x))); const w = 'k'; {UNMAPPED_WRITE}"
+    ),
+    "division_after_string_then_typed": f'const q = "a" / 2; {UNMAPPED_WRITE}',
+    "division_after_number_then_typed": f"const r = 4 / 2; {UNMAPPED_WRITE}",
     "opaque": 'eval(atob("dG9vbHM="));',
 }
 
@@ -643,7 +652,97 @@ def test_literal_empty_polls_keep_later_literal_cwd_proof(
     assert _lookup(tmp_path, records, REPLAY_PYTEST).refusal == ""
 
 
+REGEX_POLL_CELL = (
+    "text(ALL_TOOLS.filter(x=>/feedback|list_mcp_servers/.test(x.name)).map(x=>x.name));"
+    f'\ntext(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:""}}));\n'
+)
+
+
+def test_regex_literal_beside_empty_poll_keeps_later_literal_cwd_proof(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A regex literal is read-only text, so a cell holding one and an empty poll types nothing.
+
+    The live refusal began with a read-only lookup like this one: its regex literal failed
+    the static reader, latched every yielded cell that never finished, and refused each later
+    literal cwd proof behind them.
+    """
+    workdir = tmp_path / "task"
+    records = [
+        _call("cell54", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell54", _yield_text(54)),
+        _call("cell71", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell71", _yield_text(71)),
+        _call("cell73", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell73", _yield_text(73)),
+        _call("cell77", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell77", _yield_text(77)),
+        _call("cell137", _unscoped(REPLAY_DIFF, 8500) + _unscoped(REPLAY_OCR, 1000)),
+        _output("cell137", _yield_text(137)),
+        _call("lookup", REGEX_POLL_CELL),
+        _output("lookup", STDIN_OUTPUT),
+        _compacted(),
+        _call("probe", _literal(REPLAY_PYTEST, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=REPLAY_PYTEST)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+    assert _lookup(tmp_path, records, REPLAY_PYTEST).refusal == ""
+
+
 MAPPED_SESSION = 905
+# two_calls is a readable batch: its members are literal pending calls, so they match as
+# ordinary calls instead of reaching the unattributed refusal.
+UNREADABLE_CELLS = [name for name in UNKNOWN_CELLS if name != "two_calls"]
+
+
+@pytest.mark.parametrize("name", UNREADABLE_CELLS)
+def test_unattributed_pending_cell_blocks_every_literal_proof(tmp_path: Path, name: str) -> None:
+    """An unreadable pending cell may run any command, so it blocks every literal cwd proof."""
+    records = [
+        _call("unknown", UNKNOWN_CELLS[name]),
+        _output("unknown", YIELD_TEN),
+        _call("probe", _literal(PYTEST, tmp_path / "task")),
+    ]
+    lookup = _lookup(tmp_path, records, PYTEST)
+    assert lookup.workdir is None
+    assert lookup.refusal == "unattributed pending call blocks every proof"
+
+
+def test_matched_batch_member_without_absolute_workdir_is_not_validated(tmp_path: Path) -> None:
+    """A batch member can match its command, but only an absolute workdir proves its cwd."""
+    source = (
+        f'text(await tools.exec_command({{cmd:{json.dumps(PYTEST)},workdir:"relative/task"}}));'
+        + _literal("git status", tmp_path / "other")
+    )
+    lookup = _lookup(tmp_path, [_call("multi", source)], PYTEST)
+    assert lookup.workdir is None
+    assert lookup.refusal == "matched call is not a validated shell call"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["rtk pytest tests/hooks/test_typed.py -q", "ocr delegate rule src/x.py", PYTEST],
+)
+def test_pending_literal_proves_its_cwd_for_rtk_ocr_and_uv_heads(
+    tmp_path: Path, command: str
+) -> None:
+    """Matching compares the exact command text, so no launcher head blocks a literal proof."""
+    workdir = tmp_path / "task"
+    lookup = _lookup(tmp_path, [_call("probe", _literal(command, workdir))], command)
+    assert lookup.refusal == ""
+    assert lookup.workdir == str(workdir)
+
+
+def test_rtk_prefixed_pending_literal_does_not_match_its_unwrapped_command(tmp_path: Path) -> None:
+    """A hook command that drops the rtk head is a different command, so no pending call matches."""
+    records = [_call("probe", _literal(f"rtk {PYTEST}", tmp_path / "task"))]
+    lookup = _lookup(tmp_path, records, PYTEST)
+    assert lookup.workdir is None
+    assert lookup.refusal == "0 pending calls match the command"
+    assert lookup.retryable
+
+
 # Input to a session an attributed launch owns is attributed; only the rest of the cell can
 # reach the unmapped shell. (cell, decision)
 MAPPED_CELLS = {

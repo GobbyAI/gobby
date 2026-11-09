@@ -8,7 +8,8 @@ while name-based management is not a project-selection API.
 
 MCP definition mutations require `manage_workflow_definitions` or the operator's
 terminal. This differs from session/step `set_variable`, which requires
-`write_session_variables`. Scope arguments do not grant either capability.
+`write_session_variables`, or the narrower `write_own_step_phase` for the caller's own
+step `phase` at scope `step`. Scope arguments grant no capability.
 
 For user YAML, loader roots supply global/project scope. `create_variable` MCP
 creates a global row; `project_path` chooses export destination only. Operator
@@ -22,5 +23,5 @@ remain bound to their session; operator definition routes need operator authorit
 See [HTTP and scope](../../../../../../../../docs/guides/variables.md#http-and-scope). Never create a new runtime instance or
 retarget another session merely to make a variable request succeed.
 
-_Version: 1.0.0_
+_Version: 1.1.0_
 _Last verified: 2026-11-03_
