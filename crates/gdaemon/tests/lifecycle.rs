@@ -1148,3 +1148,52 @@ async fn silent_backend_wait_is_reported_each_interval() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn silent_backend_wait_writes_progress_to_startup_timings() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        // The readiness bootstrap creates this file; the supervisor adds progress only to it.
+        let timings = home.path().join("logs").join("startup-timings.jsonl");
+        std::fs::create_dir_all(timings.parent().context("timings parent")?)?;
+        std::fs::write(&timings, "")?;
+        let mut supervisor = db
+            .supervisor_with(
+                home.path(),
+                "import signal\nwhile True:\n    signal.pause()\n",
+                |config| {
+                    config.report_interval = Duration::from_millis(100);
+                },
+            )
+            .await?;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let observed = timeout(Duration::from_secs(10), async {
+            loop {
+                let text = std::fs::read_to_string(&timings).unwrap_or_default();
+                let progress = text
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .filter(|record| record["state"] == "progress")
+                    .count();
+                if progress >= 3 {
+                    return progress;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        stop.send(true)?;
+        assert_eq!(
+            timeout(Duration::from_secs(10), task).await???,
+            SupervisorExit::Stopped
+        );
+        ensure!(
+            observed.is_ok(),
+            "no progress reached startup timings during a silent wait: {:?}",
+            std::fs::read_to_string(&timings).unwrap_or_default()
+        );
+        Ok(())
+    })
+    .await
+}
