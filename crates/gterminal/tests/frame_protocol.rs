@@ -563,7 +563,7 @@ fn set_scroll_offset_is_attachment_local() {
             rows_from_live_edge: 5,
         },
     );
-    match read_msg(&mut a) {
+    match read_reply(&mut a) {
         ServerMessage::ScrollOffsetApplied { applied_rows, .. } => {
             assert!(applied_rows <= 5);
         }

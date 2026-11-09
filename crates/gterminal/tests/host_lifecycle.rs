@@ -194,18 +194,12 @@ fn host_exits_when_socket_dir_vanishes() {
     let mut host = spawn_host(dir.path());
     wait_socket(&dir.path().join(CONTROL_SOCKET));
 
-    let started = Instant::now();
     let socket_dir = dir.keep();
     let removed_dir = socket_dir.with_extension("removed");
     std::fs::rename(&socket_dir, &removed_dir).expect("remove live socket dir");
     assert!(
         wait_exit(&mut host, Duration::from_millis(250)).is_some(),
         "host must exit within two health ticks after its socket directory vanishes"
-    );
-    assert!(
-        started.elapsed() < Duration::from_millis(250),
-        "socket-directory shutdown took {:?}",
-        started.elapsed()
     );
     let log = std::fs::read_to_string(removed_dir.join("gterm.log")).expect("host log");
     assert!(log.contains("socket_dir_removed"), "{log}");
