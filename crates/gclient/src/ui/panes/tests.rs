@@ -99,7 +99,7 @@ fn render_panes_draws_titles_and_focus_word() {
         "term-alpha",
         "term-beta",
         "gclient",
-        "○ term-beta · Focused",
+        "  term-beta · Focused",
         "┌",
         "┐",
     ] {
@@ -130,9 +130,9 @@ fn corners_render_with_and_without_pane_gaps() {
             let corner = info.rect.right() - 1;
             let top = cells(&terminal, info.rect.y, info.rect.x + 1, corner);
             let title = if info.is_focused {
-                " ○ zsh · Focused "
+                "   zsh · Focused "
             } else {
-                " ○ zsh "
+                "   zsh "
             };
             assert!(top.starts_with(title), "gaps={pane_gaps}: top edge {top:?}");
             // The bottom-left corner stays empty: rule up to the address.
@@ -174,13 +174,13 @@ fn stacked_panes_without_gaps_keep_the_upper_address_beside_its_title() {
         upper.borders
     );
     let top = cells(&terminal, upper.rect.y, upper.rect.x, upper.rect.right());
-    assert!(top.contains(" ○ term-alpha "), "{top:?}");
+    assert!(top.contains("   term-alpha "), "{top:?}");
     assert!(top.ends_with(" tmux ┐"), "{top:?}");
 
     let lower = info_of(&ws, &chrome, "term-beta");
     let shared = cells(&terminal, lower.rect.y, lower.rect.x, lower.rect.right());
     assert!(!shared.contains("tmux"), "{shared:?}");
-    assert!(shared.contains(" ○ term-beta · Focused "), "{shared:?}");
+    assert!(shared.contains("   term-beta · Focused "), "{shared:?}");
     let bottom = cells(
         &terminal,
         lower.rect.bottom() - 1,
@@ -229,7 +229,7 @@ fn header_titles_scroll_left_right_or_truncate_on_the_ticker() {
     chrome.prefs.title_scrolling = TitleScrolling::Left;
     assert_eq!(
         header_title(&corners.title, &narrow, &corners, &chrome, 0).as_deref(),
-        Some(" ○ … ")
+        Some("   … ")
     );
 }
 
@@ -335,12 +335,12 @@ fn hovered_read_only_title_underlines_only_while_actionable() {
     };
     assert_eq!(
         underlined(&ws, &chrome),
-        ("○ term-beta · Focused".to_owned(), false, false)
+        ("  term-beta · Focused".to_owned(), false, false)
     );
     ws.pane_mut(focused).take_back = true;
     assert_eq!(
         underlined(&ws, &chrome),
-        ("○ term-beta · Read-only".to_owned(), false, true)
+        ("  term-beta · Read-only".to_owned(), false, true)
     );
 }
 

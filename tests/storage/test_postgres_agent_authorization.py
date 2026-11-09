@@ -765,7 +765,6 @@ def test_ownership_disabled_rls_public_defaults_and_operator_relations_are_denie
                     "CREATE TEMP TABLE agent_escape(id integer)",
                     "CREATE TABLE public.agent_escape(id integer)",
                     "SELECT * FROM sessions",
-                    "SELECT * FROM tasks",
                     "SELECT * FROM config_store",
                     "SELECT * FROM schema_migrations",
                     f"SELECT * FROM {AUTH_SCHEMA}.principal_bindings",
@@ -790,6 +789,7 @@ def test_managed_execution_cannot_record_an_operator_dirty_path_approval(
                 checkout_root=str(tmp_path),
                 paths=["a.txt"],
                 approved_by="agent",
+                reason="test",
             )
     finally:
         agent_db.close()
@@ -1175,3 +1175,105 @@ def test_managed_checkout_reads_only_registered_local_sibling_overlays(
             owner.execute("DELETE FROM worktrees WHERE worktree_path = ANY(%s)", (roots,))
             owner.execute("DELETE FROM clones WHERE clone_path = ANY(%s)", (roots,))
             owner.execute("DELETE FROM code_indexed_projects WHERE id = ANY(%s)", (overlay_ids,))
+
+
+QUERY_READONLY_ROLE = "gobby_query_readonly"
+
+
+def _run_as(
+    conn: psycopg.Connection[Any], role: str, statement: str, params: tuple[Any, ...] = ()
+) -> Any:
+    """Run one statement as `role`; return its rows, or its rowcount when it returns none."""
+    conn.execute(f"SET ROLE {role}")
+    try:
+        cursor = conn.execute(statement, params)
+        return cursor.fetchall() if cursor.description is not None else cursor.rowcount
+    finally:
+        conn.execute("RESET ROLE")
+
+
+def _task_ids(conn: psycopg.Connection[Any], role: str) -> set[UUID]:
+    return {row[0] for row in _run_as(conn, role, "SELECT id FROM public.tasks")}
+
+
+def test_plan_coverage_reads_are_bound_to_the_seat_project(
+    fresh_authorization_fixture: AuthorizationFixture,
+) -> None:
+    """Db-mode plan coverage reads tasks as a seat, bound to that seat's project (#25804).
+
+    The seat's login role inherits gobby_gcode_capability, which may SELECT tasks and
+    task_dependencies only for its own project. The roles that already read these tables
+    keep their access, and no role gains a write it did not have.
+    """
+    if os.environ.get("GOBBY_TEST_GDAEMON") != "checkout":
+        # The installed gdaemon predates migration 490; prove the candidate schema instead.
+        pytest.skip("needs the candidate schema: run with GOBBY_TEST_GDAEMON=checkout")
+    fixture = fresh_authorization_fixture
+    own_task, other_task = uuid4(), uuid4()
+    with psycopg.connect(fixture.database_url, autocommit=True) as owner:
+        try:
+            for task_id, project_id in (
+                (own_task, fixture.project_id),
+                (other_task, fixture.other_project_id),
+            ):
+                _run_as(
+                    owner,
+                    RUNTIME_ROLE,
+                    "INSERT INTO public.tasks (id, project_id, title, priority, task_type, "
+                    "validation_criteria, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, 2, 'task', 'coverage read proof', NOW(), NOW())",
+                    (task_id, project_id, f"coverage-{task_id}"),
+                )
+            # One edge owned by each project. The seat may see only the edge its task owns.
+            _run_as(
+                owner,
+                RUNTIME_ROLE,
+                "INSERT INTO public.task_dependencies (task_id, depends_on, dep_type) "
+                "VALUES (%s, %s, 'blocks'), (%s, %s, 'blocks')",
+                (own_task, other_task, other_task, own_task),
+            )
+
+            with psycopg.connect(fixture.agent_url, autocommit=True) as agent:
+                assert _ids(agent, "SELECT id FROM public.tasks") == {own_task}
+                edges = agent.execute("SELECT task_id, depends_on FROM public.task_dependencies")
+                assert edges.fetchall() == [(own_task, other_task)]
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    agent.execute(
+                        "INSERT INTO public.tasks (id, project_id, title, priority, task_type, "
+                        "validation_criteria, created_at, updated_at) "
+                        "VALUES (%s, %s, 'denied', 2, 'task', 'denied', NOW(), NOW())",
+                        (uuid4(), fixture.project_id),
+                    )
+
+            assert {own_task, other_task} <= _task_ids(owner, RUNTIME_ROLE)
+            renamed = _run_as(
+                owner,
+                RUNTIME_ROLE,
+                "UPDATE public.tasks SET title = 'renamed' WHERE id = %s",
+                (other_task,),
+            )
+            assert renamed == 1
+
+            assert {own_task, other_task} <= _task_ids(owner, ISSUER_ROLE)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                _run_as(
+                    owner,
+                    ISSUER_ROLE,
+                    "UPDATE public.tasks SET title = 'denied' WHERE id = %s",
+                    (own_task,),
+                )
+
+            assert {own_task, other_task} <= _task_ids(owner, QUERY_READONLY_ROLE)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                _run_as(
+                    owner,
+                    QUERY_READONLY_ROLE,
+                    "UPDATE public.tasks SET title = 'denied' WHERE id = %s",
+                    (own_task,),
+                )
+        finally:
+            owner.execute(
+                "DELETE FROM public.task_dependencies WHERE task_id IN (%s, %s)",
+                (own_task, other_task),
+            )
+            owner.execute("DELETE FROM public.tasks WHERE id IN (%s, %s)", (own_task, other_task))

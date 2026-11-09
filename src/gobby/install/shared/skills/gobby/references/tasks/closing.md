@@ -60,8 +60,7 @@ the tasks an author can attest. Authors correct their own evidence with
 it does not allow overwriting evidence. Never author a peer's attestation.
 
 The bundled coding policy requires TDD evidence, implementation, validation,
-OCR self-review, a linked and integrated candidate, clean attributed files and
-closing evidence. Follow its current rules for ordering and candidate references.
+a linked and integrated candidate, clean attributed files and closing evidence. Follow its current rules for ordering and candidate references.
 The paired workflow additionally requires independent reviewers. Task-specific
 security approval remains independent and capability-bound. A later rejection
 or correction can revoke approval for a subsequent landing or close attempt.
@@ -110,6 +109,6 @@ Security paths force approval at land even without a label. Filers label obvious
 trust-boundary work; leads inspect the diff and add security-review when needed.
 Only the operator or authorized policy owner removes that label.
 
-_Version: 4.0.0_
+_Version: 5.0.0_
 
 _Last verified: 2026-11-05_

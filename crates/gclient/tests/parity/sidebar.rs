@@ -186,28 +186,30 @@ impl Board {
                     ..Default::default()
                 });
             }
-            RowState::Working | RowState::Unseen => {
+            RowState::Working => {
                 let pane = self
                     .panes
                     .iter_mut()
                     .find(|pane| pane.terminal_id == name)
                     .expect("known terminal");
                 pane.new_output = true;
-                pane.live = state == RowState::Working;
-                // A working herdr agent is a running gobby run.
-                self.agent_mut(name).lifecycle_status =
-                    (state == RowState::Working).then(|| "running".to_string());
-            }
-            RowState::Idle => {}
-            RowState::Paused => {
-                self.agent_mut(name).lifecycle_status = Some("paused".to_string());
-            }
-            RowState::Orphaned => {
+                pane.live = true;
                 let agent = self.agent_mut(name);
-                agent.state = RowState::Orphaned;
+                agent.state = RowState::Working;
+                // A working herdr agent is a running gobby run.
+                agent.lifecycle_status = Some("running".to_string());
+            }
+            RowState::Blank => {}
+            RowState::Paused => {
+                let agent = self.agent_mut(name);
+                agent.state = RowState::Paused;
+                agent.lifecycle_status = Some("paused".to_string());
+            }
+            RowState::NoLive => {
+                let agent = self.agent_mut(name);
+                agent.state = RowState::NoLive;
                 agent.terminal_state = Some("orphaned".to_string());
             }
-            RowState::Unknown => self.panes.retain(|pane| pane.terminal_id != name),
         }
     }
 }
@@ -639,7 +641,8 @@ parity_tests! {
             // and grouped sort the space order.
             let mut board = Board::new(&["one", "two", "three", "four"]);
             board.set_state("one", RowState::Working);
-            board.set_state("two", RowState::Unseen);
+            // gclient has no pane-output state: "two" stays blank and sorts last.
+            board.set_state("two", RowState::Blank);
             board.set_state("three", RowState::Working);
             board.set_state("four", RowState::Attention);
             let mut chrome = chrome();
@@ -657,7 +660,7 @@ parity_tests! {
             chrome.prefs.agent_sort = AgentSort::Priority;
             let entries = agent_rows(&board, &chrome);
             let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
-            assert_eq!(labels, ["four", "two", "one", "three"]);
+            assert_eq!(labels, ["four", "one", "three", "two"]);
         }
 
         fn all_workspaces_agent_panel_entries_use_live_root_runtime_cwd_for_workspace_label() {
@@ -996,7 +999,7 @@ parity_tests! {
             let rows = agent_rows(&board, &chrome);
             assert_eq!(rows[0].label, "repo");
 
-            board.set_state("repo", RowState::Unknown);
+            board.panes.retain(|pane| pane.terminal_id != "repo");
             let rows = agent_rows(&board, &chrome);
             assert_eq!(rows[0].label, "repo");
             assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
@@ -1006,10 +1009,10 @@ parity_tests! {
             // herdr: `[state_icon, workspace("feature")]` with the branch and
             // `↑2 ↓1` suppressed; gclient agent rows never carry git details.
             let chrome = chrome();
-            let row = plain_row("feature", RowState::Idle, &[]);
+            let row = plain_row("feature", RowState::Blank, &[]);
 
             let text = line_text(&row, 60, &chrome);
-            assert_eq!(text, format!(" {} feature", dot(RowState::Idle)));
+            assert_eq!(text, format!(" {} feature", dot(RowState::Blank)));
             assert!(!text.contains("worktree/feature") && !text.contains('↑'));
             assert_eq!(third_text(&row, 60, &chrome), "   No assigned task");
         }
@@ -1017,10 +1020,10 @@ parity_tests! {
         fn workspace_custom_token_can_replace_git_specific_details() {
             // herdr: `[$jj_status]` resolves to `2 changes`.
             let chrome = chrome();
-            let row = plain_row("repo", RowState::Idle, &["2 changes"]);
+            let row = plain_row("repo", RowState::Blank, &["2 changes"]);
 
             let text = line_text(&row, 60, &chrome);
-            assert_eq!(text, format!(" {} repo", dot(RowState::Idle)));
+            assert_eq!(text, format!(" {} repo", dot(RowState::Blank)));
             let third = third_text(&row, 60, &chrome);
             assert_eq!(third, "   Working task 1 2 changes");
             assert!(!third.contains('↑') && !third.contains('↓'));

@@ -396,8 +396,9 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     // Headings carry no controls: View › Sidebar holds each section's options.
     assert_eq!(lines[3], " Projects");
     // `working` lists only alpha, folded, on one line with its counts.
-    assert_eq!(lines[4], " ⍾ alpha (main ↑2 ↓1)   ▸");
-    assert!(!text.contains("○ beta"), "{text}");
+    // The needs-you count takes the branch detail's room on this narrow row.
+    assert_eq!(lines[4], " ⍾ ⍾1 alpha             ▸");
+    assert!(!text.contains("beta (~)"), "{text}");
     assert!(!text.contains("feature"), "{text}");
     assert!(blank(lines[5]), "{:?}", lines[5]);
     assert_eq!(lines[6], " Agents");
@@ -406,7 +407,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert_eq!(lines[9], "   No assigned task");
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals");
-    assert_eq!(lines[24], " ○ term-beta      gclient");
+    assert_eq!(lines[24], "   term-beta      gclient");
     assert!(blank(lines[25]), "{:?}", lines[25]);
     // No footer: the terminals run to the last row.
     assert!(blank(lines[39]), "{:?}", lines[39]);

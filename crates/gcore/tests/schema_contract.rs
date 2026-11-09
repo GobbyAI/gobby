@@ -21,15 +21,15 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.version, 490);
     assert_eq!(
         identity.latest_asset.filename,
-        "490_skills_live_name_slots.sql"
+        "490_grant_plan_coverage_reads.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "fa41e53264261e7da9f476975a473ffa41d398b2356204a1e0d31b8bff0ff33a"
+        "531bf6fd9c8f37232a2deefa28c2433639d6b0a9d04f7612d1ee632ecf4ec6de"
     );
     assert_eq!(
         identity.root_hash,
-        "34be6715d3bbf665e87a99c5ae7b13d971c7373ea8d7d955078bb81728c36b38"
+        "27f7ffaacf210bc71e2e796c557eb0006d8da32300b247907dd6df0ae3acafd7"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

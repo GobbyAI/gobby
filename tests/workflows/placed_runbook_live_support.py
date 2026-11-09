@@ -592,11 +592,11 @@ def stop_fixture_host(host: FixtureHost) -> dict[str, Any]:
 
 
 @contextmanager
-def host_socket_dir() -> Iterator[Path]:
-    """A private marked directory, removed after its hosts drain successfully."""
+def host_socket_dir(root: Path | None = None) -> Iterator[Path]:
+    """A private marked directory under ``root``, removed after its hosts drain successfully."""
     from tests.e2e.conftest import create_host_socket_dir, stop_terminal_host
 
-    socket_dir = create_host_socket_dir(prefix="grb-")
+    socket_dir = create_host_socket_dir(root, prefix="grb-")
     try:
         yield socket_dir
     finally:

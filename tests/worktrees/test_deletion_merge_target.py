@@ -267,7 +267,7 @@ async def test_missing_detached_checkout_is_removed_only_after_landing_proof(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target", [None, "0.5.0"])
+@pytest.mark.parametrize("target", ["0.5.0"])
 async def test_missing_detached_checkout_with_pruned_registration_is_retired(
     landed_worktree: tuple[Path, Worktree],
     deletion_registry: tuple[InternalToolRegistry, MagicMock],
@@ -287,6 +287,30 @@ async def test_missing_detached_checkout_with_pruned_registration_is_retired(
     assert result["success"] is True, result
     storage.delete.assert_called_once_with(worktree.id)
     assert worktree.worktree_path not in _git(repo, "worktree", "list", "--porcelain")
+    assert _git(repo, "branch", "--list", "child") == "child"
+
+
+@pytest.mark.asyncio
+async def test_missing_detached_checkout_with_pruned_registration_refuses_without_source_branch(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(Path(worktree.worktree_path), "checkout", "--detach")
+    worktree.branch_name = None
+    shutil.rmtree(worktree.worktree_path)
+    _git(repo, "worktree", "prune")
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into=None)
+
+    # The probe refuses before the deleting mark, so the row keeps its status with no write.
+    assert result["success"] is False
+    assert result["error"] == "Cannot verify missing worktree without its source branch"
+    storage.update.assert_not_called()
+    storage.delete.assert_not_called()
     assert _git(repo, "branch", "--list", "child") == "child"
 
 

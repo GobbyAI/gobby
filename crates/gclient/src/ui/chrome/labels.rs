@@ -7,7 +7,7 @@
 //! there is no pane, still answer with a name rather than the id they were
 //! handed.
 
-use crate::app::sidebar_model::{agent_row_state, pane_state, AgentEntry};
+use crate::app::sidebar_model::AgentEntry;
 use crate::app::{short_terminal_id, PaneId};
 use crate::ui::chrome::WorkspaceView;
 use crate::ui::sidebar::agent_label;
@@ -15,32 +15,26 @@ use crate::ui::sidebar::agent_label;
 /// herdr `AgentState`, mapped onto Gobby roster rows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum RowState {
-    /// An attention prompt is waiting on this terminal.
+    /// The session waits on the operator: a question, a plan approval or a permission prompt.
     Attention,
-    /// The terminal's host is gone; the row can only be destroyed.
-    Orphaned,
-    /// Held: an operator paused the session or the user interrupted its turn.
-    Paused,
-    /// Output is arriving on an attached pane.
+    /// Mid-turn, or between turns while waiting on a child run it started.
     Working,
-    /// New output landed since the pane was last focused.
-    Unseen,
-    /// Attached and quiet.
+    /// Alive but stopped: an operator pause or a user interrupt.
+    Paused,
+    /// Agents are assigned but all are dead, or the machine's daemon is unreachable.
+    NoLive,
+    /// Nothing is assigned or being worked.
     #[default]
-    Idle,
-    /// No pane is attached to this roster row.
-    Unknown,
+    Blank,
 }
 
 impl RowState {
-    pub const ALL: [RowState; 7] = [
+    pub const ALL: [RowState; 5] = [
         RowState::Attention,
-        RowState::Orphaned,
-        RowState::Paused,
         RowState::Working,
-        RowState::Unseen,
-        RowState::Idle,
-        RowState::Unknown,
+        RowState::Paused,
+        RowState::NoLive,
+        RowState::Blank,
     ];
 }
 
@@ -140,12 +134,9 @@ pub fn terminal_label<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
 }
 
 pub fn row_state<W: WorkspaceView>(ws: &W, terminal_id: &str) -> RowState {
-    let Some(pane_id) = ws.pane_for_terminal(terminal_id) else {
-        return RowState::Unknown;
-    };
-    let pane = ws.pane(pane_id);
-    agent_for_terminal(ws, terminal_id).map_or_else(
-        || pane_state(pane),
-        |agent| agent_row_state(agent, Some(pane)),
-    )
+    if ws.pane_for_terminal(terminal_id).is_none() {
+        return RowState::Blank;
+    }
+    // A pane no roster row names is a bare terminal: nothing is assigned, so it is blank.
+    agent_for_terminal(ws, terminal_id).map_or(RowState::Blank, |agent| agent.state)
 }

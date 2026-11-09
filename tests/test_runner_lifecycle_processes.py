@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+import gobby.agents.srt_monitor as srt_monitor
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
@@ -34,6 +38,18 @@ async def test_restart_preservation_checks_monitor_creation_identity(
         preserve_srt_monitor=True,
     )
     assert processes[WORKER_PID].terminated is (started != float(WORKER_PID))
+
+
+@pytest.mark.asyncio
+async def test_reap_logs_every_terminated_child_by_identity(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    processes = _install_fake_psutil(monkeypatch)
+    caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
+    await runner_lifecycle_processes._reap_remaining_child_processes()
+    for pid in (HOST_PID, SHELL_PID, WORKER_PID):
+        assert processes[pid].terminated
+        assert f"pid={pid} " in caplog.text
 
 
 HOST_PID = 500
@@ -185,3 +201,72 @@ def test_host_preserve_pids_requires_gterm_identity(short_socket_dir: Path) -> N
         )
         == set()
     )
+
+
+@pytest.mark.asyncio
+async def test_reap_enumeration_overrun_names_the_step_and_each_unreaped_child(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    processes = _install_fake_psutil(monkeypatch)
+    caplog.set_level(logging.ERROR, logger="gobby.runner_lifecycle")
+    release = threading.Event()
+
+    def stalled_identities() -> dict[int, float]:
+        release.wait()
+        return {}
+
+    monkeypatch.setattr(srt_monitor, "live_monitor_identities", stalled_identities)
+    monkeypatch.setattr(
+        runner_lifecycle_processes, "_CHILD_ENUMERATION_BUDGET_SECONDS", 0.05, raising=False
+    )
+    try:
+        # Hang guard only: a reaper that ignores its enumeration bound fails here.
+        async with asyncio.timeout(30):
+            await runner_lifecycle_processes._reap_remaining_child_processes(
+                preserve_agents=True,
+                preserved_agent_pids=set(),
+                preserve_srt_monitor=True,
+            )
+    finally:
+        release.set()
+    assert not processes[HOST_PID].terminated
+    assert "during live_monitor_identities" in caplog.text
+    for pid in (HOST_PID, SHELL_PID, WORKER_PID):
+        assert f"pid={pid} " in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reap_finishes_its_kill_sweep_before_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_psutil(monkeypatch)
+    fake_psutil = sys.modules["psutil"]
+    sweeps: list[list[int]] = []
+    kill_sweep_entered = threading.Event()
+    release = threading.Event()
+
+    def wait_procs(
+        children: list[FakeProcess], timeout: float
+    ) -> tuple[list[FakeProcess], list[FakeProcess]]:
+        sweeps.append(sorted(child.pid for child in children))
+        if len(sweeps) == 1:
+            # SIGTERM sweep: nothing exits gracefully, so every child is force-killed.
+            return [], list(children)
+        kill_sweep_entered.set()
+        release.wait()  # the force-kill sweep is delayed here
+        return list(children), []
+
+    monkeypatch.setattr(fake_psutil, "wait_procs", staticmethod(wait_procs))
+    reap = asyncio.create_task(runner_lifecycle_processes._reap_remaining_child_processes())
+    try:
+        # Hang guard only: a reaper that never reaches its kill sweep fails here.
+        async with asyncio.timeout(30):
+            await asyncio.to_thread(kill_sweep_entered.wait)
+            reap.cancel()  # the caller gives up while the kill sweep is in flight
+            await asyncio.sleep(0)
+            assert not reap.done()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await reap
+    assert sweeps[1] == sorted([HOST_PID, SHELL_PID, WORKER_PID])

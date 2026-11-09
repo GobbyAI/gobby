@@ -555,6 +555,25 @@ def restart(
     ctx.invoke(start, verbose=verbose)
 
 
+class _RestartUnavailable(Exception):
+    """A spawned seat's restart that the daemon did not accept, with the reason it can name."""
+
+
+def _restart_unreachable_reason(port: int) -> str | None:
+    """Why this process must not contact the daemon for a restart, or None when it may."""
+    if is_test_protect_enabled() and os.environ.get(E2E_ISOLATED_HOME_ENV) != str(get_gobby_home()):
+        return (
+            "GOBBY_TEST_PROTECT is set without a matching GOBBY_E2E_ISOLATED_HOME, "
+            "so this seat sent no restart request"
+        )
+    if not _is_daemon_healthy(port):
+        return (
+            f"the daemon health check at localhost:{port} failed, "
+            "so this seat sent no restart request"
+        )
+    return None
+
+
 def _refuse_restart(reason: str) -> NoReturn:
     _step(f"Refusing to restart: {reason}", error=True)
     _step("The running daemon was left alone.")
@@ -576,11 +595,12 @@ def _restart_from_spawned_seat(
         raise click.UsageError("--force and --wait are mutually exclusive")
     if refusal := spawned_restart_refusal():
         _refuse_restart(refusal)
-    result = _restart_backend(
-        ctx, force=force, wait=wait, drain_terminals=drain_terminals, spawned=True
-    )
-    if result is None:
-        _refuse_restart("the daemon did not accept the restart request")
+    try:
+        result = _restart_backend(
+            ctx, force=force, wait=wait, drain_terminals=drain_terminals, spawned=True
+        )
+    except _RestartUnavailable as exc:
+        _refuse_restart(str(exc))
     if not result:
         sys.exit(1)
 
@@ -604,8 +624,9 @@ def _restart_backend(
     logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
     spawned: bool = False,
 ) -> bool | None:
-    """Restart a serving backend; None requires a full lifecycle replacement.
+    """Restart a serving backend; None requires a full lifecycle replacement for an operator.
 
+    A spawned seat that cannot restart raises _RestartUnavailable with the reason instead of None.
     A spawned seat has no runtime: it takes the port from the URL it was spawned with, sends only
     signed requests, and never sends its bearer, and it leaves the handoff admission to the daemon
     route that the CLI owns for an operator.
@@ -620,9 +641,9 @@ def _restart_backend(
         if runtime is None
         else runtime.read_only_operational_config().daemon_port
     )
-    if is_test_protect_enabled() and os.environ.get(E2E_ISOLATED_HOME_ENV) != str(get_gobby_home()):
-        return None
-    if not _is_daemon_healthy(port):
+    if reason := _restart_unreachable_reason(port):
+        if spawned:
+            raise _RestartUnavailable(reason)
         return None
     fetch = fetch_signed_protected_runs if spawned else fetch_protected_runs
     if not clear_protected_runs(port, force=force, wait=wait, step=_step, fetch=fetch):
@@ -664,6 +685,10 @@ def _restart_backend(
                 _step(f"Backend restart request failed: {exc}", error=True)
                 return False
             if response.status_code == 503:
+                if spawned:
+                    raise _RestartUnavailable(
+                        "the daemon answered 503 to the restart request; no restart was accepted"
+                    )
                 return None
             if response.status_code != 200:
                 _step(f"Backend restart refused: {response.text}", error=True)

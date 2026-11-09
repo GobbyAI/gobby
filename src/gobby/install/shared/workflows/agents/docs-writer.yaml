@@ -5,7 +5,7 @@ description: |
   Documentation implementation agent for docs-category lifecycle development
   leaves. Owns docs changes and release-note style writing work.
 
-version: "4.0.0"
+version: "5.1.0"
 enabled: true
 priority: 30
 surfaces: [spawn, persona]
@@ -19,7 +19,7 @@ checkout_mode: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
   - "gobby-tasks:close_task"
-task_attestation_writes: [test-before, implementation, test-after, validation, self-review]
+task_attestation_writes: [test-before, implementation, test-after]
 task_attestation_scope: {own_claim_only: true}
 respect_task_protections: true
 
@@ -39,17 +39,6 @@ task_attestation_kinds:
     - approved
     - rejected
     guidance: Describe the passing rerun and exact command on the full candidate SHA.
-  validation:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
-      the integrated SHA after land.
-  self-review:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
 
 prompts:
   persona: |
@@ -72,11 +61,11 @@ prompts:
 
     Handoff:
     Commit the documentation changes, attach the commit with
-    gobby-tasks:link_commit, and record approved implementation, test-after,
-    validation and self-review attestations through gobby-tasks:record_attestation,
-    referencing the full current Git SHA. Record test-before evidence before
-    implementation, with observed RED or a truthful explanation of non-applicability.
-    Include exact validation results and a bounded criteria review. Send the
+    gobby-tasks:link_commit, and record approved implementation and test-after
+    attestations through gobby-tasks:record_attestation, referencing the full current
+    Git SHA. Record test-before evidence before implementation, with observed RED or a
+    truthful explanation of non-applicability. Include exact focused check results.
+    Review and validation attestations come from an independent seat. Send the
     candidate and evidence IDs to your parent in an ordinary message. Coordinate
     its completion owner; this definition delegates landing and closure.
 
@@ -95,6 +84,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-implementer-review"
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"

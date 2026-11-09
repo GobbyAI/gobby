@@ -1,5 +1,5 @@
 name: security-auditor
-version: "3.1.0"
+version: "3.2.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -111,6 +111,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+    - "tag:task-closure-implementer-review"
     - tag:default
     - tag:runbook
     - tag:worker-safety

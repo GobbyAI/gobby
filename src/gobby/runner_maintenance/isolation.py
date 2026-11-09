@@ -46,6 +46,7 @@ from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
+    WorktreeDeletionResult,
     delete_worktree_transaction,
 )
 from gobby.worktrees.executor import (
@@ -54,6 +55,7 @@ from gobby.worktrees.executor import (
     run_worktree_delete,
 )
 from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.recovery import recover_deleting_worktrees
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -307,6 +309,25 @@ def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
         )
 
     return terminate
+
+
+def deleting_worktree_recovery(
+    db: HubDatabase,
+    executor: WorktreeDeleteExecutor | None,
+    should_stop: Callable[[], bool],
+) -> Callable[[], Awaitable[list[WorktreeDeletionResult]]]:
+    """Finish worktree records a shutdown left deleting, through the same git resolver."""
+
+    async def recover() -> list[WorktreeDeletionResult]:
+        return await recover_deleting_worktrees(
+            worktree_storage=LocalWorktreeManager(db),
+            resolve_git_manager=partial(_worktree_git, db),
+            task_manager=LocalTaskManager(db),
+            executor=executor,
+            should_stop=should_stop,
+        )
+
+    return recover
 
 
 def _worktree_git(db: HubDatabase, worktree: Worktree) -> WorktreeGitManager:

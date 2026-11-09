@@ -73,9 +73,10 @@ class SearchService:
         self._run_db = run_db
 
     async def _run_storage[T](self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        if self._run_db is None:
-            return await asyncio.to_thread(func, *args, **kwargs)
-        return cast(T, await self._run_db(func, *args, **kwargs))
+        with stage_timing.timed("storage_" + getattr(func, "__name__", "callback")):
+            if self._run_db is None:
+                return await asyncio.to_thread(func, *args, **kwargs)
+            return cast(T, await self._run_db(func, *args, **kwargs))
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:

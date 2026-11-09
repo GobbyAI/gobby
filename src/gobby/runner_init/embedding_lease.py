@@ -57,13 +57,25 @@ class _ManagedEmbeddingLease:
     def activate(self) -> None:
         self.lease.activate()
         self.renewal_stop.clear()
+        _ACTIVE_LEASE_HANDLES.add(self)
         self.renewal = _EMBEDDING_LEASE_RENEW_EXECUTOR.submit(_renew_embedding_lease, self)
 
     def dispose(self) -> None:
+        _ACTIVE_LEASE_HANDLES.discard(self)
         self.renewal_stop.set()
         self.lease.fence()
         if self.renewal is not None:
             self.renewal.cancel()
+
+
+# Activated handles whose renewal thread must end with the daemon, whichever teardown runs.
+_ACTIVE_LEASE_HANDLES: set[_ManagedEmbeddingLease] = set()
+
+
+def dispose_active_embedding_leases() -> None:
+    """Stop every activated lease renewal; shutdown cannot rely on config teardown reaching it."""
+    for handle in list(_ACTIVE_LEASE_HANDLES):
+        handle.dispose()
 
 
 def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:

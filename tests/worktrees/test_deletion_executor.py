@@ -6,6 +6,7 @@ import asyncio
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,6 +45,13 @@ class _Storage:
     @contextmanager
     def lock_for_removal(self, worktree_id: str) -> Iterator[Worktree | None]:
         yield self.get(worktree_id)
+
+    def update(self, worktree_id: str, *, status: str) -> None:
+        with self._lock:
+            self.thread_ids.add(threading.get_ident())
+            row = self.rows.get(worktree_id)
+            if row is not None:
+                self.rows[worktree_id] = replace(row, status=status)
 
     def delete(self, worktree_id: str) -> bool:
         with self._lock:

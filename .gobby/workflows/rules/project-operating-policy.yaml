@@ -1,4 +1,4 @@
-version: "1.8.0"
+version: "1.10.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -99,10 +99,13 @@ rules:
               "src/gobby/worktrees/deletion.py",
               "src/gobby/worktrees/git/_status.py",
               "src/gobby/worktrees/creation.py",
-              "src/gobby/servers/routes/source_control_worktrees.py"
+              "src/gobby/servers/routes/source_control_worktrees.py",
+              "src/gobby/agents/srt_runner.mjs",
+              "src/gobby/utils/dependency_requirements.py",
+              "crates/gdaemon/src/nodes/agents/sandbox/verify.rs"
             ],
             "operator_channel": "gobby-telegram",
-            "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
+            "quiet_hours": "04:00–06:30 America/Chicago daily",
             "operator_timezone": "America/Chicago",
             "report_cadence_seconds": 1800,
             "full_report_minutes": "00-29 UTC",
