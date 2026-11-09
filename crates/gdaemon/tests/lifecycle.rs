@@ -1197,3 +1197,39 @@ async fn silent_backend_wait_writes_progress_to_startup_timings() -> Result<()> 
     })
     .await
 }
+
+#[tokio::test]
+async fn lease_lock_wait_writes_progress_to_startup_timings() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        // The harness creates this file before launch, so a wait that blocks before the
+        // bootstrap child starts is recorded too.
+        let timings = home.path().join("logs").join("startup-timings.jsonl");
+        std::fs::create_dir_all(timings.parent().context("timings parent")?)?;
+        std::fs::write(&timings, "")?;
+        let lease = Arc::new(NamedLock::new(db.lease("lock-holder")?));
+        let _held = lease.lock_as("test lease holder").await;
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv("pass")?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config.lease_lock_limit = Duration::from_secs(1);
+        config.report_interval = Duration::from_millis(100);
+        let mut supervisor = BackendSupervisor::with_lease(Some(lease.clone()), claim, config);
+        let (_stop, rx) = watch::channel(false);
+        let outcome = timeout(Duration::from_secs(10), supervisor.run(rx)).await?;
+        outcome.expect_err("a lock held past the bound must fail the supervisor");
+        let text = std::fs::read_to_string(&timings)?;
+        let progress = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| record["state"] == "progress")
+            .count();
+        ensure!(
+            progress >= 3,
+            "no progress reached startup timings during a lease-lock wait: {text:?}"
+        );
+        Ok(())
+    })
+    .await
+}
