@@ -60,6 +60,13 @@ REPORT_PID_AND_DENIED_KEYS = (
 )
 
 
+PREFIXED_KEYS = ("SCCACHE_FOO", "SCCACHE_BASEDIRS", "SCCACHE_CACHE_SIZE")
+REPORT_PREFIXED_KEYS = (
+    'printf "%s\\n" "${SCCACHE_FOO-absent}" "${SCCACHE_BASEDIRS-absent}" '
+    '"${SCCACHE_CACHE_SIZE-absent}"'
+)
+
+
 class _RecordingClient:
     host_epoch = "epoch-env-policy"
 
@@ -223,3 +230,24 @@ async def test_managed_spawn_scrubs_overlay_and_native_host_token() -> None:
     pid_line, token_line = stdout.splitlines()
     assert int(pid_line) == proc.pid
     assert token_line == "absent"
+
+
+@pytest.mark.asyncio
+async def test_native_spawn_drops_sccache_keys_by_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Host-only keys come from the daemon env the gterm host inherits; launch keys ride the spawn.
+    host_keys = {key: f"dummy-host-{key.lower()}" for key in PREFIXED_KEYS}
+    launch_keys = {key: f"dummy-launch-{key.lower()}" for key in PREFIXED_KEYS}
+    for key, value in host_keys.items():
+        monkeypatch.setenv(key, value)
+
+    argv, env = await _spawn(
+        ["/bin/sh", "-c", REPORT_PREFIXED_KEYS], env=launch_keys, auth_cli="codex"
+    )
+
+    assert not set(PREFIXED_KEYS) & set(env)
+    host_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **host_keys, **env}
+    proc = subprocess.Popen(argv, env=host_env, stdout=subprocess.PIPE, text=True)
+    stdout, _ = proc.communicate(timeout=10)
+
+    assert proc.returncode == 0
+    assert stdout.splitlines() == ["absent"] * len(PREFIXED_KEYS)

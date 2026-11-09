@@ -231,6 +231,56 @@ fn provider_launch_removes_inherited_cargo_keys() -> Result<()> {
 }
 
 #[test]
+fn provider_launch_removes_sccache_keys_by_prefix() -> Result<()> {
+    const PREFIXED: [&str; 3] = ["SCCACHE_FOO", "SCCACHE_BASEDIRS", "SCCACHE_CACHE_SIZE"];
+    let report = r#"printf '%s\n' "${SCCACHE_FOO-absent}" "${SCCACHE_BASEDIRS-absent}" "${SCCACHE_CACHE_SIZE-absent}""#;
+    for entry in corpus()?["cases"].as_array().context("corpus cases")? {
+        let name = entry["name"].as_str().context("case name")?;
+        let mut case = CommandCase::new(name)?;
+        for key in PREFIXED {
+            // Launch-provided keys ride the sandbox launch env; host-only keys are the inherited ambient env.
+            case.sandbox
+                .env
+                .insert(key.to_string(), "dummy-launch".to_string());
+            case.fixture["ambient"][key] = Value::from("dummy-host");
+        }
+        let actual = case.environment()?;
+        for key in PREFIXED {
+            assert!(
+                !actual.env.contains_key(key),
+                "{name}: {key} in the spawn env"
+            );
+            assert!(
+                actual
+                    .argv_prefix
+                    .windows(2)
+                    .any(|pair| pair[0] == "-u" && pair[1] == key),
+                "{name}: {key} is not unset in the exec argv"
+            );
+        }
+        let argv: Vec<String> = actual
+            .argv_prefix
+            .iter()
+            .cloned()
+            .chain(["/bin/sh", "-c", report].map(String::from))
+            .collect();
+        let output = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .env_clear()
+            .envs(PREFIXED.map(|key| (key, "0")))
+            .envs(&actual.env)
+            .output()?;
+        assert!(output.status.success(), "{name}: {output:?}");
+        assert_eq!(
+            String::from_utf8(output.stdout)?,
+            "absent\n".repeat(PREFIXED.len()),
+            "{name}: an inherited SCCACHE key reached the provider"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn codex_prompt_placement() -> Result<()> {
     for name in ["codex-fresh", "codex-resume", "codex-oss"] {
         let mut case = CommandCase::new(name)?;

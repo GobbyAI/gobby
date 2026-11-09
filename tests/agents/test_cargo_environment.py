@@ -38,6 +38,16 @@ REPORT_REMOVED_KEYS = (
     "for k in CARGO_INCREMENTAL RUSTC_WRAPPER SCCACHE_DIR SCCACHE_SERVER_UDS; "
     'do printenv "$k" || echo absent; done'
 )
+PREFIXED_KEYS = ("SCCACHE_FOO", "SCCACHE_BASEDIRS", "SCCACHE_CACHE_SIZE")
+REPORT_PREFIXED_KEYS = (
+    'printf "%s\\n" "${SCCACHE_FOO-absent}" "${SCCACHE_BASEDIRS-absent}" '
+    '"${SCCACHE_CACHE_SIZE-absent}"'
+)
+AGENT_COMMANDS = [
+    ["codex", "--full-auto"],
+    ["/managed/node", "/managed/srt/runner.js", "--", "/opt/bin/claude"],
+    ["agy", "--yolo"],
+]
 
 
 @pytest.fixture
@@ -127,6 +137,51 @@ def test_agent_exec_drops_an_inherited_cargo_incremental() -> None:
     )
 
     assert result.stdout.splitlines() == ["absent"] * len(REMOVED_KEYS)
+
+
+@pytest.mark.parametrize("command", AGENT_COMMANDS)
+def test_agent_exec_drops_launch_provided_sccache_keys_by_prefix(command: list[str]) -> None:
+    caller_env = {key: f"dummy-launch-{key.lower()}" for key in PREFIXED_KEYS}
+
+    _argv, env = apply_native_env_policy(command, caller_env, None)
+
+    assert not set(PREFIXED_KEYS) & set(env)
+
+
+@pytest.mark.parametrize("command", AGENT_COMMANDS)
+def test_agent_exec_unsets_host_inherited_sccache_keys_by_prefix(
+    monkeypatch: pytest.MonkeyPatch, command: list[str]
+) -> None:
+    for key in PREFIXED_KEYS:
+        monkeypatch.setenv(key, f"dummy-host-{key.lower()}")
+
+    argv, env = apply_native_env_policy(command, {}, None)
+
+    separator = argv.index("--")
+    unset = argv[1:separator]
+    pairs = list(zip(unset[::2], unset[1::2], strict=True))
+    for key in PREFIXED_KEYS:
+        assert ("-u", key) in pairs
+    assert argv[separator + 1 :] == command
+    assert not set(PREFIXED_KEYS) & set(env)
+
+
+def test_agent_exec_drops_inherited_sccache_keys_at_exec(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in PREFIXED_KEYS:
+        monkeypatch.setenv(key, f"dummy-host-{key.lower()}")
+    argv, env = apply_native_env_policy(["/bin/sh", "-c", REPORT_PREFIXED_KEYS], {}, "codex")
+    # Stands in for the gterm host's inherited daemon environment.
+    host_env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        **{key: f"dummy-host-{key.lower()}" for key in PREFIXED_KEYS},
+        **env,
+    }
+
+    result = subprocess.run(
+        argv, env=host_env, capture_output=True, text=True, timeout=10, check=True
+    )
+
+    assert result.stdout.splitlines() == ["absent"] * len(PREFIXED_KEYS)
 
 
 def test_non_agent_exec_keeps_its_cargo_environment() -> None:
