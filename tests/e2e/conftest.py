@@ -148,29 +148,47 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
 
 @functools.cache
 def build_tree_gclient() -> Path | str:
-    """Build ``gclient`` from this tree once: its binary, or the failure report."""
+    """Build ``gclient`` from this tree once: its binary, or the failure report.
+
+    Every failure to build or locate the binary returns a report, so the collection hook
+    never aborts the session.
+    """
     repo = Path(__file__).resolve().parents[2]
-    build = subprocess.run(
-        ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=2400.0,
-    )
+    try:
+        build = subprocess.run(
+            ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2400.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"building gclient from the tree timed out after {exc.timeout}s"
+    except OSError as exc:
+        return f"building gclient from the tree could not run cargo: {exc}"
     if build.returncode != 0:
         return f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}"
-    metadata = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=600.0,
-    )
+    try:
+        metadata = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"cargo metadata timed out after {exc.timeout}s"
+    except OSError as exc:
+        return f"cargo metadata could not run: {exc}"
     if metadata.returncode != 0:
         return f"cargo metadata failed:\n{metadata.stderr}"
-    binary = Path(str(json.loads(metadata.stdout)["target_directory"])) / "debug" / "gclient"
+    try:
+        target_directory = json.loads(metadata.stdout)["target_directory"]
+    except (ValueError, KeyError, TypeError) as exc:
+        return f"cargo metadata output is unusable: {exc!r}"
+    binary = Path(str(target_directory)) / "debug" / "gclient"
     if not binary.is_file():
         return f"cargo build left no gclient at {binary}"
     return binary

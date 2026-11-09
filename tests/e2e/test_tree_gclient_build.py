@@ -11,9 +11,7 @@ from tests.e2e import conftest
 
 pytestmark = pytest.mark.unit
 
-_BUILD_OK = subprocess.CompletedProcess(
-    args=["cargo", "build"], returncode=0, stdout="", stderr=""
-)
+_BUILD_OK = subprocess.CompletedProcess(args=["cargo", "build"], returncode=0, stdout="", stderr="")
 
 
 def _metadata(stdout: str) -> subprocess.CompletedProcess[str]:
