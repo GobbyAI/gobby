@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 from provision_environment import (
     BASE_SHA,
+    C0_WORKSPACE,
     CHANGE_SHA,
     COMPARATOR_CASES,
     COMPOSE_PROJECT,
@@ -497,8 +498,8 @@ def validate_receipts(root: Path) -> None:
     )
     require(
         proof["project_id"]
-        == _load_json(contained_file(root, "corpora/gcode/C0/.gobby/project.json"))["id"],
-        "check failed: proof['project_id'] == _load_json(contained_file(root, 'corpora/gcode/C0/.gobby/project.json'))['id']",
+        == _load_json(contained_file(root, root / C0_WORKSPACE / ".gobby/project.json"))["id"],
+        "check failed: proof['project_id'] == _load_json(contained_file(root, root / C0_WORKSPACE / '.gobby/project.json'))['id']",
     )
     require(
         proof["postgres_identity"] == ["gobby_bakeoff_22948", proof["postgres_role"], "public"],
@@ -546,7 +547,7 @@ def _validate_grant_binding(
 ) -> dict[str, str | int | None]:
     from psycopg.conninfo import conninfo_to_dict
 
-    project = _load_json(contained_file(root, "corpora/gcode/C0/.gobby/project.json"))
+    project = _load_json(contained_file(root, root / C0_WORKSPACE / ".gobby/project.json"))
     require(
         grant["version"] == 2 and grant["api_contract"] == 1,
         "check failed: grant['version'] == 2 and grant['api_contract'] == 1",
@@ -622,48 +623,96 @@ def auth_probe(root: Path, cache: Path, mode: str) -> dict[str, Any]:
     return json.loads(_run_probe(argv, env=isolated_environment(root, dict(os.environ))))
 
 
-def validate_live_processes(root: Path, launches: dict[str, Any]) -> None:
+DAEMON_PORTS = (59480, 59481)
+
+
+def _contains_argv(cmdline: list[str], expected: list[str]) -> bool:
+    width = len(expected)
+    return any(
+        cmdline[start : start + width] == expected for start in range(len(cmdline) - width + 1)
+    )
+
+
+def _require_contained_environment(root: Path, environment: Mapping[str, str]) -> None:
+    require(
+        not set(environment).intersection(MANAGED_ENV_NAMES),
+        "check failed: not set(environment).intersection(MANAGED_ENV_NAMES)",
+    )
+    require(
+        environment["GOBBY_HOME"] == str(root / "gobby-home"),
+        "check failed: environment['GOBBY_HOME'] == str(root / 'gobby-home')",
+    )
+
+
+def validate_live_processes(root: Path, launches: dict[str, Any]) -> list[dict[str, Any]]:
+    """Check the live daemon through the SRT wrapper that the launch receipt names.
+
+    The wrapper does not listen itself; the sandboxed daemon it spawns does. Each listener on a
+    daemon port must be a descendant of the wrapper, run the recorded daemon argv, stay under the
+    runtime root and keep the managed environment. Returns the listener identities.
+    """
     import psutil
 
     require(set(launches) == {"daemon"}, "check failed: set(launches) == {'daemon'}")
-    expected_ports = {"daemon": {59480, 59481}}
-    for name, ports in expected_ports.items():
-        launch = _load_json(verify_file_record(root, launches[name]))
-        process = psutil.Process(launch["pid"])
+    launch = _load_json(verify_file_record(root, launches["daemon"]))
+    wrapper = psutil.Process(launch["pid"])
+    require(wrapper.uids().real == os.getuid(), "check failed: wrapper.uids().real == os.getuid()")
+    require(wrapper.cwd() == launch["cwd"], "check failed: wrapper.cwd() == launch['cwd']")
+    require(
+        Path(wrapper.cwd()).resolve().is_relative_to(root),
+        "check failed: Path(wrapper.cwd()).resolve().is_relative_to(root)",
+    )
+    require(
+        wrapper.cmdline() == launch["argv"], "check failed: wrapper.cmdline() == launch['argv']"
+    )
+    environment = wrapper.environ()
+    _require_contained_environment(root, environment)
+    require(
+        environment["PATH"] == launch["path"],
+        "check failed: environment['PATH'] == launch['path']",
+    )
+    require(
+        environment["GOBBY_NATIVE_BIN_DIR"] == str(root / "gobby-home/bin"),
+        "check failed: environment['GOBBY_NATIVE_BIN_DIR'] == str(root / 'gobby-home/bin')",
+    )
+    listeners: dict[tuple[str, int], Any] = {}
+    for process in wrapper.children(recursive=True):
+        for connection in process.net_connections(kind="tcp"):
+            if connection.status != psutil.CONN_LISTEN:
+                continue
+            endpoint = (connection.laddr.ip, connection.laddr.port)
+            require(endpoint not in listeners, "a daemon port has two listeners")
+            listeners[endpoint] = process
+    expected = {("127.0.0.1", port) for port in DAEMON_PORTS}
+    require(
+        set(listeners) == expected,
+        "daemon ports are not listened on by the wrapper's descendants",
+    )
+    identities: list[dict[str, Any]] = []
+    for endpoint in sorted(expected):
+        process = listeners[endpoint]
         require(
-            process.uids().real == os.getuid(), "check failed: process.uids().real == os.getuid()"
+            _contains_argv(process.cmdline(), launch["daemon_argv"]),
+            "a daemon port is listened on by a process that is not the daemon",
         )
-        require(process.cwd() == launch["cwd"], "check failed: process.cwd() == launch['cwd']")
+        require(
+            process.uids().real == os.getuid(),
+            "check failed: process.uids().real == os.getuid()",
+        )
         require(
             Path(process.cwd()).resolve().is_relative_to(root),
-            "check failed: Path(process.cwd()).resolve().is_relative_to(root)",
+            "daemon listener runs outside the runtime root",
         )
-        require(
-            process.cmdline() == launch["argv"], "check failed: process.cmdline() == launch['argv']"
+        _require_contained_environment(root, process.environ())
+        identities.append(
+            {
+                "port": endpoint[1],
+                "pid": process.pid,
+                "create_time": process.create_time(),
+                "cmdline": process.cmdline(),
+            }
         )
-        environment = process.environ()
-        require(
-            not set(environment).intersection(MANAGED_ENV_NAMES),
-            "check failed: not set(environment).intersection(MANAGED_ENV_NAMES)",
-        )
-        require(
-            environment["GOBBY_HOME"] == str(root / "gobby-home"),
-            "check failed: environment['GOBBY_HOME'] == str(root / 'gobby-home')",
-        )
-        require(
-            environment["PATH"] == launch["path"],
-            "check failed: environment['PATH'] == launch['path']",
-        )
-        require(
-            environment["GOBBY_NATIVE_BIN_DIR"] == str(root / "gobby-home/bin"),
-            "check failed: environment['GOBBY_NATIVE_BIN_DIR'] == str(root / 'gobby-home/bin')",
-        )
-        listeners = {
-            (connection.laddr.ip, connection.laddr.port)
-            for connection in process.net_connections(kind="tcp")
-            if connection.status == psutil.CONN_LISTEN
-        }
-        require(listeners == {("127.0.0.1", port) for port in ports}, name)
+    return identities
 
 
 def bearer_verdicts(
@@ -707,7 +756,7 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
         [
             str(root / gcode_binary_relative()),
             "--project",
-            str(root / "corpora" / "gcode" / "C0"),
+            str(root / C0_WORKSPACE),
             "--format",
             "json",
             "status",
@@ -715,7 +764,7 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
         env=gcode_env,
     )
     parsed = json.loads(status)
-    project_root = root / "corpora/gcode/C0"
+    project_root = root / C0_WORKSPACE
     project_id = _load_json(contained_file(root, project_root / ".gobby/project.json"))["id"]
     require(
         parsed["id"] == project_id and parsed["root_path"] == str(project_root),
@@ -794,7 +843,7 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     launches = _load_json(contained_file(root, "receipts/active-launches.json"))
     for record in launches.values():
         verify_file_record(root, record)
-    validate_live_processes(root, launches)
+    daemon_listeners = validate_live_processes(root, launches)
     return {
         "observed_unix": now,
         "issued_at": grant["issued_at"],
@@ -809,6 +858,7 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
         "qdrant_url": qdrant["url"],
         "falkordb_endpoint": "127.0.0.1:61237",
         "launch_receipts": launches,
+        "daemon_listeners": daemon_listeners,
         "gcode_status_sha256": hashlib.sha256(status.encode()).hexdigest(),
         "grant_cache_at_observation": file_record(root, cache),
     }

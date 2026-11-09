@@ -40,7 +40,7 @@ DEFAULT_GOBBY_REPO = Path("/Users/josh/Projects/gobby")
 
 BASE_SHA = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_SHA = "8b24ac26699aac8b24254a647aa70b208287b492"
-GOBBY_SHA = "0bf234a92e1266e310db2f7bf9245f0bc69a08bb"
+GOBBY_SHA = "1a13024ceda47fb25bebefc8b42ee9d2e372778d"
 TASK_REF = "#22948"
 PROBE_CRATE = "gobby-core"
 PROBE_NAME = "managed_bearer_probe"
@@ -78,6 +78,9 @@ COMPARATOR_CASES = {
 }
 CHANGED_CASES = frozenset({"C3", "C8-change", "C9-change"})
 PROJECT_MANIFEST = "config/project-manifest.json"
+C0_PROJECT = "gcode-C0-probe"
+# The C0 probe's registered workspace: the only project path C0, the grant and --live read.
+C0_WORKSPACE = f"workspaces/{C0_PROJECT}"
 SCORED_CASES = ("C1", "C2", "C3", "C4", "C5", "C6")
 SINGLE_PROJECTS = (
     ("gcode-C7-interrupted", "C7", "interrupted"),
@@ -85,7 +88,7 @@ SINGLE_PROJECTS = (
     ("gcode-C8-baseline", "C8-baseline", "baseline"),
     ("gcode-C8-change", "C8-change", "change"),
     ("gcode-C1-labels-properties", "C1", "labels-properties"),
-    ("gcode-C0-probe", "C0", "probe"),
+    (C0_PROJECT, "C0", "probe"),
 )
 
 PORTS = {

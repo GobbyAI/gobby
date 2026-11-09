@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 import record_installations
 from provision_environment import (
+    C0_WORKSPACE,
     GOBBY_SHA,
     PROBE_BINARY,
     PROBE_MANIFEST,
@@ -43,7 +44,7 @@ SOURCE_PIN = "9b148b644c63a8ac2a28f341ecac585210ecd3fe"
 
 @pytest.fixture
 def grant(tmp_path: Path) -> dict[str, Any]:
-    write_once(tmp_path / "corpora/gcode/C0/.gobby/project.json", '{"id":"owned"}', 0o600)
+    write_once(tmp_path / C0_WORKSPACE / ".gobby/project.json", '{"id":"owned"}', 0o600)
     write_once(tmp_path / "gobby-home/machine_id", "owned-machine\n", 0o600)
     return {
         "version": 2,

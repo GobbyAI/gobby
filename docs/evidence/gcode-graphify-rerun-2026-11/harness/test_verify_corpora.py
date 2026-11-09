@@ -63,10 +63,26 @@ def test_verify_corpora_reads_each_case_and_writes_nothing(tmp_path: Path) -> No
     assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
 
 
+def _identity_manifest(sha: str) -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "source_commit": "c" * 40,
+            "root": "/run",
+            "control_exclusions": [],
+            "source_exclusions": [],
+            "file_count": 1,
+            "total_bytes": 3,
+            "input_tree_sha256": sha,
+            "files": [{"path": "a.py", "sha256": sha}],
+        }
+    )
+
+
 def test_manifests_must_match_the_september_copies(tmp_path: Path) -> None:
     rerun = tmp_path / "rerun"
     september = tmp_path / "september"
-    write_once(rerun / "manifests/corpora/gcode/C0.json", '{"a": 1}', 0o600)
-    write_once(september / "manifests/corpora/gcode/C0.json", '{"a": 2}', 0o600)
+    write_once(rerun / "manifests/corpora/gcode/C0.json", _identity_manifest("1" * 64), 0o600)
+    write_once(september / "manifests/corpora/gcode/C0.json", _identity_manifest("2" * 64), 0o600)
     with pytest.raises(EvidenceError, match="gcode/C0"):
         compare_manifests(rerun, september, cases={"gcode": ("C0",)})

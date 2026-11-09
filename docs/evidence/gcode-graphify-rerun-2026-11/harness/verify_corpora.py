@@ -17,6 +17,17 @@ from provision_environment import COMPARATOR_CASES, DEFAULT_RUNTIME_ROOT, build_
 from runtime_boundary import require
 
 COMPARED_FIELDS = ("type", "mode", "bytes", "sha256")
+# A manifest's content identity. The run-specific root and the JSON layout are not part of it.
+IDENTITY_FIELDS = (
+    "schema_version",
+    "source_commit",
+    "control_exclusions",
+    "source_exclusions",
+    "file_count",
+    "total_bytes",
+    "input_tree_sha256",
+    "files",
+)
 
 
 def compare_case(case_root: Path, manifest: Mapping[str, Any]) -> dict[str, list[str]]:
@@ -41,6 +52,15 @@ def _cases(cases: Mapping[str, tuple[str, ...]] | None) -> Mapping[str, tuple[st
     return COMPARATOR_CASES if cases is None else cases
 
 
+def _corpus_identity(payload: bytes) -> dict[str, Any]:
+    manifest = json.loads(payload)
+    require(
+        all(field in manifest for field in IDENTITY_FIELDS),
+        "manifest lacks its corpus identity fields",
+    )
+    return {field: manifest[field] for field in IDENTITY_FIELDS}
+
+
 def compare_manifests(
     root: Path,
     september_root: Path,
@@ -49,8 +69,8 @@ def compare_manifests(
     for comparator, names in _cases(cases).items():
         for case in names:
             relative = Path("manifests/corpora") / comparator / f"{case}.json"
-            rerun = (root / relative).read_bytes()
-            september = (september_root / relative).read_bytes()
+            rerun = _corpus_identity((root / relative).read_bytes())
+            september = _corpus_identity((september_root / relative).read_bytes())
             require(rerun == september, f"manifest differs from September: {comparator}/{case}")
 
 

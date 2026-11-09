@@ -12,6 +12,7 @@ from typing import Any
 
 from c0_poller import IndexPoller
 from prepare_daemon import isolated_environment
+from provision_environment import C0_WORKSPACE
 from runtime_boundary import EvidenceError, require, write_once
 from schema_head import gcode_binary_relative, read_archived_gcode_version
 
@@ -37,7 +38,6 @@ SEPTEMBER_RUN_RECORDS = "results/index-comparison/run-records.jsonl"
 SEPTEMBER_C0_EXTRACT_LINE = 3
 GRAPHIFY_BINARY = "tools/graphify/venv/bin/graphify"
 GRAPHIFY_CORPUS = "corpora/graphify/C0"
-GCODE_CORPUS = "corpora/gcode/C0"
 GRAPHIFY_INVENTORY = (
     "extract",
     "update",
@@ -176,7 +176,7 @@ def build_command_manifest(
     graphify = str(root / GRAPHIFY_BINARY)
     gcode = str(root / gcode_binary_relative())
     graphify_corpus = root / GRAPHIFY_CORPUS
-    gcode_corpus = root / GCODE_CORPUS
+    gcode_corpus = root / C0_WORKSPACE
     extract = [
         graphify,
         "extract",

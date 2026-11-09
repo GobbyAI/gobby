@@ -11,7 +11,6 @@ from typing import Any
 
 from c0_poller import IndexPoller, clean_file_count, corpus_project_id, index_row_count
 from c0_runner import (
-    GCODE_CORPUS,
     GRAPHIFY_MARKER_PATTERN,
     PROBE_SYMBOLS,
     CommandResult,
@@ -23,7 +22,7 @@ from c0_runner import (
 )
 from launch_daemon import resolve_srt_runner, srt_policy, srt_wrapped_argv
 from prepare_daemon import isolated_environment
-from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
+from provision_environment import C0_WORKSPACE, DEFAULT_RUNTIME_ROOT, _write_json
 from runtime_boundary import assert_owned_runtime
 from validate_environment import SEPTEMBER_ROOT
 
@@ -78,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     freeze_command_manifest(root, probe_symbols=PROBE_SYMBOLS, graphify_concurrency=concurrency)
     (root / "receipts").mkdir(mode=0o700, parents=True, exist_ok=True)
-    project_id = corpus_project_id(root, GCODE_CORPUS)
+    project_id = corpus_project_id(root, C0_WORKSPACE)
     observer = IndexPoller(
         count=index_row_count(root, project_id),
         clock=time.monotonic,

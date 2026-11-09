@@ -93,7 +93,7 @@ SEPTEMBER_EXTRACT_OUTPUT = (
 )
 GOOD_STATUS = {
     "id": "case-id",
-    "root_path": "/runtime/corpora/gcode/C0",
+    "root_path": "/runtime/workspaces/gcode-C0-probe",
     "code_index": {"healthy": True},
 }
 CHECK_RULINGS: dict[str, Any] = {
@@ -279,11 +279,11 @@ def test_the_cold_index_is_the_first_gcode_command_and_runs_the_september_index_
     assert gcode_commands[0]["argv"] == [
         "/runtime/gobby-home/bin/gcode",
         "--project",
-        "/runtime/corpora/gcode/C0",
+        "/runtime/workspaces/gcode-C0-probe",
         "--format",
         "json",
         "index",
-        "/runtime/corpora/gcode/C0",
+        "/runtime/workspaces/gcode-C0-probe",
         "--full",
         "--sync-projections",
     ]

@@ -47,7 +47,10 @@ def test_live_corpora_fail_when_a_manifest_differs_from_september(tmp_path: Path
     root = tmp_path / "runtime"
     september = tmp_path / "september"
     _write_corpus(root, "print('one')\n")
-    _write_september(september, '{"files": []}\n')
+    case_root = root / "corpora/gcode/C0"
+    _write_september(
+        september, json.dumps(build_manifest(case_root, "b" * 40, []), indent=2) + "\n"
+    )
 
     with pytest.raises(EvidenceError, match="manifest differs from September"):
         validation.validate_corpora_live(root, september, cases=CASES)

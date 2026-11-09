@@ -16,7 +16,7 @@ Live steps belong to the orchestrator root pane. A developer seat runs no step b
 | Attempt | `rerun2611b` |
 | Owner session | `7674aa11-70a3-40d5-91dd-1fe46140732b` (orchestrator root pane) |
 | Compose project | `gcode-graphify-rerun-2026-11` |
-| Source commit (gobby, gcode) | `0bf234a92e1266e310db2f7bf9245f0bc69a08bb`, the 0.5.0 tip merged at candidate time |
+| Source commit (gobby, gcode) | `1a13024ceda47fb25bebefc8b42ee9d2e372778d`, the last gobby commit that changed `src/gobby` (reviewed tree, digest `62f58212...`, 3039 files). Was `0bf234a9` before the successor; see the pin move under Judgment calls |
 | gcode pins | version read from `sources/gobby/crates/gcode/Cargo.toml` `package.version` (archived at `GOBBY_SHA`; `1.9.105` at candidate time), frozen into the command manifest and checked against `gcode --version` at C0; contract `12` |
 | Graphify | PyPI `graphifyy==0.9.103` (version-only pin, `GRAPHIFY_PACKAGE` in `harness/launch_services.py`); recorded by version, executable SHA-256 and lock |
 | Graphify wheel | `graphifyy-0.9.103-py3-none-any.whl`, SHA-256 `7948c030f8b04153d88bc1ee23a485ddaa0c2d6aaa03a748c177e3c217bcfe34` (PyPI, latest release at review time) |
@@ -42,6 +42,12 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
    `:latest`, and records `receipts/image-references.json`. Then it runs `docker image inspect` on each
    reference and `docker pull` only for the references that are missing. A failed pull stops the step
    with `docker pull failed for <service> image <reference>: <stderr>`.
+2a. `provision_environment.py build-probe --owner-session <session> --probe-source <path> --candidate <sha> --gobby-repo <path>`,
+   run once after step 2 and before step 3. `--probe-source` is the worktree's
+   `crates/gcore/examples/managed_bearer_probe.rs`; `--candidate` is a full gobby commit whose crates diff from the pin is
+   exactly that file, with `Cargo.lock` unchanged. It archives the pinned tree, requires the example absent
+   there, builds `probes/managed_bearer_probe` with `cargo build --locked` under `build/probe-target`, and writes
+   `manifests/bearer-probe.json` with `example_in_pin: false`. It does not run the probe.
 3. `launch_services.py provision --owner-session <session> --attempt <id>`:
    - writes `isolation/external-state.before.json` once;
    - renders Compose, checks names and ports, and starts the three services, or verifies the
@@ -105,17 +111,25 @@ Residual: third-party packages that gobby imports are not hashed.
 ### Status at this candidate (M1)
 
 Read-only, no launch. The values use the same formulas as `compare_package_copies` and
-`package_digest`. The pin copy is `git archive 0bf234a9 src/gobby`.
+`package_digest`. The pin is `GOBBY_SHA = 1a13024ceda47fb25bebefc8b42ee9d2e372778d`, the last
+gobby commit that changed `src/gobby`. Its `src/gobby` equals the epic HEAD's `src/gobby`.
 
 | Copy | Files | `.py` | Other | Aggregate digest |
 | --- | --- | --- | --- | --- |
-| Pin archive | 3031 | 2190 | 841 | `467edf61...` (matches the expected value) |
-| Runtime `sources/gobby/src/gobby` | 3031 | 2190 | 841 | `467edf61...` (byte-identical to the pin) |
-| Epic tree `src/gobby` at `55a3814291` | 3039 | 2196 | 843 | `62f58212...` |
+| Pin archive `git archive 1a13024c src/gobby` | 3039 | 2196 | 843 | `62f58212...` (matches the expected value) |
+| Runtime `sources/gobby/src/gobby` | 3039 | 2196 | 843 | `62f58212...` (byte-identical to the pin) |
+| Epic tree `src/gobby` at `eaf536aca6` | 3039 | 2196 | 843 | `62f58212...` |
 
-- The four direct-import modules hash equal in all three copies.
-- Against the pin, the epic tree has 8 files that the pin lacks and 69 changed files. No file is only in the pin.
-- `verify_gobby_modules` therefore refuses at step 4, before the daemon starts. That refusal is the correct result under the current pin. The pin is not changed here. Moving the pin, or landing the epic's gobby changes first, is the lead's decision.
+- Checked at the successor: `package_digest` over the pin archive and over the epic tree are equal
+  (3039 files each, no differing path). `git diff` of `src/gobby` between `1a13024c` and HEAD is empty.
+- `verify_gobby_modules` passes at step 4: every pin file equals the epic file. The four direct-import
+  modules are equal in all copies.
+- The prior pin `0bf234a9` (3031 files, digest `467edf61...`) differed from the epic tree in 69 changed
+  and 8 added files. Its refusal at step 4 was correct for that pin.
+- `crates/` and `Cargo.lock` are identical between `0bf234a9` and `1a13024c`. The only crate path that
+  differs from `1a13024c` to HEAD is `crates/gcore/examples/managed_bearer_probe.rs`, so the
+  `build_probe` premise (the pinned tree lacks the example, and the candidate changes only that file under
+  crates) holds for the new pin. `build_probe` is unchanged.
 - `tools/gobby/venv` is not built. Its side is proven only through the archive, which equals the pin.
 
 ## Command lines for attempt `rerun2611b`
@@ -206,7 +220,7 @@ outside the runtime root, and SRT denied that read without it.
 3. **C7 poller.** The cold index runs under `IndexPoller`. It samples
    `SELECT count(*) FROM code_indexed_file_states WHERE project_id = %s` every 0.2 s over a
    read-only connection, and logs to `receipts/c7-poller-<attempt>.jsonl`. The project id is read
-   from `corpora/gcode/C0/.gobby/project.json`, as `launch_services` reads it. The clean count is
+   from `workspaces/gcode-C0-probe/.gobby/project.json`, the registered C0 workspace, as `launch_services` reads it. The sealed `corpora/gcode/C0` is not a project. The clean count is
    `file_count` in `manifests/corpora/gcode/C1.json` (149), checked against its file entries. C7
    passes only if a sample with `0 < count < 149` is observed. A failed sample read, of any kind,
    fails the poller: the qualifying marker is withdrawn and `stop()` raises.
@@ -243,6 +257,18 @@ and `test_a_graphify_export_help_that_exits_nonzero_fails_the_inventory`. Both w
 
 ## Judgment calls and what is unverified
 
+- The source pin moved at the successor from `0bf234a9` to `1a13024ceda47fb25bebefc8b42ee9d2e372778d`, the last
+  gobby commit that changed `src/gobby`. Reason: step 4 compares the runtime copy with the reviewed tree
+  (digest `62f58212...`, 3039 files). Edits against September from this move: `GOBBY_SHA` only. `build_probe`
+  and the step-4 check are unchanged. Re-verify the digest and the 3039-file count after any later re-pin,
+  including to the landed 0.5.0 tip.
+- `validate_environment.py --live` checks the daemon through its SRT wrapper's descendants (`validate_live_processes`).
+  Each listener on 59480 and 59481 must be a descendant of the wrapper, run the recorded daemon argv, stay under
+  the runtime root and keep the managed environment. The wrapper itself must not be the listener. The check
+  returns the listener identities, which the proof records as `daemon_listeners`.
+- `verify_corpora.compare_manifests` compares the corpus identity (source commit, exclusions, file records and
+  tree digest), not raw JSON, so the run's root and JSON layout do not fail a correct corpus. Each corpus is
+  still verified file by file.
 - The source pin moved from the September `7394b97c` to the 0.5.0 tip. The plan requires the
   source archived at the run's commit. If the tip moves before provisioning, the pin must be
   updated and the gcode version and contract checks will fail loudly until it is.
@@ -299,8 +325,10 @@ and `test_a_graphify_export_help_that_exits_nonzero_fails_the_inventory`. Both w
 - Known live risk: September saw `malformed grant: grant project does not match local project`
   under the isolated grant. It is the likely first live failure, at step 3 or step 8.
 - Reviewer readings (6f1201aa), checked against the code at this candidate:
-  1. Embedding provider key: not established. The embedding `api_key` is optional in
-     `src/gobby/config/ai.py`, and the harness sends no key to Ollama. Whether the provider needs one is a live question.
+  1. Embedding provider config key: removal confirmed statically. `ai.embeddings.provider` is no longer
+     read (`embedding_keys.py`). Provider availability and auth are live questions: the embedding `api_key`
+     is optional in `src/gobby/config/ai.py`, and the harness sends no key to Ollama. The live status run
+     decides whether the configured provider needs one.
   2. Nomic prefix: refuted. The harness adds no nomic prefix. `query_prefix` was removed at `70ec575688`.
      The only `nomic-embed-text` string is a wrong-model fixture in `test_daemon_preparation.py`.
   3. `embedding_readiness` (`prepare_daemon.py`): confirmed call graph. Only `prepare` calls it, and only
