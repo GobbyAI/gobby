@@ -11,6 +11,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Protocol
 from uuid import uuid4
 
 import psutil
@@ -141,17 +142,79 @@ def _assert_socket_headroom(sockets: Path) -> None:
     )
 
 
-def _await_ready(root: Path, process: subprocess.Popen[bytes]) -> list[Path]:
-    # Each worker imports the harness (about 20s warm under host load 40) before its
-    # fixture starts a host and the daemon stub, so the budget covers both workers' imports.
-    deadline = time.monotonic() + 120
+# Measured in the solo run at host load ~50: workers reached the fixture 85 s after the parent
+# started, and daemon-ready followed 38-43 s later (ready at 123 s and 128 s). A 120 s deadline
+# from the parent start expired with both workers healthy. 300 s is about twice that worst case.
+_READY_TIMEOUT_SECONDS = 300
+_LOG_TAIL_CHARS = 2000
+
+
+class _Pollable(Protocol):
+    def poll(self) -> int | None: ...
+
+
+def _tail(path: Path) -> str:
+    if not path.exists():
+        return "<missing>"
+    return path.read_text(errors="replace")[-_LOG_TAIL_CHARS:]
+
+
+def _await_ready(
+    root: Path, process: _Pollable, timeout: float = _READY_TIMEOUT_SECONDS
+) -> list[Path]:
+    # One wall clock from the parent start: worker collection, host start and daemon-stub start
+    # run in sequence, so no single stage gets its own budget here.
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ready = sorted(root.glob("gw*/ready.json"))
         if len(ready) == 2:
             return ready
         assert process.poll() is None, "Nested pytest exited before both workers started"
         time.sleep(0.05)
-    raise AssertionError("Both xdist workers did not reach blocked fixture setup")
+    workers = "".join(
+        f"\n--- {worker.name}/stub.stderr ---\n{_tail(worker / 'stub.stderr')}"
+        for worker in sorted(root.glob("gw*"))
+        if worker.is_dir()
+    )
+    raise AssertionError(
+        "Both xdist workers did not reach blocked fixture setup within "
+        f"{timeout:g}s ({len(list(root.glob('gw*/ready.json')))} of 2 workers ready).\n"
+        f"--- pytest.log tail ---\n{_tail(root / 'pytest.log')}{workers}"
+    )
+
+
+class _NestedRun:
+    """Stands in for the nested pytest process: alive, optionally publishing both workers on poll."""
+
+    def __init__(self, root: Path, *, publish_on_poll: bool) -> None:
+        self._root = root
+        self._publish_on_poll = publish_on_poll
+
+    def poll(self) -> int | None:
+        if self._publish_on_poll:
+            self._publish_on_poll = False
+            for name in ("gw0", "gw1"):
+                (self._root / name).mkdir()
+                (self._root / name / "ready.json").write_text("{}")
+        return None
+
+
+def test_await_ready_returns_once_both_workers_publish_ready(tmp_path: Path) -> None:
+    ready = _await_ready(tmp_path, _NestedRun(tmp_path, publish_on_poll=True), timeout=10)
+    assert [path.parent.name for path in ready] == ["gw0", "gw1"]
+
+
+def test_await_ready_timeout_reports_worker_state_and_log_tail(tmp_path: Path) -> None:
+    (tmp_path / "pytest.log").write_text("collected 2 items\nworker gw0 stalled in import\n")
+    (tmp_path / "gw0").mkdir()
+    (tmp_path / "gw0" / "stub.stderr").write_text("shutdown POST received at 1.0\n")
+    with pytest.raises(AssertionError) as raised:
+        _await_ready(tmp_path, _NestedRun(tmp_path, publish_on_poll=False), timeout=0.3)
+    message = str(raised.value)
+    assert "Both xdist workers did not reach blocked fixture setup" in message
+    assert "0 of 2 workers ready" in message
+    assert "worker gw0 stalled in import" in message
+    assert "shutdown POST received at 1.0" in message
 
 
 def test_sigint_drains_daemons_and_late_hosts_preserving_another_run(tmp_path: Path) -> None:
