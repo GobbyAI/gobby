@@ -568,6 +568,10 @@ def _restart_preflight(
 
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
+    # Admission has separate coverage in tests/releases/test_activation_guard.py.
+    # These tests exercise schema preflight with an admitted caller.
+    monkeypatch.setattr("gobby.releases.activation.caller_is_spawned", lambda: False)
+    monkeypatch.setattr("gobby.releases.activation.agent_activation_refusal", lambda _action: None)
     monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
     monkeypatch.setattr(
         "gobby.cli.daemon_preflight.dirty_bundled_content_refusal",
