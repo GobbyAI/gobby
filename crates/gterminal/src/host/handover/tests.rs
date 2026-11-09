@@ -109,6 +109,26 @@ const PREVIOUS_RELEASE_STATE: &str = concat!(
 );
 
 #[test]
+fn encoded_state_matches_the_serializer_byte_for_byte() {
+    let fixture = read_state(Path::new(PREVIOUS_RELEASE_STATE)).expect("fixture state");
+    let pane = fixture.panes[0].clone();
+    let mut empty = fixture.clone();
+    empty.panes.clear();
+    let mut several = fixture.clone();
+    several.panes = vec![pane.clone(), pane.clone(), pane];
+    for state in [fixture, empty, several] {
+        let expected = serde_json::to_vec(&state).expect("serialize state");
+        let encoded = encode_state(&state).expect("encode state");
+        assert_eq!(
+            encoded,
+            expected,
+            "{} panes encode to the serializer's bytes",
+            state.panes.len()
+        );
+    }
+}
+
+#[test]
 fn read_state_accepts_the_previous_release_state() {
     let carried = read_state(Path::new(PREVIOUS_RELEASE_STATE))
         .unwrap_or_else(|err| panic!("read the 0.1.15 state: {err}"));

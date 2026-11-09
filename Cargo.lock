@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.138"
+version = "0.4.139"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2627,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "base64 0.22.1",
  "bincode",

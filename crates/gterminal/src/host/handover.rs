@@ -297,6 +297,72 @@ impl Drop for StagedState {
     }
 }
 
+/// Every `HandoverState` field but `panes`, in declaration order.
+#[derive(Serialize)]
+struct StateHead<'a> {
+    format_version: u32,
+    host_epoch: &'a str,
+    generation: u64,
+    host_pid: u32,
+    deadline_monotonic_ns: u64,
+    attempt: &'a UpgradeAttempt,
+    previous_image: &'a Path,
+    argv: &'a [String],
+    control_listener_fd: RawFd,
+    frames_listener_fd: RawFd,
+    next_host_id: u64,
+    next_attachment: u64,
+    events: &'a CarriedEvents,
+}
+
+/// Encodes `state` exactly as `serde_json::to_vec` would. Each pane's
+/// snapshot is encoded on its own scoped thread: the encoder runs in series
+/// otherwise, inside the upgrade's soft window.
+fn encode_state(state: &HandoverState) -> io::Result<Vec<u8>> {
+    let head = StateHead {
+        format_version: state.format_version,
+        host_epoch: &state.host_epoch,
+        generation: state.generation,
+        host_pid: state.host_pid,
+        deadline_monotonic_ns: state.deadline_monotonic_ns,
+        attempt: &state.attempt,
+        previous_image: &state.previous_image,
+        argv: &state.argv,
+        control_listener_fd: state.control_listener_fd,
+        frames_listener_fd: state.frames_listener_fd,
+        next_host_id: state.next_host_id,
+        next_attachment: state.next_attachment,
+        events: &state.events,
+    };
+    let mut out = serde_json::to_vec(&head).map_err(io::Error::other)?;
+    // The head closes its object; reopen it for the panes, which come last.
+    out.pop();
+    out.extend_from_slice(b",\"panes\":[");
+    let encoded: Vec<io::Result<Vec<u8>>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = state
+            .panes
+            .iter()
+            .map(|pane| scope.spawn(move || serde_json::to_vec(pane).map_err(io::Error::other)))
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|_| Err(io::Error::other("pane encoding panicked")))
+            })
+            .collect()
+    });
+    for (index, pane) in encoded.into_iter().enumerate() {
+        if index > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(&pane?);
+    }
+    out.extend_from_slice(b"]}");
+    Ok(out)
+}
+
 /// Writes `state` to a private file of its own beside `path` and `fsync`s it.
 /// Nothing reads that file until `commit_state` puts it in place.
 pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<StagedState> {
@@ -308,7 +374,7 @@ pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<StagedState
         .mode(0o600)
         .open(&temp)?;
     let staged = StagedState(temp);
-    serde_json::to_writer(&mut file, state)?;
+    file.write_all(&encode_state(state)?)?;
     file.flush()?;
     file.sync_all()?;
     Ok(staged)

@@ -198,19 +198,26 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
     )
 }
 
-/// Default install credentials and startup files. Trusted hub-resolved canonical and
-/// bound-daemon authorities join these denies in `compute`; absent authorities retain
-/// the default `gobby_home/bootstrap.yaml` stand-in.
-fn credential_roots(gobby: &Path, authority_roots: &[PathBuf]) -> Vec<PathBuf> {
+/// Default install credentials and startup files, mirroring the Python `credential_roots`
+/// oracle: the runtime-home credentials, trusted hub-resolved and bound-daemon authorities,
+/// then the canonical operator bootstrap and break-glass pair under `home/.gobby`. The
+/// runtime-home break-glass pair is not a default; the canonical pair covers the operator's
+/// file. The canonical entries come last so `deny_paths`, which keeps first occurrences,
+/// leaves the order unchanged when the hub already sends them.
+fn credential_roots(gobby: &Path, home: &Path, authority_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let canonical = home.join(".gobby");
     let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
         gobby.join("grants"),
         gobby.join("tools").join("srt"),
-        gobby.join("break_glass"),
-        gobby.join(".break_glass-staging"),
     ];
     roots.extend_from_slice(authority_roots);
+    roots.extend([
+        canonical.join("bootstrap.yaml"),
+        canonical.join("break_glass"),
+        canonical.join(".break_glass-staging"),
+    ]);
     roots
 }
 
@@ -240,7 +247,7 @@ fn sensitive_roots(
     env: &BTreeMap<String, String>,
     authority_roots: &[PathBuf],
 ) -> Vec<String> {
-    let mut roots = credential_roots(gobby, authority_roots);
+    let mut roots = credential_roots(gobby, home, authority_roots);
     roots.push(gobby.join("gcode-runtime"));
     roots.push(managed_execution_root(gobby));
     roots.extend(private_srt_socket_roots(gobby, env));
@@ -261,7 +268,7 @@ fn sensitive_write_roots(
         home.join(".kube"),
         home.join(".config").join("gcloud"),
     ];
-    roots.extend(credential_roots(gobby, authority_roots));
+    roots.extend(credential_roots(gobby, home, authority_roots));
     roots.extend(private_srt_socket_roots(gobby, env));
     deny_paths(roots.iter().map(|root| text(root)), None, home)
 }

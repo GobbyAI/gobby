@@ -1279,14 +1279,20 @@ fn restored_attachment_ids(fallback: bool, late_attach: bool) -> (u64, u64) {
         Value::Null
     };
     let accepted = host_upgrade(&mut ctl, &gterm_bin(), "stale-grant", hold);
-    eprintln!("attachment handover accepted at {:?}: {accepted}", measured.elapsed());
+    eprintln!(
+        "attachment handover accepted at {:?}: {accepted}",
+        measured.elapsed()
+    );
     assert_eq!(accepted["accepted"], true);
     if late_attach {
         wait_until("the capture is written", || dir.join(STATE_FILE).exists());
         assert_late_frame_attach_is_refused(&dir, terminal);
     }
     let after = wait_outcome(&dir, UPGRADE_TOKEN, "stale-grant", OUTCOME_WAIT);
-    eprintln!("attachment handover outcome at {:?}: {after}", measured.elapsed());
+    eprintln!(
+        "attachment handover outcome at {:?}: {after}",
+        measured.elapsed()
+    );
     assert_outcome(
         &after,
         "stale-grant",
@@ -2400,7 +2406,10 @@ fn sigterm_before_exec_aborts_and_exits() {
         "attempt-term-write",
         json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
     );
-    eprintln!("SIGTERM handover accepted at {:?}: {accepted}", measured.elapsed());
+    eprintln!(
+        "SIGTERM handover accepted at {:?}: {accepted}",
+        measured.elapsed()
+    );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     wait_until("the state file is written", || {
         dir.join(STATE_FILE).exists()

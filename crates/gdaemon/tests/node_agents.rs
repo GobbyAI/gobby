@@ -1741,7 +1741,42 @@ fn srt_gobby_home_override_denies_bound_and_canonical_break_glass_paths() -> Res
                     authority_home.join(name).display()
                 );
             }
+            assert!(
+                !paths.contains(&json!(inputs.gobby_home.join(name))),
+                "{operation}: unexpected runtime-home {name}"
+            );
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn srt_canonical_break_glass_paths_are_denied_without_authorities() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let case = srt_entries(&corpus, "cases")?
+        .iter()
+        .find(|case| case["platform"] == srt_host_platform())
+        .context("no host corpus case")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(root.path())?;
+    tree.materialize(&case["inputs"])?;
+    let mut inputs = srt_policy_inputs(&tree, &case["inputs"])?;
+    // The renderer omits write denies for paths no grant can write, so the read
+    // denial is the observable contract here. The shared write-deny builder is
+    // covered by srt_gobby_home_override_denies_bound_and_canonical_break_glass_paths.
+    inputs.gobby_home = inputs.home.join(".npm/_logs/runtime-home");
+    inputs.credential_authority_roots.clear();
+    let canonical_home = inputs.home.join(".gobby");
+    let actual: Value = serde_json::from_slice(&resolve_srt_policy(&inputs)?.settings)?;
+    let paths = actual["filesystem"]["denyRead"]
+        .as_array()
+        .context("credential deny paths")?;
+    for name in ["break_glass", ".break_glass-staging"] {
+        assert!(
+            paths.contains(&json!(canonical_home.join(name))),
+            "denyRead: missing {}",
+            canonical_home.join(name).display()
+        );
     }
     Ok(())
 }

@@ -23,6 +23,10 @@ def test_credential_roots_deny_canonical_operator_credentials_under_a_gobby_home
     assert account / ".gobby" / "bootstrap.yaml" in roots
     assert account / ".gobby" / "break_glass" in roots
     assert account / ".gobby" / ".break_glass-staging" in roots
+    # The Python oracle keeps the runtime-home pair; the Rust side drops it and
+    # receives this pair through the hub-sent authority roots instead.
+    assert tmp_path / "override-home" / "break_glass" in roots
+    assert tmp_path / "override-home" / ".break_glass-staging" in roots
 
 
 def test_credential_roots_survive_an_account_without_a_passwd_entry(
