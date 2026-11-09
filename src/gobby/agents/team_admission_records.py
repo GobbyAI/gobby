@@ -31,7 +31,7 @@ class TeamBinding:
     worktree_id: str | None
     worktree_path: str | None
     # Reviewer definitions the team admits; a join must name one of them.
-    reviewers: dict[str, str | None] = field(default_factory=dict)
+    reviewers: list[str] = field(default_factory=list)
     # "epic" for a team bound to an epic's open leaves; "single" for one task.
     mode: str = SINGLE_MODE
     # Resolved runbook tab title, shared by replacements and later epic-seat spawns.
@@ -108,8 +108,8 @@ def binding_from_record(record: dict[str, Any] | None) -> TeamBinding | None:
     for item in fields(TeamBinding):
         value = record.get(item.name)
         if item.name == "reviewers":
-            # The admission intent carries no reviewers map unless a reviewer is named.
-            values[item.name] = dict(value) if isinstance(value, dict) else {}
+            # The admission intent carries no reviewers list unless a reviewer is named.
+            values[item.name] = list(value) if isinstance(value, list) else []
             continue
         if item.name == "mode":
             # Records admitted before epic mode carry no mode: they are single-task teams.

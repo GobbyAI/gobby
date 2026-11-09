@@ -31,4 +31,4 @@ def test_record_without_reviewers_still_binds() -> None:
     )
 
     assert binding is not None
-    assert binding.reviewers == {}
+    assert binding.reviewers == []

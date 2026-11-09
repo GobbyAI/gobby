@@ -71,7 +71,7 @@ async def test_enabled_definition_needs_no_hardcoded_review_grant(
     reply = await admit(world, owner, task, definition)
 
     assert reply["success"] is True, reply
-    assert world.admit_step_output(owner)["team"]["reviewers"] == {definition: None}
+    assert world.admit_step_output(owner)["team"]["reviewers"] == [definition]
 
 
 async def test_reviewer_agent_admission(world: TeamWorld) -> None:
@@ -89,15 +89,13 @@ async def test_reviewer_agent_admission(world: TeamWorld) -> None:
     reply = await admit(world, owner, task, "fixture-definition-3d77e16a")
     assert reply["success"] is True, reply
     team = world.admit_step_output(owner)["team"]
-    assert team["reviewers"] == {"fixture-definition-3d77e16a": None}
+    assert team["reviewers"] == ["fixture-definition-3d77e16a"]
 
     # A single-task team keeps exactly one reviewer definition.
     second = await admit(world, owner, task, "fixture-definition-e08ba693")
     assert second["success"] is False, second
     assert "fixture-definition-e08ba693" in second["error"]
-    assert world.admit_step_output(owner)["team"]["reviewers"] == {
-        "fixture-definition-3d77e16a": None
-    }
+    assert world.admit_step_output(owner)["team"]["reviewers"] == ["fixture-definition-3d77e16a"]
 
     # A replacement execution joins with its binding's definition, and no other.
     world.finish(owner)
@@ -112,9 +110,9 @@ async def test_reviewer_agent_admission(world: TeamWorld) -> None:
         world, replacement, task, "fixture-definition-3d77e16a", team_id=team["team_id"]
     )
     assert reply["success"] is True, reply
-    assert world.admit_step_output(replacement)["team"]["reviewers"] == {
-        "fixture-definition-3d77e16a": None
-    }
+    assert world.admit_step_output(replacement)["team"]["reviewers"] == [
+        "fixture-definition-3d77e16a"
+    ]
 
 
 @pytest.mark.asyncio
@@ -131,6 +129,4 @@ async def test_research_spike_admits_a_research_reviewer_devteam(world: TeamWorl
     owner = world.child(spike)
     reply = await admit(world, owner, spike, "fixture-definition-82cde3b3")
     assert reply["success"] is True, reply
-    assert world.admit_step_output(owner)["team"]["reviewers"] == {
-        "fixture-definition-82cde3b3": None
-    }
+    assert world.admit_step_output(owner)["team"]["reviewers"] == ["fixture-definition-82cde3b3"]

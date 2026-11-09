@@ -244,7 +244,7 @@ def _bound_tab(recorded: str | None, proposed: str | None) -> str | None:
 
 def _bound_reviewer(reviewers: Any, reviewer_agent: str | None, team_id: str) -> None:
     """A team binds its reviewer definitions; a join must name one the team already binds."""
-    if reviewer_agent is None or not isinstance(reviewers, dict) or not reviewers:
+    if reviewer_agent is None or not isinstance(reviewers, list) or not reviewers:
         return
     if reviewer_agent not in reviewers:
         bound = ", ".join(sorted(reviewers))
