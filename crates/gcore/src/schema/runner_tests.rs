@@ -3668,7 +3668,7 @@ fn claim_principal_role_owner_refuses_tables_other_than_principal_bindings() -> 
 }
 
 #[test]
-fn migration_491_claims_roles_bound_before_it_landed() -> anyhow::Result<()> {
+fn migration_492_claims_roles_bound_before_it_landed() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3677,7 +3677,7 @@ fn migration_491_claims_roles_bound_before_it_landed() -> anyhow::Result<()> {
     };
     let migration_index = MIGRATIONS
         .iter()
-        .position(|migration| migration.version == 491)
+        .position(|migration| migration.version == 492)
         .expect("scope role sweeps migration must stay registered");
     SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
         .apply()?;
