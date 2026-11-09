@@ -74,6 +74,11 @@ context. Context loads are never offloaded and never cut. They page.
   the last `seq`, and ships as one part through the queue like any other context.
 - **No response.** A hook call that produces no response dict delivers nothing and
   leaves the queue as it is. Every delivery that returns a response drains it.
+- **At-least-once.** Context a delivery shipped, but whose acknowledgment did not commit,
+  may ship again on the next prompt. The receipt acknowledgment and its queue commit share
+  one transaction, so a failed queue write leaves the queue as it was and the receipt
+  prepared. A duplicate is allowed; a drop is not. A failed commit raises to the caller
+  and withholds that output, so no contributor is dropped.
 
 ## Token-budget pagination
 
