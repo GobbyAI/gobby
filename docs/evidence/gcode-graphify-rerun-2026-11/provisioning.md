@@ -42,7 +42,8 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
    `:latest`, and records `receipts/image-references.json`. Then it runs `docker image inspect` on each
    reference and `docker pull` only for the references that are missing. A failed pull stops the step
    with `docker pull failed for <service> image <reference>: <stderr>`.
-2a. `provision_environment.py build-probe --owner-session <session> --probe-source <path> --candidate <sha> --gobby-repo <path>`,
+2a. `provision_environment.py --gobby-repo <path> build-probe --owner-session <session> --probe-source <path> --candidate <sha>`,
+   (`--gobby-repo` is a root option and must precede the subcommand),
    run once after step 2 and before step 3. `--probe-source` is the worktree's
    `crates/gcore/examples/managed_bearer_probe.rs`; `--candidate` is a full gobby commit whose crates diff from the pin is
    exactly that file, with `Cargo.lock` unchanged. It archives the pinned tree, requires the example absent
