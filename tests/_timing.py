@@ -83,15 +83,23 @@ def wait_for_condition[T](
     timeout: float = 1.0,
     interval: float = 0.001,
     description: str = "condition",
+    on_timeout: Callable[[], object] | None = None,
 ) -> T:
-    """Synchronous predicate wait for thread/timer based tests."""
+    """Synchronous predicate wait for thread/timer based tests.
+
+    On timeout, `on_timeout` (when given) supplies diagnostics appended to the
+    AssertionError, such as a daemon log, so failures carry evidence.
+    """
     deadline = time.monotonic() + timeout
     while True:
         value = predicate()
         if value:
             return value
         if time.monotonic() >= deadline:
-            raise AssertionError(f"Timed out waiting for {description}")
+            message = f"Timed out waiting for {description}"
+            if on_timeout is not None:
+                message = f"{message}\n{on_timeout()}"
+            raise AssertionError(message)
         time.sleep(min(interval, max(deadline - time.monotonic(), 0)))
 
 

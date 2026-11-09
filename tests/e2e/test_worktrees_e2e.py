@@ -18,9 +18,10 @@ from typing import Any
 import httpx
 import pytest
 
-from gobby.utils.native_bin import resolve_native_bin
+from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
+    CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
     authenticated_daemon_client,
@@ -37,7 +38,7 @@ def extract_result(response: dict[str, Any]) -> dict[str, Any]:
     This extracts the inner 'result' dict.
     """
     if "result" in response:
-        result = response["result"]
+        result: dict[str, Any] = response["result"]
         if response.get("success") is True and isinstance(result, dict) and "success" not in result:
             return {"success": True, **result}
         return result
@@ -54,10 +55,13 @@ def extract_internal_session_id(session_result: dict[str, Any]) -> str:
 
 def read_project_id(project_path: Path) -> str:
     project_json = project_path / ".gobby" / "project.json"
-    return json.loads(project_json.read_text(encoding="utf-8"))["id"]
+    project_id: str = json.loads(project_json.read_text(encoding="utf-8"))["id"]
+    return project_id
 
 
-def register_project_session(cli_events, project_path: Path, external_id: str) -> str:
+def register_project_session(
+    cli_events: CLIEventSimulator, project_path: Path, external_id: str
+) -> str:
     project_id = read_project_id(project_path)
     start_result = cli_events.session_start(
         session_id=external_id,
@@ -100,7 +104,10 @@ def wait_for_project_registration(daemon_instance: DaemonInstance, project_id: s
 
 @pytest.fixture
 def git_repo_with_origin(
-    e2e_project_dir: Path, tmp_path_factory, cli_events, daemon_instance
+    e2e_project_dir: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    cli_events: CLIEventSimulator,
+    daemon_instance: DaemonInstance,
 ) -> Path:
     """Initialize a git repository with a local origin for worktree tests.
 
@@ -195,9 +202,8 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    # The seeded e2e project already binds this root on the local machine, so the
-    # register route's insert conflicts and it skips the checkout write.
-    project_id = "00000000-0000-0000-0000-000000000e2e"
+    # Reuse the checkout marker's identity, which the daemon fixture already registered.
+    project_id = read_project_id(e2e_project_dir)
     project_name = e2e_project_dir.name
     cli_events.register_test_project(
         project_id=project_id,
@@ -206,19 +212,22 @@ def git_repo_with_origin(
     )
     wait_for_project_registration(daemon_instance, project_id)
 
-    # An overlay pin requires the parent indexed on this machine. Production has
-    # that from `gobby init`, which runs `gcode index --project` (cli/init.py:65).
-    gcode_bin = resolve_native_bin("gcode")
-    assert gcode_bin is not None, "gcode binary not resolvable for the e2e run"
-    indexed = subprocess.run(
-        [gcode_bin, "index", "--project", str(e2e_project_dir)],
+    # Overlay pinning requires an indexed parent on the daemon's machine.
+    # Use the same isolated binary set, home and bootstrap database as the daemon.
+    subprocess.run(
+        [
+            str(Path(daemon_instance.env[NATIVE_BIN_DIR_ENV]) / native_bin_name("gcode")),
+            "--project",
+            str(e2e_project_dir),
+            "index",
+        ],
+        cwd=str(e2e_project_dir),
+        env=daemon_instance.env,
+        check=True,
         capture_output=True,
         text=True,
-        timeout=300,
-        check=False,
-        env=daemon_instance.env,
+        timeout=60,
     )
-    assert indexed.returncode == 0, indexed.stderr or indexed.stdout
 
     return e2e_project_dir
 
@@ -406,7 +415,7 @@ class TestWorktreeClaimRelease:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Claiming a worktree assigns session ownership."""
         # Create worktree
@@ -455,7 +464,7 @@ class TestWorktreeClaimRelease:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Releasing a worktree removes session ownership."""
         # Create worktree
@@ -814,7 +823,7 @@ class TestWorktreeTaskLinking:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Create worktree with task ID links them."""
         mcp_client.session_id = register_project_session(
@@ -866,7 +875,7 @@ class TestWorktreeTaskLinking:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Get worktree by task ID."""
         mcp_client.session_id = register_project_session(

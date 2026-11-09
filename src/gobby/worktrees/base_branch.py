@@ -62,7 +62,7 @@ async def select_worktree_base(git_manager: Any, requested_base: str | None) -> 
         if branch.startswith("refs/"):
             raise WorktreeBaseError("invalid_base_ref", f"Unsupported base ref: {requested_base}")
         valid = await git_manager.run_git_command(
-            ["check-ref-format", "--branch", branch], timeout=5
+            ["check-ref-format", "--branch", branch], timeout=30
         )
         if valid.returncode != 0:
             raise WorktreeBaseError("invalid_base_ref", f"Invalid base branch: {requested_base}")
@@ -107,7 +107,7 @@ async def rejects_unreferenced_sha_base(git_manager: Any, base_branch: str) -> b
         return False
     result = await git_manager.run_git_command(
         ["for-each-ref", "--format=%(refname:short)"],
-        timeout=10,
+        timeout=30,
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or "git for-each-ref failed"

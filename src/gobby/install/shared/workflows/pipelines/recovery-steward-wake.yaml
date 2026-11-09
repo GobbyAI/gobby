@@ -1,8 +1,9 @@
 name: recovery-steward-wake
 type: pipeline
-version: "1.0.0"
+version: "1.1.0"
 description: |
-  Patrol tick for the Recovery Steward. A five-minute cron runs this pipeline. It lists the
+  Patrol tick for the Recovery Steward. A five-minute cron runs this pipeline and supplies its
+  agent_type and content (the wake message) inputs. It lists the
   Recovery Steward sessions in this project once per live status, so the status filter applies
   before the 500-row limit and historical terminal rows never hide a live one. When exactly one
   session is live and it isn't active, it wakes that session to patrol. An active Steward, zero
@@ -16,6 +17,10 @@ inputs:
     type: string
     default: recovery-steward
     description: "Agent definition whose single live session receives the patrol tick"
+  content:
+    type: string
+    default: "Patrol tick. Run your patrol now, then register your wait and yield."
+    description: "Message the woken session receives"
 
 steps:
   - id: resolve_active
@@ -108,4 +113,4 @@ steps:
         target_id: "${{ [s for r in [steps.resolve_paused.output, steps.resolve_waiting.output, steps.resolve_idle.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions][0].id }}"
         wake: true
         message_type: message
-        content: "Patrol tick. Run your patrol now, then register your wait and yield."
+        content: "${{ inputs.content }}"

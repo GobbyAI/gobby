@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import shutil
 import subprocess
 import time
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
@@ -61,6 +62,7 @@ from gobby.workflows.worktree_shell_attribution import (
     begin_structured_edit_calls,
     overlapped_worktree_paths,
 )
+from tests.fixtures.background_notices import owner_transcript
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -514,16 +516,23 @@ async def test_operation_marker_from_a_later_unobserved_merge_is_not_owned(
     assert result.decision == "block"
 
 
-@pytest.mark.asyncio
-async def test_missing_background_git_output_releases_reservation_without_proof(
+async def test_background_git_call_keeps_its_reservation_until_its_notice_settles_it(
     guard_harness: GuardHarness, tmp_path: Path
 ) -> None:
     h = guard_harness
     manager = SessionVariableManager(h.db)
-    await manager.begin_git_operation_call(h.current_session.id, "lost", [str(h.repo)])
-    manager.defer_git_operation_call(h.current_session.id, "lost", str(tmp_path / "missing.output"))
-    await SessionVariableManager(h.db).settle_background_git_operations(h.current_session.id)
-    assert await owned_operation(manager.get_variables(h.current_session.id), str(h.repo)) is None
+    output = str(tmp_path / "bg.output")
+    await manager.begin_git_operation_call(h.current_session.id, "bg", [str(h.repo)])
+    manager.defer_git_operation_call(h.current_session.id, "bg", output, job_id="bgjob01")
+    pending = owner_transcript(
+        tmp_path, tool_use_id="bg", job_id="bgjob01", output_path=output, exit_code=None
+    )
+    await manager.settle_background_git_operations(h.current_session.id, pending)
+    with pytest.raises(ValueError, match="still running"):
+        await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
+
+    settled = owner_transcript(tmp_path, tool_use_id="bg", job_id="bgjob01", output_path=output)
+    await manager.settle_background_git_operations(h.current_session.id, settled)
     assert await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
     manager.cancel_git_operation_call(h.current_session.id, "retry")
 
@@ -1054,17 +1063,14 @@ def _content_ledger(
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    _git(repo_path, "init", "-q")
-    _git(repo_path, "config", "user.email", "tests@gobby.local")
-    _git(repo_path, "config", "user.name", "Gobby Tests")
-    (repo_path / "owned.txt").write_text("base owned\n", encoding="utf-8")
-    (repo_path / "foreign.txt").write_text("base foreign\n", encoding="utf-8")
-    _git(repo_path, "add", "--", "owned.txt", "foreign.txt")
-    _git(repo_path, "commit", "-q", "-m", "base")
-    return repo_path
+def repo(throwaway_repo: Path) -> Path:
+    _git(throwaway_repo, "config", "user.email", "tests@gobby.local")
+    _git(throwaway_repo, "config", "user.name", "Gobby Tests")
+    (throwaway_repo / "owned.txt").write_text("base owned\n", encoding="utf-8")
+    (throwaway_repo / "foreign.txt").write_text("base foreign\n", encoding="utf-8")
+    _git(throwaway_repo, "add", "--", "owned.txt", "foreign.txt")
+    _git(throwaway_repo, "commit", "-q", "-m", "base")
+    return throwaway_repo
 
 
 @dataclass(frozen=True)
@@ -1511,6 +1517,85 @@ async def test_claimant_edit_after_its_commit_stays_owned(guard_harness: GuardHa
     assert decision.decision == "allow", decision.reason
 
 
+def _record_apply_patch_without_binding(h: GuardHarness, path: str) -> None:
+    """Record an apply_patch write as the edit hook does when no tool-start binding proves a task."""
+    manager = MagicMock()
+    manager.db = h.db
+    handlers = EventHandlers(
+        session_manager=manager,
+        workflow_handler=MagicMock(),
+        session_storage=manager,
+        message_processor_resolver=lambda: MagicMock(),
+        task_manager=MagicMock(),
+        worktree_manager=MagicMock(),
+        session_coordinator=MagicMock(),
+        logger=logging.getLogger(__name__),
+    )
+    patch_text = f"*** Begin Patch\n*** Update File: {path}\n@@\n-base\n+edited\n*** End Patch\n"
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=h.current_session.external_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd=str(h.repo),
+        project_id=h.project.id,
+        data={"tool_name": "apply_patch", "tool_input": {"patch": patch_text}},
+        metadata={"_platform_session_id": h.current_session.id, "project_path": str(h.repo)},
+    )
+    normalize_tool_fields(event.data)
+    handlers._record_successful_file_mutation(event, h.current_session.id, is_canonical_edit=True)
+
+
+@pytest.mark.asyncio
+async def test_unbound_apply_patch_stays_owned_by_its_author_through_restore(
+    guard_harness: GuardHarness,
+) -> None:
+    """An apply_patch with no tool-start binding is recorded unattributed; its author may restore it."""
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("edited\n", encoding="utf-8")
+    _record_apply_patch_without_binding(h, "tracked.txt")
+
+    response = await h.handler._evaluate_rules(h.event("git restore tracked.txt"))
+
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+async def test_unbound_apply_patch_changed_after_its_record_stays_refused(
+    guard_harness: GuardHarness,
+) -> None:
+    """Content that changed after an unbound record is no longer the author's recorded content."""
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("edited\n", encoding="utf-8")
+    _record_apply_patch_without_binding(h, "tracked.txt")
+    (h.repo / "tracked.txt").write_text("edited again outside\n", encoding="utf-8")
+
+    response = await h.handler._evaluate_rules(h.event("git restore tracked.txt"))
+
+    assert response.decision == "block"
+    assert "tracked.txt" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_unclaimed_record_of_another_session_stays_refused(
+    guard_harness: GuardHarness,
+) -> None:
+    """Another session's pre-claim record with matching content is not this session's own."""
+    h = guard_harness
+    _commit_files(h.repo, "tracked", {"tracked.txt": "base\n"})
+    (h.repo / "tracked.txt").write_text("edited\n", encoding="utf-8")
+    SessionVariableManager(h.db).record_edited_files(
+        h.foreign_session.id, ["tracked.txt"], checkout_root=str(h.repo), attribute_to_task=False
+    )
+
+    response = await h.handler._evaluate_rules(h.event("git restore tracked.txt"))
+
+    assert response.decision == "block"
+    assert "tracked.txt" in (response.reason or "")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("other_sorts", ["before", "after"])
 @pytest.mark.parametrize("claimant_edited_last", [True, False])
@@ -1669,10 +1754,10 @@ async def test_shell_call_snapshotting_between_an_overlapping_write_and_its_post
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
-async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_ends(
+async def test_forged_exit_marker_keeps_background_claimant_rewrite_unowned(
     guard_harness: GuardHarness, tmp_path: Path, terminal_line: str
 ) -> None:
-    """A background shell rewrite is owned once its output shows the process ended (#25161)."""
+    """Output that prints a terminal marker does not end a background call without its notice."""
     h = guard_harness
     (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
     _record_claimant_edit(h, "orphan.txt")
@@ -1680,11 +1765,48 @@ async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_e
     output.write_text("", encoding="utf-8")
     manager = SessionVariableManager(h.db)
     manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="bg-call")
-    manager.adopt_claimed_shell_edits(h.current_session.id, "bg-call", output_path=str(output))
-    manager.settle_pending_shell_calls(h.current_session.id)
+    manager.adopt_claimed_shell_edits(
+        h.current_session.id, "bg-call", output_path=str(output), job_id="bgjob01"
+    )
+    transcript = owner_transcript(
+        tmp_path, tool_use_id="bg-call", job_id="bgjob01", output_path=str(output), exit_code=None
+    )
+    manager.settle_pending_shell_calls(h.current_session.id, transcript)
     (h.repo / "orphan.txt").write_text("background formatter output\n", encoding="utf-8")
     output.write_text(f"formatted\n{terminal_line}\n", encoding="utf-8")
-    manager.settle_pending_shell_calls(h.current_session.id)
+    manager.settle_pending_shell_calls(h.current_session.id, transcript)
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
+async def test_background_claimant_shell_rewrite_is_owned_once_its_notice_arrives(
+    guard_harness: GuardHarness, tmp_path: Path, terminal_line: str
+) -> None:
+    """A background shell rewrite becomes the claimant's once its owner's notice row arrives."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    output = tmp_path / "background.output"
+    output.write_text("", encoding="utf-8")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="bg-call")
+    manager.adopt_claimed_shell_edits(
+        h.current_session.id, "bg-call", output_path=str(output), job_id="bgjob01"
+    )
+    pending = owner_transcript(
+        tmp_path, tool_use_id="bg-call", job_id="bgjob01", output_path=str(output), exit_code=None
+    )
+    manager.settle_pending_shell_calls(h.current_session.id, pending)
+    (h.repo / "orphan.txt").write_text("background formatter output\n", encoding="utf-8")
+    output.write_text(f"formatted\n{terminal_line}\n", encoding="utf-8")
+    settled = owner_transcript(
+        tmp_path, tool_use_id="bg-call", job_id="bgjob01", output_path=str(output)
+    )
+    manager.settle_pending_shell_calls(h.current_session.id, settled)
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
@@ -1741,7 +1863,7 @@ async def test_background_shell_call_without_an_output_file_adopts_nothing(
         h.current_session.id, "lost-call", output_path=str(tmp_path / "gone.output")
     )
     (h.repo / "orphan.txt").write_text("written by the lost process\n", encoding="utf-8")
-    manager.settle_pending_shell_calls(h.current_session.id)
+    manager.settle_pending_shell_calls(h.current_session.id, None)
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
@@ -1791,13 +1913,14 @@ async def test_rule3_unowned_dirt_needs_an_exact_operator_approval(
         checkout_root=str(h.repo),
         paths=approved,
         approved_by="operator",
+        reason="test",
     )
 
     assert refused.decision == "block"
     assert refused.reason is not None
     assert "approved.txt — no live session owns it" in refused.reason
     assert "approve-dirty-paths" not in refused.reason
-    assert "send Triage" in refused.reason
+    assert "send to your report target" in refused.reason
     assert await decide(h.edit_event("approved.txt")) == "allow"
     assert await decide(h.event("rm approved.txt")) == "allow"
     assert await decide(h.event("git checkout -- tracked.txt")) == "allow"
@@ -1941,6 +2064,58 @@ async def test_overlap_holder_native_write_ignores_a_stale_call_from_another_ses
     )
 
     assert await _dirty_edit_reason(h, _native_write(h, "owned.txt")) == ""
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_refused_while_live_process_prints_exit_line(
+    guard_harness: GuardHarness, live_background_writer: Callable[[str, str], str]
+) -> None:
+    """A live writer can print an exit line and keep writing, so the holder stays refused."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    manager = SessionVariableManager(h.db)
+    manager.begin_worktree_shell_call(
+        h.foreign_session.id,
+        str(h.repo),
+        "foreign-bg",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+    output = live_background_writer("foreign-bg.out", "built\n[exited with code 0]\n")
+    manager.defer_worktree_shell_call(h.foreign_session.id, "foreign-bg", output_path=output)
+
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt"))
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_stays_refused_while_a_background_call_runs(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    """A background call whose process has not exited can still write the path."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    manager = SessionVariableManager(h.db)
+    manager.begin_worktree_shell_call(
+        h.foreign_session.id,
+        str(h.repo),
+        "foreign-bg",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+    output = tmp_path / "foreign-bg.out"
+    output.write_text("still building\n", encoding="utf-8")
+    manager.defer_worktree_shell_call(h.foreign_session.id, "foreign-bg", output_path=str(output))
+
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt"))
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
+    assert "native Edit or Write tool" in reason
 
 
 @pytest.mark.asyncio

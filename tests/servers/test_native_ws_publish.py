@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,6 +29,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
+from tests.fixtures.native_ws_probe_records import RECORDS_FILE, recording_bind
 
 pytestmark = pytest.mark.unit
 
@@ -247,6 +249,18 @@ def _publisher(daemon: _Daemon) -> NativePublisher:
     )
 
 
+def _running_server(
+    publisher: NativePublisher, monkeypatch: pytest.MonkeyPatch
+) -> tuple[WebSocketServer, AsyncMock]:
+    server = WebSocketServer(CONFIG, MagicMock(), AsyncMock(return_value="u"))
+    server.native_publisher = publisher
+    shutdown = AsyncMock()
+    server.lease_registry = MagicMock()
+    server.lease_registry.shutdown_lifecycle_publication = shutdown
+    monkeypatch.setattr(server, "_cleanup_idle_sessions", AsyncMock())
+    return server, shutdown
+
+
 async def _until(predicate: Callable[[], bool], timeout: float = 1.0) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():
@@ -379,7 +393,7 @@ async def test_ambiguous_publish_retires_generation_without_retry(
         native_publish.REQUEST_TIMEOUT,
         native_publish.REBIND_INTERVAL,
         native_publish.LEG_CLOSE_TIMEOUT,
-    ) == (2.0, 5.0, 1.0)
+    ) == (15.0, 5.0, 1.0)
     monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.2)
     monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.3)
     monkeypatch.setattr(native_publish, "LEG_CLOSE_TIMEOUT", 0.2)
@@ -703,9 +717,18 @@ async def test_native_mode_from_environment_and_bind_waits_for_token(
 class _LoopbackHTTP:
     """A bare HTTP/1.1 listener on loopback that records each request and answers it."""
 
-    def __init__(self, answer: Callable[[str], bytes]) -> None:
+    def __init__(
+        self,
+        answer: Callable[[str], bytes],
+        *,
+        publish_delay: float = 0.0,
+        bind_delays: Sequence[float] = (),
+    ) -> None:
         self.requests: list[tuple[str, dict[str, str]]] = []
         self._answer = answer
+        self._publish_delay = publish_delay
+        # Delay for each successive bind attempt; attempts past the list answer at once.
+        self._bind_delays = list(bind_delays)
         self._server: asyncio.Server | None = None
 
     async def __aenter__(self) -> int:
@@ -729,9 +752,14 @@ class _LoopbackHTTP:
                 await reader.readexactly(int(headers.get("content-length", "0")))
                 target = request_line.split(" ")[1]
                 self.requests.append((target, headers))
+                if target == native_publish.PUBLISH_PATH:
+                    await asyncio.sleep(self._publish_delay)
+                if target == native_publish.BIND_PATH and self._bind_delays:
+                    await asyncio.sleep(self._bind_delays.pop(0))
                 writer.write(self._answer(target))
                 await writer.drain()
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, ConnectionError):
+            # A client that cut a held request has closed its socket; there is no answer to give.
             pass
         finally:
             writer.close()
@@ -780,6 +808,292 @@ async def test_production_client_ignores_proxy_environment(
     for _target, headers in daemon.requests:
         assert headers["x-gobby-front-door"] == SECRET
         assert headers["x-gobby-backend-token"] == supervisor_token
+
+
+async def test_a_bind_held_past_the_deadline_is_retried_until_the_front_door_answers(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Binds held past the deadline cost retries, and the first timely answer rebinds the door.
+
+    Each held attempt is cut at the deadline; the rebind loop then waits its interval and
+    tries again. A front door that answers late is therefore recovered within a bounded
+    number of attempts, over real sockets and real timers.
+    """
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.3)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[1.0, 1.0])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            # Hang guards only. Host load can stretch each attempt, so the held attempts are
+            # asserted by count below, never by elapsed time.
+            await _until(lambda: publisher.generation == GEN1, timeout=5.0)
+            binds = [target for target, _headers in daemon.requests if target == "/_gobby/ws/bind"]
+            assert len(binds) >= 3
+            assert await publisher.wait_bound(timeout=0.0) is True
+        finally:
+            await publisher.stop()
+
+
+async def test_a_stalled_loop_is_reported_while_the_publisher_runs(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The sampler names a loop stall as it happens, with the lag it measured.
+
+    The stall is virtual, as in the stall test above: the loop clock jumps while the sampler
+    sleeps, so the sample overshoots by the jump.
+    """
+    monkeypatch.setattr(native_publish, "LOOP_LAG_INTERVAL", 0.05)
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    stalled = 0.0
+    monkeypatch.setattr(loop, "time", lambda: real_time() + stalled)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        await asyncio.sleep(0)  # The sampler registers its first sleep.
+        stalled += 2.0
+        await _until(lambda: any("event loop lag" in r.getMessage() for r in caplog.records))
+    finally:
+        await publisher.stop()
+    lag = next(r.getMessage() for r in caplog.records if "event loop lag" in r.getMessage())
+    measured = float(lag.split("lag ")[1].split("s ")[0])
+    assert measured >= 1.5  # The 2 s jump registers; the sample starts a few ms after it.
+
+
+@pytest.mark.asyncio
+async def test_server_start_reports_a_stalled_loop(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The production server start owns the sampler. publisher.start is not required."""
+    monkeypatch.setattr(native_publish, "LOOP_LAG_INTERVAL", 0.05)
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    stalled = 0.0
+    monkeypatch.setattr(loop, "time", lambda: real_time() + stalled)
+    server, _shutdown = _running_server(_publisher(_Daemon()), monkeypatch)
+    await server.start()
+    try:
+        await asyncio.sleep(0)  # The sampler registers its first sleep.
+        stalled += 2.0
+        await _until(lambda: any("event loop lag" in r.getMessage() for r in caplog.records))
+    finally:
+        await server.stop()
+    lag = next(r.getMessage() for r in caplog.records if "event loop lag" in r.getMessage())
+    measured = float(lag.split("lag ")[1].split("s ")[0])
+    assert measured >= 1.5
+
+
+@pytest.mark.asyncio
+async def test_server_start_rebinds_after_a_transient_bind_failure(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed startup bind stays visible and the publisher rebinds within its interval."""
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.01)
+    daemon = _Daemon()
+    daemon.bind_status = [503]
+    publisher = _publisher(daemon)
+    server, shutdown = _running_server(publisher, monkeypatch)
+    with pytest.raises(Exception, match="bind answered 503"):
+        await server.start()
+    try:
+        await _until(lambda: publisher.generation == GEN1)
+    finally:
+        await publisher.stop()
+    shutdown.assert_not_awaited()
+    assert any("Native WS bind failed" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_server_start_rebind_keeps_lifecycle_publication(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recovered startup bind leaves lifecycle publication and idle cleanup live."""
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.01)
+    daemon = _Daemon()
+    daemon.bind_status = [503]
+    publisher = _publisher(daemon)
+    registry = TerminalLeaseRegistry()
+    server = WebSocketServer(CONFIG, MagicMock(), AsyncMock(return_value="u"))
+    server.native_publisher = publisher
+    server.lease_registry = registry
+    with pytest.raises(Exception, match="bind answered 503"):
+        await server.start()
+    try:
+        assert await publisher.wait_bound(timeout=2.0) is True
+
+        async def record(_stamped: dict[str, Any]) -> None:
+            return None
+
+        pending = {"type": "terminal_event", "event": "pending"}
+        stamped = await asyncio.wait_for(registry.publish_lifecycle(pending, record), 1.0)
+        assert stamped["event"] == "pending"
+        assert server._cleanup_task is not None
+        assert not server._cleanup_task.done()
+    finally:
+        await server.stop()
+
+
+@pytest.mark.parametrize(
+    ("bind_delay", "deadline", "outcome", "first_byte_seen"),
+    [
+        (1.0, 0.3, "bind failed after", False),
+        (0.6, 2.0, "bind answered after", True),
+    ],
+)
+async def test_a_slow_bind_names_the_phase_it_reached(
+    bind_delay: float,
+    deadline: float,
+    outcome: str,
+    first_byte_seen: bool,
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The bind log says how far the request got: a held answer shows no first byte."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", deadline)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[bind_delay])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1)
+        finally:
+            await publisher.stop()
+    line = next(r.getMessage() for r in caplog.records if outcome in r.getMessage())
+    assert "phases" in line
+    assert "connection.connect_tcp" in line
+    assert ("http11.receive_response_headers" in line) is first_byte_seen
+
+
+@pytest.mark.parametrize(
+    ("publish_delay", "deadline", "outcome", "first_byte_seen"),
+    [
+        (1.0, 0.3, "publish failed for generation", False),
+        (0.6, 2.0, "publish answered after", True),
+    ],
+)
+async def test_a_slow_publish_names_the_phase_it_reached(
+    publish_delay: float,
+    deadline: float,
+    outcome: str,
+    first_byte_seen: bool,
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The publish log says how far the request got, as the bind log does."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", deadline)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, publish_delay=publish_delay)
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1)
+            publisher.publish({"type": "agent_event"})
+            await _until(lambda: any(outcome in r.getMessage() for r in caplog.records), 5.0)
+        finally:
+            await publisher.stop()
+    line = next(r.getMessage() for r in caplog.records if outcome in r.getMessage())
+    assert "phases" in line
+    # Publish reuses the connection the bind opened, so no connect phase is logged.
+    assert "http11.send_request_headers" in line
+    assert ("http11.receive_response_headers" in line) is first_byte_seen
+
+
+async def test_a_held_rebind_is_logged_as_a_rebind(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A rebind that the front door holds past the deadline logs as a rebind, with phases."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.3)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[1.0, 1.0])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1, 5.0)
+        finally:
+            await publisher.stop()
+    assert any(
+        "rebind failed after" in r.getMessage() and "phases" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_the_probe_wrapper_serves_a_rebind_and_records_its_generation(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The e2e probe wraps bind; a rebind through that wrapper must bind and be recorded."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.3)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    monkeypatch.setattr(NativePublisher, "bind", recording_bind(NativePublisher.bind, tmp_path))
+    daemon = _LoopbackHTTP(_daemon_answer, bind_delays=[1.0])
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await _until(lambda: publisher.generation == GEN1, 5.0)
+        finally:
+            await publisher.stop()
+    records = (tmp_path / RECORDS_FILE).read_text().splitlines()
+    assert [json.loads(line)["generation"] for line in records] == [GEN1]
+
+
+@pytest.mark.slow
+async def test_a_publish_slower_than_httpx_default_stays_bound_inside_the_deadline(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 6 s answer over a real socket is inside the 15 s deadline, so the door stays bound.
+
+    Socket phases used to keep httpx's 5 s default, which fired first as ReadTimeout and
+    retired the generation, so the deadline raised in _post never governed them.
+    """
+    daemon = _LoopbackHTTP(_daemon_answer, publish_delay=6.0)
+    async with daemon as daemon_port:
+        monkeypatch.setattr(runner_backend, "_supervisor_fd", 9)
+        monkeypatch.setattr(runner_backend, "_front_door_secret", SECRET)
+        publisher = native_publisher_from_environment(
+            CONFIG, BootstrapConfig(daemon_port=daemon_port, bind_host="127.0.0.1")
+        )
+        assert publisher is not None
+        try:
+            await asyncio.wait_for(publisher.start(), 2.0)
+            await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 15.0)
+            assert publisher.generation == GEN1
+        finally:
+            await publisher.stop()
+
+    assert [target for target, _headers in daemon.requests][-1] == "/_gobby/ws/publish"
 
 
 @pytest.mark.parametrize("budget", ["bytes", "ops", "futures"])
@@ -849,3 +1163,83 @@ async def test_publisher_admission_budgets_fail_generation_on_overflow(
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
     finally:
         await publisher.stop()
+
+
+async def test_loop_stall_under_host_load_keeps_the_front_door_bound(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A publish answered after a host-load loop stall completes; the door stays bound.
+
+    The stall is virtual: the loop clock jumps 3 s past the publish deadline while the request
+    is parked, as if the loop had been starved. The overdue deadline fires before the response
+    is released, the order the production stall produced. Production constants apply.
+    """
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    stalled = 0.0
+    monkeypatch.setattr(loop, "time", lambda: real_time() + stalled)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        assert publisher.generation == GEN1
+        daemon.gate = asyncio.Event()
+        pending = publisher.publish({"type": "agent_event", "n": 1})
+        await _until(daemon.received.is_set)
+        stalled += 3.0  # The loop was parked this long; the response is not yet read.
+        await asyncio.sleep(0)  # The loop resumes and runs the overdue publish deadline first.
+        daemon.gate.set()
+        await asyncio.wait_for(pending, 5.0)
+        assert publisher.generation == GEN1
+        assert daemon.ops() == [_publish_op({"type": "agent_event", "n": 1})]
+    finally:
+        await publisher.stop()
+
+
+async def test_wait_bound_returns_once_a_rebind_lands(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _Daemon()
+    daemon.bind_status = [503]
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        assert publisher.generation is None
+        assert await publisher.wait_bound(1.0) is True
+        assert publisher.generation == GEN1
+    finally:
+        await publisher.stop()
+
+
+async def test_wait_bound_gives_up_at_its_deadline(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.05)
+    daemon = _Daemon()
+    daemon.bind_status = [503] * 1000
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        assert await publisher.wait_bound(0.2) is False
+        assert publisher.generation is None
+    finally:
+        await publisher.stop()
+
+
+async def test_wait_bound_refuses_at_once_on_a_stopped_publisher(supervisor_token: str) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    await publisher.stop()
+    # A stopped publisher never binds again, so spawn must not wait out the full deadline.
+    async with asyncio.timeout(1.0):
+        assert await publisher.wait_bound() is False
+
+
+def test_front_door_wait_covers_two_bind_attempts_and_their_rebind_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 15.0)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 5.0)
+    assert native_publish.front_door_wait() == 40.0

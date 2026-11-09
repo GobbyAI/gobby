@@ -18,10 +18,9 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from psycopg.rows import dict_row
-from qdrant_client.models import Filter
 
 from gobby.memory.dream.models import DreamCandidate, RelatedMemoryEvidence
 from gobby.memory.services.keyword import MemoryKeywordSearchService
@@ -34,6 +33,9 @@ from gobby.search.keyword import (
 from gobby.storage.hub.async_ops import run_bounded_db
 from gobby.storage.memories_crud import map_get_memories_rows, render_get_memories_statement
 from gobby.storage.memories_scope import MemoryScope
+
+if TYPE_CHECKING:
+    from qdrant_client.models import Filter
 
 logger = logging.getLogger(__name__)
 

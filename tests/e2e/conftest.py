@@ -59,8 +59,10 @@ _TERMINAL_E2E_BINARIES = {
     "test_terminal_client_stack.py": ("gterm", "gclient"),
 }
 
-# Startup phases can each take up to 65s before reporting their own timeout.
+# Startup phases can each take up to 65s before reporting their own timeout. The
+# stall window is measured from the last startup progress record, not from launch.
 ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS = 75.0
+ISOLATED_DAEMON_HEALTH_CEILING_SECONDS = 300.0
 DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS = 0.5
 DAEMON_HEALTH_POLL_INTERVAL_SECONDS = 0.25
 # Preserve multiple observations even when a caller supplies a deliberately tiny deadline.
@@ -76,6 +78,7 @@ class DaemonHealthTimeoutError(AssertionError):
         *,
         port: int,
         elapsed_seconds: float,
+        reason: str,
         attempts: int,
         connect_refused: int,
         timed_out: int,
@@ -92,6 +95,7 @@ class DaemonHealthTimeoutError(AssertionError):
     ) -> None:
         self.port = port
         self.elapsed_seconds = elapsed_seconds
+        self.reason = reason
         self.attempts = attempts
         self.connect_refused = connect_refused
         self.timed_out = timed_out
@@ -107,7 +111,7 @@ class DaemonHealthTimeoutError(AssertionError):
         self.startup_timing_tail = startup_timing_tail
         super().__init__(
             f"Isolated daemon on port {port} did not serve /api/auth/status after "
-            f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
+            f"{elapsed_seconds:.3f}s ({reason}): attempts={attempts}, connect_refused={connect_refused}, "
             f"timed_out={timed_out}, transport_errors={transport_errors}, "
             f"last_status_code={last_status_code}, process={process_status}\n"
             f"--- daemon log tail ---\n{log_tail}\n"
@@ -550,19 +554,48 @@ def wait_for_port(port: int, timeout: float = 10.0) -> bool:
     return False
 
 
+def _startup_progress_count(timings: Path | None) -> int:
+    """Count startup progress records: completed stages and import-growth heartbeats."""
+    if timings is None:
+        return 0
+    try:
+        lines = timings.read_text(errors="replace").splitlines()
+    except OSError:
+        return 0
+    progress = 0
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue  # A record the daemon is still writing.
+        if isinstance(record, dict) and record.get("state") in ("completed", "progress"):
+            progress += 1
+    return progress
+
+
 def wait_for_daemon_health(
     port: int,
     *,
     log_file: Path | None = None,
     process: subprocess.Popen[bytes] | None = None,
     timeout: float = ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS,
+    ceiling: float = ISOLATED_DAEMON_HEALTH_CEILING_SECONDS,
     min_attempts: int = DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
 ) -> None:
-    """Wait for isolated daemon health or raise with bounded startup diagnostics."""
+    """Wait for isolated daemon health or raise with bounded startup diagnostics.
+
+    Fails when the process exits, when `timeout` passes without startup progress (a
+    newly completed stage or import growth in the stage-timing records), or when
+    `ceiling` passes overall.
+    """
     from tests.e2e.readiness_capture import capture_readiness_timeout, safe_backend_state
 
     start = time.monotonic()
-    deadline = start + timeout
+    ceiling_at = start + ceiling
+    timings = log_file.with_name("startup-timings.jsonl") if log_file is not None else None
+    stages_seen = _startup_progress_count(timings)
+    last_progress = start
+    reason = ""
     attempts = 0
     connect_refused = 0
     timed_out = 0
@@ -573,8 +606,8 @@ def wait_for_daemon_health(
     # This is a plaintext loopback probe, including for TLS front doors. Reuse
     # the client so retries don't reload CA roots and compete with startup.
     with httpx.Client(verify=False, trust_env=False) as client:
-        while attempts < min_attempts or time.monotonic() < deadline:
-            remaining = max(deadline - time.monotonic(), 0.0)
+        while True:
+            remaining = max(ceiling_at - time.monotonic(), 0.0)
             probe_timeout = max(0.001, min(DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS, remaining))
             attempts += 1
             try:
@@ -593,9 +626,23 @@ def wait_for_daemon_health(
             except httpx.TransportError:
                 transport_errors += 1
 
-            remaining = max(deadline - time.monotonic(), 0.0)
-            if remaining > 0:
-                time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
+            now = time.monotonic()
+            progress = _startup_progress_count(timings)
+            if progress > stages_seen:
+                stages_seen = progress
+                last_progress = now
+            if attempts >= min_attempts:
+                if process is not None and process.poll() is not None:
+                    reason = "daemon process exited"
+                elif now >= ceiling_at:
+                    reason = f"startup exceeded the {ceiling:g}s ceiling"
+                elif now - last_progress >= timeout:
+                    reason = f"no startup progress in {timeout:g}s"
+                if reason:
+                    break
+            until_check = min(last_progress + timeout, ceiling_at) - now
+            if until_check > 0:
+                time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, until_check))
 
     elapsed_seconds = time.monotonic() - start
     capture = capture_readiness_timeout(log_file.parent if log_file is not None else None, process)
@@ -629,6 +676,7 @@ def wait_for_daemon_health(
     raise DaemonHealthTimeoutError(
         port=port,
         elapsed_seconds=elapsed_seconds,
+        reason=reason,
         attempts=attempts,
         connect_refused=connect_refused,
         timed_out=timed_out,

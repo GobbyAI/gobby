@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks.checkout_reads import event_machine_id
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.workflows.checkout_fingerprint import file_fingerprint, path_fingerprints
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -27,6 +30,7 @@ from gobby.workflows.task_claim_state import (
     task_checkout_edit_hashes,
     task_checkout_edit_times,
 )
+from gobby.workflows.worktree_shell_attribution import CALLS_VARIABLE, overlapped_worktree_paths
 
 OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE = "operator_dirty_path_approvals"
 # Never a git blob hash, so an unreadable path matches no record.
@@ -141,17 +145,28 @@ def checkout_path_owners(
 def content_recorded_paths(
     variables: Mapping[str, Any], checkout_root: str, paths: Iterable[str]
 ) -> set[str]:
-    """Return the paths, among ``paths``, whose current content matches a record in ``variables``."""
+    """Return the paths, among ``paths``, whose current content matches a record in ``variables``.
+
+    A record is a task's attributed edit, or a pre-claim write this session holds in
+    ``session_unclaimed_edits`` until a claim adopts it. Both are this session's own content.
+    """
     root = normalize_task_checkout_root(checkout_root)
-    hashes = variables.get("task_edited_checkout_hashes")
-    if root is None or not isinstance(hashes, dict):
+    if root is None:
         return set()
     records: dict[str, set[str | None]] = {}
-    for task_id in hashes:
-        for entry, digest in task_checkout_edit_hashes(
-            {"task_edited_checkout_hashes": hashes}, task_id, root
-        ).items():
-            records.setdefault(entry, set()).add(digest)
+    hashes = variables.get("task_edited_checkout_hashes")
+    if isinstance(hashes, dict):
+        for task_id in hashes:
+            for entry, digest in task_checkout_edit_hashes(
+                {"task_edited_checkout_hashes": hashes}, task_id, root
+            ).items():
+                records.setdefault(entry, set()).add(digest)
+    unclaimed = variables.get("session_unclaimed_edits")
+    root_unclaimed = unclaimed.get(root) if isinstance(unclaimed, dict) else None
+    if isinstance(root_unclaimed, dict):
+        for entry, record in root_unclaimed.items():
+            if isinstance(record, dict):
+                records.setdefault(entry, set()).add(record.get("digest"))
     return {
         path for path in paths if path in records and _current_digest(root, path) in records[path]
     }
@@ -193,6 +208,44 @@ def _json_object(text: str | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+@dataclass(frozen=True)
+class DirtyPathRelease:
+    """What one operator approval recorded, and the stale state it released."""
+
+    approvals: dict[str, str | None]
+    cleared_overlaps: tuple[str, ...]
+    released_calls: dict[str, tuple[str, ...]]
+
+
+def release_ended_owner_calls(
+    db: HubDatabase, root_key: str, paths: Collection[str]
+) -> dict[str, tuple[str, ...]]:
+    """Retire in-flight worktree calls in ``root_key`` that touch ``paths`` and whose owner ended.
+
+    A live owner's calls stay: they may still be running. An ended owner's call that touches an
+    approved path can no longer settle, so left alone it would hold that path. A call that touches
+    no approved path is not the approval's to release, so it stays in flight.
+    """
+    rows = db.fetchall(
+        "SELECT v.session_id, (v.variables -> %s)::text AS calls "
+        "FROM session_variables v JOIN sessions s ON s.id = v.session_id "
+        "WHERE NOT (s.status = ANY(%s)) AND s.machine_id = %s AND v.variables -> %s IS NOT NULL",
+        (CALLS_VARIABLE, list(LIVE_SESSION_STATUS_ORDER), event_machine_id(), CALLS_VARIABLE),
+    )
+    manager = SessionVariableManager(db)
+    released: dict[str, tuple[str, ...]] = {}
+    for row in rows:
+        calls = _json_object(row["calls"])
+        if not any(
+            isinstance(entry, dict) and entry.get("root") == root_key for entry in calls.values()
+        ):
+            continue
+        retired = manager.retire_worktree_shell_calls(row["session_id"], root_key, paths)
+        if retired:
+            released[row["session_id"]] = tuple(retired)
+    return released
+
+
 def record_dirty_path_approval(
     db: HubDatabase,
     session_id: str,
@@ -200,8 +253,17 @@ def record_dirty_path_approval(
     checkout_root: str,
     paths: Iterable[str],
     approved_by: str,
-) -> dict[str, str | None]:
-    """Approve exact paths for one session, replacing its approval for that checkout."""
+    reason: str,
+) -> DirtyPathRelease:
+    """Approve exact paths for one session, replacing its approval for that checkout.
+
+    The approval also releases what keeps those paths foreign: the session's overlap records
+    for them, and in-flight calls that ended sessions left in the checkout. The approval record
+    keeps the operator's reason and what it released.
+    """
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("Give the reason for releasing these paths.")
     root_key = normalize_task_checkout_root(checkout_root)
     if root_key is None:
         raise ValueError(f"Checkout {checkout_root!r} is not an absolute path.")
@@ -216,15 +278,22 @@ def record_dirty_path_approval(
     if not fingerprints:
         raise ValueError("Name at least one path to approve.")
     manager = SessionVariableManager(db)
-    stored = manager.get_variables(session_id).get(OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE)
+    variables = manager.get_variables(session_id)
+    stored = variables.get(OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE)
     approvals = dict(stored) if isinstance(stored, dict) else {}
+    cleared = tuple(sorted(set(fingerprints) & overlapped_worktree_paths(variables, root_key)))
+    released = release_ended_owner_calls(db, root_key, fingerprints)
     approvals[root_key] = {
         "paths": dict(sorted(fingerprints.items())),
         "approved_by": approved_by,
         "approved_at": datetime.now(UTC).isoformat(),
+        "reason": reason,
+        "cleared_overlaps": list(cleared),
+        "released_calls": {owner: list(ids) for owner, ids in released.items()},
     }
     manager.set_variable(session_id, OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE, approvals)
-    return fingerprints
+    manager.clear_overlapped_paths(session_id, root_key, fingerprints)
+    return DirtyPathRelease(fingerprints, cleared, released)
 
 
 def approved_dirty_paths(variables: Mapping[str, Any], checkout_root: str) -> set[str]:

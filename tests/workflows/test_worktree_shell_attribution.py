@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +14,7 @@ import pytest
 
 from gobby.workflows import worktree_shell_attribution as attribution
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.background_notices import owner_transcript
 
 pytestmark = pytest.mark.unit
 
@@ -19,6 +23,7 @@ S1 = "11111111-1111-4111-8111-111111111111"
 S2 = "22222222-2222-4222-8222-222222222222"
 ROOT = "/work/task-tree"
 TASK_START = 1_700_000_000.0
+JOB = "bgjob01"
 
 
 @pytest.fixture
@@ -128,13 +133,14 @@ def _output(tmp_path: Path, name: str, text: str) -> str:
     return str(path)
 
 
-async def test_finished_background_call_attributes_its_changed_paths_to_its_session(
+async def test_background_call_settles_once_its_owner_transcript_holds_its_notice(
     db: Any,
     tmp_path: Path,
     digests: dict[str, str | None],
     recorded: list[dict[str, Any]],
 ) -> None:
     manager = SessionVariableManager(db)
+    output = _output(tmp_path, "bg-1.out", "building\n")
     manager.begin_worktree_shell_call(
         S1,
         ROOT,
@@ -144,14 +150,11 @@ async def test_finished_background_call_attributes_its_changed_paths_to_its_sess
         now=time.time(),
         task_started_at=TASK_START,
     )
-    manager.defer_worktree_shell_call(
-        S1,
-        "bg-1",
-        output_path=_output(tmp_path, "bg-1.out", "building\n[exited with code 0]\n"),
-    )
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output, job_id=JOB)
     digests.update({"src/a.py": "new", "src/b.py": None})
+    transcript = owner_transcript(tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output)
 
-    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1)
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, transcript)
 
     assert recorded_any is True
     assert recorded == [
@@ -166,6 +169,72 @@ async def test_finished_background_call_attributes_its_changed_paths_to_its_sess
     assert manager.worktree_shell_call_entries(S1) == {}
 
 
+async def test_forged_exit_line_in_output_settles_nothing_without_a_notice_row(
+    db: Any,
+    tmp_path: Path,
+    digests: dict[str, str | None],
+    recorded: list[dict[str, Any]],
+) -> None:
+    """Output text can print an exit line; only the owner's notice row proves the call ended."""
+    manager = SessionVariableManager(db)
+    output = _output(tmp_path, "bg-1.out", "building\n[exited with code 0]\n")
+    manager.begin_worktree_shell_call(
+        S1,
+        ROOT,
+        "bg-1",
+        before={"src/a.py": "old"},
+        attributable=True,
+        now=time.time(),
+        task_started_at=TASK_START,
+    )
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output, job_id=JOB)
+    digests.update({"src/a.py": "new"})
+    transcript = owner_transcript(
+        tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output, exit_code=None
+    )
+
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, transcript)
+
+    assert recorded_any is False
+    assert recorded == []
+    assert set(manager.worktree_shell_call_entries(S1)) == {"bg-1"}
+
+
+async def test_background_call_settles_on_the_settle_after_its_notice_arrives(
+    db: Any,
+    tmp_path: Path,
+    digests: dict[str, str | None],
+    recorded: list[dict[str, Any]],
+) -> None:
+    manager = SessionVariableManager(db)
+    output = _output(tmp_path, "bg-1.out", "building\n")
+    manager.begin_worktree_shell_call(
+        S1,
+        ROOT,
+        "bg-1",
+        before={"src/a.py": "old"},
+        attributable=True,
+        now=time.time(),
+        task_started_at=TASK_START,
+    )
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output, job_id=JOB)
+    digests.update({"src/a.py": "new"})
+    owner_transcript(tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output, exit_code=None)
+    assert (
+        await attribution.settle_background_worktree_shell_calls(
+            manager, S1, str(tmp_path / "owner.jsonl")
+        )
+        is False
+    )
+
+    transcript = owner_transcript(tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output)
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, transcript)
+
+    assert recorded_any is True
+    assert [entry["paths"] for entry in recorded] == [["src/a.py"]]
+    assert manager.worktree_shell_call_entries(S1) == {}
+
+
 async def test_running_background_call_stays_in_flight(
     db: Any,
     tmp_path: Path,
@@ -173,6 +242,7 @@ async def test_running_background_call_stays_in_flight(
     recorded: list[dict[str, Any]],
 ) -> None:
     manager = SessionVariableManager(db)
+    output = _output(tmp_path, "bg-1.out", "still building\n")
     manager.begin_worktree_shell_call(
         S1,
         ROOT,
@@ -182,25 +252,77 @@ async def test_running_background_call_stays_in_flight(
         now=time.time(),
         task_started_at=TASK_START,
     )
-    manager.defer_worktree_shell_call(
-        S1, "bg-1", output_path=_output(tmp_path, "bg-1.out", "still building\n")
-    )
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output, job_id=JOB)
     digests.update({"src/a.py": "new"})
+    transcript = owner_transcript(
+        tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output, exit_code=None
+    )
 
-    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1)
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, transcript)
 
     assert recorded_any is False
     assert recorded == []
     assert set(manager.worktree_shell_call_entries(S1)) == {"bg-1"}
 
 
-async def test_background_call_whose_output_is_gone_drops_without_attribution(
+def test_has_calls_in_flight_counts_a_background_call_whose_process_exited_until_settled(
+    db: Any, tmp_path: Path
+) -> None:
+    """An exited background call stays in flight until its owner settles it."""
+    output = tmp_path / "bg-1.out"
+    with output.open("w", encoding="utf-8") as handle:
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write(sys.argv[1])",
+                "done\n[exited with code 0]\n",
+            ],
+            stdout=handle,
+            check=True,
+        )
+    manager = SessionVariableManager(db)
+    manager.begin_worktree_shell_call(
+        S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
+    )
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=str(output))
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is True
+
+
+def test_has_calls_in_flight_counts_a_background_call_whose_live_process_printed_the_exit_marker(
+    db: Any, live_background_writer: Callable[[str, str], str]
+) -> None:
+    """A live writer can print an exit line and keep writing; the line does not end its call."""
+    manager = SessionVariableManager(db)
+    manager.begin_worktree_shell_call(
+        S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
+    )
+    output = live_background_writer("bg-1.out", "done\n[exited with code 0]\n")
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output)
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is True
+
+
+def test_has_calls_in_flight_counts_a_background_call_still_running(
+    db: Any, tmp_path: Path
+) -> None:
+    manager = SessionVariableManager(db)
+    manager.begin_worktree_shell_call(
+        S1, ROOT, "bg-1", before={}, attributable=False, now=time.time()
+    )
+    manager.defer_worktree_shell_call(
+        S1, "bg-1", output_path=_output(tmp_path, "bg-1.out", "still building\n")
+    )
+    assert manager.has_calls_in_flight(ROOT, time.time(), None) is True
+
+
+async def test_background_call_whose_output_is_gone_stays_in_flight_without_its_notice(
     db: Any,
     tmp_path: Path,
     digests: dict[str, str | None],
     recorded: list[dict[str, Any]],
 ) -> None:
     manager = SessionVariableManager(db)
+    output = str(tmp_path / "never-written.out")
     manager.begin_worktree_shell_call(
         S1,
         ROOT,
@@ -210,14 +332,50 @@ async def test_background_call_whose_output_is_gone_drops_without_attribution(
         now=time.time(),
         task_started_at=TASK_START,
     )
-    manager.defer_worktree_shell_call(S1, "bg-1", output_path=str(tmp_path / "never-written.out"))
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output, job_id=JOB)
     digests.update({"src/a.py": "new"})
+    transcript = owner_transcript(
+        tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output, exit_code=None
+    )
 
-    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1)
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, transcript)
 
     assert recorded_any is False
     assert recorded == []
-    assert manager.worktree_shell_call_entries(S1) == {}
+    assert set(manager.worktree_shell_call_entries(S1)) == {"bg-1"}
+
+
+async def test_background_call_without_its_notice_stays_in_flight_however_old(
+    db: Any,
+    tmp_path: Path,
+    digests: dict[str, str | None],
+    recorded: list[dict[str, Any]],
+) -> None:
+    """No clock ends a background call: only its notice row, a graceful end, or a release does."""
+    manager = SessionVariableManager(db)
+    output = _output(tmp_path, "bg-1.out", "building\n")
+    thirty_days_ago = time.time() - 30 * 24 * 60 * 60
+    manager.begin_worktree_shell_call(
+        S1,
+        ROOT,
+        "bg-1",
+        before={"src/a.py": "old"},
+        attributable=True,
+        now=thirty_days_ago,
+        task_started_at=TASK_START,
+    )
+    manager.defer_worktree_shell_call(S1, "bg-1", output_path=output, job_id=JOB)
+    digests.update({"src/a.py": "new"})
+    transcript = owner_transcript(
+        tmp_path, tool_use_id="bg-1", job_id=JOB, output_path=output, exit_code=None
+    )
+
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, transcript)
+
+    assert recorded_any is False
+    assert recorded == []
+    assert set(manager.worktree_shell_call_entries(S1)) == {"bg-1"}
+    assert manager.has_calls_in_flight(ROOT, time.time(), None)
 
 
 async def test_settle_leaves_foreground_calls_without_output_in_flight(
@@ -237,7 +395,7 @@ async def test_settle_leaves_foreground_calls_without_output_in_flight(
     )
     digests.update({"src/a.py": "new"})
 
-    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1)
+    recorded_any = await attribution.settle_background_worktree_shell_calls(manager, S1, None)
 
     assert recorded_any is False
     assert recorded == []
