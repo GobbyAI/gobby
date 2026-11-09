@@ -29,7 +29,11 @@ priority: its message arrives through the hook mailbox on its next tool call. No
 clears or replaces composer text, operator comms included. A draft, held, or unconfirmed
 composer, and an interrupted, input-, approval-, or
 handoff-waiting seat, take no typed input either, so the message stays queued until the
-seat is safe to wake. The one handoff exception is the `get_handoff` continuation of an
+seat is safe to wake. A composer whose only change is a cursor or control key, with no
+typed text, is probed: the wake types only into an idle, empty pane frame, and that frame
+releases the hold. When the probe does not release it, the seat gets an attention item
+that names the seat and the reason. A typed text draft keeps its hold with no attention
+item. The one handoff exception is the `get_handoff` continuation of an
 awaiting-handoff terminal with a confirmed compact boundary and an empty composer.
 Otherwise `project` fanout stays queued without live wakes, and `wake=false` queues any
 target without a live wake. The daemon sends restart and cutover notices itself as
@@ -121,5 +125,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 2.4.2_
-_Last verified: 2026-11-06_
+_Version: 2.5.0_
+_Last verified: 2026-11-09_
