@@ -32,7 +32,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.engine.core import RuleEngine
@@ -238,7 +238,7 @@ def boundary(
     token = "boundary-operator-token"
     if request.param == "agent":
         token = issue_agent_api_token(
-            derive_managed_signing_key(token),
+            cast(bytes, server.auth_service.managed_signing_key()),
             agent_run_id=run.id,
             session_id=session.id,
             project_id=project_id,

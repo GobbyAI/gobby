@@ -5,17 +5,26 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.requests import Request
 
 from gobby.runtime_grants import encode_grant_header
+from gobby.runtime_grants.launch import materialize_managed_launch
+from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal
 from gobby.servers.auth_service import AuthService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.break_glass import BREAK_GLASS_HEADER
-from gobby.utils.local_token import derive_managed_signing_key, issue_session_api_token
+from gobby.utils.local_token import (
+    derive_managed_signing_key,
+    issue_agent_api_token,
+    issue_maintenance_api_token,
+    issue_session_api_token,
+    issue_tool_api_token,
+    read_managed_api_token,
+)
 from tests.servers.test_auth_service import (
     _GRANT_NOW,
     _grant_service,
@@ -39,6 +48,172 @@ MACHINE_HEADERS = {
 MACHINE_BEARER = {"Authorization": f"Bearer {API_KEY}"}
 # A second live api_keys row, which gdaemon also resolves and injects identity for.
 SECOND_KEY = "session-binding-second-key"
+
+
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat", "maintenance", "session"])
+@pytest.mark.parametrize("machine_derived", [True, False])
+def test_only_the_daemon_key_can_sign_each_capability_kind(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_session: Any,
+    sample_project: dict[str, Any],
+    kind: str,
+    machine_derived: bool,
+) -> None:
+    service = _service(temp_db, tmp_path)
+    key = derive_managed_signing_key(API_KEY) if machine_derived else service.managed_signing_key()
+    assert key is not None
+    identity = {
+        "session_id": live_session.id,
+        "project_id": sample_project["id"],
+        "machine_id": LOCAL_MACHINE_ID,
+    }
+    headers: dict[str, str] = {}
+    if kind == "agent_run":
+        token = issue_agent_api_token(key, agent_run_id="synthetic-run", **identity)
+        headers["X-Gobby-Agent-Run-Id"] = "synthetic-run"
+    elif kind == "tool_chat":
+        token = issue_tool_api_token(
+            key, managed_execution_id="synthetic-execution", timeout_seconds=60, **identity
+        )
+        headers["X-Gobby-Managed-Execution-Id"] = "synthetic-execution"
+    elif kind == "maintenance":
+        token = issue_maintenance_api_token(
+            key,
+            execution_id=live_session.id,
+            project_id=sample_project["id"],
+            machine_id=LOCAL_MACHINE_ID,
+            timeout_seconds=60,
+        )
+        headers["X-Gobby-Managed-Execution-Id"] = live_session.id
+    else:
+        token = issue_session_api_token(key, **identity)
+    request = _request(
+        _session_headers(token, live_session.id, sample_project["id"]) | headers,
+        method="POST",
+        path="/api/mcp/tools/call",
+    )
+    # Isolate signing authority from owner liveness, which has separate real-storage coverage.
+    with patch.object(service, "_managed_capability_is_live", return_value=True):
+        decision = service.authenticate(request)
+    assert decision.allowed is (not machine_derived)
+    if machine_derived:
+        assert decision.code == "capability_invalid"
+        assert token not in repr(decision)
+
+
+def test_machine_key_cannot_forge_a_session_credential(
+    temp_db: HubDatabase, tmp_path: Path, live_session: Any, sample_project: dict[str, Any]
+) -> None:
+    service = _service(temp_db, tmp_path)
+    forged = issue_session_api_token(
+        derive_managed_signing_key(API_KEY),
+        session_id=live_session.id,
+        project_id=sample_project["id"],
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    decision = service.authenticate(
+        _request(
+            _session_headers(forged, live_session.id, sample_project["id"]),
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+    )
+    assert not decision.allowed
+    assert decision.code == "capability_invalid"
+    assert forged not in repr(decision)
+
+
+def test_capability_signing_key_survives_restart_and_machine_key_rotation(tmp_path: Path) -> None:
+    service = _service(None, tmp_path)
+    key = service.managed_signing_key()
+    assert isinstance(key, bytes) and len(key) == 32
+    assert key != derive_managed_signing_key(API_KEY)
+    key_file = tmp_path / "capability_signing_key"
+    assert key_file.read_bytes() == key
+    assert key_file.stat().st_mode & 0o777 == 0o600
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text(json.dumps({"api_key": SECOND_KEY}))
+    restarted = AuthService(lambda: cast(HubDatabase, None), bootstrap_file=bootstrap)
+    assert restarted.managed_signing_key() == key
+
+
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat", "maintenance"])
+def test_managed_respawn_remints_after_authority_activation(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_session: Any,
+    sample_project: dict[str, Any],
+    kind: str,
+) -> None:
+    service = _service(temp_db, tmp_path)
+    key = service.managed_signing_key()
+    assert key is not None
+    golden = Path(__file__).parents[1] / "runtime_grants/golden/direct_datastores.json"
+    grant = GrantBundle.model_validate_json(golden.read_bytes()).model_copy(
+        update={
+            "principal": GrantPrincipal.model_validate(
+                {
+                    "kind": kind,
+                    "execution_id": live_session.id,
+                    "session_id": live_session.id if kind != "maintenance" else None,
+                    "project_id": sample_project["id"],
+                    "machine_id": LOCAL_MACHINE_ID,
+                }
+            ),
+        }
+    )
+    old = materialize_managed_launch(
+        grant,
+        dest_dir=tmp_path / "old-launch",
+        signing_key=derive_managed_signing_key(API_KEY),
+        deadline_seconds=60,
+    )
+    fresh = materialize_managed_launch(
+        grant,
+        dest_dir=tmp_path / "fresh-launch",
+        signing_key=key,
+        deadline_seconds=60,
+    )
+    old_token = read_managed_api_token(old.env)
+    fresh_token = read_managed_api_token(fresh.env)
+    assert old_token is not None and fresh_token is not None
+    restarted = _service(temp_db, tmp_path)
+    extra = {
+        "X-Gobby-Agent-Run-Id"
+        if kind == "agent_run"
+        else "X-Gobby-Managed-Execution-Id": live_session.id,
+    }
+
+    def request(token: str) -> Request:
+        return _request(
+            _session_headers(token, live_session.id, sample_project["id"]) | extra,
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+
+    with patch.object(restarted, "_managed_capability_is_live", return_value=True):
+        refused = restarted.authenticate(request(old_token))
+        admitted = restarted.authenticate(request(fresh_token))
+    assert not refused.allowed and refused.code == "capability_invalid"
+    assert admitted.allowed, admitted
+
+
+@pytest.mark.parametrize("unsafe", ["permissions", "symlink", "truncated"])
+def test_capability_signing_key_refuses_unsafe_files(tmp_path: Path, unsafe: str) -> None:
+    service = _service(None, tmp_path)
+    key_file = tmp_path / "capability_signing_key"
+    target = tmp_path / "other-key"
+    target.write_bytes(b"x" * 32)
+    target.chmod(0o600)
+    if unsafe == "symlink":
+        key_file.symlink_to(target)
+    else:
+        key_file.write_bytes(b"x" * (1 if unsafe == "truncated" else 32))
+        key_file.chmod(0o644 if unsafe == "permissions" else 0o600)
+    assert service.managed_signing_key() is None
+
+
 SECOND_KEY_HEADERS = MACHINE_HEADERS | {"Authorization": f"Bearer {SECOND_KEY}"}
 BREAK_GLASS_SECRET = "session-binding-break-glass-secret"
 GRANT_ROUTES = ["/api/mcp/tools/call", "/api/sessions/foreign-session/acp/close"]
@@ -367,7 +542,7 @@ def test_session_credential_presents_its_own_interactive_grant(
 ) -> None:
     service = _grant_bound_service(temp_db, tmp_path)
     token = issue_session_api_token(
-        derive_managed_signing_key(API_KEY),
+        cast(bytes, service.managed_signing_key()),
         session_id=live_session.id,
         project_id=sample_project["id"],
         machine_id=LOCAL_MACHINE_ID,
@@ -395,7 +570,7 @@ def test_foreign_session_credential_cannot_present_another_sessions_grant(
 ) -> None:
     service = _grant_bound_service(temp_db, tmp_path)
     token = issue_session_api_token(
-        derive_managed_signing_key(API_KEY),
+        cast(bytes, service.managed_signing_key()),
         session_id=live_session.id,
         project_id=sample_project["id"],
         machine_id=LOCAL_MACHINE_ID,
@@ -461,7 +636,7 @@ def test_session_token_admits_its_own_session(
 ) -> None:
     service = _service(temp_db, tmp_path)
     token = issue_session_api_token(
-        derive_managed_signing_key(API_KEY),
+        cast(bytes, service.managed_signing_key()),
         session_id=live_session.id,
         project_id=sample_project["id"],
         machine_id=LOCAL_MACHINE_ID,
@@ -481,7 +656,7 @@ def test_session_token_refuses_other_session_and_run_selectors(
 ) -> None:
     service = _service(temp_db, tmp_path)
     token = issue_session_api_token(
-        derive_managed_signing_key(API_KEY),
+        cast(bytes, service.managed_signing_key()),
         session_id=live_session.id,
         project_id=sample_project["id"],
         machine_id=LOCAL_MACHINE_ID,
@@ -503,7 +678,7 @@ def test_session_token_refused_after_session_ends(
 ) -> None:
     service = _service(temp_db, tmp_path)
     token = issue_session_api_token(
-        derive_managed_signing_key(API_KEY),
+        cast(bytes, service.managed_signing_key()),
         session_id=live_session.id,
         project_id=sample_project["id"],
         machine_id=LOCAL_MACHINE_ID,
@@ -521,7 +696,7 @@ def test_expired_session_token_is_refused(
 ) -> None:
     service = _service(temp_db, tmp_path)
     token = issue_session_api_token(
-        derive_managed_signing_key(API_KEY),
+        cast(bytes, service.managed_signing_key()),
         session_id=live_session.id,
         project_id=sample_project["id"],
         machine_id=LOCAL_MACHINE_ID,

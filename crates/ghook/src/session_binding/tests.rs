@@ -78,15 +78,25 @@ fn machine_key_home() -> tempfile::TempDir {
 
 /// Serve one request, hand its raw text to `check`, and reply 200.
 fn serve_once(check: impl FnOnce(&str) + Send + 'static) -> (String, thread::JoinHandle<()>) {
+    serve_response("{}".to_owned(), check)
+}
+
+fn serve_response(
+    body: String,
+    check: impl FnOnce(&str) + Send + 'static,
+) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let request = read_http_request(&mut stream);
         check(&request);
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
-            .unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
     });
     (format!("http://{addr}"), handle)
 }
@@ -268,17 +278,23 @@ fn response_credential_is_stored_for_the_provider_and_cli_and_stripped() {
 }
 
 #[test]
-fn a_bound_session_start_restores_the_record_under_the_current_cli() {
+fn a_bound_session_start_replaces_the_old_record_after_key_activation() {
     let home = machine_key_home();
     session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
 
     isolated(home.path(), || {
         let envelope = session_start_envelope("sid-1", "resume");
         let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
-        let (url, server) = serve_once(|request| {
+        let body = json!({SESSION_CREDENTIAL_FIELD: {
+            "token": "fresh-daemon-token",
+            "session_id": SESSION_UUID,
+            "project_id": "22222222-2222-4222-8222-222222222222"
+        }})
+        .to_string();
+        let (url, server) = serve_response(body, |request| {
             assert_eq!(
                 header_values(request, "Authorization"),
-                vec![format!("Bearer {TOKEN}")]
+                vec![format!("Bearer {MACHINE_KEY}")]
             );
         });
 
@@ -289,30 +305,28 @@ fn a_bound_session_start_restores_the_record_under_the_current_cli() {
         let cli = current_cli_pid().expect("the parent CLI process is readable");
         let restored = session_credential::load(home.path(), &cli_pid_key(cli))
             .expect("the bound credential is restored under the CLI key");
-        assert_eq!(restored.token, TOKEN);
+        assert_eq!(restored.token, "fresh-daemon-token");
         assert_eq!(restored.session_id, SESSION_UUID);
+        let provider = session_credential::bound_for_provider(home.path(), "sid-1").unwrap();
+        assert_eq!(provider.token, "fresh-daemon-token");
     });
 }
 
 #[test]
-fn a_clear_session_start_is_minted_by_the_machine_path() {
+fn every_unspawned_session_start_can_remint_after_key_activation() {
     let home = machine_key_home();
     session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
 
     isolated(home.path(), || {
         for hook_type in ["session-start", "SessionStart"] {
-            let mut clear = session_start_envelope("sid-1", "clear");
-            clear.hook_type = hook_type.into();
-            assert!(
-                matches!(caller_for(&clear), Caller::Unbound),
-                "{hook_type} with source clear mints a successor"
-            );
-            let mut resume = session_start_envelope("sid-1", "resume");
-            resume.hook_type = hook_type.into();
-            assert!(
-                matches!(caller_for(&resume), Caller::Bound(_)),
-                "{hook_type} with source resume keeps its bound credential"
-            );
+            for source in ["startup", "resume", "clear"] {
+                let mut start = session_start_envelope("sid-1", source);
+                start.hook_type = hook_type.into();
+                assert!(
+                    matches!(caller_for(&start), Caller::Unbound),
+                    "{hook_type} with source {source} must reattest and mint a fresh credential"
+                );
+            }
         }
     });
 }

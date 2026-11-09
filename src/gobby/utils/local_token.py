@@ -106,15 +106,14 @@ def derive_managed_signing_key(api_key: str) -> bytes:
 
 
 def read_managed_signing_key(bootstrap: Path | None = None) -> bytes | None:
-    """Read the current startup-bound bootstrap key, failing closed on bad input."""
-    from gobby.config.bootstrap import BootstrapConfigError
-    from gobby.config.bootstrap_io import read_bootstrap_yaml
+    """Load the daemon's persistent authority; the machine bearer supplies no signing key."""
+    from gobby.utils.capability_signing_key import (
+        CAPABILITY_SIGNING_KEY_FILENAME,
+        ensure_capability_signing_key,
+    )
 
-    try:
-        api_key = read_bootstrap_yaml(bootstrap or daemon_bootstrap_path()).get("api_key")
-    except (OSError, BootstrapConfigError):
-        return None
-    return derive_managed_signing_key(api_key) if isinstance(api_key, str) and api_key else None
+    path = (bootstrap or daemon_bootstrap_path()).with_name(CAPABILITY_SIGNING_KEY_FILENAME)
+    return ensure_capability_signing_key(path)
 
 
 # This is a filename, not a credential value.

@@ -44,13 +44,13 @@ pub fn is_session_selector(name: &str) -> bool {
 
 /// Decide how the envelope's request authenticates.
 ///
-/// A `/clear` SessionStart starts a successor session, which only the machine path
-/// mints, so it never presents the predecessor's credential.
+/// Every SessionStart reattests the CLI through the machine path and receives a fresh
+/// credential, including after activation invalidates a cached provider token.
 pub fn caller_for(envelope: &Envelope) -> Caller {
     if session_credential::is_managed_environment() {
         return Caller::Managed;
     }
-    if is_clear_session_start(envelope) {
+    if is_session_start(envelope) {
         return Caller::Unbound;
     }
     let Some(provider_session_id) = provider_session_id(envelope) else {
@@ -114,12 +114,6 @@ fn store_credential(keys: &[String], credential: &SessionCredential) {
 
 fn is_session_start(envelope: &Envelope) -> bool {
     normalized_hook_type(&envelope.hook_type) == "sessionstart"
-}
-
-/// Whether the envelope is a SessionStart that a `/clear` produced.
-fn is_clear_session_start(envelope: &Envelope) -> bool {
-    is_session_start(envelope)
-        && envelope.input_data.get("source").and_then(Value::as_str) == Some("clear")
 }
 
 fn provider_session_id(envelope: &Envelope) -> Option<&str> {

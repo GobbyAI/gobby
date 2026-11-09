@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +21,7 @@ from gobby.servers.routes.mcp.endpoints.request_context import (
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.session_context import get_session_context
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -153,7 +153,7 @@ async def test_managed_wrapper_header_is_bound_to_signed_caller(
         break_glass_file=tmp_path / "absent-break-glass",
     )
     token = issue_agent_api_token(
-        derive_managed_signing_key("operator-test-key"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=run.id,
         session_id=caller.id,
         project_id=sample_project["id"],

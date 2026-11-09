@@ -18,12 +18,12 @@ from gobby.utils.local_token import (
     SESSION_TOKEN_KIND,
     AgentApiTokenClaims,
     classify_agent_api_token,
-    derive_managed_signing_key,
 )
 
 pytestmark = pytest.mark.unit
 
 OPERATOR_TOKEN = "operator-machine-token"
+SESSION_SIGNING_KEY = b"independent-session-signing-key!!"
 SESSION_ID = "5f1c0c3e-8a1e-4c1b-9d52-2d9b6c1f0a11"
 PROJECT_ID = "project-1"
 MACHINE_ID = "machine-1"
@@ -50,7 +50,12 @@ class _SessionRowDb:
 
 
 def _app_with_session(row: dict[str, str] | None) -> SimpleNamespace:
-    return SimpleNamespace(state=SimpleNamespace(database=_SessionRowDb(row)))
+    auth = SimpleNamespace(managed_signing_key=lambda: SESSION_SIGNING_KEY)
+    return SimpleNamespace(
+        state=SimpleNamespace(
+            database=_SessionRowDb(row), server=SimpleNamespace(auth_service=auth)
+        )
+    )
 
 
 def _envelope(headers: dict[str, str]) -> dict[str, Any]:
@@ -141,7 +146,7 @@ async def test_replay_presents_the_envelope_session_bound_credential(
 
     bearer = headers["Authorization"].removeprefix("Bearer ")
     assert bearer != OPERATOR_TOKEN
-    claims = classify_agent_api_token(bearer, derive_managed_signing_key(OPERATOR_TOKEN))
+    claims = classify_agent_api_token(bearer, SESSION_SIGNING_KEY)
     assert isinstance(claims, AgentApiTokenClaims)
     assert (claims.kind, claims.session_id, claims.project_id) == (
         SESSION_TOKEN_KIND,

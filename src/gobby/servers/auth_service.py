@@ -48,7 +48,6 @@ from gobby.utils.local_token import (
     AgentApiTokenClaims,
     AgentApiTokenRejection,
     classify_agent_api_token,
-    daemon_bootstrap_path,
     read_local_api_token,
     read_managed_signing_key,
     verify_expired_agent_api_token,
@@ -264,25 +263,12 @@ class AuthService:
         self._clock = clock
         self._break_glass_file = break_glass_file
         self._bootstrap_file = bootstrap_file
-        self._managed_key_stamp: tuple[Path, int, int, int] | None = None
-        self._managed_key: bytes | None = None
         self.browser_sessions = BrowserSessions()
 
     def managed_signing_key(self) -> bytes | None:
-        """Observe bootstrap replacement on the next request, without a refresh interval."""
-        path = self._bootstrap_file or daemon_bootstrap_path()
+        """Read the daemon key, validating the credential inode on every request."""
         with self._lock:
-            try:
-                stat = path.stat()
-            except OSError:
-                self._managed_key_stamp = None
-                self._managed_key = None
-                return None
-            stamp = (path, stat.st_ino, stat.st_mtime_ns, stat.st_size)
-            if stamp != self._managed_key_stamp:
-                self._managed_key = read_managed_signing_key(path)
-                self._managed_key_stamp = stamp
-            return self._managed_key
+            return read_managed_signing_key(self._bootstrap_file)
 
     def bind_runtime(
         self,

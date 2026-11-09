@@ -253,6 +253,44 @@ def _machine_caller(route: HookRoute) -> None:
     )
 
 
+@pytest.mark.parametrize("hook_type", ["pre-tool-use", "stop", "session-end"])
+@pytest.mark.parametrize(
+    "claimant", [None, Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)]
+)
+def test_machine_non_start_cannot_select_another_clis_body_session(
+    hook_route: HookRoute,
+    started_session: Any,
+    hook_type: str,
+    claimant: Claimant | None,
+) -> None:
+    _machine_caller(hook_route)
+    with (
+        patch("gobby.hooks.session_claimant.resolve_claimant", return_value=claimant),
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native") as handle,
+    ):
+        response = hook_route.client.post(
+            "/api/hooks/execute",
+            headers={"X-Gobby-Peer-Port": "53412"},
+            json={
+                "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+                "critical": False,
+                "hook_type": hook_type,
+                "source": "claude",
+                "input_data": {
+                    "session_id": started_session.external_id,
+                    "machine_id": TEST_MACHINE_ID,
+                    "terminal_context": {"parent_pid": CLI_PID},
+                },
+            },
+        )
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "claimant_unverified" if claimant is None else "session_claimant_mismatch"
+    }
+    handle.assert_not_called()
+
+
 def test_machine_start_naming_a_session_owned_by_another_cli_is_refused(
     hook_route: HookRoute, started_session: Any, temp_db: HubDatabase
 ) -> None:

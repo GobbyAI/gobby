@@ -46,9 +46,10 @@ from gobby.config.runtime_models import ConfigSnapshot
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.storage.schema_contract import expected_schema_identity
-from gobby.utils.local_token import derive_managed_signing_key, verify_agent_api_token
+from gobby.utils.local_token import verify_agent_api_token
 from gobby.utils.native_bin import native_bin_name
 from gobby.worktrees.git import WorktreeGitManager
+from tests.fixtures.capability_tokens import daemon_signing_key
 from tests.runtime_grants.support import config_snapshot, daemon_config
 
 _REAL_POPEN = subprocess.Popen
@@ -468,7 +469,7 @@ class TestEnsureIsolationCodeIndex:
         assert context.fencing_epoch == 9
         assert context.signing_secret == "sec-live"
 
-    def test_missing_signing_key_fails_before_grant_write(
+    def test_damaged_signing_key_fails_before_grant_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from gobby.agents.code_index import _prepare_gcode_runtime
@@ -478,6 +479,7 @@ class TestEnsureIsolationCodeIndex:
         runtime_root = tmp_path / "runtime"
         workspace.mkdir()
         source_home.mkdir()
+        (source_home / "capability_signing_key").write_bytes(b"")
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
         self._stub_grant_context(monkeypatch)
         signed = MagicMock(side_effect=AssertionError("grant must not be signed"))
@@ -778,7 +780,7 @@ class TestEnsureIsolationCodeIndex:
 
         token = result.api_token
         assert token is not None
-        claims = verify_agent_api_token(token, derive_managed_signing_key("isolated-agent-token"))
+        claims = verify_agent_api_token(token, daemon_signing_key(source_home / "bootstrap.yaml"))
         assert claims is not None
         assert claims.agent_run_id == str(credential.managed_execution_id)
         assert (claims.project_id, claims.session_id) == (self._PROJECT_ID, self._SESSION_ID)

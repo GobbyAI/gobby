@@ -147,13 +147,11 @@ def _provider_session_id(input_data: Any) -> str | None:
 def _claim_session_start(
     server: "HTTPServer", request: Request, payload: dict[str, Any]
 ) -> SessionStartClaim:
-    """Attest a machine-bearer SessionStart's kernel-proven claimant before its handler runs.
+    """Attest every machine-bearer hook's kernel-proven claimant before its handler runs.
 
     The claimant's proven CLI pid becomes the stored parent pid of a new session, in place of
     the body's own parent pid, which is never proof.
     """
-    if payload.get("hook_type") != HookType.SESSION_START.value:
-        return SessionStartClaim()
     if request.headers.get(AGENT_RUN_ID_HEADER):
         return SessionStartClaim()
     identity = server.auth_service.verified_front_door_identity(request)

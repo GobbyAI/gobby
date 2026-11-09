@@ -43,7 +43,6 @@ from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
-    derive_managed_signing_key,
     issue_agent_api_token,
     issue_session_api_token,
 )
@@ -56,6 +55,7 @@ from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.handlers import execute_mcp_step
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
+from tests.fixtures.capability_tokens import daemon_signing_key
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
@@ -784,7 +784,7 @@ async def test_actor_is_derived_from_session_context_and_principal(
     )
     stack.sessions.update_terminal_pickup_metadata(agent_session.id, agent_run_id=run.id)
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        daemon_signing_key(tmp_path / "bootstrap.yaml"),
         agent_run_id=run.id,
         session_id=agent_session.id,
         project_id=stack.project_id,
@@ -798,7 +798,7 @@ async def test_actor_is_derived_from_session_context_and_principal(
     }
     # A selector names its session, so the wrapper presents that session's own credential.
     session_token = issue_session_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        daemon_signing_key(tmp_path / "bootstrap.yaml"),
         session_id=session.id,
         project_id=stack.project_id,
         machine_id=LOCAL_MACHINE_ID,
@@ -865,7 +865,9 @@ async def test_actor_is_derived_from_session_context_and_principal(
         assert internal is not None
         registry = internal.get_registry("gobby-workspaces")
         assert registry is not None
-        claims = classify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
+        claims = classify_agent_api_token(
+            agent_token, daemon_signing_key(tmp_path / "bootstrap.yaml")
+        )
         assert isinstance(claims, AgentApiTokenClaims)
         with _principal(claims):
             assert await _code(registry, "create_workspace", name="claims") == "forbidden"
@@ -873,7 +875,7 @@ async def test_actor_is_derived_from_session_context_and_principal(
                 assert await _code(registry, "create_workspace", name="claims") == "forbidden"
         # A session's own credential acts as that session, and no other.
         own_session = classify_agent_api_token(
-            session_token, derive_managed_signing_key(OPERATOR_TOKEN)
+            session_token, daemon_signing_key(tmp_path / "bootstrap.yaml")
         )
         assert isinstance(own_session, AgentApiTokenClaims)
         with _principal(own_session), session_context_for_test(agent_session.id):

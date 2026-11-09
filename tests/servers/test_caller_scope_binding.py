@@ -35,12 +35,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.break_glass import BREAK_GLASS_HEADER
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.machine_id import get_machine_id
+from tests.fixtures.capability_tokens import daemon_signing_key
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.servers.conftest import (
     OTHER_USER_ID,
-    TEST_API_KEY,
     TEST_FRONT_DOOR_IDENTITY,
     TEST_FRONT_DOOR_SECRET,
     authenticate_as,
@@ -141,7 +141,7 @@ def _bearer(
     sample_project: dict[str, Any],
     machine_id: str,
     *,
-    api_key: str = _API_KEY,
+    signing_key: bytes,
 ) -> dict[str, str]:
     session = session_manager.register(
         external_id=f"caller-scope-{uuid4().hex}",
@@ -155,7 +155,7 @@ def _bearer(
         prompt="caller scope",
     )
     token = issue_agent_api_token(
-        derive_managed_signing_key(api_key),
+        signing_key,
         agent_run_id=run.id,
         session_id="session-123",
         project_id=sample_project["id"],
@@ -202,7 +202,13 @@ def test_authenticate_resolves_caller_user(
 
     owned = service.authenticate(
         _request(
-            _bearer(temp_db, session_manager, sample_project, hub),
+            _bearer(
+                temp_db,
+                session_manager,
+                sample_project,
+                hub,
+                signing_key=cast(bytes, service.managed_signing_key()),
+            ),
             method="POST",
             path="/api/mcp/tools/call",
         )
@@ -212,7 +218,13 @@ def test_authenticate_resolves_caller_user(
 
     missing = service.authenticate(
         _request(
-            _bearer(temp_db, session_manager, sample_project, str(uuid4())),
+            _bearer(
+                temp_db,
+                session_manager,
+                sample_project,
+                str(uuid4()),
+                signing_key=cast(bytes, service.managed_signing_key()),
+            ),
             method="POST",
             path="/api/mcp/tools/call",
         )
@@ -223,7 +235,13 @@ def test_authenticate_resolves_caller_user(
     raising = _service(cast(HubDatabase, _MachinesRaise(temp_db)), tmp_path / "raising")
     failed_lookup = raising.authenticate(
         _request(
-            _bearer(temp_db, session_manager, sample_project, hub),
+            _bearer(
+                temp_db,
+                session_manager,
+                sample_project,
+                hub,
+                signing_key=cast(bytes, raising.managed_signing_key()),
+            ),
             method="POST",
             path="/api/mcp/tools/call",
         )
@@ -285,7 +303,13 @@ def test_authenticate_resolves_caller_user(
     )
     assert (unbound.allowed, unbound.code) == (False, "forged_identity")
 
-    bearer_headers = _bearer(temp_db, session_manager, sample_project, hub)
+    bearer_headers = _bearer(
+        temp_db,
+        session_manager,
+        sample_project,
+        hub,
+        signing_key=cast(bytes, service.managed_signing_key()),
+    )
     agent_grant = encode_grant_header(
         _signed_presentation_grant(
             kind="agent_run",
@@ -469,14 +493,14 @@ def test_http_ownership_matrix(
         session_manager,
         sample_project,
         hub,
-        api_key=TEST_API_KEY,
+        signing_key=daemon_signing_key(tmp_path / "bootstrap.yaml"),
     )
     other_bearer = _bearer(
         temp_db,
         session_manager,
         sample_project,
         other_machine,
-        api_key=TEST_API_KEY,
+        signing_key=daemon_signing_key(tmp_path / "bootstrap.yaml"),
     )
     glass_path = tmp_path / "matrix-break-glass"
     glass_path.write_text("break-glass-secret\n")

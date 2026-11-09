@@ -33,7 +33,6 @@ from gobby.hooks.replay_fence import defer_live_hook
 from gobby.utils import daemon_url as daemon_address
 from gobby.utils.local_token import (
     daemon_bootstrap_path,
-    derive_managed_signing_key,
     issue_session_api_token,
     read_local_api_token,
 )
@@ -271,7 +270,7 @@ def _mark_carrying_envelopes_processed(
             )
 
 
-def _replay_session_token(app: Any, envelope: dict[str, Any], operator_token: str) -> str | None:
+def _replay_session_token(app: Any, envelope: dict[str, Any]) -> str | None:
     """Mint the envelope's own session credential so its replay keeps the session binding.
 
     The envelope's session header is what binds a replayed hook to its session, and the
@@ -301,8 +300,12 @@ def _replay_session_token(app: Any, envelope: dict[str, Any], operator_token: st
         return None
     if row is None:
         return None
+    auth = getattr(getattr(getattr(app, "state", None), "server", None), "auth_service", None)
+    signing_key = auth.managed_signing_key() if auth is not None else None
+    if signing_key is None:
+        return None
     return issue_session_api_token(
-        derive_managed_signing_key(operator_token),
+        signing_key,
         session_id=str(row["id"]),
         project_id=str(row["project_id"]),
         machine_id=machine_id,
@@ -352,9 +355,7 @@ async def _post_envelope(
     if not operator_token:
         return httpx.Response(503)
     session_token = (
-        await asyncio.to_thread(_replay_session_token, app, envelope, operator_token)
-        if app is not None
-        else None
+        await asyncio.to_thread(_replay_session_token, app, envelope) if app is not None else None
     )
     request_headers = _replay_headers(
         envelope,

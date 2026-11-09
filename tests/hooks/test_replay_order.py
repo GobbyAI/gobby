@@ -88,6 +88,7 @@ async def test_backlog_keeps_later_same_session_events(
     session_manager.update_status(session.id, "paused")
     manager = LifecycleHooks(session_manager)
     server = create_http_server(session_manager=session_manager)
+    server.app.state.server = server
     server.app.state.hook_manager = manager
     # The daemon app exposes its hub database to replay, so a replayed envelope can keep its session.
     server.app.state.database = session_manager.db
@@ -132,6 +133,7 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     )
     manager = LifecycleHooks(session_manager)
     server = create_http_server(session_manager=session_manager)
+    server.app.state.server = server
     server.app.state.hook_manager = manager
     # The daemon app exposes its hub database to replay, so a replayed envelope can keep its session.
     server.app.state.database = session_manager.db
