@@ -658,7 +658,7 @@ def _score(args: argparse.Namespace) -> None:
         for value in [metrics[name]]
     }
     gate_passed = all(passed[name] for name in list(thresholds)[:8])
-    rule = 1 if g_regressions <= 1 else (2 if gate_passed and not run.no_decisions else 3)
+    rule = 1 if g_regressions <= 0 else (2 if gate_passed and not run.no_decisions else 3)
     config: dict[str, str] = {"code_index.community_label.enabled": str(rule != 3).lower()}
     for consumer, enabled in (
         ("community_label", rule == 2),

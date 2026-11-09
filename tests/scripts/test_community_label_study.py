@@ -582,6 +582,27 @@ def test_ship_configuration_follows_each_branch(
     _assert_ships(results, _off_everywhere("false"))
 
 
+def test_single_g_regression_does_not_ship_rule_one(
+    tmp_path: Path, openrouter_wire: OpenRouterWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capture = _capture(tmp_path, openrouter_wire, cost_per_token=1e-8)
+    _fresh_decisions(monkeypatch)
+    bare = _prepare(tmp_path, "one-regression", "--no-decisions")
+    assert bare.code == 0
+    target = min(entry["community"] for entry in bare.key().values() if "D" in _arms(entry))
+
+    # G loses to D on exactly one community. Rule 1 requires G to regress on zero communities.
+    def one_regression(entry: dict[str, Any], _name: str) -> Rating:
+        if "G" in _arms(entry) and entry["community"] == target:
+            return (0, 0)
+        return (2, 2)
+
+    code, results = _score(bare, _rate(bare, one_regression, "one-regression.csv"), capture)
+    assert code == 0
+    assert "G regressions: 1/15" in results
+    _assert_ships(results, _off_everywhere("false"))
+
+
 def test_missing_capture_cost_fails_cost_bar(
     tmp_path: Path, openrouter_wire: OpenRouterWire, monkeypatch: pytest.MonkeyPatch
 ) -> None:
