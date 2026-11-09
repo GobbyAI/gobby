@@ -2935,10 +2935,29 @@ async fn direct_pane_keys_reach_the_host_not_the_daemon() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_granted_lease_without_a_host_grant_offers_take_back() {
+    assert_eq!(
+        ungranted_lease_offers_take_back(false).await,
+        HOST_GRANT_UNAVAILABLE
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_explicit_host_grant_refusal_offers_take_back() {
+    assert_eq!(
+        ungranted_lease_offers_take_back(true).await,
+        HOST_GRANT_UNAVAILABLE
+    );
+}
+
+async fn ungranted_lease_offers_take_back(serve_control: bool) -> String {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-ungranted";
-    let host = DirectHost::start("epoch-ungranted").await;
+    let mut host = DirectHost::start("epoch-ungranted").await;
+    if serve_control {
+        host.serve_gterm_control("local-token");
+        host.refuse_grants();
+    }
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
     let pane_id = workspace
         .pane_for_terminal(terminal_id)
@@ -2980,7 +2999,6 @@ async fn a_granted_lease_without_a_host_grant_offers_take_back() {
     let pane = workspace.pane(pane_id);
     assert!(pane.is_observe(), "an ungranted pane cannot hold control");
     assert!(pane.has_take_back(), "it offers take-back instead");
-    assert_eq!(pane.status_message(), Some(HOST_GRANT_UNAVAILABLE));
     assert!(
         websocket_requests(&mock, "terminal_input").is_empty(),
         "gclient never falls back to daemon-mediated keys"
@@ -2999,8 +3017,21 @@ async fn a_granted_lease_without_a_host_grant_offers_take_back() {
         "the refusal is visible: {:?}",
         chrome.alert_log
     );
+    if serve_control {
+        assert!(
+            host.control_requests().iter().any(|request| {
+                request.get("method").and_then(|method| method.as_str()) == Some("grant_input")
+            }),
+            "the host's authenticated control path refused the grant"
+        );
+    }
+    let status = pane
+        .status_message()
+        .expect("host refusal status")
+        .to_owned();
     host.shutdown().await;
     mock.shutdown().await;
+    status
 }
 
 #[tokio::test(flavor = "current_thread")]

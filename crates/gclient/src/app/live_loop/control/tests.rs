@@ -2,6 +2,7 @@ use gobby_terminal::protocol::{
     read_message_async, write_message_async, ClientMessage, ServerMessage, MAX_FRAME_SIZE,
 };
 use serde_json::json;
+use std::io;
 use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
@@ -14,6 +15,163 @@ use crate::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
 };
 use crate::ui::Chrome;
+
+async fn host_grant_error_after_take(daemon_ready: bool, daemon_first: bool) -> String {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    workspace.daemon_ready = daemon_ready;
+    let pane_id = PaneId(1);
+    let mut pane = cut_pane_with_keys().await;
+    let attachment = pane.attachment_id().to_owned();
+    pane.set_lease_generation(1);
+    pane.control_request = Some(7);
+    workspace.panes.insert(pane_id, pane);
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    let take = || ControlOutcome {
+        pane_id,
+        request: 7,
+        reply: Ok(json!({
+            "granted": true,
+            "host_input_granted": false,
+            "lease_generation": 1,
+        })),
+    };
+    if daemon_first {
+        apply_control_outcome(&mut workspace, &mut chrome, &jobs, take());
+    }
+    apply_outage_grant(
+        &mut workspace,
+        &mut chrome,
+        &jobs,
+        pane_id,
+        &attachment,
+        1,
+        Err(io::Error::from(io::ErrorKind::NotFound)),
+    );
+    if !daemon_first {
+        apply_control_outcome(&mut workspace, &mut chrome, &jobs, take());
+    }
+
+    let pane = workspace.pane(pane_id);
+    assert!(pane.is_observe(), "neither outcome grants host input");
+    assert!(pane.has_take_back());
+    assert!(!pane.direct_input());
+    assert!(
+        pane.pending_input.is_empty(),
+        "undeliverable keys are dropped"
+    );
+    assert!(
+        chrome
+            .alert_log
+            .iter()
+            .any(|toast| toast.title.contains(crate::app::HOST_GRANT_UNAVAILABLE)),
+        "the daemon's explicit host refusal remains visible"
+    );
+    pane.status_message()
+        .expect("host refusal status")
+        .to_owned()
+}
+
+#[tokio::test]
+async fn host_grant_error_with_ready_daemon_after_take_keeps_host_refusal() {
+    assert_eq!(
+        host_grant_error_after_take(true, true).await,
+        crate::app::HOST_GRANT_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
+async fn host_grant_error_with_ready_daemon_before_take_keeps_host_refusal() {
+    assert_eq!(
+        host_grant_error_after_take(true, false).await,
+        crate::app::HOST_GRANT_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
+async fn host_grant_error_with_down_daemon_after_take_reports_outage() {
+    assert_eq!(
+        host_grant_error_after_take(false, true).await,
+        super::super::outage_grant::CONTROL_UNREACHABLE
+    );
+}
+
+#[tokio::test]
+async fn host_grant_error_with_down_daemon_before_take_keeps_explicit_refusal() {
+    assert_eq!(
+        host_grant_error_after_take(false, false).await,
+        crate::app::HOST_GRANT_UNAVAILABLE
+    );
+}
+
+async fn stale_host_grant_error(older_attachment: bool) -> Vec<ControlState> {
+    let mut controls = Vec::new();
+    for daemon_ready in [false, true] {
+        let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+            .expect("unconnected daemon handle");
+        let mut workspace = Workspace::live(daemon);
+        workspace.daemon_ready = daemon_ready;
+        let pane_id = PaneId(1);
+        let mut pane = cut_pane_with_keys().await;
+        let current_attachment = pane.attachment_id().to_owned();
+        pane.set_lease_generation(2);
+        pane.control = ControlState::Held;
+        assert!(pane.apply_host_grant(Some(true)));
+        let attachment = if older_attachment {
+            format!("{current_attachment}-old")
+        } else {
+            current_attachment
+        };
+        let lease = if older_attachment { 2 } else { 1 };
+        workspace.panes.insert(pane_id, pane);
+        let jobs = LoopJobs::new(&workspace);
+        let mut chrome = Chrome::dark();
+
+        apply_outage_grant(
+            &mut workspace,
+            &mut chrome,
+            &jobs,
+            pane_id,
+            &attachment,
+            lease,
+            Err(io::Error::from(io::ErrorKind::NotFound)),
+        );
+
+        let pane = workspace.pane(pane_id);
+        assert!(
+            pane.direct_input(),
+            "an old error cannot revoke a new grant"
+        );
+        assert!(!pane.has_take_back());
+        assert_eq!(
+            pane.pending_input.len(),
+            3,
+            "newer queued input is retained"
+        );
+        assert_eq!(pane.status_message(), None);
+        assert!(chrome.alert_log.is_empty());
+        controls.push(pane.control);
+    }
+    controls
+}
+
+#[tokio::test]
+async fn host_grant_error_for_stale_attachment_preserves_current_grant() {
+    assert_eq!(
+        stale_host_grant_error(true).await,
+        vec![ControlState::Held, ControlState::Held]
+    );
+}
+
+#[tokio::test]
+async fn host_grant_error_for_stale_lease_preserves_current_grant() {
+    assert_eq!(
+        stale_host_grant_error(false).await,
+        vec![ControlState::Held, ControlState::Held]
+    );
+}
 
 #[tokio::test]
 async fn a_roster_refresh_requests_control_for_new_focus_or_a_pending_attachment() {
