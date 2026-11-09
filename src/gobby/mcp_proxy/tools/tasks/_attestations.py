@@ -1,6 +1,7 @@
 """Thin generic task-evidence transport; policy belongs to selected rules."""
 
 import asyncio
+from dataclasses import asdict
 from typing import Any
 
 from pydantic import ValidationError
@@ -12,7 +13,7 @@ from gobby.tasks.attestations import (
     AttestationError,
     AttestationSubmission,
     list_attestations,
-    record_attestation,
+    record_attestation_recording,
 )
 from gobby.tasks.lifecycle_access import resolve_lifecycle_task
 from gobby.utils.session_context import get_current_session_id
@@ -41,8 +42,8 @@ def create_attestation_registry(ctx: RegistryContext) -> InternalToolRegistry:
         try:
             task, author = await asyncio.to_thread(resolve, task_id)
             submission = AttestationSubmission.model_validate(kwargs)
-            attestation, created = await asyncio.to_thread(
-                record_attestation,
+            recording = await asyncio.to_thread(
+                record_attestation_recording,
                 ctx.task_manager.db,
                 task_id=task.id,
                 session_id=author,
@@ -50,9 +51,15 @@ def create_attestation_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
         except (ValueError, ValidationError, TaskNotFoundError) as exc:
             return {"error": str(exc)}
-        if created:
+        if recording.created:
             ctx.task_manager._notify_listeners()
-        return {"record": attestation.model_dump(mode="json"), "created": created}
+        result: dict[str, Any] = {
+            "record": recording.record.model_dump(mode="json"),
+            "created": recording.created,
+        }
+        if recording.claim_flow_stalled is not None:
+            result["claim_flow_stalled"] = asdict(recording.claim_flow_stalled)
+        return result
 
     async def listing(task_id: str) -> dict[str, Any]:
         try:
