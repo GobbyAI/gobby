@@ -231,7 +231,8 @@ fn prepare_sandbox(
 }
 
 /// Launches the sandbox from the resolved policy inputs. The prompt file is removed on every path,
-/// including a failed input resolution, because it exists only for this preparation.
+/// including a failed input resolution, because it exists only for this preparation. A failed
+/// removal is appended to a preparation failure, which keeps its reason.
 fn sandbox_from_inputs(
     inputs: anyhow::Result<PolicyInputs>,
     prompt_file: &Path,
@@ -241,15 +242,16 @@ fn sandbox_from_inputs(
         prepare_launch_with(&inputs, prompt_file, installation)
             .map_err(|error| LaunchFailure::new(ExitReason::PrepareFailed, error.to_string()))
     });
-    let removed = remove_prompt_file(prompt_file);
-    let sandbox = prepared?;
-    removed.map_err(|error| {
-        LaunchFailure::new(
-            ExitReason::PrepareFailed,
-            format!("remove prompt file: {error}"),
-        )
-    })?;
-    Ok(sandbox)
+    let removed =
+        remove_prompt_file(prompt_file).map_err(|error| format!("remove prompt file: {error}"));
+    match (prepared, removed) {
+        (prepared, Ok(())) => prepared,
+        (Ok(_), Err(detail)) => Err(LaunchFailure::new(ExitReason::PrepareFailed, detail)),
+        (Err(mut failure), Err(detail)) => {
+            failure.detail = format!("{}; {detail}", failure.detail);
+            Err(failure)
+        }
+    }
 }
 
 fn policy_inputs(
