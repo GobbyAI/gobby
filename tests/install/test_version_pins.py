@@ -60,6 +60,13 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.82"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
+        # #25710: gcore's embedded catalog manifest changed, so every shipped binary whose
+        # closure reaches gobby-core gets a forward patch bump under its installed version.
+        ("gmcp", "0.1.35"),
+        ("gclient", "0.1.111"),
+        ("gcode", "1.9.106"),
+        ("gdaemon", "0.4.138"),
+        ("ghook", "0.9.70"),
     ],
 )
 def test_changed_source_floors_cover_their_patch_bumps(bin_name: str, minimum: str) -> None:
