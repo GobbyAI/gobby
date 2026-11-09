@@ -6,7 +6,7 @@ use super::{
     provider_command::build_command,
     provider_env::{EnvInputs, build_env},
     sandbox::{
-        PolicyInputs,
+        PolicyInputs, operator_bootstrap_path,
         runtime::{SandboxLaunch, SrtInstallation, prepare_launch_with},
     },
     state::{AgentState, ExitRecord, RunPhase, WorkspaceRecord},
@@ -226,7 +226,7 @@ fn prepare_sandbox(
     cwd: &Path,
     prompt_file: &Path,
 ) -> Result<SandboxLaunch, LaunchFailure> {
-    let inputs = policy_inputs(gobby_home, context, run_id, payload, cwd);
+    let inputs = policy_inputs(gobby_home, context, run_id, payload, cwd).map_err(prepare_error)?;
     let prepared = prepare_launch_with(&inputs, prompt_file, &context.installation);
     let removed = remove_prompt_file(prompt_file);
     let sandbox = prepared
@@ -246,11 +246,11 @@ fn policy_inputs(
     run_id: &str,
     payload: &SpawnPayload,
     cwd: &Path,
-) -> PolicyInputs {
+) -> anyhow::Result<PolicyInputs> {
     // The cache variables name this run's caches, so they win over the ambient values.
     let mut env = context.ambient.clone();
     env.extend(context.cache_env.clone());
-    PolicyInputs {
+    Ok(PolicyInputs {
         provider: payload.provider.clone(),
         sandbox: payload.sandbox.clone(),
         source_root: PathBuf::from(&payload.source_root),
@@ -267,13 +267,15 @@ fn policy_inputs(
         prewarm_pre_commit_store: payload.prewarm_pre_commit_store,
         platform: context.platform.clone(),
         darwin_user_dirs: None,
+        // From the passwd entry, never the seat HOME: an environment variable cannot redirect it.
+        operator_bootstrap: operator_bootstrap_path()?,
         // The payload carries no seat-folder authority, so these grant nothing.
         definition: None,
         session_seq: None,
         epic_seq: None,
         read_all_agent_workspaces: false,
         predecessor_workspace_folders: Vec::new(),
-    }
+    })
 }
 
 /// The sandbox wrapper with the native env prefix between its `--` and the provider. `wrap`
