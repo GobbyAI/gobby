@@ -485,7 +485,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 491,
         filename: "491_scope_role_sweeps_to_owning_hub.sql",
-        checksum: "427c707184af3a441ec1adcdd7992480492f86479a5742f695519ecab223c0fd",
+        checksum: "f73c703a077253bc9e539fa3409c6c856dc871ba36d916f436d1f6be5fc6c211",
         sql: include_str!("../../assets/schema/migrations/491_scope_role_sweeps_to_owning_hub.sql"),
     },
 ];

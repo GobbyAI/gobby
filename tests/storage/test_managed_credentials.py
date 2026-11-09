@@ -1375,8 +1375,8 @@ def test_other_daemon_waits_for_expired_lease_then_recovers_terminal_and_orphan_
             agent_run_id=fixture.agent_run_id,
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
+        _plant_login_role(fixture.database_url, orphan_role)
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
-            admin.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(orphan_role)))
             admin.execute(
                 "UPDATE public.agent_runs SET status = 'error' WHERE id = %s",
                 (fixture.agent_run_id,),

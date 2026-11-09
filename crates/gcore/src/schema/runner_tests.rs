@@ -444,6 +444,30 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_eq!(check_expression, "false");
         }
     }
+    // Migration 490 (#25804) gives the capability role one project-scoped SELECT
+    // policy on tasks and task_dependencies, and no write policy on either table.
+    for (table, predicate_fragment) in [
+        ("tasks", "current_project_id"),
+        ("task_dependencies", "EXISTS"),
+    ] {
+        let policies = actual
+            .remove(table)
+            .expect("gcode plan-coverage reads must carry a read policy");
+        let operations: Vec<(String, String)> = policies
+            .iter()
+            .map(|(name, command, _, _)| (name.clone(), command.clone()))
+            .collect();
+        assert_eq!(
+            operations,
+            [("gobby_gcode_project_read".to_owned(), "SELECT".to_owned())]
+        );
+        for (_, _, using_expression, _) in policies {
+            assert!(
+                using_expression.contains(predicate_fragment),
+                "{table}: {using_expression}"
+            );
+        }
+    }
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"

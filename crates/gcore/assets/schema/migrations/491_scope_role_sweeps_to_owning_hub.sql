@@ -29,10 +29,10 @@ CREATE FUNCTION gobby_agent_auth.claim_principal_role_owner() RETURNS trigger
     SET createrole_self_grant TO ''
     AS $_$
 BEGIN
-    IF TG_TABLE_SCHEMA IS DISTINCT FROM 'gobby_agent_auth'
+    IF TG_TABLE_SCHEMA IS DISTINCT FROM current_schema()
         OR TG_TABLE_NAME IS DISTINCT FROM 'principal_bindings'
     THEN
-        RAISE EXCEPTION 'role owner claim runs only on gobby_agent_auth.principal_bindings';
+        RAISE EXCEPTION 'role owner claim runs only on the auth principal_bindings table';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles AS role WHERE role.rolname = NEW.role_name)
         AND shobj_description(
@@ -174,7 +174,7 @@ reconciled_count INTEGER := 0;
 retry_pending BOOLEAN := FALSE;
 BEGIN
 PERFORM pg_advisory_xact_lock(hashtextextended('gobby-agent-auth-reconcile', 0));
-IF NOT EXISTS (SELECT 1 FROM $schema.machines WHERE id = p_machine_id) THEN
+IF NOT EXISTS (SELECT 1 FROM public.machines WHERE id = p_machine_id) THEN
 RAISE EXCEPTION 'unknown reconciling machine' USING ERRCODE = '23503';
 END IF;
 
@@ -183,7 +183,7 @@ SELECT pb.managed_execution_id, pb.credential_generation
 FROM principal_bindings AS pb
 LEFT JOIN daemon_registry AS daemon
 ON daemon.machine_id = pb.issuing_machine_id
-LEFT JOIN $schema.agent_runs AS run
+LEFT JOIN public.agent_runs AS run
 ON run.id = pb.agent_run_id
 WHERE pb.revoked_at IS NULL
 AND (
