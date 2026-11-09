@@ -12,9 +12,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.idle_detector import ComposerRead
 from gobby.hub.machine_routing import is_local_machine
+from gobby.terminals.composer_ledger import (
+    CURSOR_DRAFT_REASON,
+    confirm_cursor_draft,
+    cursor_draft_mark,
+)
 
 if TYPE_CHECKING:
+    from gobby.events.live_wake import TerminalActivity
     from gobby.events.wake import WakeDispatcher
 
 NODE_TERMINAL_WITHHELD = "node_terminal_withheld"
@@ -66,3 +73,41 @@ async def target_gate(
         "reason": refusal.message,
         "ism_persisted": True,
     }
+
+
+async def settle_cursor_draft(
+    dispatcher: WakeDispatcher,
+    session_id: str,
+    terminal: Any | None,
+    activity: TerminalActivity,
+) -> ComposerRead:
+    """The composer a wake acts on: an idle, empty pane frame clears a cursor-only draft.
+
+    The pane decides, and a turn in flight is never probed. The draft's mark is taken before
+    the frame is read, and the ledger clears only a draft still at that mark, so input that
+    lands in between keeps the draft. Otherwise the draft stays and raises the seat's item.
+    """
+    composer = activity.composer
+    if composer.reason != CURSOR_DRAFT_REASON or terminal is None:
+        return composer
+    if activity.turn_in_flight_fingerprint is not None:
+        return composer
+    terminal_id = str(terminal.id)
+    mark = cursor_draft_mark(terminal_id)
+    if mark is None:
+        return composer
+    # Imported lazily: the send_keys package imports terminal and agent modules that
+    # themselves import the events package.
+    from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import send_keys_target_refusal
+
+    refusal = await send_keys_target_refusal(
+        session_id,
+        dispatcher._terminal_manager,
+        dispatcher._terminal_runtime_registry,
+        resolved_terminal=terminal,
+        ledger_vouches=True,
+        cursor_draft=True,
+    )
+    if refusal is None and confirm_cursor_draft(terminal_id, mark):
+        return ComposerRead("empty")
+    return composer

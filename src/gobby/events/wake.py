@@ -40,7 +40,7 @@ from gobby.events.wake_active_recovery import (
 )
 from gobby.events.wake_notifications import persist_completion_notification
 from gobby.events.wake_sdk import dispatch_sdk_wake
-from gobby.events.wake_target import target_gate
+from gobby.events.wake_target import settle_cursor_draft, target_gate
 from gobby.events.wake_terminal_resolution import (
     LiveTerminalResolver,
     SessionTerminalRoute,
@@ -779,8 +779,9 @@ class WakeDispatcher:
         checks above run first, so a running turn is never steered, and the hold does
         not apply to other wakes.
 
-        A gap or interrupt block raises the seat's attention item naming
-        ``release_composer``; any other read retires it (``composer_attention``).
+        A gap, an interrupt, or a cursor-only draft the pane does not confirm empty raises
+        the seat's attention item naming ``release_composer``; any other read retires it
+        (``composer_attention``).
 
         A node terminal's composer is the node's report, read from the hub store.
         Only an empty one passes this check, and target_gate then withholds every
@@ -803,16 +804,17 @@ class WakeDispatcher:
         except Exception:
             logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return composer_unconfirmed_result(session_id, method=method), False
+        composer = await settle_cursor_draft(self, session_id, terminal, activity)
         if self._attention_manager is not None:
             await sync_composer_attention(
-                self._attention_manager, self._run_db, session, activity.composer.reason
+                self._attention_manager, self._run_db, session, composer.reason
             )
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
         if handoff_continuation:
-            if activity.composer.state == "empty":
+            if composer.state == "empty":
                 return None, True
-            if activity.composer.state == "draft":
+            if composer.state == "draft":
                 return composer_occupied_result(session_id, method=method), False
             return composer_unconfirmed_result(session_id, method=method), False
         pending = await self._run_db(self._ism_manager.get_undelivered_wake_messages, session_id)
@@ -824,7 +826,7 @@ class WakeDispatcher:
                 return pane_focused_result(session_id, method=method), False
             # The pane is unfocused now, so a hold recorded earlier is stale.
             self._focus_holds.get(terminal_id, set()).discard(session_id)
-        state = activity.composer.state
+        state = composer.state
         if state == "empty":
             return None, True
         if state == "draft":

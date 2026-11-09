@@ -19,7 +19,7 @@ from typing import Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.agents.srt_runtime import srt_install_root
-from gobby.terminals.composer_ledger import read_composer
+from gobby.terminals.composer_ledger import CURSOR_DRAFT_REASON, read_composer
 from gobby.terminals.foreground import (
     command_name,
     foreground_child_executables,
@@ -174,6 +174,7 @@ async def send_keys_target_refusal(
     clear_held: bool = False,
     resolved_terminal: Any | None = None,
     ledger_vouches: bool = False,
+    cursor_draft: bool = False,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
 
@@ -186,6 +187,10 @@ async def send_keys_target_refusal(
     (Grok) has no frame to read, so the ledger's empty verdict confirms its composer; the
     identity, credential, busy and idle-pane checks still apply. Without it, such a CLI is
     refused, as send_keys has always refused it.
+
+    ``cursor_draft`` is set by a live wake that found a cursor-only draft. The ledger's draft
+    is not refused then: the frame alone must read as an empty idle composer, and a CLI
+    with no frame reader is refused.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
@@ -223,7 +228,11 @@ async def send_keys_target_refusal(
 
         composer = read_composer(terminal.id)
         draining = clear_held and composer.state == "held"
-        if composer.state != "empty" and not draining:
+        # A cursor-only draft is confirmed by the frame alone: the frame must read empty below.
+        probing = (
+            cursor_draft and composer.state == "draft" and composer.reason == CURSOR_DRAFT_REASON
+        )
+        if composer.state != "empty" and not draining and not probing:
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
@@ -233,7 +242,7 @@ async def send_keys_target_refusal(
         registry = _detection_registry(terminal_manager)
         read_frame = composer_reader(registry, cli)
         manifest = registry.for_provider(cli)
-        if manifest is None or (read_frame is None and not ledger_vouches):
+        if manifest is None or (read_frame is None and (probing or not ledger_vouches)):
             return _refuse(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",
