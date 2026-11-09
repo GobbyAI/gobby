@@ -1656,6 +1656,7 @@ class TestUpdateDefinitionNestedFields:
             "reviews",
             "send_message_targets",
             "spawnable_agents",
+            "spawner_capabilities",
             "supplemental_review",
             "task_close_reasons",
             "task_close_scope",
@@ -1703,6 +1704,7 @@ class TestUpdateDefinitionNestedFields:
             ("read_all_agent_workspaces", True),
             ("task_step_writes", ["implementation"]),
             ("capabilities", ["land_tasks"]),
+            ("spawner_capabilities", ["fixture-authority"]),
             ("resumable_team_agents", ["fixture-worker"]),
         ],
     )
