@@ -126,6 +126,11 @@ impl Attempts {
         self.lock.lock().await
     }
 
+    /// Records that the recorded outcome reached a client. RED shape only: the
+    /// fix makes the control endpoint call it when it serves the outcome.
+    #[cfg(test)]
+    pub(crate) fn mark_outcome_served(&self) {}
+
     fn update(&self, change: impl FnOnce(&mut LiveAttempt)) {
         if let Some(live) = self
             .live
@@ -136,6 +141,17 @@ impl Attempts {
             change(live);
         }
     }
+}
+
+/// Waits for the attempt in flight to settle, then runs `teardown` while
+/// `upgrade_lock` is held. The returned guard keeps the lock to shutdown.
+pub(crate) async fn drain_endpoint(
+    state: &HostState,
+    teardown: impl FnOnce(),
+) -> MutexGuard<'_, ()> {
+    let settled = state.attempts.settled().await;
+    teardown();
+    settled
 }
 
 impl HostState {
@@ -869,3 +885,7 @@ fn resume(panes: &[(String, PtyIoActorHandle)], fail: Option<&str>) -> Vec<Strin
             .collect()
     })
 }
+
+#[cfg(test)]
+#[path = "upgrade/tests.rs"]
+mod tests;
