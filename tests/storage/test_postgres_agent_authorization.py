@@ -945,6 +945,105 @@ def test_operator_inventory_is_secret_free_and_drain_removes_login_authority(
         assert active == (0,)
 
 
+def _role_can_login(cluster: psycopg.Connection[Any], role_name: str) -> bool:
+    row = cluster.execute(
+        "SELECT rolcanlogin FROM pg_roles WHERE rolname = %s",
+        (role_name,),
+    ).fetchone()
+    assert row is not None
+    return bool(row[0])
+
+
+def _assert_bystander_still_connects(
+    cluster_url: str,
+    bystander: AuthorizationFixture,
+) -> None:
+    with psycopg.connect(cluster_url, autocommit=True) as cluster:
+        assert _role_can_login(cluster, bystander.role_name) is True
+        assert cluster.execute(
+            "SELECT pg_has_role(%s, %s, 'MEMBER')",
+            (bystander.role_name, CAPABILITY_ROLE),
+        ).fetchone() == (True,)
+    with psycopg.connect(bystander.agent_url) as conn:
+        assert conn.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_issued_role_records_the_database_and_schema_that_own_it(
+    postgres_database_url: str,
+) -> None:
+    with _authorization_fixture(postgres_database_url) as fixture:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            database_name = admin.execute("SELECT current_database()").fetchone()
+            owner_marker = admin.execute(
+                "SELECT shobj_description(role.oid, 'pg_authid') "
+                "FROM pg_roles AS role WHERE role.rolname = %s",
+                (fixture.role_name,),
+            ).fetchone()
+        assert database_name is not None
+        assert owner_marker == (f"{database_name[0]}:{AUTH_SCHEMA}",)
+
+
+def test_drain_does_not_disable_a_role_bound_in_another_database(
+    postgres_database_url: str,
+) -> None:
+    with _authorization_fixture(postgres_database_url) as draining:
+        with _authorization_fixture(postgres_database_url) as bystander:
+            with psycopg.connect(draining.database_url, autocommit=True) as admin:
+                _as_runtime(admin, f"SELECT {AUTH_SCHEMA}.drain_ephemeral_principals()", ())
+            _assert_bystander_still_connects(postgres_database_url, bystander)
+
+
+def test_reconcile_does_not_disable_a_role_bound_in_another_database(
+    postgres_database_url: str,
+) -> None:
+    with _authorization_fixture(postgres_database_url) as reconciling:
+        with _authorization_fixture(postgres_database_url) as bystander:
+            with psycopg.connect(reconciling.database_url, autocommit=True) as admin:
+                _as_runtime(
+                    admin,
+                    f"SELECT {AUTH_SCHEMA}.reconcile_daemon(%s)",
+                    (reconciling.machine_id,),
+                )
+            _assert_bystander_still_connects(postgres_database_url, bystander)
+
+
+def test_drain_still_reaps_an_unbound_role_this_database_owns(
+    postgres_database_url: str,
+) -> None:
+    with _authorization_fixture(postgres_database_url) as fixture:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"DELETE FROM {AUTH_SCHEMA}.principal_audit_events WHERE role_name = %s",
+                (fixture.role_name,),
+            )
+            admin.execute(
+                f"DELETE FROM {AUTH_SCHEMA}.principal_bindings WHERE role_name = %s",
+                (fixture.role_name,),
+            )
+            drained = _as_runtime(admin, f"SELECT {AUTH_SCHEMA}.drain_ephemeral_principals()", ())
+            assert drained >= 1
+            role = admin.execute("SELECT to_regrole(%s)", (fixture.role_name,)).fetchone()
+            assert role is not None
+            assert role[0] is None
+
+
+def test_drain_leaves_an_unbound_role_without_an_ownership_marker_alone(
+    postgres_database_url: str,
+) -> None:
+    unmarked_role = f"gobby_agent_{uuid4().hex}_1"
+    with psycopg.connect(postgres_database_url, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(unmarked_role)))
+    try:
+        with _authorization_fixture(postgres_database_url) as fixture:
+            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                _as_runtime(admin, f"SELECT {AUTH_SCHEMA}.drain_ephemeral_principals()", ())
+        with psycopg.connect(postgres_database_url, autocommit=True) as cluster:
+            assert _role_can_login(cluster, unmarked_role) is True
+    finally:
+        with psycopg.connect(postgres_database_url, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(unmarked_role)))
+
+
 def test_crafted_missing_expired_and_duplicate_issue_inputs_are_rejected(
     fresh_authorization_fixture: AuthorizationFixture,
 ) -> None:

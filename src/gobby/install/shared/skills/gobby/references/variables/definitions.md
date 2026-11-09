@@ -7,7 +7,8 @@ Fetch `gobby-workflows` schemas for `list_variables`, `get_variable_definition`,
 MCP definition creation, updating and deletion require
 `manage_workflow_definitions` or the operator's terminal. Other seats can read
 and export definitions and ask an authorized session to mutate them. Session
-`set_variable` is separate and requires `write_session_variables`.
+`set_variable` is separate and requires `write_session_variables`, or the narrower
+`write_own_step_phase` for the caller's own step `phase` alone.
 
 Read the existing row first; inspect scope, enabled state, source and tags.
 Creation rejects name collisions and creates a global user definition. The MCP
@@ -22,5 +23,5 @@ on sync; do not use force deletion or permissive mutators to bypass Gobby owners
 For missing names or collisions, inspect scope and use a user-owned definition.
 See [definition tools](../../../../../../../../docs/guides/variables.md#mcp-tools) and [overrides](../../../../../../../../docs/guides/variables.md#defaults-and-overrides).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
 _Last verified: 2026-11-03_

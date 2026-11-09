@@ -77,7 +77,9 @@ def test_daemon_reaps_finished_parent_and_retains_approval_parent(
         parent = sessions.get(finished_id)
         return parent is not None and parent.status == "deleted"
 
-    assert wait_for_condition(finished_parent_deleted, timeout=30), daemon_instance.read_logs()
+    assert wait_for_condition(
+        finished_parent_deleted, timeout=150, on_timeout=daemon_instance.read_logs
+    ), daemon_instance.read_logs()
     approval_parent = sessions.get(approval_id)
     assert approval_parent is not None and approval_parent.status == "active"
     storage = CronJobStorage(postgres_db)

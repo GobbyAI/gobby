@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from gobby.storage.worktree_notes import WorktreeNote
+
 
 @dataclass(frozen=True)
 class InFlightTask:
@@ -75,6 +77,18 @@ class WorktreeRow:
     live_seat: bool
     last_commit_at: datetime | None
     git_error: str | None
+    # The tree's last commit or dirty change; None when git could not say.
+    change_at: datetime | None = None
+    note: WorktreeNote | None = None
+
+    @property
+    def current_note(self) -> WorktreeNote | None:
+        """The note when it is newer than the tree's last change; None renders UNRECONCILED."""
+        if self.note is None or self.git_error is not None or self.change_at is None:
+            return None
+        if self.note.updated_at < self.change_at:
+            return None
+        return self.note
 
 
 @dataclass(frozen=True)
