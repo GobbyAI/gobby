@@ -263,6 +263,7 @@ struct ScratchDatabase {
     admin: Client,
     config: Config,
     name: String,
+    owned_roles: Vec<String>,
 }
 
 impl ScratchDatabase {
@@ -280,6 +281,7 @@ impl ScratchDatabase {
                 admin,
                 config: scratch_config,
                 name,
+                owned_roles: Vec::new(),
             },
             client,
         ))
@@ -287,6 +289,10 @@ impl ScratchDatabase {
 
     fn connect(&self) -> Result<Client, postgres::Error> {
         self.config.connect(NoTls)
+    }
+
+    fn track_role(&mut self, role: &str) {
+        self.owned_roles.push(role.to_owned());
     }
 
     fn connect_as(&self, user: &str, password: &str) -> Result<Client, postgres::Error> {
@@ -302,6 +308,15 @@ impl Drop for ScratchDatabase {
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",
             self.name
         ));
+        for role in &self.owned_roles {
+            let result = self
+                .admin
+                .batch_execute(&format!("DROP ROLE IF EXISTS {role}"));
+            assert!(
+                result.is_ok() || std::thread::panicking(),
+                "failed to remove owned test role {role}: {result:?}"
+            );
+        }
     }
 }
 
@@ -3458,6 +3473,43 @@ fn reply_waits_ignore_daemon_receipts_from_the_owner() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn scratch_database_cleans_tracked_roles_on_unwind() -> anyhow::Result<()> {
+    let Some((mut database, mut observer)) = scratch_database()? else {
+        return Ok(());
+    };
+    let role = format!("claim_cleanup_{}", Uuid::new_v4().simple());
+    database.track_role(&role);
+    observer.batch_execute(&format!("CREATE ROLE {role} NOLOGIN"))?;
+    // Observe through the hub after the scratch database and its connections are gone.
+    let admin_database: String = database
+        .admin
+        .query_one("SELECT current_database()", &[])?
+        .get(0);
+    let mut admin = database.config.clone();
+    admin.dbname(&admin_database);
+    let mut admin = admin.connect(NoTls)?;
+    drop(observer);
+    let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _database = database;
+        panic!("simulated assertion failure after role creation");
+    }));
+    assert!(unwind.is_err());
+    let remains: bool = admin
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)",
+            &[&role],
+        )?
+        .get(0);
+    // Keep the RED run isolated too, even before teardown is implemented.
+    admin.batch_execute(&format!("DROP ROLE IF EXISTS {role}"))?;
+    assert!(
+        !remains,
+        "scratch teardown must remove its tracked role on panic"
+    );
+    Ok(())
+}
+
 const INTERACTIVE_ISSUE_SQL: &str = "SELECT role_name::TEXT \
      FROM gobby_agent_auth.issue_or_reuse_interactive_principal( \
          $1, $2, $3, $4, clock_timestamp() + INTERVAL '10 minutes', $5, $6 \
@@ -3532,11 +3584,12 @@ fn claim_principal_role_owner_is_not_attachable_by_other_roles() -> anyhow::Resu
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = scratch_database()? else {
+    let Some((mut database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     let probe_role = format!("claim_probe_{}", Uuid::new_v4().simple());
+    database.track_role(&probe_role);
     let probe_password = format!("claim-probe-{}", Uuid::new_v4().simple());
     client.batch_execute(&format!(
         "CREATE ROLE {probe_role} LOGIN PASSWORD '{probe_password}' NOSUPERUSER; \
@@ -3581,11 +3634,12 @@ fn claim_principal_role_owner_refuses_tables_other_than_principal_bindings() -> 
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = scratch_database()? else {
+    let Some((mut database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     let bystander = format!("claim_bystander_{}", Uuid::new_v4().simple());
+    database.track_role(&bystander);
     client.batch_execute(&format!(
         "CREATE ROLE {bystander} NOLOGIN; \
          GRANT TEMPORARY ON DATABASE {} TO gobby_agent_issuer; \
@@ -3618,7 +3672,7 @@ fn migration_491_claims_roles_bound_before_it_landed() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = scratch_database()? else {
+    let Some((mut database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     let migration_index = MIGRATIONS
@@ -3630,16 +3684,19 @@ fn migration_491_claims_roles_bound_before_it_landed() -> anyhow::Result<()> {
     let fixture = insert_interactive_fixture(&mut client, "claim-backfill")?;
     let token = format!("claim-backfill-{}", Uuid::new_v4().simple());
     let bound_role = issue_interactive_role(&mut client, &token, fixture, "backfill-pass")?;
+    database.track_role(&bound_role);
     let foreign_role = issue_interactive_role(
         &mut client,
         &format!("{token}-foreign"),
         fixture,
         "foreign-pass",
     )?;
+    database.track_role(&foreign_role);
     client.batch_execute(&format!(
         "COMMENT ON ROLE {foreign_role} IS 'elsewhere:other_agent_auth'"
     ))?;
     let unbound = format!("claim_unbound_{}", Uuid::new_v4().simple());
+    database.track_role(&unbound);
     client.batch_execute(&format!("CREATE ROLE {unbound} NOLOGIN"))?;
     assert_eq!(role_marker(&mut client, &bound_role)?, None);
 
@@ -3667,7 +3724,7 @@ fn foreign_unmarked_derived_role_survives_a_colliding_issuance() -> anyhow::Resu
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((database, mut client)) = scratch_database()? else {
+    let Some((mut database, mut client)) = scratch_database()? else {
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
@@ -3681,6 +3738,7 @@ fn foreign_unmarked_derived_role_survives_a_colliding_issuance() -> anyhow::Resu
         )?
         .get(0);
     let password = format!("foreign-{}", Uuid::new_v4().simple());
+    database.track_role(&derived);
     client.batch_execute(&format!(
         "CREATE ROLE {derived} LOGIN PASSWORD '{password}' NOSUPERUSER; \
          GRANT gobby_gcode_capability TO {derived}"
