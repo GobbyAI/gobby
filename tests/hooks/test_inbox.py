@@ -1254,7 +1254,10 @@ def test_quarantine_prune_recovers_orphan_payload_and_sidecar(tmp_path: Path) ->
 class _ReceiptDb:
     """Hub stand-in for the receipt CAS: one owning session and a no-op ambient transaction."""
 
-    def fetchone(self, _sql: str, _params: tuple[Any, ...] = ()) -> dict[str, Any]:
+    def fetchone(self, sql: str, _params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        if "original_envelope_id" in sql:
+            # A full receipt-row read finds no row: the stale or unknown path these tests take.
+            return None
         return {"session_id": "recipient-session"}
 
     def transaction_immediate(self, _lock: object) -> nullcontext[None]:

@@ -123,3 +123,33 @@ def test_a_carrier_sweep_that_raises_keeps_the_ack_claimable_until_every_carrier
     inbox.consume_pending_delivery_receipts(_app(temp_db), inbox_dir)
     assert not ack.exists()
     assert [_terminal(processed, e) for e in (ORIGINAL, CURRENT, ACK)] == [True, True, True]
+
+
+def test_a_failed_acknowledgment_marker_keeps_the_ack_claimable_until_it_is_terminal(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ack-marker case: the acknowledgment's own marker write fails after its carriers are marked."""
+    receipt_id = _carried_receipt(temp_db, monkeypatch, "22000000-0000-4000-8000-0000000000c3")
+    inbox_dir = tmp_path / "inbox"
+    inbox_dir.mkdir()
+    processed = get_processed_envelope_dir(inbox_dir)
+    ack = _ack(inbox_dir, receipt_id)
+    real_mark = mark_envelope_processed
+    failures: list[str] = []
+
+    def failing_mark(envelope_id: str, **kwargs: Any) -> None:
+        if envelope_id == ACK and not failures:
+            failures.append(envelope_id)
+            raise OSError("ack marker write failed")
+        real_mark(envelope_id, **kwargs)
+
+    monkeypatch.setattr(inbox, "mark_envelope_processed", failing_mark)
+
+    inbox.consume_pending_delivery_receipts(_app(temp_db), inbox_dir)
+    assert _state(temp_db, receipt_id) == "acknowledged"
+    assert ack.exists()
+    assert [_terminal(processed, e) for e in (ORIGINAL, CURRENT)] == [True, True]
+
+    inbox.consume_pending_delivery_receipts(_app(temp_db), inbox_dir)
+    assert not ack.exists()
+    assert [_terminal(processed, e) for e in (ORIGINAL, CURRENT, ACK)] == [True, True, True]
