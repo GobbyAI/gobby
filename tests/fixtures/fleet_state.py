@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,11 +30,32 @@ def healthy_fleet_document(sampled_at: float) -> dict[str, Any]:
     }
 
 
+def _publish(path: Path, payload: bytes) -> None:
+    """Replace the state file in one step, so a concurrent reader never sees a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as file:
+        staged = Path(file.name)
+        try:
+            file.write(payload)
+            file.close()
+            os.replace(staged, path)
+        finally:
+            staged.unlink(missing_ok=True)
+
+
 def write_healthy_fleet_state(path: Path, *, sampled_at: float) -> bytes:
     """Write a healthy state file and return the exact bytes written."""
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(healthy_fleet_document(sampled_at)).encode("utf-8")
-    path.write_bytes(payload)
+    _publish(path, payload)
+    return payload
+
+
+def refresh_healthy_fleet_state(path: Path, *, last: bytes, sampled_at: float) -> bytes | None:
+    """Re-stamp the state while it still holds the bytes last written; None means another writer owns it."""
+    if path.read_bytes() != last:
+        return None
+    payload = json.dumps(healthy_fleet_document(sampled_at)).encode("utf-8")
+    _publish(path, payload)
     return payload
 
 
@@ -41,9 +66,33 @@ def keep_fleet_state_fresh(
     interval_seconds: float = FLEET_STATE_REFRESH_SECONDS,
     clock: Callable[[], float] | None = None,
 ) -> Iterator[None]:
-    """Write a healthy state now and re-stamp it every interval while the block runs."""
-    # Red stage: nothing is written here and nothing refreshes the state.
-    yield
+    """Write a healthy state now and re-stamp it every interval while the block runs.
+
+    The refresher stops as soon as another writer changes the file, so a test that
+    writes its own condition keeps that condition.
+    """
+    now = clock if clock is not None else time.time
+    last = write_healthy_fleet_state(path, sampled_at=now())
+    stop = threading.Event()
+
+    def refresh() -> None:
+        nonlocal last
+        while not stop.wait(interval_seconds):
+            try:
+                renewed = refresh_healthy_fleet_state(path, last=last, sampled_at=now())
+            except OSError:
+                return  # The next read reports the file as stale, the visible failure.
+            if renewed is None:
+                return  # Another writer owns the file now; leave its state alone.
+            last = renewed
+
+    worker = threading.Thread(target=refresh, name="fleet-state-refresh", daemon=True)
+    worker.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        worker.join(timeout=5)
 
 
 __all__ = [

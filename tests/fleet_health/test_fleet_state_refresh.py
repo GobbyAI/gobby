@@ -10,6 +10,7 @@ from gobby.fleet_health.state import STALE_AFTER_SECONDS, read_fleet_state
 from tests.fixtures.fleet_state import (
     healthy_fleet_document,
     keep_fleet_state_fresh,
+    refresh_healthy_fleet_state,
     write_healthy_fleet_state,
 )
 
@@ -48,14 +49,12 @@ def test_state_stays_fresh_for_a_test_longer_than_the_stale_window(tmp_path: Pat
 
 def test_a_state_another_writer_replaces_is_left_alone(tmp_path: Path) -> None:
     path = tmp_path / "fleet-health.json"
-    clock = FakeClock(NOW)
-    write_healthy_fleet_state(path, sampled_at=NOW)
+    healthy = write_healthy_fleet_state(path, sampled_at=NOW)
     degraded = healthy_fleet_document(NOW) | {
         "state": "degraded",
         "reasons": ["load_per_core:2.6"],
     }
+    path.write_text(json.dumps(degraded), encoding="utf-8")
 
-    with keep_fleet_state_fresh(path, interval_seconds=0.01, clock=clock):
-        path.write_text(json.dumps(degraded), encoding="utf-8")
-        time.sleep(0.1)
-        assert read_fleet_state(path, clock.now).state == "degraded"
+    assert refresh_healthy_fleet_state(path, last=healthy, sampled_at=NOW + 1) is None
+    assert read_fleet_state(path, NOW).state == "degraded"
