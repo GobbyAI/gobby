@@ -207,6 +207,37 @@ fn host_exits_when_socket_dir_vanishes() {
 }
 
 #[test]
+fn host_exits_when_socket_dir_is_renamed_during_startup() {
+    // The control socket appears at bind; the pidfile write follows a few ms later.
+    // A rename inside that window must still end the host, not leave it running in a
+    // socket directory that startup recreated.
+    for round in 0..20 {
+        let dir = temp_socket_dir();
+        write_token(dir.path(), "control-token-startup-rename");
+        let mut host = spawn_host(dir.path());
+        let control = dir.path().join(CONTROL_SOCKET);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !control.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "round {round}: host never bound its control socket"
+            );
+            std::hint::spin_loop();
+        }
+        let socket_dir = dir.keep();
+        let removed_dir = socket_dir.with_extension(format!("removed-{round}"));
+        std::fs::rename(&socket_dir, &removed_dir).expect("remove socket dir during startup");
+        if wait_exit(&mut host, Duration::from_secs(10)).is_none() {
+            let _ = host.kill();
+            panic!(
+                "round {round}: host kept running after its socket dir was removed during startup"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&removed_dir);
+    }
+}
+
+#[test]
 fn drain_honours_grace_then_kills() {
     let (dir, mut host, mut stream) = test_host("control-token-real-drain");
     let polite_marker = dir.path().join("polite-hup");
