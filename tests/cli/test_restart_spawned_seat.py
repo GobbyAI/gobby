@@ -306,6 +306,37 @@ def test_unavailable_backend_is_refused_for_a_spawned_seat_not_stopped(
     result = CliRunner().invoke(restart, [])
 
     assert result.exit_code == 1
-    assert "did not accept the restart request" in result.output
+    assert "the daemon answered 503 to the restart request" in result.output
+    assert "did not accept the restart request" not in result.output
     assert all("Authorization" not in call["headers"] for call in listener.calls)
+    seat.assert_not_called()
+
+
+def test_test_protect_without_isolated_home_names_the_guard_and_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch, seat: MagicMock
+) -> None:
+    listener = _Listener(monkeypatch)
+    monkeypatch.setattr(lifecycle, "is_test_protect_enabled", lambda: True)
+
+    result = CliRunner().invoke(restart, [])
+
+    assert result.exit_code == 1
+    assert "GOBBY_TEST_PROTECT is set" in result.output
+    assert "did not accept the restart request" not in result.output
+    assert listener.calls == []
+    seat.assert_not_called()
+
+
+def test_failed_health_probe_names_the_probe_and_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch, seat: MagicMock
+) -> None:
+    listener = _Listener(monkeypatch)
+    monkeypatch.setattr(lifecycle, "_is_daemon_healthy", lambda _port: False)
+
+    result = CliRunner().invoke(restart, [])
+
+    assert result.exit_code == 1
+    assert "health check at localhost:61987 failed" in result.output
+    assert "did not accept the restart request" not in result.output
+    assert listener.calls == []
     seat.assert_not_called()
