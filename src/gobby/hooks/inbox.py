@@ -128,13 +128,18 @@ def _consume_inbox_delivery_receipt(
                     ack_envelope_id=envelope_id,
                     processed_dir=processed_dir,
                 )
-        except Exception as exc:
-            logger.warning(
-                "Failed to consume delivery receipt %s generation %s: %s",
+        except Exception:
+            # A failed acknowledgment rolled back, so the receipt stays prepared. Restore the
+            # claim so the next sweep acknowledges it again, and leave the envelope unprocessed.
+            # A failure after the commit leaves the receipt acknowledged; that sweep finds it
+            # stale and terminalizes the envelope.
+            logger.exception(
+                "Failed to consume delivery receipt %s generation %s; restoring its claim",
                 receipt_id,
                 generation,
-                exc,
             )
+            inbox_envelopes.restore_inbox_claim(claimed, path)
+            return False
     if envelope_id:
         mark_envelope_processed(envelope_id, processed_dir=processed_dir)
     claimed.unlink(missing_ok=True)

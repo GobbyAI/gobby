@@ -438,29 +438,41 @@ class ChatLifecycleMixin:
                 payload = response.metadata.get(STAGED_EFFECTS_FIELD)
 
                 def acknowledge_prompt(after_commit: Callable[[], None] | None = None) -> None:
-                    """Commit the lifecycle payload, then the caller's commit, then mark messages.
+                    """Commit the lifecycle payload and the caller's commit as one, then mark messages.
 
-                    The payload commit writes only set and union values, so a raise before
-                    ``after_commit`` consumes nothing and the retry re-applies it unchanged.
-                    ``after_commit`` is the caller's success boundary. The message marks run
-                    after it and do not raise, so an output that reached this point ships.
+                    The payload commit and ``after_commit`` share one transaction, so a raise in
+                    ``after_commit`` rolls back the payload's receipt and its effects too. The
+                    output is withheld and the next delivery re-applies both. The message marks run
+                    after that commit and do not raise, so an output that reached this point ships.
                     """
+                    from contextlib import nullcontext
+
+                    from gobby.storage.hub.protocol import SessionVariableMutation
+
                     variable_manager = workflow_handler._session_var_manager
-                    if payload and variable_manager is not None:
-                        commit_staged_effects(
-                            variable_manager.db,
-                            session_id=db_session_id,
-                            staged=payload,
-                            variable_manager=variable_manager,
+                    boundary = (
+                        variable_manager.db.transaction_immediate(
+                            SessionVariableMutation(session_id=db_session_id)
                         )
-                    elif payload:
-                        logger.warning(
-                            "acknowledge_prompt: no session variable manager; staged effects "
-                            "not applied for %s",
-                            db_session_id,
-                        )
-                    if after_commit is not None:
-                        after_commit()
+                        if variable_manager is not None
+                        else nullcontext()
+                    )
+                    with boundary:
+                        if payload and variable_manager is not None:
+                            commit_staged_effects(
+                                variable_manager.db,
+                                session_id=db_session_id,
+                                staged=payload,
+                                variable_manager=variable_manager,
+                            )
+                        elif payload:
+                            logger.warning(
+                                "acknowledge_prompt: no session variable manager; staged effects "
+                                "not applied for %s",
+                                db_session_id,
+                            )
+                        if after_commit is not None:
+                            after_commit()
                     self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
                 if session._on_prompt_delivered is pending_prompt_delivery:

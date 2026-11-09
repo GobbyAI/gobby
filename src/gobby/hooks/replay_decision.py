@@ -21,17 +21,30 @@ def acknowledge_and_apply_receipt(
     message_manager: Any,
     variable_manager: Any,
 ) -> HookReceipt | None:
-    """Apply one-shot effects only for the winner of the receipt CAS."""
-    from gobby.hooks.receipt_effects import apply_acknowledged_receipt
-    from gobby.storage.hook_receipts import acknowledge_receipt
+    """Apply one-shot effects only for the winner of the receipt CAS.
 
-    committed = acknowledge_receipt(
-        db, receipt_id=receipt_id, delivery_generation=delivery_generation
+    The CAS and the variable effects commit in one transaction. A failed variable write
+    rolls the acknowledgment back, leaves the receipt prepared for redelivery, and raises.
+    Message marks run after that commit and never raise.
+    """
+    from gobby.hooks.receipt_effects import apply_acknowledged_marks, apply_acknowledged_variables
+    from gobby.storage.hook_receipts import acknowledge_receipt
+    from gobby.storage.hub.protocol import SessionVariableMutation
+
+    owner = db.fetchone(
+        "SELECT session_id FROM hook_receipt_effects WHERE receipt_id = %s", (receipt_id,)
     )
-    if committed is not None:
-        apply_acknowledged_receipt(
-            committed, message_manager=message_manager, variable_manager=variable_manager
+    if owner is None:
+        return None
+    with db.transaction_immediate(SessionVariableMutation(session_id=str(owner["session_id"]))):
+        committed = acknowledge_receipt(
+            db, receipt_id=receipt_id, delivery_generation=delivery_generation
         )
+        if committed is None:
+            return None
+        if variable_manager is not None:
+            apply_acknowledged_variables(committed, variable_manager=variable_manager)
+    apply_acknowledged_marks(committed, message_manager=message_manager)
     return committed
 
 
