@@ -77,7 +77,15 @@ def test_daemon_reaps_finished_parent_and_retains_approval_parent(
         parent = sessions.get(finished_id)
         return parent is not None and parent.status == "deleted"
 
-    assert wait_for_condition(finished_parent_deleted, timeout=30), daemon_instance.read_logs()
+    try:
+        wait_for_condition(finished_parent_deleted, timeout=30, description="finished parent reap")
+    except AssertionError as exc:
+        # wait_for_condition raises on timeout instead of returning a falsy value, so an
+        # assert message after it is never evaluated. Gather the logs here instead.
+        raise AssertionError(
+            f"{exc}\n--- daemon log ---\n{daemon_instance.read_logs()[-8000:]}"
+            f"\n--- daemon error log ---\n{daemon_instance.read_error_logs()[-8000:]}"
+        ) from exc
     approval_parent = sessions.get(approval_id)
     assert approval_parent is not None and approval_parent.status == "active"
     storage = CronJobStorage(postgres_db)
