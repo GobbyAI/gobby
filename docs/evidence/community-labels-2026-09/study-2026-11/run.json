@@ -1,0 +1,377 @@
+{
+  "created_at": "2026-11-09T04:06:41.125336+00:00",
+  "seed": 22604,
+  "no_decisions": true,
+  "reason": "Operator selected --no-decisions; OpenRouter checklist unmet",
+  "evaluated_model": null,
+  "evaluated_backend": null,
+  "min_score": 0.5,
+  "probe": [],
+  "samples": {
+    "gobby": [
+      17,
+      5596,
+      103,
+      5220,
+      58,
+      5626,
+      5580,
+      48,
+      5189,
+      5597,
+      90,
+      5613,
+      5714,
+      5451,
+      5253
+    ]
+  },
+  "main": [
+    {
+      "corpus": "gobby",
+      "community": 17,
+      "names": {
+        "D": "web/src/components/activity/integrations",
+        "G": "Activity Integrations"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5596,
+      "names": {
+        "D": "src/gobby #28",
+        "G": "Model Capability Metadata"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 103,
+      "names": {
+        "D": "crates/ghook/src",
+        "G": "Git Hook CLI Core"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5220,
+      "names": {
+        "D": "tests #38",
+        "G": "Phase 5 Contract Compliance"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 58,
+      "names": {
+        "D": "web/src/components/activity #3",
+        "G": "Activity panel state and tabs"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5626,
+      "names": {
+        "D": "src/gobby #16",
+        "G": "Communications channel messaging"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5580,
+      "names": {
+        "D": "tests #31",
+        "G": "Memory Persistence and Sync"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 48,
+      "names": {
+        "D": "src/gobby #9",
+        "G": "Provider Capability Registry"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5189,
+      "names": {
+        "D": "src/gobby #20",
+        "G": "Session Token Feedback"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5597,
+      "names": {
+        "D": "tests #27",
+        "G": "Authentication and Identity"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 90,
+      "names": {
+        "D": "crates/gcode/src/commands",
+        "G": "Code Search Commands"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5613,
+      "names": {
+        "D": "tests #9",
+        "G": "Worktree and Clone Management"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5714,
+      "names": {
+        "D": "tests #17",
+        "G": "Daemon lifecycle and service control"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5451,
+      "names": {
+        "D": "src/gobby #4",
+        "G": "Task lifecycle and storage"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    },
+    {
+      "corpus": "gobby",
+      "community": 5253,
+      "names": {
+        "D": "tests #15",
+        "G": "Workflow Definitions and Sync"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": null,
+      "label_confidence": null,
+      "position": null
+    }
+  ],
+  "carry_skipped": 0,
+  "events": [
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 17,
+      "member_signature": "27aeb78f19fc2ee4",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5596,
+      "member_signature": "79ca4c8db6f7dae6",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 103,
+      "member_signature": "f38a258d2cc10ccb",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5220,
+      "member_signature": "d7cd2465df2542c0",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 58,
+      "member_signature": "bc22352bba41f408",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "93949e3b521788c3",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5580,
+      "member_signature": "d33aeaa4892df1f5",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 48,
+      "member_signature": "e5d2c23d50aabfc0",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5189,
+      "member_signature": "bfd43cc95d0a203d",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5597,
+      "member_signature": "bc625564994eab66",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 90,
+      "member_signature": "c6b5091114f966b6",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5613,
+      "member_signature": "88b82013ba425840",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5714,
+      "member_signature": "80ec754db63bda36",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5451,
+      "member_signature": "aca7dee9a6a557c3",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5253,
+      "member_signature": "0a6936d43a67e323",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 15
+      }
+    }
+  ],
+  "event_counts": {
+    "G:code_index.community_label.outcome:written_model": 15,
+    "G:code_index.community_label.batch:batch": 1
+  },
+  "decision_usage": []
+}
