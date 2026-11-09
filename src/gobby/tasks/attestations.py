@@ -321,5 +321,5 @@ def record_attestation_recording(
             (record.id, task_id, session_id, AUTHOR_TYPE, record.model_dump_json()),
         )
         conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
-        advance_claim_flow(db, conn, task, record, [*records, record])
-    return AttestationRecording(record, True)
+        stalled = advance_claim_flow(db, conn, task, record, [*records, record])
+    return AttestationRecording(record, True, stalled)
