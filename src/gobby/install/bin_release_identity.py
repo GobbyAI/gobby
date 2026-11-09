@@ -350,7 +350,7 @@ def _release_version(read: Manifests, crate: str) -> str:
     return version
 
 
-_RELEASE_NUMBERS = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+_RELEASE_NUMBERS = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
 def _release_parts(version: str) -> tuple[int, int, int] | None:

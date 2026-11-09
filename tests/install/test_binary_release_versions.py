@@ -553,6 +553,8 @@ def test_landing_bump_check_follows_crate_closure(
         pytest.param("1.1.0", True, id="minor-only-bump-refused"),
         pytest.param("1.0.0-rc.1", True, id="prerelease-refused"),
         pytest.param("1.0.1+build.7", True, id="build-metadata-refused"),
+        pytest.param("1.0.01", True, id="leading-zero-patch-refused"),
+        pytest.param("01.0.1", True, id="leading-zero-major-refused"),
     ],
 )
 def test_landing_bump_must_be_a_forward_patch_bump(
