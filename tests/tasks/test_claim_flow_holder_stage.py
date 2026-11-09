@@ -978,7 +978,7 @@ def test_idle_claim_holder_is_never_dropped_while_a_live_sibling_is_bound(
     temp_db.execute("UPDATE sessions SET status = 'idle' WHERE id = %s", (team.seat("dev-a"),))
 
     with pytest.raises(ValueError, match="ambiguous live pipeline seats"):
-        team.attest("a", team.seat("dev-a2"), "test-before", IMPLEMENT, sha=C1)
+        team.attest("a", team.seat("dev-a"), "test-before", IMPLEMENT, sha=C1)
 
     assert team.holder("a") == team.seat("dev-a")
     assert list_attestations(temp_db, team.leaves["a"]) == []
