@@ -74,8 +74,8 @@ A locally owned root session with an enabled definition granting
 `gobby-tasks:release_task_claim(task_id, holder_session_ref, reason)` to release
 a named seat's claim on an open task. Discover the schema first. The caller,
 holder, and task must belong to the same project, and the holder must be on the
-caller's machine. A team manager may release only a seat of its own team, on the
-task that team was admitted for. A definition name alone grants no authority.
+caller's machine. A spawned team manager may release only a seat of its own team or of the task's
+team, on a task that its team or a leaf team launched under it owns. A definition name alone grants no authority.
 A holder whose definition declares `release_own_claim` may release its own claim
 with the same call, which the reviewer's await step allows.
 
@@ -95,11 +95,15 @@ Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`.
 
 The task's Dev Team Lead calls
 `gobby-tasks:hand_off_task_claim(task_id, holder_session_ref, recipient_session_ref, reason)`
-to move the task claim from one seat of its team to another. Discover the schema
-first. The caller needs an active agent run bound to the task, a definition that
-writes the closing step, and a seat in the task's team; otherwise the call returns
-`team_manager_required`. A holder or recipient outside that team returns
-`team_seat_required`.
+to move the task claim from one seat to another. Discover the schema first. The
+caller needs `manage_task_claims` in its installed definition, within that
+definition's task claim scope. A spawned caller, one with an agent run or a nonzero
+agent depth, is confined to its own team: the task must belong to the team the caller
+was admitted for, or to a leaf team whose `parent_team_id` is that team. Otherwise the
+call returns `team_manager_required`. The holder and the recipient must each be a seat
+of the caller's team or of the task's team, read from their declared team binding, not
+from definition names. Otherwise the call returns `team_seat_required`. Both refusals
+move nothing. An unspawned local root keeps project-wide authority.
 
 The holder must still own the open task (`task_claim_conflict` otherwise) and have
 no dirty task-attributed paths (`task_has_uncommitted_changes`, naming them). The
@@ -126,6 +130,6 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Version: 2.1.0_
+_Version: 2.2.0_
 
-_Last verified: 2026-11-04_
+_Last verified: 2026-11-08_

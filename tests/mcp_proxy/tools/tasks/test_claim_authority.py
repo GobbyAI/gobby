@@ -229,19 +229,13 @@ def _task(world: TeamWorld, title: str, *, parent: Task | None = None, epic: boo
     )
 
 
-def _define_manager(world: TeamWorld, name: str, *, team_manager: bool) -> None:
-    """A synthetic coordinator that declares claim management, with or without the team grant."""
-    body = synthetic_manager_body()
-    body["name"] = name
-    body["workflows"]["variables"]["team_manager"] = team_manager
-    AgentDefinitionManager(world.case.db).create(name, body, project_id=world.case.project_id)
-
-
 def _spawned_manager(world: TeamWorld, runbook: Session, task: Task, name: str = MANAGER) -> str:
-    """A spawned seat of ``runbook`` whose running run is bound to ``task``."""
+    """A spawned seat of ``runbook`` that declares claim management, running bound to ``task``."""
     db = world.case.db
     if AgentDefinitionManager(db).get_by_name(name, world.case.project_id) is None:
-        _define_manager(world, name, team_manager=True)
+        body = synthetic_manager_body()
+        body["name"] = name
+        AgentDefinitionManager(db).create(name, body, project_id=world.case.project_id)
     manager = world.case.session(name, parent=runbook.id)
     runs = LocalAgentRunManager(db)
     run = runs.create(
@@ -264,7 +258,8 @@ async def _call(
     tasks: LocalTaskManager, session_id: str, operation: str, arguments: dict[str, Any]
 ) -> dict[str, Any]:
     with session_context_for_test(session_id):
-        return await create_task_registry(tasks).call(operation, arguments)
+        result: dict[str, Any] = await create_task_registry(tasks).call(operation, arguments)
+    return result
 
 
 @pytest.mark.asyncio
@@ -441,35 +436,6 @@ async def test_team_manager_refuses_a_holder_outside_its_team(
 
     assert result.get("error_code") == "team_seat_required", result
     assert tasks.get_task(own.id).claimed_by_session_id == outsider
-
-
-@pytest.mark.asyncio
-async def test_spawned_coordinator_without_a_team_grant_is_refused(world: TeamWorld) -> None:
-    db = world.case.db
-    tasks = LocalTaskManager(db)
-    _define_manager(world, "claim-coordinator-untethered", team_manager=False)
-    own = _task(world, TITLE)
-    own_runbook = world.child(own)
-    await world.admit(own_runbook, own)
-    manager = _spawned_manager(world, own_runbook, own, name="claim-coordinator-untethered")
-    holder = world.case.session("fixture-worker", parent=own_runbook.id)
-    recipient = world.case.session("fixture-definition-c02389e4", parent=own_runbook.id)
-    tasks.claim_task(own.id, holder)
-
-    result = await _call(
-        tasks,
-        manager,
-        "hand_off_task_claim",
-        {
-            "task_id": own.id,
-            "holder_session_ref": holder,
-            "recipient_session_ref": recipient,
-            "reason": "No team grant.",
-        },
-    )
-
-    assert result.get("error_code") == "team_manager_required", result
-    assert tasks.get_task(own.id).claimed_by_session_id == holder
 
 
 @pytest.mark.asyncio
