@@ -6,7 +6,7 @@ description: |
   in the live Plan Advocate's dispositioned edits and the adversary's findings, and
   reaches consensus with the adversary over send_message.
 
-version: "4.0.0"
+version: "4.1.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -98,6 +98,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-implementer-review"
       - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"

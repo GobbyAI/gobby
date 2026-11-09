@@ -136,6 +136,36 @@ def _docs_flow() -> PipelineDefinition:
     )
 
 
+def _record(
+    db: HubDatabase,
+    task_id: str,
+    session: str,
+    kind: str,
+    stage: str,
+    *,
+    result: str = "approved",
+    sha: str | None = None,
+    supersedes_id: str | None = None,
+) -> str:
+    record, _ = record_attestation(
+        db,
+        task_id=task_id,
+        session_id=session,
+        submission=AttestationSubmission(
+            kind=kind,
+            result=result,
+            summary=f"probe {kind} {result}",
+            reference={"scheme": "git", "value": sha} if sha else None,
+            supersedes_id=supersedes_id,
+            evidence={
+                "stage": stage,
+                "criteria": [{"criterion": "Works.", "met": True, "how": "probe"}],
+            },
+        ),
+    )
+    return record.id
+
+
 @dataclass
 class _Team:
     db: HubDatabase
@@ -168,23 +198,16 @@ class _Team:
         sha: str | None = None,
         supersedes_id: str | None = None,
     ) -> str:
-        record, _ = record_attestation(
+        return _record(
             self.db,
-            task_id=self.task_id,
-            session_id=session,
-            submission=AttestationSubmission(
-                kind=kind,
-                result=result,
-                summary=f"probe {kind} {result}",
-                reference={"scheme": "git", "value": sha} if sha else None,
-                supersedes_id=supersedes_id,
-                evidence={
-                    "stage": stage,
-                    "criteria": [{"criterion": "Works.", "met": True, "how": "probe"}],
-                },
-            ),
+            self.task_id,
+            session,
+            kind,
+            stage,
+            result=result,
+            sha=sha,
+            supersedes_id=supersedes_id,
         )
-        return record.id
 
     def chain(
         self, session: str, stage: str, sha: str, *, first_reference: str | None = None
@@ -693,3 +716,188 @@ def test_evidence_from_a_session_outside_the_flow_is_refused(
 
     assert team.holder() == outsider
     assert len(list_attestations(temp_db, team.task_id)) == count
+
+
+@dataclass
+class _Epic:
+    """An epic team with leaves ``a`` and ``b``; each live seat is bound to one leaf by its run."""
+
+    db: HubDatabase
+    definition: PipelineDefinition
+    epic_id: str
+    leaves: dict[str, str]
+    seats: dict[str, str]
+
+    def seat(self, name: str) -> str:
+        return self.seats[name]
+
+    def attest(
+        self,
+        leaf: str,
+        session: str,
+        kind: str,
+        stage: str,
+        *,
+        result: str = "approved",
+        sha: str | None = None,
+    ) -> str:
+        return _record(self.db, self.leaves[leaf], session, kind, stage, result=result, sha=sha)
+
+    def chain(self, leaf: str, session: str, stage: str, sha: str) -> None:
+        for kind in self.definition.claim_flow[stage].done_when:
+            self.attest(leaf, session, kind, stage, sha=sha)
+
+    def holder(self, leaf: str) -> str:
+        return str(LocalTaskManager(self.db).get_task(self.leaves[leaf]).claimed_by_session_id)
+
+
+def _build_epic(
+    db: HubDatabase,
+    sample_project: dict[str, Any],
+    seats: list[tuple[str, str, str]],
+    claims: dict[str, str],
+) -> _Epic:
+    """Admits an epic team whose live seats are ``(name, pipeline seat, leaf)``.
+
+    ``claims`` maps each leaf to the name of the seat that claims it.
+    """
+    project = sample_project["id"]
+    tasks = LocalTaskManager(db)
+    epic = tasks.create_task(project, "Epic", task_type="epic")
+    leaves = {
+        name: tasks.create_task(
+            project, f"Leaf {name}", validation_criteria="Works.", parent_task_id=epic.id
+        ).id
+        for name in ("a", "b")
+    }
+    definition = _flow()
+    executions = LocalPipelineExecutionManager(db, project)
+    execution = executions.create_execution(
+        definition.name, definition_json=definition.model_dump_json()
+    )
+    # Registered before the seats: AgentSessions numbers its sessions from a fixed base.
+    parent = SessionManager(db).register(
+        external_id=f"pipeline-{execution.id}",
+        source="pipeline",
+        machine_id=require_machine_id(),
+        project_id=project,
+    )
+    fixtures = AgentSessions(db, project)
+    runs = LocalAgentRunManager(db)
+    sessions: dict[str, str] = {}
+    for name, seat, leaf in seats:
+        sid = fixtures.add(AGENTS[seat], _seat_kinds(definition, seat))
+        sessions[name] = sid
+        db.execute("UPDATE sessions SET parent_session_id = %s WHERE id = %s", (parent.id, sid))
+        run = runs.create(
+            parent.id,
+            "claude",
+            f"Seat {name}",
+            agent_name=AGENTS[seat],
+            child_session_id=sid,
+            task_id=leaves[leaf],
+        )
+        runs.start(run.id)
+    binding = TeamBinding(execution.id, epic.id, project, "single", "main", None, None, mode="epic")
+    admit = executions.create_step_execution(execution.id, ADMISSION_STEP)
+    executions.update_step_execution(
+        admit.id,
+        status=StepStatus.COMPLETED,
+        output_json=json.dumps({"team": asdict(binding)}),
+    )
+    for seat in sorted({key for _, key, _ in seats}):
+        first = next(name for name, key, _ in seats if key == seat)
+        step = executions.create_step_execution(execution.id, seat)
+        executions.update_step_execution(
+            step.id,
+            status=StepStatus.COMPLETED,
+            output_json=json.dumps({"child_session_id": sessions[first]}),
+        )
+    db.execute("UPDATE sessions SET status = 'deleted' WHERE id = %s", (parent.id,))
+    for leaf, name in claims.items():
+        tasks.claim_task(leaves[leaf], sessions[name])
+    return _Epic(db, definition, epic.id, leaves, sessions)
+
+
+def test_two_live_developers_on_two_leaves_each_move_their_own_claim(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_epic(
+        temp_db,
+        sample_project,
+        seats=[
+            ("dev-a", "build", "a"),
+            ("dev-b", "build", "b"),
+            ("check-a", "check", "a"),
+            ("check-b", "check", "b"),
+        ],
+        claims={"a": "dev-a", "b": "dev-b"},
+    )
+
+    team.chain("a", team.seat("dev-a"), IMPLEMENT, C1)
+    team.chain("b", team.seat("dev-b"), IMPLEMENT, C2)
+
+    assert team.holder("a") == team.seat("check-a")
+    assert team.holder("b") == team.seat("check-b")
+
+
+def test_rejection_on_one_leaf_returns_its_claim_to_its_own_developer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_epic(
+        temp_db,
+        sample_project,
+        seats=[
+            ("dev-a", "build", "a"),
+            ("dev-b", "build", "b"),
+            ("check-a", "check", "a"),
+            ("check-b", "check", "b"),
+        ],
+        claims={"a": "dev-a", "b": "dev-b"},
+    )
+    team.chain("a", team.seat("dev-a"), IMPLEMENT, C1)
+    team.chain("b", team.seat("dev-b"), IMPLEMENT, C2)
+
+    team.attest("a", team.seat("check-a"), "independent-review", REVIEW, result="rejected", sha=C1)
+
+    assert team.holder("a") == team.seat("dev-a")
+    assert team.holder("b") == team.seat("check-b")
+
+
+def test_seat_bound_to_another_leaf_never_receives_the_claim(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_epic(
+        temp_db,
+        sample_project,
+        seats=[("dev-a", "build", "a"), ("check-b", "check", "b")],
+        claims={"a": "dev-a"},
+    )
+    builder = team.seat("dev-a")
+    for kind in team.definition.claim_flow[IMPLEMENT].done_when[:-1]:
+        team.attest("a", builder, kind, IMPLEMENT, sha=C1)
+
+    with pytest.raises(ValueError, match="needs its live pipeline seat"):
+        team.attest("a", builder, "validation", IMPLEMENT, sha=C1)
+
+    assert team.holder("a") == builder
+
+
+def test_two_live_seats_bound_to_one_leaf_refuse_and_name_the_task_and_both_sessions(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_epic(
+        temp_db,
+        sample_project,
+        seats=[("dev-a", "build", "a"), ("dev-a2", "build", "a")],
+        claims={"a": "dev-a"},
+    )
+
+    with pytest.raises(ValueError, match="ambiguous live pipeline seats") as raised:
+        team.attest("a", team.seat("dev-a"), "test-before", IMPLEMENT, sha=C1)
+
+    message = str(raised.value)
+    assert team.leaves["a"] in message
+    assert team.seat("dev-a") in message
+    assert team.seat("dev-a2") in message
+    assert team.holder("a") == team.seat("dev-a")

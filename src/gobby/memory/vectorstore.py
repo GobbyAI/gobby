@@ -9,10 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
-
-from qdrant_client import AsyncQdrantClient, QdrantClient
-from qdrant_client.models import Filter
+from typing import TYPE_CHECKING, Any
 
 from gobby.memory.vectorstore_client import (
     QdrantClientLike,
@@ -37,10 +34,26 @@ from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
 from gobby.memory.vectorstore_status import VectorStoreStatus
 from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 
+if TYPE_CHECKING:
+    from qdrant_client import AsyncQdrantClient, QdrantClient
+    from qdrant_client.models import Filter
+
 _COLLECTION_SOURCE_KINDS = {
     "memories": "memory",
     "tool_embeddings": "tool",
 }
+
+
+def _new_qdrant_client(**kwargs: Any) -> QdrantClient:
+    from qdrant_client import QdrantClient
+
+    return QdrantClient(**kwargs)
+
+
+def _new_async_qdrant_client(**kwargs: Any) -> AsyncQdrantClient:
+    from qdrant_client import AsyncQdrantClient
+
+    return AsyncQdrantClient(**kwargs)
 
 
 class VectorStore:
@@ -88,8 +101,8 @@ class VectorStore:
         self._client_ops = VectorStoreClient(
             self,
             lambda: time.monotonic(),
-            lambda **kwargs: QdrantClient(**kwargs),
-            lambda **kwargs: AsyncQdrantClient(**kwargs),
+            lambda **kwargs: _new_qdrant_client(**kwargs),
+            lambda **kwargs: _new_async_qdrant_client(**kwargs),
         )
         self._queries = VectorStoreQueries(self)
         self._maintenance = VectorStoreMaintenance(self)
