@@ -2521,7 +2521,10 @@ fn sigterm_before_exec_aborts_and_exits() {
         &mut ctl,
         &gterm_bin(),
         "attempt-term-write",
-        json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
+        // Both holds spend the attempt's 15 s alarm budget. The state file lands
+        // about 1.3 s after accept under load, so 1 s is enough to land SIGTERM
+        // before exec and 2 s is enough for the outcome poll (#25733).
+        json!({"hold_before_exec_ms": 1000, "hold_after_guard_release_ms": 2000}),
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     wait_until_host(&dir, "the state file is written", || {

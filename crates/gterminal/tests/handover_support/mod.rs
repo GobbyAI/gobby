@@ -33,7 +33,11 @@ use crate::host_support::{
 pub const HELPER_TEST: &str = "handover_helper";
 pub const TOKEN: &str = "handover-token";
 const SPEC_ENV: &str = "GTERM_HANDOVER_HELPER_SPEC";
-pub const WAIT: Duration = Duration::from_secs(10);
+/// Restore wait (#25733). Fallback restores took 3.8 to 5.7 s typically, with peaks of
+/// 7.1, 9.1 and 9.7 s at load 45 to 58; a 10 s wait expired at that peak. Parallel
+/// host_handover stress passed 152 of 152 (4 iterations of 38 at -j 12, load 36 to 47).
+/// 30 s is about three times the observed peak.
+pub const WAIT: Duration = Duration::from_secs(30);
 /// Socket and pidfile identities the helper saw before exec.
 pub const BOUND_FILE: &str = "helper-bound.json";
 
