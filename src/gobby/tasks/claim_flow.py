@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -17,6 +18,16 @@ if TYPE_CHECKING:
 
     from gobby.tasks.attestations import TaskAttestation
     from gobby.workflows.pipeline_models import ClaimStage
+
+
+@dataclass(frozen=True)
+class ClaimFlowStall:
+    """A claim-flow stage that can never complete, as the attestation that found it reports."""
+
+    execution_id: str
+    definition_version: str
+    stage: str
+    unmet_kinds: list[str]
 
 
 def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:

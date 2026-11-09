@@ -8,27 +8,36 @@ the flow must be refused rather than ignored.
 """
 
 import json
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import pytest
 
 from gobby.agents.team_admission_records import TeamBinding
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.team_records import ADMISSION_STEP
-from gobby.tasks.attestations import AttestationSubmission, list_attestations, record_attestation
+from gobby.tasks.attestations import (
+    AttestationRecording,
+    AttestationSubmission,
+    list_attestations,
+    record_attestation_recording,
+)
+from gobby.tasks.claim_flow import ClaimFlowStall
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.pipeline_models import (
     ClaimStage,
     MCPStepConfig,
     PipelineDefinition,
     PipelineStep,
 )
-from gobby.workflows.pipeline_state import StepStatus
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.unit
@@ -136,7 +145,7 @@ def _docs_flow() -> PipelineDefinition:
     )
 
 
-def _record(
+def _recording(
     db: HubDatabase,
     task_id: str,
     session: str,
@@ -146,8 +155,8 @@ def _record(
     result: str = "approved",
     sha: str | None = None,
     supersedes_id: str | None = None,
-) -> str:
-    record, _ = record_attestation(
+) -> AttestationRecording:
+    return record_attestation_recording(
         db,
         task_id=task_id,
         session_id=session,
@@ -163,7 +172,29 @@ def _record(
             },
         ),
     )
-    return record.id
+
+
+def _record(
+    db: HubDatabase,
+    task_id: str,
+    session: str,
+    kind: str,
+    stage: str,
+    *,
+    result: str = "approved",
+    sha: str | None = None,
+    supersedes_id: str | None = None,
+) -> str:
+    return _recording(
+        db,
+        task_id,
+        session,
+        kind,
+        stage,
+        result=result,
+        sha=sha,
+        supersedes_id=supersedes_id,
+    ).record.id
 
 
 @dataclass
@@ -175,6 +206,7 @@ class _Team:
     seats: AgentSessions
     sessions: dict[str, str]
     agents: dict[str, str]
+    execution_id: str
 
     def session(self, stage: str) -> str:
         return self.sessions[_seat_key(self.definition.claim_flow[stage])]
@@ -297,6 +329,8 @@ def _build_team(
     sample_project: dict[str, Any],
     definition: PipelineDefinition,
     category: str | None = None,
+    *,
+    grants: dict[str, list[str]] | None = None,
 ) -> _Team:
     project = sample_project["id"]
     task = LocalTaskManager(db).create_task(
@@ -315,7 +349,11 @@ def _build_team(
     )
     seats = AgentSessions(db, project)
     agents = {_seat_key(stage): _agent_name(stage) for stage in definition.claim_flow.values()}
-    sessions = {key: seats.add(agents[key], _seat_kinds(definition, key)) for key in sorted(agents)}
+    granted = grants or {}
+    sessions = {
+        key: seats.add(agents[key], granted.get(key, _seat_kinds(definition, key)))
+        for key in sorted(agents)
+    }
     binding = TeamBinding(execution.id, task.id, project, "single", "main", None, None)
     admit = executions.create_step_execution(execution.id, ADMISSION_STEP)
     executions.update_step_execution(
@@ -341,7 +379,7 @@ def _build_team(
         runs.start(run.id)
     db.execute("UPDATE sessions SET status = 'deleted' WHERE id = %s", (parent.id,))
     LocalTaskManager(db).claim_task(task.id, sessions[_seat_key(definition.claim_flow[IMPLEMENT])])
-    return _Team(db, definition, task.id, str(parent.id), seats, sessions, agents)
+    return _Team(db, definition, task.id, str(parent.id), seats, sessions, agents, execution.id)
 
 
 def test_re_candidate_after_explicit_hand_off_moves_to_checker(
@@ -901,3 +939,134 @@ def test_two_live_seats_bound_to_one_leaf_refuse_and_name_the_task_and_both_sess
     assert team.seat("dev-a") in message
     assert team.seat("dev-a2") in message
     assert team.holder("a") == team.seat("dev-a")
+
+
+def _stall_flow() -> PipelineDefinition:
+    """The implement, check and validate flow at a pinned version, so a stall must name it."""
+    return _flow().model_copy(update={"version": "2.3.0"})
+
+
+def _stall_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "gobby.tasks.claim_flow" and record.levelno == logging.WARNING
+    ]
+
+
+def test_done_when_kind_the_seat_cannot_write_stalls_the_stage_and_keeps_the_claim(
+    temp_db: HubDatabase, sample_project: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    team = _build_team(
+        temp_db,
+        sample_project,
+        _stall_flow(),
+        grants={"build": ["test-before", "implementation", "test-after"]},
+    )
+    builder = team.session(IMPLEMENT)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.tasks.claim_flow"):
+        recordings = [
+            _recording(temp_db, team.task_id, builder, kind, IMPLEMENT, sha=C1)
+            for kind in ("test-before", "implementation", "test-after")
+        ]
+
+    assert all(recording.created for recording in recordings)
+    recorded = {record.id for record in list_attestations(temp_db, team.task_id)}
+    assert recordings[-1].record.id in recorded
+    assert team.holder() == builder
+    assert recordings[-1].claim_flow_stalled == ClaimFlowStall(
+        execution_id=team.execution_id,
+        definition_version="2.3.0",
+        stage=IMPLEMENT,
+        unmet_kinds=["self-review", "validation"],
+    )
+    assert any(
+        team.execution_id in message
+        and "2.3.0" in message
+        and IMPLEMENT in message
+        and "self-review, validation" in message
+        for message in _stall_warnings(caplog)
+    )
+
+
+def test_ended_execution_stalls_the_stage_and_keeps_the_claim(
+    temp_db: HubDatabase, sample_project: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    team = _build_team(temp_db, sample_project, _stall_flow())
+    builder = team.session(IMPLEMENT)
+    LocalPipelineExecutionManager(temp_db, sample_project["id"]).update_execution_status(
+        team.execution_id, ExecutionStatus.COMPLETED
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.tasks.claim_flow"):
+        recording = _recording(temp_db, team.task_id, builder, "test-before", IMPLEMENT, sha=C1)
+
+    assert recording.created
+    recorded = {record.id for record in list_attestations(temp_db, team.task_id)}
+    assert recording.record.id in recorded
+    assert team.holder() == builder
+    assert recording.claim_flow_stalled == ClaimFlowStall(
+        execution_id=team.execution_id,
+        definition_version="2.3.0",
+        stage=IMPLEMENT,
+        unmet_kinds=["implementation", "test-after", "self-review", "validation"],
+    )
+    assert any(
+        team.execution_id in message and "2.3.0" in message and IMPLEMENT in message
+        for message in _stall_warnings(caplog)
+    )
+
+
+def test_grantable_stage_in_progress_reports_no_stall(
+    temp_db: HubDatabase, sample_project: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    team = _build_team(temp_db, sample_project, _stall_flow())
+    builder = team.session(IMPLEMENT)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.tasks.claim_flow"):
+        recording = _recording(temp_db, team.task_id, builder, "test-before", IMPLEMENT, sha=C1)
+
+    assert recording.created
+    assert recording.claim_flow_stalled is None
+    assert team.holder() == builder
+    assert _stall_warnings(caplog) == []
+
+
+async def test_registry_record_reports_the_stall_beside_the_recorded_attestation(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_team(
+        temp_db,
+        sample_project,
+        _stall_flow(),
+        grants={"build": ["test-before", "implementation", "test-after"]},
+    )
+    builder = team.session(IMPLEMENT)
+    _record(temp_db, team.task_id, builder, "test-before", IMPLEMENT, sha=C1)
+    _record(temp_db, team.task_id, builder, "implementation", IMPLEMENT, sha=C1)
+
+    with session_context_for_test(builder):
+        result = await create_task_registry(LocalTaskManager(temp_db)).call(
+            "record_attestation",
+            {
+                "task_id": team.task_id,
+                "kind": "test-after",
+                "result": "approved",
+                "summary": "probe test-after approved",
+                "reference": {"scheme": "git", "value": C1},
+                "evidence": {
+                    "stage": IMPLEMENT,
+                    "criteria": [{"criterion": "Works.", "met": True, "how": "probe"}],
+                },
+            },
+        )
+
+    assert "error" not in result, result
+    assert result["created"] is True
+    assert result.get("claim_flow_stalled") == {
+        "execution_id": team.execution_id,
+        "definition_version": "2.3.0",
+        "stage": IMPLEMENT,
+        "unmet_kinds": ["self-review", "validation"],
+    }
