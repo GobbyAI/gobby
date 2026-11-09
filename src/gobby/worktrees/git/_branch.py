@@ -92,7 +92,7 @@ async def get_current_branch(runner: GitRunner) -> str | None:
     try:
         result = await runner._run_git(
             ["branch", "--show-current"],
-            timeout=5,
+            timeout=30,
         )
         if result.returncode == 0:
             branch = result.stdout.strip()
@@ -117,7 +117,7 @@ async def get_local_commit(runner: GitRunner, branch: str) -> str | None:
     try:
         result = await runner._run_git(
             ["rev-parse", branch],
-            timeout=5,
+            timeout=30,
         )
         if result.returncode == 0:
             return result.stdout.strip()
