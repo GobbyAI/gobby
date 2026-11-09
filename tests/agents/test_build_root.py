@@ -10,9 +10,10 @@ from gobby.agents.cargo_target import (
     agent_checkout_cargo_target_dir,
     checkout_cargo_target_dir,
     cleanup_checkout_cargo_target_dir,
+    ensure_agent_cargo_target_dir,
     sandbox_checkout_cargo_target_dir,
 )
-from gobby.agents.sandbox_policy import sandbox_cache_path
+from gobby.agents.sandbox_policy import prepare_sandbox_run_paths, sandbox_cache_path
 from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy
 
 pytestmark = pytest.mark.unit
@@ -148,6 +149,36 @@ def test_sandbox_grant_refuses_a_link_under_the_configured_root(
 
     with pytest.raises(PermissionError, match="sandbox cache"):
         sandbox_cache_path(sandbox_checkout_cargo_target_dir(checkout))
+
+
+def test_agent_launch_refuses_a_configured_root_that_disappeared(
+    gobby_home: Path, checkout: Path, volume: Path
+) -> None:
+    configure_build_root(str(volume))
+    volume.rmdir()
+
+    with pytest.raises(ValueError, match="does not exist"):
+        ensure_agent_cargo_target_dir(checkout, PROJECT)
+
+    assert not volume.exists()
+
+
+def test_sandbox_launch_refuses_a_configured_root_that_disappeared(
+    gobby_home: Path, checkout: Path, volume: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_build_root(str(volume))
+    volume.rmdir()
+    monkeypatch.setattr(
+        "gobby.agents.sandbox_policy.secure_policy_directory",
+        lambda run_id: gobby_home / "runs" / run_id,
+    )
+
+    with pytest.raises(ValueError, match="does not exist"):
+        prepare_sandbox_run_paths(
+            "missing-volume", {}, workspace=checkout, prewarm_pre_commit_store=False
+        )
+
+    assert not volume.exists()
 
 
 def test_build_root_is_restart_required() -> None:
