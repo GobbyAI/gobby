@@ -572,6 +572,24 @@ def test_a_taskless_run_reports_live_only_for_its_requested_seats(env: _Env) -> 
     assert (partial.launch, dict(partial.live)) == (("dev",), {})
 
 
+def test_a_relaunch_reuses_the_seat_a_failed_run_left_live(env: _Env) -> None:
+    """A run that fails partway leaves its live seat; the relaunch for that task reuses it."""
+    task = _team_task(env, "Half staffed")
+    failed = _pipeline_child(env, ExecutionStatus.FAILED, inputs={"task": f"#{task.seq_num}"})
+    dev, _ = _seat_session(env, "dev-agent", parent=failed)
+
+    relaunch = check_runbook_seats(
+        env.stores,
+        caller_session_id=_pipeline_child(env, inputs={"task": f"#{task.seq_num}"}),
+        workspace=env.workspace_id,
+        requested="lead,dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+    )
+
+    assert (relaunch.launch, dict(relaunch.live)) == (("lead",), {"dev": dev})
+
+
 def test_a_partial_run_sees_only_its_own_tasks_live_seats(env: _Env) -> None:
     """Live seats count only for the run's task, and a seat not requested still reports live."""
     mine, theirs = _team_task(env, "Mine"), _team_task(env, "Theirs")

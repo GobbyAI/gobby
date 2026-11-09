@@ -8,6 +8,9 @@ use tokio::time::timeout;
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+#[path = "common/hub_lock.rs"]
+pub(super) mod hub_lock;
+
 struct TestDb {
     admin: Client,
     pool: Arc<Pool>,
@@ -320,7 +323,12 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     config.application_name(format!("gdaemon-lease-fixture:{}", std::process::id()));
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
-    lock_fixture_key(&admin, Duration::from_secs(30)).await?;
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
+    lock_fixture_key(&admin, Duration::from_secs(300)).await?;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lease_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(

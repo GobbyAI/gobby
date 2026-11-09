@@ -21,7 +21,7 @@ pytestmark = pytest.mark.cli
 THREE_DAYS = 3 * 24 * 3600
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     home = tmp_path / "gobby-home"
     home.mkdir()

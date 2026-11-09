@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 from gobby import shutdown_budget
+from gobby.paths import get_gobby_home
 from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
+from gobby.sync.jsonl_io import atomic_write_text
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -183,6 +186,15 @@ async def _reap_remaining_child_processes(
                         registered = await asyncio.to_thread(live_monitor_identities)
                         step = "verified_monitor_paths"
                         paths = await asyncio.to_thread(verified_monitor_paths)
+                        if paths is None:
+                            logger.warning(
+                                "SRT monitor paths could not be verified; left unreaped: %s",
+                                _describe_children(children, root_pid=current_process.pid),
+                            )
+                            await asyncio.to_thread(
+                                _record_deferred_children, children, root_pid=current_process.pid
+                            )
+                            return
                         pinned: dict[int, float] = {}
                         if paths is not None:
                             node, runner = paths
@@ -294,6 +306,32 @@ async def _sweep_children(children: list[Any], *, timeout: float, root_pid: int)
             len(still_alive),
             _describe_children(still_alive, root_pid=root_pid),
         )
+
+
+def _record_deferred_children(children: list[Any], *, root_pid: int) -> None:
+    """Retain private identities for manual inspection after this daemon exits."""
+    path = (
+        get_gobby_home() / "run" / "deferred-child-processes" / f"{root_pid}-{time.time_ns()}.txt"
+    )
+    identities: list[str] = []
+    for child in children:
+        try:
+            identities.append(
+                f"pid={child.pid} created={child.create_time()} cmdline={child.cmdline()!r}"
+            )
+        except Exception:
+            identities.append(_describe_child_process(child, root_pid=root_pid))
+    try:
+        atomic_write_text(
+            path,
+            "Unverified SRT monitor paths; manual inspection required.\n"
+            + "\n".join(identities)
+            + "\n",
+        )
+    except OSError:
+        logger.exception("Could not record deferred child processes at %s", path)
+    else:
+        logger.warning("Deferred child process identities retained for manual cleanup: %s", path)
 
 
 def _describe_children(processes: list[Any], *, root_pid: int) -> str:

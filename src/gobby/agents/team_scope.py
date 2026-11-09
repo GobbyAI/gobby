@@ -16,8 +16,8 @@ from pathlib import Path
 from gobby.agents.isolation_models import title_slug
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
-from gobby.storage.team_records import EPIC_MODE, live_team_rows_sql
-from gobby.storage.worktrees import Worktree, WorktreeStatus
+from gobby.storage.team_records import EPIC_MODE, LIVE_TREE_STATUSES, live_team_rows_sql
+from gobby.storage.worktrees import Worktree
 
 EPIC_TASK_TYPE = "epic"
 SINGLE_MODE = "single"
@@ -53,8 +53,7 @@ class ScopeTeam:
 def tree_is_live(tree: Worktree) -> bool:
     # A landing marks an open task's tree merged while its team keeps working on it. Closed tasks
     # are refused before this check, so the merged marker alone does not end the team's tree.
-    live = {WorktreeStatus.ACTIVE.value, WorktreeStatus.MERGED.value}
-    return tree.status in live and Path(tree.worktree_path).is_dir()
+    return tree.status in LIVE_TREE_STATUSES and Path(tree.worktree_path).is_dir()
 
 
 def epic_names(task: Task) -> tuple[str, str]:

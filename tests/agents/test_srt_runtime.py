@@ -744,6 +744,14 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         preflights.append((launch, cwd, env))
 
     monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
+
+    # This policy unit uses a nonrepository workspace; real Git and its deadline
+    # are exercised by TestComputeSandboxPaths in test_sandbox.py.
+    async def no_git_metadata(path: Path) -> list[str]:
+        assert path == workspace.resolve()
+        return []
+
+    monkeypatch.setattr("gobby.agents.sandbox._git_metadata_write_paths", no_git_metadata)
     # #25069: the re-signed ps shim serves every SRT launch, not only Droid. Every
     # provider must get it readable and first on PATH so `ps -axo pid,ppid,etime,comm`
     # resolves inside the sandbox.

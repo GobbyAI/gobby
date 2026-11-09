@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -17,6 +19,19 @@ if TYPE_CHECKING:
 
     from gobby.tasks.attestations import TaskAttestation
     from gobby.workflows.pipeline_models import ClaimStage
+    from gobby.workflows.pipeline_state import PipelineExecution
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClaimFlowStall:
+    """A claim-flow stage that can never complete, as the attestation that found it reports."""
+
+    execution_id: str
+    definition_version: str
+    stage: str
+    unmet_kinds: list[str]
 
 
 def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
@@ -178,28 +193,118 @@ def _produced(
     return references == {candidate}
 
 
+def _seat_for_task(
+    stage_name: str,
+    task: Task,
+    seats: dict[str, str | None],
+    *,
+    home: str,
+    child: str | None,
+) -> str | None:
+    """The live seat that serves ``task`` for ``stage_name``; ``seats`` maps session to run task.
+
+    A seat whose run names another leaf of the team serves that leaf, never this task. Among the
+    rest, the seats bound to this task win: its claim holder, its run's task, or the admission's
+    step output when that run names no task. A run that names only the team's task is shared by
+    the team's leaves, so it never binds one of them. Unbound seats serve only when none is bound.
+    Every live seat counts, idle or not. Two seats left in the chosen set are ambiguous, and the
+    error names the task and both sessions.
+    """
+    eligible = {
+        sid: run_task for sid, run_task in seats.items() if run_task in (None, home, task.id)
+    }
+    bound = {
+        sid
+        for sid, run_task in eligible.items()
+        if run_task == task.id
+        or sid == task.claimed_by_session_id
+        or (run_task is None and sid == child)
+    }
+    pool = bound or set(eligible)
+    if len(pool) > 1:
+        raise ValueError(
+            f"claim flow stage {stage_name!r} has ambiguous live pipeline seats for task "
+            f"{task.id}: {', '.join(sorted(pool))}"
+        )
+    return next(iter(pool)) if pool else None
+
+
+def _ungrantable(db: HubDatabase, writer: str | None, project_id: str, kinds: list[str]) -> bool:
+    """Whether the seat's installed definition can no longer write one of ``kinds``.
+
+    A definition that does not resolve is unknown rather than ungrantable, so it reports no stall.
+    """
+    from gobby.workflows.agent_resolver import resolve_agent_with_row
+
+    resolved = resolve_agent_with_row(writer, db, project_id=project_id) if writer else None
+    if resolved is None:
+        return False
+    body, row = resolved
+    writes = body.task_attestation_writes if row.enabled else []
+    return any("*" not in writes and kind not in writes for kind in kinds)
+
+
+def _stall(
+    db: HubDatabase,
+    task: Task,
+    execution: PipelineExecution,
+    definition: PipelineDefinition,
+    name: str,
+    writer: str | None,
+    active: dict[str, TaskAttestation],
+) -> ClaimFlowStall | None:
+    """The stage's unmet done_when kinds when they can never be met, otherwise None.
+
+    They can never be met once the execution has ended, or once the seat's definition cannot write
+    one of them. A stage with nothing unmet is complete, not stalled.
+    """
+    from gobby.agents.team_admission_records import ENDED_EXECUTIONS
+
+    stage = definition.claim_flow[name]
+    unmet = [
+        kind
+        for kind in stage.done_when
+        if kind not in active or active[kind].result != stage.approved_result
+    ]
+    if not unmet:
+        return None
+    if execution.status not in ENDED_EXECUTIONS and not _ungrantable(
+        db, writer, task.project_id, unmet
+    ):
+        return None
+    return ClaimFlowStall(
+        execution_id=execution.id,
+        definition_version=definition.version,
+        stage=name,
+        unmet_kinds=unmet,
+    )
+
+
 def advance_claim_flow(
     db: HubDatabase,
     conn: Transaction,
     task: Task,
     record: TaskAttestation,
     records: list[TaskAttestation],
-) -> None:
-    """Only the holder's current stage can move the claim; a failed move rolls back evidence."""
+) -> ClaimFlowStall | None:
+    """Only the holder's current stage can move the claim; a failed move rolls back evidence.
+
+    Returns the stall when the holder's stage can never complete and the claim stays put.
+    """
     if task.claimed_by_session_id != record.session_id:
-        return
+        return None
     from gobby.agents.team_lifecycle import seat_team
 
     team = seat_team(db, record.session_id)
     if team is None:
-        return
+        return None
     executions = LocalPipelineExecutionManager(db, task.project_id)
     execution = executions.get_execution(team.team_id)
     if execution is None or not execution.definition_json:
-        return
+        return None
     definition = PipelineDefinition.model_validate_json(execution.definition_json)
     if not definition.claim_flow:
-        return
+        return None
     # The admission must cover this task, including a persistent epic team's leaves.
     if task.id != team.task_id:
         from gobby.agents.team_scope import open_leaf_below
@@ -234,10 +339,11 @@ def advance_claim_flow(
         child = output.get("child_session_id")
         # Relaunches join the same admission; their active runs replace ended step outputs.
         agent = seat_agent(stage_name)
-        live: set[str] = set()
+        live: dict[str, str | None] = {}
+        home = team.task_id
         if agent:
             rows = conn.execute(
-                "SELECT ar.child_session_id FROM agent_runs ar "
+                "SELECT ar.child_session_id, ar.task_id FROM agent_runs ar "
                 "JOIN sessions s ON s.id = ar.child_session_id "
                 "WHERE ar.status IN ('queued', 'running', 'pending') "
                 "AND ar.machine_id = %s AND ar.agent_name = %s "
@@ -251,21 +357,36 @@ def advance_claim_flow(
                 ),
             ).fetchall()
             seated = {
-                str(row["child_session_id"]): seat_team(db, str(row["child_session_id"]))
+                str(row["child_session_id"]): (
+                    seat_team(db, str(row["child_session_id"])),
+                    row["task_id"],
+                )
                 for row in rows
             }
-            live = {sid for sid, seat in seated.items() if seat and seat.team_id == team.team_id}
+            live = {
+                sid: run_task
+                for sid, (member, run_task) in seated.items()
+                if member and member.team_id == team.team_id
+            }
             # A pod launches no manager seat; its parent team's manager holds that stage.
             if not live and child is None and _is_team_manager(db, agent, task.project_id):
                 from gobby.agents.team_admission_records import team_binding
 
                 binding = team_binding(db, team.team_id)
                 parent = binding.parent_team_id if binding is not None else None
-                if parent is not None:
-                    live = {sid for sid, seat in seated.items() if seat and seat.team_id == parent}
-        if len(live) > 1:
-            raise ValueError(f"claim flow stage {stage_name!r} has ambiguous live pipeline seats")
-        return next(iter(live)) if live else child
+                parent_binding = team_binding(db, parent) if parent is not None else None
+                if parent_binding is not None:
+                    home = parent_binding.task_id
+                    live = {
+                        sid: run_task
+                        for sid, (member, run_task) in seated.items()
+                        if member and member.team_id == parent
+                    }
+        seat_id = _seat_for_task(stage_name, task, live, home=home, child=child)
+        if seat_id is None and child in live:
+            # The admitted seat runs another leaf of this team; it never serves this task.
+            return None
+        return seat_id if seat_id is not None else child
 
     # Resolve the stage this author holds. A marker names the stage last moved to; when its
     # recipient is this author, the marker wins even after a relaunch gave the seat a newer live
@@ -367,7 +488,17 @@ def advance_claim_flow(
             )
         targets = routes[:1]
     if not targets:
-        return
+        stall = _stall(db, task, execution, definition, name, stage_agents[name], active)
+        if stall is not None:
+            logger.warning(
+                "claim flow stage %r of execution %s (definition version %s) can never complete; "
+                "unmet kinds: %s",
+                stall.stage,
+                stall.execution_id,
+                stall.definition_version,
+                ", ".join(stall.unmet_kinds),
+            )
+        return stall
     target = targets[0]
     recipient_id = stage_session(target)
     recipient = session_store.get(recipient_id) if recipient_id else None
@@ -400,3 +531,4 @@ def advance_claim_flow(
             ),
         ),
     )
+    return None

@@ -12,6 +12,7 @@ use gobby_daemon::{
     },
 };
 use gobby_terminals::write_api::WriteRefused;
+
 use serde_json::json;
 use std::fs;
 use std::{
@@ -27,15 +28,22 @@ use tokio::{
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+use super::lease::hub_lock;
+
 /// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
 /// the test deadline.
 fn repo_venv() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv")
 }
 
-/// SIGTERM-to-SIGKILL grace for fixture backends. A backend's TERM handler must run inside this
-/// window to write its marker; 100 ms missed it under CPU load (1 of 10 stress runs).
-const DRAIN_GRACE: Duration = Duration::from_secs(1);
+fn backend_argv(script: &str) -> Result<String> {
+    // `uv run` is another process plus project discovery on every start. That
+    // startup, with the interpreter and the gobby import, is what stretches
+    // under host load. The synced venv interpreter imports gobby on its own.
+    let python = repo_venv().join("bin").join("python");
+    let python = python.to_str().context("venv python path is not utf-8")?;
+    serde_json::to_string(&[python, "-c", script]).context("encode backend argv")
+}
 
 fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
     let mut config = BackendConfig::from_command_json(home, Some(argv))?;
@@ -44,6 +52,24 @@ fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
         repo_venv().into_os_string(),
     );
     Ok(config)
+}
+
+#[test]
+fn backend_argv_execs_the_venv_python() -> Result<()> {
+    let parsed: Vec<String> = serde_json::from_str(&backend_argv("pass")?)?;
+    let python = repo_venv().join("bin").join("python");
+    assert_eq!(
+        parsed,
+        vec![
+            python
+                .to_str()
+                .context("venv python path is not utf-8")?
+                .to_owned(),
+            "-c".into(),
+            "pass".into(),
+        ]
+    );
+    Ok(())
 }
 
 struct TestDb {
@@ -70,12 +96,12 @@ impl TestDb {
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let argv = backend_argv(script)?;
         let mut config = backend_config(home, &argv)?;
         config
             .environment
             .insert("HOME".into(), home.as_os_str().to_owned());
-        config.drain_timeout = DRAIN_GRACE;
+        config.drain_timeout = TERM_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         Ok(BackendSupervisor::new(lease, claim, config))
     }
@@ -97,7 +123,12 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     config.application_name(format!("gdaemon-lifecycle-fixture:{}", std::process::id()));
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
-    super::lease::lock_fixture_key(&admin, Duration::from_secs(60)).await?;
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
+    super::lease::lock_fixture_key(&admin, Duration::from_secs(300)).await?;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lifecycle_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
@@ -156,8 +187,11 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// The peer must build its pool, acquire the lease, claim its PID file and start a `uv run`
+/// backend before any file appears. That chain runs under the same host load as the rest of
+/// the suite, so the bound is a hang guard sized for it, and the error names the awaited file.
 async fn wait_for_file(path: &Path) -> Result<String> {
-    timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(60), async {
         loop {
             match tokio::fs::read_to_string(path).await {
                 Ok(value) if !value.is_empty() => return Ok(value),
@@ -169,7 +203,8 @@ async fn wait_for_file(path: &Path) -> Result<String> {
             }
         }
     })
-    .await?
+    .await
+    .with_context(|| format!("waiting for {}", path.display()))?
 }
 
 #[tokio::test]
@@ -210,7 +245,7 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         let healthy_home=TempDir::new()?;
         let claim=claim_pid_file(&healthy_home.path().join("gobby.pid"),Role::Daemon)?.context("standby PID claim")?;
         let script="import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('healthy'); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
-        let argv=serde_json::to_string(&["uv","run","python","-c",script])?;
+        let argv=serde_json::to_string(&["uv","run","--no-sync","python","-c",script])?;
         let mut config=backend_config(healthy_home.path(), &argv)?;
         config.drain_timeout=Duration::from_millis(100);
         let mut healthy=BackendSupervisor::new(standby,claim,config);
@@ -304,7 +339,7 @@ os.read(fd,1)
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
             .context("fixture PID claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
         let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let slot = config.write_token.clone();
@@ -383,7 +418,7 @@ control.sendall(b'ready')
 control.recv(1)
 raise SystemExit(1)
 "#;
-    let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
     let mut config = backend_config(home.path(), &argv)?;
     config.drain_timeout = Duration::from_millis(100);
     let claim =
@@ -441,7 +476,7 @@ if {code}==0:
 raise SystemExit({code})
 "#
         );
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", &script])?;
         let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
@@ -512,6 +547,7 @@ async fn standby_does_not_spawn_a_backend() -> Result<()> {
         let command = serde_json::to_string(&[
             "uv",
             "run",
+            "--no-sync",
             "python",
             "-c",
             "raise RuntimeError('standby spawned')",
@@ -552,9 +588,16 @@ async fn pre_spawn_stop_marker_and_shutdown_in_backoff_do_not_respawn() -> Resul
     }).await
 }
 
+/// Grace between SIGTERM and SIGKILL for the tests that check the TERM marker. A TERM handler
+/// can run late under host load, so the grace must outlast it. At 100 ms the kill won that
+/// race and both tests failed with ENOENT reading the marker.
+const TERM_GRACE: Duration = Duration::from_secs(2);
+
 const IGNORE_TERM: &str = r#"import os,pathlib,signal,time
 home=pathlib.Path(os.environ['GOBBY_HOME'])
-def term(*args): (home/'term').write_text('TERM')
+def term(*args):
+    time.sleep(.3)
+    (home/'term').write_text('TERM')
 signal.signal(signal.SIGTERM,term)
 (home/'ready').write_text(str(os.getpid()))
 while True: time.sleep(.01)
@@ -572,11 +615,11 @@ async fn shutdown_sends_term_then_bounded_kill() -> Result<()> {
         let started = Instant::now();
         tx.send(true)?;
         assert_eq!(
-            timeout(Duration::from_secs(5), task).await???,
+            timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::Stopped
         );
         assert!(started.elapsed() >= Duration::from_millis(90));
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(fs::read_to_string(home.path().join("term"))?, "TERM");
         // SAFETY: signal zero only probes the already reaped isolated child.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
@@ -599,12 +642,12 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         let application = lease.application_name().to_string();
         let claim =
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", IGNORE_TERM])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", IGNORE_TERM])?;
         let mut config = backend_config(home.path(), &argv)?;
         config
             .environment
             .insert("HOME".into(), home.path().as_os_str().to_owned());
-        config.drain_timeout = DRAIN_GRACE;
+        config.drain_timeout = TERM_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
         let (_tx, rx) = watch::channel(false);
@@ -620,7 +663,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
             .await?;
         assert_eq!(rows.len(), 1);
         assert_eq!(
-            timeout(Duration::from_secs(5), task).await???,
+            timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::LeaseLost
         );
         assert_eq!(fs::read_to_string(home.path().join("term"))?, "TERM");
@@ -650,7 +693,8 @@ assert os.read(fd,1)==b''
 async fn supervisor_death_gives_backend_eof() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;
-        let command = serde_json::to_string(&["uv", "run", "python", "-c", EOF_BACKEND])?;
+        let command =
+            serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", EOF_BACKEND])?;
         let executable = std::env::current_exe()?;
         let peer_path = executable
             .parent()
@@ -715,7 +759,11 @@ raise SystemExit(0 if n!=2 else 1)
         let mut supervisor=db.supervisor(home.path(),script).await?;
         let (_tx,rx)=watch::channel(false);
         let started=Instant::now();
-        assert_eq!(timeout(Duration::from_secs(10),supervisor.run(rx)).await??,SupervisorExit::Stopped);
+        // Hang guard for three interpreter starts plus the 1 s crash backoff.
+        // The whole test finished in 6.5 s at 1-minute load about 50. Import
+        // time grew with load; supervisor transitions stayed under 0.3 s.
+        // 15 s is 8.5 s over that completion.
+        assert_eq!(timeout(Duration::from_secs(15),supervisor.run(rx)).await??,SupervisorExit::Stopped);
         assert!(started.elapsed()>=Duration::from_secs(1), "consumed restart must back off second crash");
         assert_eq!(fs::read_to_string(home.path().join("starts"))?,"aaa");
         let epoch:i64=db.admin.query_one(&format!("SELECT fencing_epoch FROM {}.deployment_runtime WHERE deployment_token='lifecycle-test'",db.schema),&[]).await?.get(0);
@@ -893,7 +941,7 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
     let home = TempDir::new()?;
     let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
         .context("fixture PID claim")?;
-    let argv = serde_json::to_string(&["uv", "run", "python", "-c", SECRET_BACKEND])?;
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", SECRET_BACKEND])?;
     let mut config = backend_config(home.path(), &argv)?;
     config.front_door_secret = Some(FRONT_DOOR_SECRET.into());
     config.drain_timeout = Duration::from_millis(100);
