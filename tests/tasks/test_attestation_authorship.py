@@ -81,6 +81,7 @@ def _submit(
     kind: str,
     *,
     supersedes_id: str | None = None,
+    sha: str | None = None,
 ) -> TaskAttestation:
     record, _created = record_attestation(
         db,
@@ -90,6 +91,7 @@ def _submit(
             kind=kind,
             result="approved",
             summary="Observed.",
+            reference={"scheme": "git", "value": sha} if sha else None,
             supersedes_id=supersedes_id,
         ),
     )
@@ -180,6 +182,85 @@ def test_reviewer_is_refused_implementation_after_recording_review(
 
     with pytest.raises(AttestationError, match=_RULE):
         _submit(temp_db, author, task.id, "build")
+
+
+_OLD = "a" * 40
+_NEW = "b" * 40
+
+
+def test_review_of_an_older_candidate_does_not_block_implementation_of_a_new_one(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    _rules(temp_db, project_id)
+    seats = AgentSessions(temp_db, project_id)
+    author = _author(seats, _SELECTED)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    _submit(temp_db, author, task.id, "sign-off", sha=_OLD)
+
+    _submit(temp_db, author, task.id, "build", sha=_NEW)
+
+    assert [record.kind for record in list_attestations(temp_db, task.id)] == [
+        "sign-off",
+        "build",
+    ]
+
+
+def test_review_of_the_candidate_being_implemented_refuses_implementation(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    _rules(temp_db, project_id)
+    seats = AgentSessions(temp_db, project_id)
+    author = _author(seats, _SELECTED)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    _submit(temp_db, author, task.id, "sign-off", sha=_NEW)
+
+    with pytest.raises(AttestationError, match=_RULE):
+        _submit(temp_db, author, task.id, "build", sha=_NEW)
+
+
+def test_superseded_review_of_the_candidate_still_refuses_implementation(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    _rules(temp_db, project_id)
+    seats = AgentSessions(temp_db, project_id)
+    author = _author(seats, _SELECTED)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    first = _submit(temp_db, author, task.id, "sign-off", sha=_NEW)
+    _submit(temp_db, author, task.id, "sign-off", sha=_NEW, supersedes_id=first.id)
+
+    with pytest.raises(AttestationError, match=_RULE):
+        _submit(temp_db, author, task.id, "build", sha=_NEW)
+
+
+def test_review_naming_no_candidate_refuses_implementation_of_any_candidate(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    _rules(temp_db, project_id)
+    seats = AgentSessions(temp_db, project_id)
+    author = _author(seats, _SELECTED)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    _submit(temp_db, author, task.id, "sign-off")
+
+    with pytest.raises(AttestationError, match=_RULE):
+        _submit(temp_db, author, task.id, "build", sha=_NEW)
+
+
+def test_implementer_is_refused_review_of_a_different_candidate(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    _rules(temp_db, project_id)
+    seats = AgentSessions(temp_db, project_id)
+    implementer = _author(seats, _SELECTED)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Bake a cake")
+    _submit(temp_db, implementer, task.id, "build", sha=_OLD)
+
+    with pytest.raises(AttestationError, match=_RULE):
+        _submit(temp_db, implementer, task.id, "sign-off", sha=_NEW)
 
 
 def _snapshot(

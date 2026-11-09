@@ -229,6 +229,42 @@ def _seat_for_task(
     return next(iter(pool)) if pool else None
 
 
+def _installed_claim_flow(
+    db: HubDatabase, execution: PipelineExecution, definition: PipelineDefinition, project_id: str
+) -> PipelineDefinition:
+    """The admitted snapshot, its claim flow replaced by the installed pipeline's when both
+    route the same seats and agents.
+
+    A team keeps its admitted steps and seats. Its stages' done_when kinds follow the installed
+    flow, so a team admitted before a kind was retired is not held forever on a kind its seat can
+    no longer write. A changed stage or seat layout is not reconciled: the snapshot keeps governing.
+    """
+    from gobby.workflows.pipeline_loader import PipelineLoader
+
+    try:
+        installed = PipelineLoader(db)._load_from_db(execution.pipeline_name, project_id=project_id)
+    except ValueError:
+        logger.warning(
+            "claim flow of execution %s: installed pipeline %r is unreadable; the admitted "
+            "snapshot governs",
+            execution.id,
+            execution.pipeline_name,
+            exc_info=True,
+        )
+        return definition
+    if installed is None or not installed.enabled or not installed.claim_flow:
+        return definition
+
+    def routing(flow: dict[str, ClaimStage]) -> dict[str, tuple[str | None, str | None]]:
+        return {name: (stage.seat, stage.agent) for name, stage in flow.items()}
+
+    if routing(installed.claim_flow) != routing(definition.claim_flow):
+        return definition
+    return definition.model_copy(
+        update={"version": installed.version, "claim_flow": installed.claim_flow}
+    )
+
+
 def _ungrantable(db: HubDatabase, writer: str | None, project_id: str, kinds: list[str]) -> bool:
     """Whether the seat's installed definition can no longer write one of ``kinds``.
 
@@ -305,6 +341,7 @@ def advance_claim_flow(
     definition = PipelineDefinition.model_validate_json(execution.definition_json)
     if not definition.claim_flow:
         return None
+    definition = _installed_claim_flow(db, execution, definition, task.project_id)
     # The admission must cover this task, including a persistent epic team's leaves.
     if task.id != team.task_id:
         from gobby.agents.team_scope import open_leaf_below

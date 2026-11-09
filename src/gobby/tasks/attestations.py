@@ -279,6 +279,7 @@ def record_attestation_recording(
             kind=submission.kind,
             session_id=session_id,
             records=records,
+            reference=submission.reference,
             agent=body,
             rules=rules,
         ):

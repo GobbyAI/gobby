@@ -17,6 +17,7 @@ import pytest
 from gobby.agents.team_admission_records import TeamBinding
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
@@ -1139,3 +1140,73 @@ async def test_registry_record_reports_the_stall_beside_the_recorded_attestation
         "stage": IMPLEMENT,
         "unmet_kinds": ["self-review", "validation"],
     }
+
+
+def _installed_flow_without_retired_kinds() -> PipelineDefinition:
+    """The installed flow after the implement stage stopped requiring self-review and validation."""
+    pinned = _stall_flow()
+    stage = pinned.claim_flow[IMPLEMENT].model_copy(
+        update={"done_when": ["test-before", "implementation", "test-after"]}
+    )
+    return pinned.model_copy(
+        update={"version": "8.0.0", "claim_flow": {**pinned.claim_flow, IMPLEMENT: stage}}
+    )
+
+
+def test_installed_claim_flow_advances_a_team_admitted_before_its_kinds_were_retired(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    installed = _installed_flow_without_retired_kinds()
+    PipelineDefinitionManager(temp_db).create(
+        installed.name, installed.model_dump_json(), version=installed.version
+    )
+    team = _build_team(
+        temp_db,
+        sample_project,
+        _stall_flow(),
+        grants={"build": ["test-before", "implementation", "test-after"]},
+    )
+    builder = team.session(IMPLEMENT)
+
+    recordings = [
+        _recording(temp_db, team.task_id, builder, kind, IMPLEMENT, sha=C1)
+        for kind in ("test-before", "implementation", "test-after")
+    ]
+
+    assert recordings[-1].claim_flow_stalled is None
+    assert team.holder() == team.session(REVIEW)
+
+
+def test_installed_claim_flow_with_another_seat_topology_leaves_the_admitted_snapshot_governing(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    pinned = _stall_flow()
+    reseated = pinned.claim_flow[IMPLEMENT].model_copy(
+        update={"seat": "check", "done_when": ["test-before", "implementation", "test-after"]}
+    )
+    installed = pinned.model_copy(
+        update={"version": "8.0.0", "claim_flow": {**pinned.claim_flow, IMPLEMENT: reseated}}
+    )
+    PipelineDefinitionManager(temp_db).create(
+        installed.name, installed.model_dump_json(), version=installed.version
+    )
+    team = _build_team(
+        temp_db,
+        sample_project,
+        pinned,
+        grants={"build": ["test-before", "implementation", "test-after"]},
+    )
+    builder = team.session(IMPLEMENT)
+
+    recordings = [
+        _recording(temp_db, team.task_id, builder, kind, IMPLEMENT, sha=C1)
+        for kind in ("test-before", "implementation", "test-after")
+    ]
+
+    assert recordings[-1].claim_flow_stalled == ClaimFlowStall(
+        execution_id=team.execution_id,
+        definition_version="2.3.0",
+        stage=IMPLEMENT,
+        unmet_kinds=["self-review", "validation"],
+    )
+    assert team.holder() == builder
