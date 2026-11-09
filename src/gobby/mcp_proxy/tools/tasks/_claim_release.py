@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.team_lifecycle import seat_team, task_team
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
@@ -120,6 +121,9 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
                     "error": "Caller lacks authority to release this claim",
                     "error_code": "coordinator_required",
                 }
+            team_refusal = _release_team_refusal(ctx, caller, holder, resolved_id)
+            if team_refusal is not None:
+                return team_refusal
             db = ctx.task_manager.db
             with db.transaction() as conn:
                 # Serialize ownership, file attribution and projection cleanup with
@@ -141,6 +145,9 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
                         "error": "Caller lacks authority to release this claim",
                         "error_code": "claim_authority_required",
                     }
+                team_refusal = _release_team_refusal(ctx, caller, holder, resolved_id)
+                if team_refusal is not None:
+                    return team_refusal
                 conn.acquire_additional_lock(SessionVariableTransfer((holder.id,)))
                 refusal = _uncommitted_refusal(ctx, holder, resolved_id)
                 if refusal is not None:
@@ -203,6 +210,49 @@ def _may_manage_claim(ctx: RegistryContext, caller: Session, task_id: str) -> bo
     )
 
 
+def _team_refusal(
+    ctx: RegistryContext, caller: Session, task_id: str, seats: tuple[Session, ...]
+) -> dict[str, Any] | None:
+    """Confine a spawned coordinator to its own team's claims and seats.
+
+    An unspawned local root keeps project-wide authority. A spawned coordinator must manage the
+    task's team, and each holder or recipient it names must be a seat of its own team or of the
+    task's team, so a leaf team's claim moves between that leaf's seats.
+    """
+    if not (caller.agent_run_id or caller.agent_depth):
+        return None
+    db = ctx.task_manager.db
+    manager = seat_team(db, caller.id)
+    team = task_team(db, task_id)
+    if (
+        manager is None
+        or team is None
+        or not (team.team_id == manager.team_id or team.parent_team_id == manager.team_id)
+    ):
+        return {
+            "error": "Caller does not manage this task's team",
+            "error_code": "team_manager_required",
+        }
+    allowed = {manager.team_id, team.team_id}
+    for seat in seats:
+        binding = seat_team(db, seat.id)
+        if binding is None or binding.team_id not in allowed:
+            return {
+                "error": f"Session {seat.id} is not a seat of this task's team",
+                "error_code": "team_seat_required",
+            }
+    return None
+
+
+def _release_team_refusal(
+    ctx: RegistryContext, caller: Session, holder: Session, task_id: str
+) -> dict[str, Any] | None:
+    """A coordinator's release names one seat; the holder's own release is not team-scoped."""
+    if not _can_release(ctx, caller, holder, task_id):
+        return None
+    return _team_refusal(ctx, caller, task_id, (holder,))
+
+
 @dataclass(frozen=True)
 class ClaimTransfer:
     """A committed claim move: the task as the recipient now holds it, and its event."""
@@ -259,6 +309,9 @@ def transfer_task_claim(
                     "error_code": "claim_authority_required",
                 }
             )
+        team_refusal = _team_refusal(ctx, caller, task_id, (holder, recipient))
+        if team_refusal is not None:
+            raise ClaimTransferRefused(team_refusal)
         if holder.id == recipient.id:
             raise ClaimTransferRefused(
                 {"error": "The recipient already holds the claim", "error_code": "same_seat"}
@@ -317,6 +370,9 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                     "error": "The holder and recipient must belong to this project and machine",
                     "error_code": "claim_participant_scope",
                 }
+            team_refusal = _team_refusal(ctx, caller, resolved_id, (holder, recipient))
+            if team_refusal is not None:
+                return team_refusal
             transfer = transfer_task_claim(
                 ctx,
                 task_id=resolved_id,
