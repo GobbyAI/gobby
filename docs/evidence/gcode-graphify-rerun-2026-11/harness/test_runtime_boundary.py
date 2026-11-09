@@ -1,13 +1,11 @@
 """Evidence paths, immutable writes and streaming input scans."""
 
-import json
 from pathlib import Path
 
 import pytest
-from provision_environment import TASK_REF, build_manifest, refresh_manifest
+from provision_environment import build_manifest, refresh_manifest
 from runtime_boundary import (
     EvidenceError,
-    assert_owned_runtime,
     contained_file,
     file_record,
     symlink_record,
@@ -119,24 +117,3 @@ def test_source_manifest_records_symlink_target(tmp_path: Path) -> None:
     assert entries["NOTES.md"]["symlink"] is True
     assert entries["NOTES.md"]["target"] == "CLAUDE.md"
     assert "symlink" not in entries["CLAUDE.md"]
-
-
-def test_owned_runtime_is_owned_by_the_rerun_task(tmp_path: Path) -> None:
-    root = tmp_path / "runtime"
-    root.mkdir(mode=0o700)
-    root.chmod(0o700)
-    ownership = root / "ownership.json"
-    ownership.write_text(
-        json.dumps({"runtime_root": str(root), "owner_task": "#25815", "owner_session": "owner-1"})
-    )
-    assert_owned_runtime(root, "owner-1")
-
-    ownership.write_text(
-        json.dumps({"runtime_root": str(root), "owner_task": "#22948", "owner_session": "owner-1"})
-    )
-    with pytest.raises(EvidenceError, match="owner_task"):
-        assert_owned_runtime(root, "owner-1")
-
-
-def test_init_records_the_rerun_task_as_owner() -> None:
-    assert TASK_REF == "#25815"

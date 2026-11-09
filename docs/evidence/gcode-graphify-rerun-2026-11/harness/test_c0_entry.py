@@ -7,7 +7,7 @@ from pathlib import Path
 
 import c0
 import pytest
-from runtime_boundary import OWNER_TASK, EvidenceError
+from runtime_boundary import EvidenceError
 
 
 def test_c0_refuses_a_runtime_owned_by_another_session(
@@ -20,7 +20,7 @@ def test_c0_refuses_a_runtime_owned_by_another_session(
         json.dumps(
             {
                 "runtime_root": str(root),
-                "owner_task": OWNER_TASK,
+                "owner_task": "#22948",
                 "owner_session": "someone-else",
             }
         )
