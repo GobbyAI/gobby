@@ -103,8 +103,8 @@ on each run.
 
 Gobby package aggregate, expected:
 
-- File count: 3031 files in each copy (2190 `.py`, 841 other), with the same set of paths.
-- Aggregate digest: `467edf61aae6ef8e1886595a4992e5a49f7c26cc4efc6da8d0d6a81853164ef1` in each copy.
+- File count: 3039 files in each copy (2196 `.py`, 843 other), with the same set of paths.
+- Aggregate digest: `62f582121e9734c706dc3d933060a9bd84c4e19bf5a8dfbfca523d4cf35667dd` in each copy.
 
 Residual: third-party packages that gobby imports are not hashed.
 
@@ -263,9 +263,13 @@ and `test_a_graphify_export_help_that_exits_nonzero_fails_the_inventory`. Both w
   and the step-4 check are unchanged. Re-verify the digest and the 3039-file count after any later re-pin,
   including to the landed 0.5.0 tip.
 - `validate_environment.py --live` checks the daemon through its SRT wrapper's descendants (`validate_live_processes`).
-  Each listener on 59480 and 59481 must be a descendant of the wrapper, run the recorded daemon argv, stay under
-  the runtime root and keep the managed environment. The wrapper itself must not be the listener. The check
-  returns the listener identities, which the proof records as `daemon_listeners`.
+  The wrapper itself must not listen. Its one descendant running the recorded daemon argv is the native gdaemon,
+  which must own the public ports 59480 (HTTP) and 59481 (websocket). The Python backend that gdaemon supervises
+  must own the backend HTTP port 59580 (`backend_ports`, offset +100) and carry `GOBBY_SUPERVISOR_FD`. In native
+  mode the backend does not bind its websocket port 59581, so a listener there is refused. Any other listener under
+  the wrapper is refused and named by endpoint. Each listener keeps the uid, runtime-root and managed-environment
+  checks. The check returns the listener identities with their roles (`public` or `backend`), which the proof
+  records as `daemon_listeners`.
 - `verify_corpora.compare_manifests` compares the corpus identity (source commit, exclusions, file records and
   tree digest), not raw JSON, so the run's root and JSON layout do not fail a correct corpus. Each corpus is
   still verified file by file.

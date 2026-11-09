@@ -623,7 +623,7 @@ def auth_probe(root: Path, cache: Path, mode: str) -> dict[str, Any]:
     return json.loads(_run_probe(argv, env=isolated_environment(root, dict(os.environ))))
 
 
-DAEMON_PORTS = (59480, 59481)
+PUBLIC_PORTS = (59480, 59481)
 
 
 def _contains_argv(cmdline: list[str], expected: list[str]) -> bool:
@@ -644,14 +644,31 @@ def _require_contained_environment(root: Path, environment: Mapping[str, str]) -
     )
 
 
+def _require_daemon_listener(root: Path, process: Any) -> None:
+    require(
+        process.uids().real == os.getuid(),
+        "check failed: process.uids().real == os.getuid()",
+    )
+    require(
+        Path(process.cwd()).resolve().is_relative_to(root),
+        "daemon listener runs outside the runtime root",
+    )
+    _require_contained_environment(root, process.environ())
+
+
 def validate_live_processes(root: Path, launches: dict[str, Any]) -> list[dict[str, Any]]:
     """Check the live daemon through the SRT wrapper that the launch receipt names.
 
-    The wrapper does not listen itself; the sandboxed daemon it spawns does. Each listener on a
-    daemon port must be a descendant of the wrapper, run the recorded daemon argv, stay under the
-    runtime root and keep the managed environment. Returns the listener identities.
+    The wrapper does not listen itself. Its descendant gdaemon serves the public ports, and the
+    Python backend that gdaemon supervises serves the backend HTTP port (in native mode the backend
+    leaves its websocket port unbound). The daemon is the one descendant running the recorded
+    daemon argv; the backend must be a descendant of it and carry GOBBY_SUPERVISOR_FD. Any other
+    listener under the wrapper is refused by endpoint. Each listener keeps the uid, runtime-root and
+    managed-environment checks. Returns the listener identities with their roles.
     """
     import psutil
+
+    from gobby.config.bootstrap import backend_ports  # step-three modules load no gobby at import
 
     require(set(launches) == {"daemon"}, "check failed: set(launches) == {'daemon'}")
     launch = _load_json(verify_file_record(root, launches["daemon"]))
@@ -675,37 +692,56 @@ def validate_live_processes(root: Path, launches: dict[str, Any]) -> list[dict[s
         environment["GOBBY_NATIVE_BIN_DIR"] == str(root / "gobby-home/bin"),
         "check failed: environment['GOBBY_NATIVE_BIN_DIR'] == str(root / 'gobby-home/bin')",
     )
+    require(
+        not any(c.status == psutil.CONN_LISTEN for c in wrapper.net_connections(kind="tcp")),
+        "the wrapper itself listens; listeners must be wrapper descendants",
+    )
+    descendants = wrapper.children(recursive=True)
+    daemons = [p for p in descendants if _contains_argv(p.cmdline(), launch["daemon_argv"])]
+    require(len(daemons) == 1, "exactly one daemon must run among the wrapper's descendants")
+    daemon = daemons[0]
+    backend_pids = {child.pid for child in daemon.children(recursive=True)}
     listeners: dict[tuple[str, int], Any] = {}
-    for process in wrapper.children(recursive=True):
+    for process in descendants:
         for connection in process.net_connections(kind="tcp"):
             if connection.status != psutil.CONN_LISTEN:
                 continue
             endpoint = (connection.laddr.ip, connection.laddr.port)
             require(endpoint not in listeners, "a daemon port has two listeners")
             listeners[endpoint] = process
-    expected = {("127.0.0.1", port) for port in DAEMON_PORTS}
+    roles = {("127.0.0.1", port): "public" for port in PUBLIC_PORTS}
+    roles[("127.0.0.1", backend_ports(*PUBLIC_PORTS)[0])] = "backend"
+    extra = sorted(set(listeners) - set(roles))
     require(
-        set(listeners) == expected,
+        not extra,
+        "unexpected listener under the wrapper: " + ", ".join(f"{ip}:{port}" for ip, port in extra),
+    )
+    require(
+        set(listeners) == set(roles),
         "daemon ports are not listened on by the wrapper's descendants",
     )
     identities: list[dict[str, Any]] = []
-    for endpoint in sorted(expected):
+    for endpoint in sorted(roles):
         process = listeners[endpoint]
-        require(
-            _contains_argv(process.cmdline(), launch["daemon_argv"]),
-            "a daemon port is listened on by a process that is not the daemon",
-        )
-        require(
-            process.uids().real == os.getuid(),
-            "check failed: process.uids().real == os.getuid()",
-        )
-        require(
-            Path(process.cwd()).resolve().is_relative_to(root),
-            "daemon listener runs outside the runtime root",
-        )
-        _require_contained_environment(root, process.environ())
+        role = roles[endpoint]
+        if role == "public":
+            require(
+                process.pid == daemon.pid,
+                "a daemon port is listened on by a process that is not the daemon",
+            )
+        else:
+            require(
+                process.pid in backend_pids,
+                "the backend port is listened on by a process that is not the daemon's backend",
+            )
+            require(
+                "GOBBY_SUPERVISOR_FD" in process.environ(),
+                "the backend listener lacks the supervisor fd",
+            )
+        _require_daemon_listener(root, process)
         identities.append(
             {
+                "role": role,
                 "port": endpoint[1],
                 "pid": process.pid,
                 "create_time": process.create_time(),
