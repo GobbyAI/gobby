@@ -527,7 +527,10 @@ def _chain_recorder(repo: _Repo, tmp_path: Path) -> Path:
 
 
 def _without_tmp_writes(repo: _Repo, log: Path) -> list[str]:
-    """Return a seatbelt prefix leaving git only its own directory and the log.
+    """Return a seatbelt prefix leaving git its own directory and the two fixture logs.
+
+    The two logs are the chained hook's log and the planted ghook's request log;
+    both sit under tmp_path, which the profile denies, so each is allowed by literal path.
 
     Ignoring TMPDIR, bash 3.2 writes here-documents to /tmp or /var/tmp, else
     to the working directory. Seatbelt does not nest, so a sandboxed seat
@@ -541,7 +544,8 @@ def _without_tmp_writes(repo: _Repo, log: Path) -> list[str]:
         "(version 1)(allow default)"
         '(deny file-write* (subpath "/private/tmp") (subpath "/private/var/tmp")'
         f' (subpath "{root.parent}"))'
-        f'(allow file-write* (subpath "{root / ".git"}") (literal "{log.resolve()}"))'
+        f'(allow file-write* (subpath "{root / ".git"}") (literal "{log.resolve()}")'
+        f' (literal "{repo.requests.resolve()}"))'
     )
     probe = subprocess.run(
         [sandbox_exec, "-p", profile, "/usr/bin/true"], capture_output=True, check=False
