@@ -554,32 +554,6 @@ def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
     return None
 
 
-def bind_reviewer_run(
-    db: HubDatabase, team_id: str, project_id: str, definition: str, run_id: str
-) -> None:
-    """Record ``run_id`` as the live seat of reviewer ``definition`` on team ``team_id``."""
-    _bind_run(db, team_id, project_id, "reviewers", definition, run_id)
-
-
-def bind_primary_run(
-    db: HubDatabase, team_id: str, project_id: str, domain: str, run_id: str
-) -> None:
-    """Record ``run_id`` as the live primary of implementation ``domain`` on team ``team_id``."""
-    _bind_run(db, team_id, project_id, "primaries", domain, run_id)
-
-
-def _bind_run(
-    db: HubDatabase, team_id: str, project_id: str, key: str, name: str, run_id: str
-) -> None:
-    executions = LocalPipelineExecutionManager(db, project_id)
-    step = admission_step(executions, team_id)
-    record = recorded_team(step)
-    if step is None or record is None:
-        raise TeamAdmissionRefused("team_missing", f"team {team_id} has no admission record")
-    bound = {**(record.get(key) or {}), name: run_id}
-    merge_step_output(executions, step, team={**record, key: bound})
-
-
 def _task_id(db: HubDatabase, ref: str, binding: TeamBinding) -> str | None:
     try:
         return LocalTaskManager(db).resolve_task_reference(ref, binding.project_id)

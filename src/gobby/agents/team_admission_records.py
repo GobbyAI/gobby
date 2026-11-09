@@ -30,10 +30,8 @@ class TeamBinding:
     # None for a treeless team, whose admission records an explicit null for its tree.
     worktree_id: str | None
     worktree_path: str | None
-    # One entry per reviewer definition the team binds; None until its seat exists.
+    # Reviewer definitions the team admits; a join must name one of them.
     reviewers: dict[str, str | None] = field(default_factory=dict)
-    # Domain metadata for primary runs; only one primary may be live across this map.
-    primaries: dict[str, str | None] = field(default_factory=dict)
     # "epic" for a team bound to an epic's open leaves; "single" for one task.
     mode: str = SINGLE_MODE
     # Resolved runbook tab title, shared by replacements and later epic-seat spawns.
@@ -109,8 +107,8 @@ def binding_from_record(record: dict[str, Any] | None) -> TeamBinding | None:
     values: dict[str, Any] = {}
     for item in fields(TeamBinding):
         value = record.get(item.name)
-        if item.name in ("reviewers", "primaries"):
-            # The admission intent carries neither map until a seat binds.
+        if item.name == "reviewers":
+            # The admission intent carries no reviewers map unless a reviewer is named.
             values[item.name] = dict(value) if isinstance(value, dict) else {}
             continue
         if item.name == "mode":

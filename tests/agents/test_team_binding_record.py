@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import pytest
 
-from gobby.agents.team_admission_records import binding_from_record
+from gobby.agents.team_admission_records import TeamBinding, binding_from_record
 
 pytestmark = pytest.mark.unit
 
 
-def test_record_without_reviewers_or_primaries_still_binds() -> None:
-    """Teams the daemon admitted before any seat bound carry no reviewers or primaries key."""
+def test_team_binding_holds_no_run_binding_map() -> None:
+    """No seat ever binds a run to a team, so the binding carries no primaries map to read."""
+    assert "primaries" not in {field.name for field in fields(TeamBinding)}
+
+
+def test_record_without_reviewers_still_binds() -> None:
+    """Teams the daemon admitted before any seat was admitted carry no reviewers key."""
     binding = binding_from_record(
         {
             "team_id": "team-1",
@@ -25,4 +32,3 @@ def test_record_without_reviewers_or_primaries_still_binds() -> None:
 
     assert binding is not None
     assert binding.reviewers == {}
-    assert binding.primaries == {}
