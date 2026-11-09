@@ -1212,8 +1212,8 @@ class TestInitSubsystems:
                 await runner._startup_recovery_task
 
         expected_events = [
-            "code-index",
             "websocket",
+            "code-index",
             "ui",
             "prewarm",
         ]
@@ -1416,7 +1416,7 @@ class TestShutdownDaemonServices:
         assert spawn_readiness_blocker(services) == "daemon_shutdown_in_progress"
         assert services.startup_ready is False
         assert services.shutdown_in_progress is True
-        start_websocket.assert_not_called()
+        start_websocket.assert_called_once()
         start_ui.assert_not_called()
         start_automation.assert_not_awaited()
 
@@ -1503,7 +1503,7 @@ class TestShutdownDaemonServices:
         assert runner.http_server.services.startup_ready is False
         assert runner.http_server.services.shutdown_in_progress is True
         start_core_services.assert_not_awaited()
-        start_websocket.assert_not_called()
+        start_websocket.assert_called_once()
         start_automation.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -5127,6 +5127,7 @@ async def test_core_startup_failure_prevents_restart_recovery() -> None:
                     bootstrap_config=BootstrapConfig(),
                     agent_runner=object(),
                     agent_lifecycle_monitor=monitor,
+                    websocket_server=None,
                     http_bound_at_ms=1_700_000_000_000,
                     wake_dispatcher=SimpleNamespace(
                         reconcile_restart_active_sessions=reconcile_sessions
@@ -6162,6 +6163,11 @@ def test_main_override_env_lets_a_worktree_package_start(
 
 class TestRuleDispositionStartup:
     """Narrow disposition migration runs once before hook service."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_project_skill_sync(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Project skill sync has its own suite; these tests pass a placeholder database.
+        monkeypatch.setattr("gobby.skills.project_sync.sync_project_skills", lambda _db: {})
 
     def test_non_dev_runs_migration_once_without_aggregator(
         self, monkeypatch: pytest.MonkeyPatch

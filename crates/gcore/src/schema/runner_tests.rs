@@ -444,6 +444,31 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_eq!(check_expression, "false");
         }
     }
+    // Plan coverage reads tasks and task_dependencies through the same capability
+    // role, scoped to the bound project (migration 490). Pin the single SELECT
+    // policy on each; no write policy may exist on them.
+    for (table, scope) in [
+        (
+            "tasks",
+            "project_id = gobby_agent_auth.current_project_id()",
+        ),
+        ("task_dependencies", "t.id = task_dependencies.task_id"),
+    ] {
+        let policies = actual
+            .remove(table)
+            .expect("plan coverage table must carry its gcode read policy");
+        let operations: Vec<(String, String)> = policies
+            .iter()
+            .map(|(name, command, _, _)| (name.clone(), command.clone()))
+            .collect();
+        assert_eq!(
+            operations,
+            [("gobby_gcode_project_read".to_owned(), "SELECT".to_owned())]
+        );
+        for (_, _, using_expression, _) in policies {
+            assert!(using_expression.contains(scope));
+        }
+    }
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"
