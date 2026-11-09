@@ -1068,6 +1068,8 @@ def test_ended_execution_stalls_the_stage_and_keeps_the_claim(
     LocalPipelineExecutionManager(temp_db, sample_project["id"]).update_execution_status(
         team.execution_id, ExecutionStatus.COMPLETED
     )
+    # An ended execution stalls only once no live seat can still write the stage.
+    team.retire(IMPLEMENT)
 
     with caplog.at_level(logging.WARNING, logger="gobby.tasks.claim_flow"):
         recording = _recording(temp_db, team.task_id, builder, "test-before", IMPLEMENT, sha=C1)
@@ -1086,6 +1088,52 @@ def test_ended_execution_stalls_the_stage_and_keeps_the_claim(
         team.execution_id in message and "2.3.0" in message and IMPLEMENT in message
         for message in _stall_warnings(caplog)
     )
+
+
+def test_ended_execution_with_a_live_holder_reports_no_stall(
+    temp_db: HubDatabase, sample_project: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """A pipeline ends once it has spawned its seats; the live holder still finishes the stage."""
+    team = _build_team(temp_db, sample_project, _stall_flow())
+    builder = team.session(IMPLEMENT)
+    LocalPipelineExecutionManager(temp_db, sample_project["id"]).update_execution_status(
+        team.execution_id, ExecutionStatus.COMPLETED
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.tasks.claim_flow"):
+        recording = _recording(temp_db, team.task_id, builder, "test-before", IMPLEMENT, sha=C1)
+
+    assert recording.created
+    assert recording.claim_flow_stalled is None
+    assert team.holder() == builder
+    assert _stall_warnings(caplog) == []
+
+
+def test_ended_execution_with_a_live_holder_advances_on_full_evidence(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    installed = _installed_flow_without_retired_kinds()
+    PipelineDefinitionManager(temp_db).create(
+        installed.name, installed.model_dump_json(), version=installed.version
+    )
+    team = _build_team(
+        temp_db,
+        sample_project,
+        _stall_flow(),
+        grants={"build": ["test-before", "implementation", "test-after"]},
+    )
+    builder = team.session(IMPLEMENT)
+    LocalPipelineExecutionManager(temp_db, sample_project["id"]).update_execution_status(
+        team.execution_id, ExecutionStatus.COMPLETED
+    )
+
+    recordings = [
+        _recording(temp_db, team.task_id, builder, kind, IMPLEMENT, sha=C1)
+        for kind in ("test-before", "implementation", "test-after")
+    ]
+
+    assert recordings[-1].claim_flow_stalled is None
+    assert team.holder() == team.session(REVIEW)
 
 
 def test_grantable_stage_in_progress_reports_no_stall(

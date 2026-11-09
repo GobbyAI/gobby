@@ -16,8 +16,9 @@ if TYPE_CHECKING:
     from gobby.tasks.attestations import EvidenceReference, TaskAttestation
 
 
-def _candidate(reference: "EvidenceReference | None") -> tuple[str, str] | None:
-    return None if reference is None else (reference.scheme, reference.value)
+def _candidate(reference: "EvidenceReference | None") -> str | None:
+    """A candidate is its value; the same commit under another reference scheme is the same one."""
+    return None if reference is None else reference.value
 
 
 def attestation_authorship_refusal(
@@ -32,10 +33,10 @@ def attestation_authorship_refusal(
     """Refuse a review kind from the task's implementer, or implementation from a reviewer.
 
     Every record counts, superseded records included, so a correction never erases
-    authorship. A reviewer is refused implementation of the candidate it reviewed. A review
-    that names a different candidate than the implementation does not count; a review that
-    names no candidate counts against every implementation. Only rules the author's
-    definition selects apply.
+    authorship. A reviewer is refused implementation of the candidate it reviewed, matched by
+    value whatever the reference scheme. A review that names a different candidate than the
+    implementation does not count; a review that names no candidate counts against every
+    implementation. Only rules the author's definition selects apply.
     """
     candidate = _candidate(reference)
     for row in select_closure_rules(agent, rules, CLOSURE_EVENTS):
