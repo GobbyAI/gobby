@@ -315,10 +315,21 @@ struct StateHead<'a> {
     events: &'a CarriedEvents,
 }
 
-/// Encodes `state` exactly as `serde_json::to_vec` would. Each pane's
-/// snapshot is encoded on its own scoped thread: the encoder runs in series
-/// otherwise, inside the upgrade's soft window.
+/// Encodes `state` exactly as `serde_json::to_vec` would.
+///
+/// The panes are serialized inside the upgrade's soft window, on the machine's cores. Lanes beyond
+/// the core count only add contention, so the lane count is capped at `available_parallelism`
+/// rather than one thread per pane, which grew without bound with the pane count.
 fn encode_state(state: &HandoverState) -> io::Result<Vec<u8>> {
+    encode_state_with_lanes(
+        state,
+        std::thread::available_parallelism().map_or(1, usize::from),
+    )
+}
+
+/// Encodes the state with panes serialized on at most `lanes` threads. The bytes do not depend on
+/// `lanes`: each lane takes a contiguous run of panes, and the runs are joined in carried order.
+fn encode_state_with_lanes(state: &HandoverState, lanes: usize) -> io::Result<Vec<u8>> {
     let head = StateHead {
         format_version: state.format_version,
         host_epoch: &state.host_epoch,
@@ -338,11 +349,12 @@ fn encode_state(state: &HandoverState) -> io::Result<Vec<u8>> {
     // The head closes its object; reopen it for the panes, which come last.
     out.pop();
     out.extend_from_slice(b",\"panes\":[");
+    let per_lane = state.panes.len().div_ceil(lanes.max(1)).max(1);
     let encoded: Vec<io::Result<Vec<u8>>> = std::thread::scope(|scope| {
         let workers: Vec<_> = state
             .panes
-            .iter()
-            .map(|pane| scope.spawn(move || serde_json::to_vec(pane).map_err(io::Error::other)))
+            .chunks(per_lane)
+            .map(|lane| scope.spawn(move || encode_lane(lane)))
             .collect();
         workers
             .into_iter()
@@ -353,13 +365,25 @@ fn encode_state(state: &HandoverState) -> io::Result<Vec<u8>> {
             })
             .collect()
     });
-    for (index, pane) in encoded.into_iter().enumerate() {
+    for (index, lane) in encoded.into_iter().enumerate() {
         if index > 0 {
             out.push(b',');
         }
-        out.extend_from_slice(&pane?);
+        out.extend_from_slice(&lane?);
     }
     out.extend_from_slice(b"]}");
+    Ok(out)
+}
+
+/// Serializes one lane's panes as comma-separated JSON values, in order.
+fn encode_lane(panes: &[CarriedPane]) -> io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (index, pane) in panes.iter().enumerate() {
+        if index > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(&serde_json::to_vec(pane).map_err(io::Error::other)?);
+    }
     Ok(out)
 }
 

@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::restore::stage;
+use super::restore::{stage, stage_panes};
 use super::*;
-use crate::host::state::{Identity, ObserverBind};
+use crate::host::state::{Identity, ObserverBind, TerminalSlot};
 use crate::pane::{PaneLaunchEnv, PaneRuntime};
 use crate::terminal_theme::TerminalTheme;
 
@@ -118,14 +118,137 @@ fn encoded_state_matches_the_serializer_byte_for_byte() {
     several.panes = vec![pane.clone(), pane.clone(), pane];
     for state in [fixture, empty, several] {
         let expected = serde_json::to_vec(&state).expect("serialize state");
+        for lanes in [1, 2, 3, 8] {
+            let encoded = encode_state_with_lanes(&state, lanes).expect("encode state");
+            assert_eq!(
+                encoded,
+                expected,
+                "{} panes on {lanes} lanes encode to the serializer's bytes",
+                state.panes.len()
+            );
+        }
         let encoded = encode_state(&state).expect("encode state");
+        assert_eq!(encoded, expected, "default lanes match the serializer");
+    }
+}
+/// One carried pane for `index`, owning `master` as its handoff descriptor.
+fn carried_pane(
+    index: usize,
+    master: RawFd,
+    pid: u32,
+    snapshot_b64: &str,
+    core: &PaneCoreHandover,
+) -> CarriedPane {
+    CarriedPane {
+        host_terminal_id: format!("ht-{index}"),
+        terminal_id: format!("term-{index}"),
+        spawn_key: format!("spawn-{index}"),
+        master_fd: master,
+        pid,
+        pgid: pid as i32,
+        start_time: 12.5,
+        title: format!("agent-{index}"),
+        rows: 24,
+        cols: 80,
+        pixel_width: 640,
+        pixel_height: 480,
+        last_seq: 9,
+        fingerprint: 5,
+        observation_state: ObservationState::Live,
+        observation_generation: 2,
+        observer_generation: 4,
+        written_bytes: 10,
+        dropped_bytes: 1,
+        total_bytes: 11,
+        truncated: false,
+        locator: None,
+        reported_cwd: None,
+        reservation_id: format!("res-{index}"),
+        reserve_key: format!("key-{index}"),
+        reserve_generation: 2,
+        observer_bind: CarriedObserverBind::None,
+        reservation: None,
+        exit: None,
+        snapshot_b64: snapshot_b64.to_string(),
+        core: core.clone(),
+    }
+}
+/// Rows of a restored pane as the handoff encoder reads them back.
+fn restored_rows(slot: &TerminalSlot) -> (Vec<u8>, PaneCoreHandover) {
+    slot.child
+        .as_ref()
+        .expect("restored child")
+        .runtime
+        .encode_handover()
+        .expect("encode restored pane")
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_restore_matches_the_serial_restore() {
+    const PANES: usize = 6;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = PaneRuntime::spawn_argv_command(
+        24,
+        80,
+        dir.path().to_path_buf(),
+        &["sh".into(), "-c".into(), "sleep 30".into()],
+        &PaneLaunchEnv::default(),
+        1 << 20,
+        TerminalTheme::default(),
+        None,
+    )
+    .expect("spawn pane");
+    let pid = runtime.child_pid().expect("child pid");
+    runtime
+        .pause_handoff_reader(Duration::from_secs(1))
+        .expect("pause reader");
+    let (snapshot, core) = runtime.encode_handover().expect("encode pane");
+    let snapshot_b64 = encode_snapshot(&snapshot);
+    let build = || -> Vec<CarriedPane> {
+        (0..PANES)
+            .map(|index| {
+                let master = runtime.duplicate_handoff_fd().expect("duplicate master");
+                carried_pane(index, master, pid, &snapshot_b64, &core)
+            })
+            .collect()
+    };
+    let serial_panes = build();
+    let concurrent_panes = build();
+    let carried: Vec<RawFd> = serial_panes
+        .iter()
+        .chain(&concurrent_panes)
+        .map(|pane| pane.master_fd)
+        .collect();
+
+    let serial = stage_panes(serial_panes, 1, 1 << 20, false).expect("serial restore");
+    let concurrent = stage_panes(concurrent_panes, 4, 1 << 20, false).expect("concurrent restore");
+
+    assert_eq!(concurrent.len(), PANES);
+    for ((serial_slot, _, _), (slot, _, _)) in serial.iter().zip(&concurrent) {
+        assert_eq!(slot.identity, serial_slot.identity);
+        assert_eq!(slot.host_terminal_id, serial_slot.host_terminal_id);
         assert_eq!(
-            encoded,
-            expected,
-            "{} panes encode to the serializer's bytes",
-            state.panes.len()
+            (slot.title.as_str(), slot.rows, slot.cols, slot.last_seq),
+            (
+                serial_slot.title.as_str(),
+                serial_slot.rows,
+                serial_slot.cols,
+                serial_slot.last_seq
+            ),
+        );
+        assert_eq!(
+            restored_rows(slot),
+            restored_rows(serial_slot),
+            "{} restores the serial rows",
+            slot.host_terminal_id
         );
     }
+    drop(serial);
+    drop(concurrent);
+    for fd in carried {
+        // SAFETY: each carried descriptor is a duplicate this test took and still owns.
+        unsafe { libc::close(fd) };
+    }
+    drop(runtime);
 }
 
 #[test]
