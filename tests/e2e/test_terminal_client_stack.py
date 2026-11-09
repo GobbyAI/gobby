@@ -1673,36 +1673,6 @@ while True:
 """
 
 
-@pytest.fixture(scope="session")
-def tree_gclient() -> Path:
-    """Build ``gclient`` from this tree; the installed one may predate the change."""
-    repo = Path(__file__).resolve().parents[2]
-    build = subprocess.run(
-        ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=2400.0,
-    )
-    if build.returncode != 0:
-        pytest.fail(f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}")
-    metadata = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=600.0,
-    )
-    if metadata.returncode != 0:
-        pytest.fail(f"cargo metadata failed:\n{metadata.stderr}")
-    binary = Path(str(json.loads(metadata.stdout)["target_directory"])) / "debug" / "gclient"
-    if not binary.is_file():
-        pytest.fail(f"cargo build left no gclient at {binary}")
-    return binary
-
-
 @pytest.mark.asyncio
 async def test_gclient_send_keys_enter_submits_the_draft_a_busy_seat_held(
     daemon_instance: DaemonInstance,

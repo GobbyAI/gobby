@@ -11,6 +11,7 @@ Provides fixtures for:
 """
 
 import asyncio
+import functools
 import json
 import math
 import os
@@ -143,6 +144,55 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
         return terminal_native_binary_headers(tuple(config.args))
     except NativeBinarySelectionError as exc:
         raise pytest.UsageError(f"terminal e2e binary selection failed: {exc}") from exc
+
+
+@functools.cache
+def build_tree_gclient() -> Path | str:
+    """Build ``gclient`` from this tree once: its binary, or the failure report."""
+    repo = Path(__file__).resolve().parents[2]
+    build = subprocess.run(
+        ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=2400.0,
+    )
+    if build.returncode != 0:
+        return f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}"
+    metadata = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600.0,
+    )
+    if metadata.returncode != 0:
+        return f"cargo metadata failed:\n{metadata.stderr}"
+    binary = Path(str(json.loads(metadata.stdout)["target_directory"])) / "debug" / "gclient"
+    if not binary.is_file():
+        return f"cargo build left no gclient at {binary}"
+    return binary
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Build the tree's gclient before any test starts, outside each test's timeout.
+
+    A cold build inside the first test's setup can outlast the per-test timeout and kill the
+    run. The result is cached here; the fixture reports a failed build on the tests needing it.
+    """
+    if any("tree_gclient" in getattr(item, "fixturenames", ()) for item in session.items):
+        build_tree_gclient()
+
+
+@pytest.fixture(scope="session")
+def tree_gclient() -> Path:
+    """Build ``gclient`` from this tree; the installed one may predate the change."""
+    built = build_tree_gclient()
+    if isinstance(built, str):
+        pytest.fail(built)
+    return built
 
 
 @dataclass
