@@ -1033,7 +1033,9 @@ async def test_uninitialized_client_blocking_init_obeys_vector_deadline() -> Non
     client = MagicMock()
     client.collection_exists = AsyncMock(side_effect=blocked_exists)
     client.close = AsyncMock()
-    with patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as client_factory:
+    with patch(
+        "gobby.memory.vectorstore._new_async_qdrant_client", return_value=client
+    ) as client_factory:
         with pytest.raises(TimeoutError):
             await store.search_by_stored_vectors([_candidate().id], limit=2, timeout=0.02)
     await store.close()

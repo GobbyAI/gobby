@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from gobby.code_index import gcode_gateway
 from gobby.code_index.gcode_gateway import (
     MIN_GCODE_PRUNE_BUDGET_VERSION,
     GcodeBusyError,
@@ -20,6 +21,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeDaemonConfigUnavailableError,
     GcodeFalkorTransportError,
     GcodeGateway,
+    GcodeGatewayError,
     GcodeIndexedFileNotFoundError,
     GcodeInputValidationError,
     GcodeJsonError,
@@ -683,6 +685,56 @@ async def test_gateway_rejects_stale_version(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(GcodeVersionError, match=f"gcode >= {GCODE_PIN} required"):
         await gateway.graph_clear("proj-1")
+
+
+@pytest.mark.parametrize("resolver", [None, lambda: True])
+async def test_pin_project_pins_when_code_indexing_is_on_or_unset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    resolver: Any,
+) -> None:
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", resolver)
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=GCODE_PIN_STDOUT), FakeProcess()])
+
+    await GcodeGateway(binary="/tmp/gcode").pin_project(tmp_path)
+
+    assert calls == [
+        ("/tmp/gcode", "--version"),
+        ("/tmp/gcode", "pin", "--quiet", "--project", str(tmp_path)),
+    ]
+
+
+async def test_pin_project_skips_pin_when_code_indexing_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", lambda: False)
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=GCODE_PIN_STDOUT), FakeProcess()])
+
+    await GcodeGateway(binary="/tmp/gcode").pin_project(tmp_path)
+
+    assert calls == []
+
+
+async def test_pin_project_keeps_named_failure_when_code_indexing_is_on(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", lambda: True)
+    _patch_subprocess(
+        monkeypatch,
+        [
+            FakeProcess(stdout=GCODE_PIN_STDOUT),
+            FakeProcess(
+                returncode=1,
+                stdout=b"",
+                stderr=b"parent code index missing for /tmp/repo (00000000)\n",
+            ),
+        ],
+    )
+
+    with pytest.raises(GcodeGatewayError, match="parent code index missing"):
+        await GcodeGateway(binary="/tmp/gcode").pin_project(tmp_path)
 
 
 async def test_gateway_prune_refuses_outdated_binary(

@@ -21,6 +21,7 @@ import pytest
 from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
+    CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
     authenticated_daemon_client,
@@ -37,7 +38,7 @@ def extract_result(response: dict[str, Any]) -> dict[str, Any]:
     This extracts the inner 'result' dict.
     """
     if "result" in response:
-        result = response["result"]
+        result: dict[str, Any] = response["result"]
         if response.get("success") is True and isinstance(result, dict) and "success" not in result:
             return {"success": True, **result}
         return result
@@ -54,10 +55,13 @@ def extract_internal_session_id(session_result: dict[str, Any]) -> str:
 
 def read_project_id(project_path: Path) -> str:
     project_json = project_path / ".gobby" / "project.json"
-    return json.loads(project_json.read_text(encoding="utf-8"))["id"]
+    project_id: str = json.loads(project_json.read_text(encoding="utf-8"))["id"]
+    return project_id
 
 
-def register_project_session(cli_events, project_path: Path, external_id: str) -> str:
+def register_project_session(
+    cli_events: CLIEventSimulator, project_path: Path, external_id: str
+) -> str:
     project_id = read_project_id(project_path)
     start_result = cli_events.session_start(
         session_id=external_id,
@@ -100,7 +104,10 @@ def wait_for_project_registration(daemon_instance: DaemonInstance, project_id: s
 
 @pytest.fixture
 def git_repo_with_origin(
-    e2e_project_dir: Path, tmp_path_factory, cli_events, daemon_instance
+    e2e_project_dir: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    cli_events: CLIEventSimulator,
+    daemon_instance: DaemonInstance,
 ) -> Path:
     """Initialize a git repository with a local origin for worktree tests.
 
@@ -195,10 +202,9 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    # The e2e_project_dir fixture and the daemon seed already own this checkout root
-    # under the project id in its marker. Registering a second id for the same root
-    # is refused, so reuse the marker's identity; the call then reports already_exists.
-    project_id = read_project_id(e2e_project_dir)
+    # The isolated checkout is already bound to the E2E project (its marker and seeded
+    # registration), so the test registers against that project rather than a second one.
+    project_id = "00000000-0000-0000-0000-000000000e2e"
     project_name = e2e_project_dir.name
     cli_events.register_test_project(
         project_id=project_id,
@@ -410,7 +416,7 @@ class TestWorktreeClaimRelease:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Claiming a worktree assigns session ownership."""
         # Create worktree
@@ -459,7 +465,7 @@ class TestWorktreeClaimRelease:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Releasing a worktree removes session ownership."""
         # Create worktree
@@ -818,7 +824,7 @@ class TestWorktreeTaskLinking:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Create worktree with task ID links them."""
         mcp_client.session_id = register_project_session(
@@ -870,7 +876,7 @@ class TestWorktreeTaskLinking:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
-        cli_events,
+        cli_events: CLIEventSimulator,
     ) -> None:
         """Get worktree by task ID."""
         mcp_client.session_id = register_project_session(
