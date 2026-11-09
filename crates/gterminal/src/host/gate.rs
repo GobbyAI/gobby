@@ -239,7 +239,7 @@ pub(crate) fn errno_name(errno: i32) -> &'static str {
 
 #[cfg(debug_assertions)]
 fn injected_fault(expected: &str) -> bool {
-    std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1")
+    crate::test_seam::helper_enabled()
         && std::env::var_os("GTERM_GATE_FAULT").is_some_and(|value| value == expected)
 }
 

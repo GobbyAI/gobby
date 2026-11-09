@@ -199,18 +199,22 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
 }
 
 /// Default install credentials and startup files, mirroring the Python `credential_roots`
-/// oracle: the runtime-home credentials, trusted hub-resolved and bound-daemon authorities,
-/// then the canonical operator bootstrap and break-glass pair under `home/.gobby`. The
-/// runtime-home break-glass pair is not a default; the canonical pair covers the operator's
-/// file. The canonical entries come last so `deny_paths`, which keeps first occurrences,
-/// leaves the order unchanged when the hub already sends them.
+/// oracle: the runtime-home credentials and break-glass pair, trusted hub-resolved and
+/// bound-daemon authorities, then the canonical operator bootstrap and break-glass pair under
+/// `home/.gobby`. The runtime-home pair is the no-hub stand-in for the bound pair. The canonical
+/// entries come last so `deny_paths`, which keeps first occurrences, leaves the order unchanged
+/// when the hub already sends them.
 fn credential_roots(gobby: &Path, home: &Path, authority_roots: &[PathBuf]) -> Vec<PathBuf> {
+    // `home` is `$HOME`, a no-hub stand-in for the passwd entry. Production hubs send the
+    // passwd-derived operator pair in `authority_roots`, which dedupes against these entries.
     let canonical = home.join(".gobby");
     let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
         gobby.join("grants"),
         gobby.join("tools").join("srt"),
+        gobby.join("break_glass"),
+        gobby.join(".break_glass-staging"),
     ];
     roots.extend_from_slice(authority_roots);
     roots.extend([

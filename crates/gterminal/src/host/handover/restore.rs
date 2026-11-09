@@ -349,7 +349,7 @@ fn injected_fault(fallback: bool, kind: &str, host_terminal_id: &str) -> bool {
     } else {
         "GTERM_RESTORE_FAULT"
     };
-    std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1")
+    crate::test_seam::helper_enabled()
         && std::env::var(var).is_ok_and(|value| value == format!("{kind}:{host_terminal_id}"))
 }
 

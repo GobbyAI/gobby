@@ -29,6 +29,23 @@ def test_credential_roots_deny_canonical_operator_credentials_under_a_gobby_home
     assert tmp_path / "override-home" / ".break_glass-staging" in roots
 
 
+def test_credential_roots_deny_runtime_home_break_glass_when_bound_elsewhere(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(local_token, "account_home", lambda: tmp_path / "account")
+    monkeypatch.setattr(
+        local_token, "_daemon_bootstrap", tmp_path / "bound-daemon" / "startup.yaml"
+    )
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "override-home"))
+
+    roots = credential_roots()
+
+    assert tmp_path / "override-home" / "break_glass" in roots
+    assert tmp_path / "override-home" / ".break_glass-staging" in roots
+    assert tmp_path / "bound-daemon" / "break_glass" in roots
+    assert tmp_path / "bound-daemon" / ".break_glass-staging" in roots
+
+
 def test_credential_roots_survive_an_account_without_a_passwd_entry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

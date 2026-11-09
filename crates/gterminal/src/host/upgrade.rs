@@ -306,7 +306,7 @@ enum AckFault {
 
 impl Faults {
     fn parse(extra: &Map<String, Value>) -> Self {
-        let helper = std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1");
+        let helper = crate::test_seam::helper_enabled();
         let Some(fault) = extra
             .get("test_fault")
             .filter(|_| helper)

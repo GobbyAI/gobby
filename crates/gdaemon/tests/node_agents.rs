@@ -1742,8 +1742,9 @@ fn srt_gobby_home_override_denies_bound_and_canonical_break_glass_paths() -> Res
                 );
             }
             assert!(
-                !paths.contains(&json!(inputs.gobby_home.join(name))),
-                "{operation}: unexpected runtime-home {name}"
+                paths.contains(&json!(inputs.gobby_home.join(name))),
+                "{operation}: missing runtime-home {}",
+                inputs.gobby_home.join(name).display()
             );
         }
     }
@@ -1835,7 +1836,7 @@ fn srt_runtime_rechecks_authorities_after_early_external_validation() -> Result<
     fs::create_dir_all(&authority)?;
     let authority_text = authority.to_string_lossy().into_owned();
     validate_external_write_roots(
-        &[authority_text.clone()],
+        std::slice::from_ref(&authority_text),
         &inputs.gobby_home,
         &inputs.home,
         &inputs.env,
