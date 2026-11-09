@@ -9,7 +9,12 @@ from dataclasses import replace
 from typing import Any
 
 from gobby.adapters.codex_impl.cell_boundaries import CellBoundaries
-from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, may_type_input, static_code
+from gobby.adapters.codex_impl.cell_shell_reach import (
+    may_reach_shell,
+    may_type_input,
+    sole_typed_session,
+    static_code,
+)
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls, repeated_spans
 from gobby.adapters.codex_impl.pending_execution import ExecutionResolution, PendingExecution
 from gobby.adapters.codex_impl.runner_summary import runner_summary_result
@@ -638,7 +643,10 @@ class ExecutionChainCorrelator:
                 if isinstance(arguments, str)
                 else execution is None and write_stdin_sends_input(arguments)
             ):
-                self._mark_sticky_unattributed(call_id, session_id)
+                # A failed literal write releases its latch only when it is the sole typist.
+                self._mark_sticky_unattributed(
+                    call_id, sole_typed_session(arguments, session_id, owned)
+                )
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
             typed = extract_direct_write_stdin_command(arguments)
