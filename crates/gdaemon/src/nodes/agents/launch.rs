@@ -226,11 +226,23 @@ fn prepare_sandbox(
     cwd: &Path,
     prompt_file: &Path,
 ) -> Result<SandboxLaunch, LaunchFailure> {
-    let inputs = policy_inputs(gobby_home, context, run_id, payload, cwd).map_err(prepare_error)?;
-    let prepared = prepare_launch_with(&inputs, prompt_file, &context.installation);
+    let inputs = policy_inputs(gobby_home, context, run_id, payload, cwd);
+    sandbox_from_inputs(inputs, prompt_file, &context.installation)
+}
+
+/// Launches the sandbox from the resolved policy inputs. The prompt file is removed on every path,
+/// including a failed input resolution, because it exists only for this preparation.
+fn sandbox_from_inputs(
+    inputs: anyhow::Result<PolicyInputs>,
+    prompt_file: &Path,
+    installation: &SrtInstallation,
+) -> Result<SandboxLaunch, LaunchFailure> {
+    let prepared = inputs.map_err(prepare_error).and_then(|inputs| {
+        prepare_launch_with(&inputs, prompt_file, installation)
+            .map_err(|error| LaunchFailure::new(ExitReason::PrepareFailed, error.to_string()))
+    });
     let removed = remove_prompt_file(prompt_file);
-    let sandbox = prepared
-        .map_err(|error| LaunchFailure::new(ExitReason::PrepareFailed, error.to_string()))?;
+    let sandbox = prepared?;
     removed.map_err(|error| {
         LaunchFailure::new(
             ExitReason::PrepareFailed,
@@ -668,3 +680,7 @@ pub(super) fn now_ms() -> u64 {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
 }
+
+#[cfg(test)]
+#[path = "launch/tests.rs"]
+mod tests;
