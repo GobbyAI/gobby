@@ -7,7 +7,8 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::thread;
 
-use gobby_core::session_credential::{self, SESSION_CREDENTIAL_FIELD, provider_key};
+use gobby_core::process_identity::current_cli_pid;
+use gobby_core::session_credential::{self, SESSION_CREDENTIAL_FIELD, cli_pid_key, provider_key};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
@@ -208,8 +209,24 @@ fn a_managed_run_keeps_its_ordinary_identity() {
     );
 }
 
+fn session_start_envelope(provider_session_id: &str, source: &str) -> Envelope {
+    Envelope::new(
+        true,
+        "session-start".into(),
+        json!({"session_id": provider_session_id, "source": source}),
+        "claude".into(),
+        BTreeMap::new(),
+    )
+}
+
+fn record_count(home: &Path) -> usize {
+    fs::read_dir(home.join("session-credentials"))
+        .map(|entries| entries.count())
+        .unwrap_or(0)
+}
+
 #[test]
-fn response_credential_is_stored_for_the_provider_and_pane_and_stripped() {
+fn response_credential_is_stored_for_the_provider_and_cli_and_stripped() {
     let home = machine_key_home();
     let body = json!({
         "continue": true,
@@ -220,11 +237,13 @@ fn response_credential_is_stored_for_the_provider_and_pane_and_stripped() {
         }
     })
     .to_string();
-    let tmux = "/tmp/tmux-501/default,4242,0";
 
     isolated_with(
         home.path(),
-        &[("TMUX", Some(tmux)), ("TMUX_PANE", Some("%4"))],
+        &[
+            ("TMUX", Some("/tmp/tmux-501/default,4242,0")),
+            ("TMUX_PANE", Some("%4")),
+        ],
         || {
             let stripped =
                 remember_response_credential(&envelope("sid-1", &[]), &body).into_owned();
@@ -235,12 +254,67 @@ fn response_credential_is_stored_for_the_provider_and_pane_and_stripped() {
                 .expect("record stored under the provider key");
             assert_eq!(by_provider.token, TOKEN);
             assert_eq!(by_provider.provider_session_id, "sid-1");
-            assert!(
-                session_credential::bound_for_pane(home.path(), Some(tmux), Some("%4")).is_some(),
-                "record stored under the pane key"
+            let cli = current_cli_pid().expect("the parent CLI process is readable");
+            let by_cli = session_credential::load(home.path(), &cli_pid_key(cli))
+                .expect("record stored under the CLI key");
+            assert_eq!(by_cli.token, TOKEN);
+            assert_eq!(
+                record_count(home.path()),
+                2,
+                "the provider and CLI keys only; a tmux pane is not a key"
             );
         },
     );
+}
+
+#[test]
+fn a_bound_session_start_restores_the_record_under_the_current_cli() {
+    let home = machine_key_home();
+    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
+
+    isolated(home.path(), || {
+        let envelope = session_start_envelope("sid-1", "resume");
+        let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
+        let (url, server) = serve_once(|request| {
+            assert_eq!(
+                header_values(request, "Authorization"),
+                vec![format!("Bearer {TOKEN}")]
+            );
+        });
+
+        let report = post_and_cleanup(&envelope, &path, &url);
+        server.join().unwrap();
+
+        assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+        let cli = current_cli_pid().expect("the parent CLI process is readable");
+        let restored = session_credential::load(home.path(), &cli_pid_key(cli))
+            .expect("the bound credential is restored under the CLI key");
+        assert_eq!(restored.token, TOKEN);
+        assert_eq!(restored.session_id, SESSION_UUID);
+    });
+}
+
+#[test]
+fn a_clear_session_start_is_minted_by_the_machine_path() {
+    let home = machine_key_home();
+    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
+
+    isolated(home.path(), || {
+        for hook_type in ["session-start", "SessionStart"] {
+            let mut clear = session_start_envelope("sid-1", "clear");
+            clear.hook_type = hook_type.into();
+            assert!(
+                matches!(caller_for(&clear), Caller::Unbound),
+                "{hook_type} with source clear mints a successor"
+            );
+            let mut resume = session_start_envelope("sid-1", "resume");
+            resume.hook_type = hook_type.into();
+            assert!(
+                matches!(caller_for(&resume), Caller::Bound(_)),
+                "{hook_type} with source resume keeps its bound credential"
+            );
+        }
+    });
 }
 
 #[test]

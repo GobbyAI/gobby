@@ -22,6 +22,7 @@ from gobby.mcp_proxy.stdio_server import (
     create_stdio_mcp_server,
 )
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools
+from tests.mcp_proxy.conftest import BOUND_SESSION_ID
 from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 from tests.mcp_proxy.tool_capture import async_tool_capture_mock
 
@@ -43,7 +44,9 @@ def _capture_stdio_tools(
 
 
 @pytest.mark.asyncio
-async def test_request_auth_retry() -> None:
+async def test_request_auth_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only a managed run renews its identity after a 401; an unspawned CLI has no machine retry.
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
     old_headers = {"Authorization": "Bearer old-token"}
     fresh_headers = {"Authorization": "Bearer fresh-token"}
 
@@ -157,7 +160,8 @@ async def test_request_refreshes_project_id_after_late_project_init(
     assert "X-Gobby-Caller-Project-Id" not in before_init
     assert after_init["X-Gobby-Project-Id"] == "proj-1"
     assert after_init["X-Gobby-Caller-Project-Id"] == "proj-1"
-    assert after_init["X-Gobby-Session-Id"] == "#1"
+    # An unspawned proxy speaks only for its bound session, so a wrapper ref never selects one.
+    assert after_init["X-Gobby-Session-Id"] == BOUND_SESSION_ID
     assert cached["X-Gobby-Project-Id"] == "proj-1"
     assert override["X-Gobby-Project-Id"] == "other-project"
     assert override["X-Gobby-Caller-Project-Id"] == "proj-1"

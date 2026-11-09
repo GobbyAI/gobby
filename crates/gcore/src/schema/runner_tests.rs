@@ -444,6 +444,37 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_eq!(check_expression, "false");
         }
     }
+    // Migration 490 grants the same capability role a SELECT on tasks and on
+    // task_dependencies, each scoped to its bound project.
+    let task_policies = actual
+        .remove("tasks")
+        .expect("tasks must carry the scoped gcode read policy");
+    let task_operations: Vec<(String, String)> = task_policies
+        .iter()
+        .map(|(name, command, _, _)| (name.clone(), command.clone()))
+        .collect();
+    assert_eq!(
+        task_operations,
+        [("gobby_gcode_project_read".to_owned(), "SELECT".to_owned())]
+    );
+    for (_, _, using_expression, _) in task_policies {
+        assert!(using_expression.contains("project_id = gobby_agent_auth.current_project_id()"));
+    }
+    let dependency_policies = actual
+        .remove("task_dependencies")
+        .expect("task_dependencies must carry the scoped gcode read policy");
+    let dependency_operations: Vec<(String, String)> = dependency_policies
+        .iter()
+        .map(|(name, command, _, _)| (name.clone(), command.clone()))
+        .collect();
+    assert_eq!(
+        dependency_operations,
+        [("gobby_gcode_project_read".to_owned(), "SELECT".to_owned())]
+    );
+    for (_, _, using_expression, _) in dependency_policies {
+        assert!(using_expression.contains("EXISTS"));
+        assert!(using_expression.contains("t.id = task_dependencies.task_id"));
+    }
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"

@@ -11,15 +11,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 from starlette.requests import Request
 
+from gobby.runtime_grants import encode_grant_header
 from gobby.servers.auth_service import AuthService
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.break_glass import BREAK_GLASS_HEADER
 from gobby.utils.local_token import derive_managed_signing_key, issue_session_api_token
+from tests.servers.test_auth_service import (
+    _GRANT_NOW,
+    _grant_service,
+    _signed_presentation_grant,
+)
 
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 FRONT_DOOR_SECRET = "session-binding-front-door-secret"
 API_KEY = "session-binding-machine-key"
+GRANT_HEADER = "X-Gobby-Runtime-Grant"
 MACHINE_HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "X-Gobby-User-Id": "user-1",
@@ -27,6 +35,13 @@ MACHINE_HEADERS = {
     "X-Gobby-Key-Id": "key-1",
     "X-Gobby-Front-Door": FRONT_DOOR_SECRET,
 }
+# The machine-wide bearer alone, as an unspawned caller presents it.
+MACHINE_BEARER = {"Authorization": f"Bearer {API_KEY}"}
+# A second live api_keys row, which gdaemon also resolves and injects identity for.
+SECOND_KEY = "session-binding-second-key"
+SECOND_KEY_HEADERS = MACHINE_HEADERS | {"Authorization": f"Bearer {SECOND_KEY}"}
+BREAK_GLASS_SECRET = "session-binding-break-glass-secret"
+GRANT_ROUTES = ["/api/mcp/tools/call", "/api/sessions/foreign-session/acp/close"]
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +50,13 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _request(headers: dict[str, str], *, method: str = "GET", path: str = "/") -> Request:
+def _request(
+    headers: dict[str, str],
+    *,
+    method: str = "GET",
+    path: str = "/",
+    client: tuple[str, int] = ("testclient", 50000),
+) -> Request:
     raw_headers = [(key.lower().encode(), value.encode()) for key, value in headers.items()]
     return Request(
         {
@@ -48,19 +69,19 @@ def _request(headers: dict[str, str], *, method: str = "GET", path: str = "/") -
             "raw_path": path.encode(),
             "query_string": b"",
             "headers": raw_headers,
-            "client": ("testclient", 50000),
+            "client": client,
             "server": ("testserver", 80),
         }
     )
 
 
-def _service(database: Any, tmp_path: Path) -> AuthService:
+def _service(database: Any, tmp_path: Path, *, break_glass_file: Path | None = None) -> AuthService:
     bootstrap_file = tmp_path / "bootstrap.yaml"
     bootstrap_file.write_text(json.dumps({"api_key": API_KEY}))
     service = AuthService(
         lambda: database,
         bootstrap_file=bootstrap_file,
-        break_glass_file=tmp_path / "absent-break-glass",
+        break_glass_file=break_glass_file or tmp_path / "absent-break-glass",
     )
     service.bind_runtime(
         grant_service=None,
@@ -94,7 +115,7 @@ def test_machine_bearer_refuses_session_selection(
 ) -> None:
     service = _service(MagicMock(spec=HubDatabase), tmp_path)
 
-    decision = service.authenticate(_request(MACHINE_HEADERS | selector, method=method, path=path))
+    decision = service.authenticate(_request(MACHINE_BEARER | selector, method=method, path=path))
 
     assert not decision.allowed
     assert decision.code == "session_requires_bound_credential"
@@ -102,6 +123,31 @@ def test_machine_bearer_refuses_session_selection(
     rendered = repr(decision)
     assert API_KEY not in rendered
     assert FRONT_DOOR_SECRET not in rendered
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"X-Gobby-Session-Id": "session-123"},
+        {"X-Gobby-Terminal-Context": '{"parent_pid": 4242}'},
+    ],
+)
+def test_invalid_bearer_with_selector_keeps_its_unauthorized_answer(
+    tmp_path: Path, selector: dict[str, str]
+) -> None:
+    service = _service(MagicMock(spec=HubDatabase), tmp_path)
+
+    decision = service.authenticate(
+        _request(
+            {"Authorization": "Bearer invalid"} | selector,
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+    )
+
+    assert not decision.allowed
+    assert decision.code == "invalid_token"
+    assert decision.status_code == 401
 
 
 def test_machine_bearer_without_session_selector_stays_operator(tmp_path: Path) -> None:
@@ -113,6 +159,283 @@ def test_machine_bearer_without_session_selector_stays_operator(tmp_path: Path) 
 
     assert decision.allowed
     assert decision.user_id == "user-1"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [MACHINE_HEADERS, SECOND_KEY_HEADERS],
+    ids=["bootstrap-key", "second-api-key"],
+)
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"X-Gobby-Session-Id": "session-123"},
+        {"X-Gobby-Agent-Run-Id": "run-123"},
+        {"X-Gobby-Managed-Execution-Id": "execution-123"},
+        {"X-Gobby-Terminal-Context": '{"parent_pid": 4242}'},
+    ],
+)
+def test_verified_front_door_refuses_session_selection(
+    tmp_path: Path, headers: dict[str, str], selector: dict[str, str]
+) -> None:
+    # gdaemon injects front-door identity for any live api_keys row, so a verified front
+    # door proves a machine key, not the operator. Any key it carries may not name a session.
+    service = _service(MagicMock(spec=HubDatabase), tmp_path)
+
+    decision = service.authenticate(
+        _request(headers | selector, method="POST", path="/api/mcp/tools/call")
+    )
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+    rendered = repr(decision)
+    assert API_KEY not in rendered
+    assert SECOND_KEY not in rendered
+    assert FRONT_DOOR_SECRET not in rendered
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"X-Gobby-Session-Id": "session-123"},
+        {"X-Gobby-Terminal-Context": '{"parent_pid": 4242}'},
+    ],
+)
+def test_break_glass_refuses_session_selection(tmp_path: Path, selector: dict[str, str]) -> None:
+    # Break-glass is an operator escape for the daemon's own routes, not a session exemption.
+    break_glass_file = tmp_path / "break-glass"
+    break_glass_file.write_text(BREAK_GLASS_SECRET)
+    break_glass_file.chmod(0o600)
+    service = _service(MagicMock(spec=HubDatabase), tmp_path, break_glass_file=break_glass_file)
+
+    decision = service.authenticate(
+        _request(
+            {BREAK_GLASS_HEADER: BREAK_GLASS_SECRET} | selector,
+            method="POST",
+            path="/api/mcp/tools/call",
+            client=("127.0.0.1", 50000),
+        )
+    )
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+    assert BREAK_GLASS_SECRET not in repr(decision)
+
+
+def test_verified_front_door_without_selector_stays_operator(tmp_path: Path) -> None:
+    service = _service(MagicMock(spec=HubDatabase), tmp_path)
+
+    decision = service.authenticate(
+        _request(MACHINE_HEADERS, method="GET", path="/api/mcp/servers")
+    )
+
+    assert decision.allowed
+    assert decision.user_id == "user-1"
+
+
+def _grant_bound_service(database: Any, tmp_path: Path) -> AuthService:
+    service = _service(database, tmp_path)
+    service.bind_runtime(
+        grant_service=_grant_service(),
+        local_machine_id=LOCAL_MACHINE_ID,
+        clock=lambda: _GRANT_NOW + 10,
+        front_door_secret=FRONT_DOOR_SECRET,
+    )
+    return service
+
+
+def _operator_grant_headers() -> dict[str, str]:
+    grant = _signed_presentation_grant(session_id="cli-session", machine_id=LOCAL_MACHINE_ID)
+    return MACHINE_HEADERS | {GRANT_HEADER: encode_grant_header(grant)}
+
+
+@pytest.mark.parametrize("grant", ["", "   ", "not-a-grant", "a.b.c"])
+@pytest.mark.parametrize("path", GRANT_ROUTES)
+def test_machine_bearer_with_invalid_grant_refuses_foreign_session(
+    tmp_path: Path, grant: str, path: str
+) -> None:
+    service = _service(MagicMock(spec=HubDatabase), tmp_path)
+    headers = MACHINE_BEARER | {"X-Gobby-Session-Id": "foreign-session", GRANT_HEADER: grant}
+
+    decision = service.authenticate(_request(headers, method="POST", path=path))
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+    rendered = repr(decision)
+    assert API_KEY not in rendered
+    assert FRONT_DOOR_SECRET not in rendered
+
+
+@pytest.mark.parametrize("path", GRANT_ROUTES)
+def test_machine_bearer_with_valid_grant_refuses_foreign_session(tmp_path: Path, path: str) -> None:
+    service = _grant_bound_service(MagicMock(spec=HubDatabase), tmp_path)
+    headers = _operator_grant_headers() | {"X-Gobby-Session-Id": "foreign-session"}
+
+    decision = service.authenticate(_request(headers, method="POST", path=path))
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+
+
+def test_machine_bearer_with_valid_grant_for_another_session_is_refused(tmp_path: Path) -> None:
+    service = _grant_bound_service(MagicMock(spec=HubDatabase), tmp_path)
+    headers = _operator_grant_headers() | {"X-Gobby-Session-Id": "foreign-session"}
+
+    decision = service.authenticate(_request(headers, method="GET", path="/api/llm/status"))
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+
+
+def test_machine_bearer_with_valid_grant_refuses_terminal_context_selector(
+    tmp_path: Path,
+) -> None:
+    service = _grant_bound_service(MagicMock(spec=HubDatabase), tmp_path)
+    headers = _operator_grant_headers() | {"X-Gobby-Terminal-Context": '{"parent_pid": 4242}'}
+
+    decision = service.authenticate(_request(headers, method="GET", path="/api/llm/status"))
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+
+
+def test_machine_bearer_with_valid_grant_for_its_own_session_is_refused(
+    tmp_path: Path,
+) -> None:
+    service = _grant_bound_service(MagicMock(spec=HubDatabase), tmp_path)
+    headers = _operator_grant_headers() | {"X-Gobby-Session-Id": "cli-session"}
+
+    decision = service.authenticate(_request(headers, method="GET", path="/api/llm/status"))
+
+    assert not decision.allowed
+    assert decision.code == "session_requires_bound_credential"
+    assert decision.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("session_id", "expected"),
+    [("cli-session", True), ("foreign-session", False), (None, False)],
+)
+def test_session_credential_matches_only_its_own_interactive_grant(
+    session_id: str | None, expected: bool
+) -> None:
+    from gobby.servers.grant_auth import bearer_matches_grant
+    from gobby.utils.local_token import SESSION_TOKEN_KIND, AgentApiTokenClaims
+
+    grant = _signed_presentation_grant(session_id=session_id, machine_id=LOCAL_MACHINE_ID)
+    claims = AgentApiTokenClaims(
+        session_id="cli-session",
+        project_id="project-1",
+        machine_id=LOCAL_MACHINE_ID,
+        iat=0,
+        exp=10**10,
+        kind=SESSION_TOKEN_KIND,
+    )
+
+    matched = bearer_matches_grant(
+        grant.principal, claims=claims, local_machine_id=LOCAL_MACHINE_ID
+    )
+
+    assert matched is expected
+
+
+@pytest.mark.parametrize(
+    ("session_id", "expected"),
+    [("cli-session", False), (None, True)],
+)
+def test_machine_key_presents_only_session_less_interactive_grants(
+    session_id: str | None, expected: bool
+) -> None:
+    """With no session claim (the machine key), a session-bound grant is a missing claim."""
+    from gobby.servers.grant_auth import bearer_matches_grant
+
+    grant = _signed_presentation_grant(session_id=session_id, machine_id=LOCAL_MACHINE_ID)
+
+    matched = bearer_matches_grant(grant.principal, claims=None, local_machine_id=LOCAL_MACHINE_ID)
+
+    assert matched is expected
+
+
+def test_session_credential_presents_its_own_interactive_grant(
+    temp_db: HubDatabase, tmp_path: Path, live_session: Any, sample_project: dict[str, Any]
+) -> None:
+    service = _grant_bound_service(temp_db, tmp_path)
+    token = issue_session_api_token(
+        derive_managed_signing_key(API_KEY),
+        session_id=live_session.id,
+        project_id=sample_project["id"],
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    grant = _signed_presentation_grant(
+        session_id=live_session.id,
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=sample_project["id"],
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Machine-Id": LOCAL_MACHINE_ID,
+        "X-Gobby-Session-Id": live_session.id,
+        "X-Gobby-Caller-Project-Id": sample_project["id"],
+        GRANT_HEADER: encode_grant_header(grant),
+    }
+
+    decision = service.authenticate(_request(headers, method="GET", path="/api/llm/status"))
+
+    assert decision.allowed
+
+
+def test_foreign_session_credential_cannot_present_another_sessions_grant(
+    temp_db: HubDatabase, tmp_path: Path, live_session: Any, sample_project: dict[str, Any]
+) -> None:
+    service = _grant_bound_service(temp_db, tmp_path)
+    token = issue_session_api_token(
+        derive_managed_signing_key(API_KEY),
+        session_id=live_session.id,
+        project_id=sample_project["id"],
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    grant = _signed_presentation_grant(
+        session_id="cli-session",
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=sample_project["id"],
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Machine-Id": LOCAL_MACHINE_ID,
+        "X-Gobby-Session-Id": live_session.id,
+        "X-Gobby-Caller-Project-Id": sample_project["id"],
+        GRANT_HEADER: encode_grant_header(grant),
+    }
+
+    decision = service.authenticate(_request(headers, method="GET", path="/api/llm/status"))
+
+    assert not decision.allowed
+    assert decision.code == "forged_identity"
+    assert decision.status_code == 401
+    rendered = repr(decision)
+    assert API_KEY not in rendered
+    assert FRONT_DOOR_SECRET not in rendered
+
+
+def test_operator_shell_grant_without_session_is_admitted_on_machine_bearer(
+    tmp_path: Path,
+) -> None:
+    # An operator shell has no session credential and its interactive grant names no
+    # session. It reaches the daemon through the verified front door with the machine key
+    # and no selector, and the grant path admits it.
+    service = _grant_bound_service(MagicMock(spec=HubDatabase), tmp_path)
+    grant = _signed_presentation_grant(session_id=None, machine_id=LOCAL_MACHINE_ID)
+    headers = MACHINE_HEADERS | {GRANT_HEADER: encode_grant_header(grant)}
+
+    decision = service.authenticate(_request(headers, method="GET", path="/api/llm/status"))
+
+    assert decision.allowed
 
 
 @pytest.fixture

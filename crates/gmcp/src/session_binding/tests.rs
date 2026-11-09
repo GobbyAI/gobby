@@ -2,12 +2,13 @@ use super::*;
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::thread;
 
-use gobby_core::session_credential::{self, pane_key};
+use gobby_core::process_identity::current_cli_pid;
+use gobby_core::session_credential::{self, cli_pid_key};
 use serde_json::{Map, json};
 use tempfile::tempdir;
 
@@ -27,8 +28,8 @@ fn credential() -> SessionCredential {
     }
 }
 
-/// The environment one client sees: its tmux pane, any managed-run marker, and the
-/// daemon it dials. Everything else that could select a session is cleared.
+/// The environment one client sees: any managed-run marker, the tmux pane it runs in,
+/// and the daemon it dials. Everything else that could select a session is cleared.
 #[derive(Default)]
 struct Surroundings<'a> {
     tmux: Option<&'a str>,
@@ -56,18 +57,6 @@ fn in_surroundings<R>(home: &Path, surroundings: Surroundings<'_>, body: impl Fn
     )
 }
 
-fn in_tmux_pane<R>(home: &Path, body: impl FnOnce() -> R) -> R {
-    in_surroundings(
-        home,
-        Surroundings {
-            tmux: Some(TMUX),
-            pane: Some("%4"),
-            ..Surroundings::default()
-        },
-        body,
-    )
-}
-
 fn machine_key_home() -> tempfile::TempDir {
     let home = tempdir().unwrap();
     fs::write(
@@ -78,13 +67,10 @@ fn machine_key_home() -> tempfile::TempDir {
     home
 }
 
-fn store_for_pane(home: &Path) {
-    session_credential::store(
-        home,
-        &[pane_key(Some(TMUX), Some("%4")).unwrap()],
-        &credential(),
-    )
-    .unwrap();
+/// Store the session credential under the CLI process this test runs in.
+fn store_for_this_cli(home: &Path) {
+    let cli = current_cli_pid().expect("the parent CLI process is readable");
+    session_credential::store(home, &[cli_pid_key(cli)], &credential()).unwrap();
 }
 
 /// Read one request head (through the blank line) from a loopback connection.
@@ -111,48 +97,62 @@ fn header_values(head: &str, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn an_unspawned_pane_reads_the_record_stored_for_it() {
+fn an_unspawned_cli_reads_the_record_stored_for_its_process() {
     let home = machine_key_home();
-    store_for_pane(home.path());
+    store_for_this_cli(home.path());
 
-    in_tmux_pane(home.path(), || {
-        let binding = pane_binding().expect("record stored for this pane");
+    in_surroundings(home.path(), Surroundings::default(), || {
+        let binding = cli_binding().expect("record stored for this CLI");
         assert_eq!(binding.token, TOKEN);
         assert_eq!(binding.session_id, SESSION_UUID);
     });
 }
 
 #[test]
-fn a_managed_run_has_no_pane_binding() {
+fn the_cli_binding_does_not_depend_on_tmux() {
     let home = machine_key_home();
-    store_for_pane(home.path());
+    store_for_this_cli(home.path());
 
     in_surroundings(
         home.path(),
         Surroundings {
             tmux: Some(TMUX),
             pane: Some("%4"),
-            run_id: Some("run-1"),
-            daemon_url: None,
+            ..Surroundings::default()
         },
-        || assert!(pane_binding().is_none()),
+        || assert!(cli_binding().is_some()),
     );
 }
 
 #[test]
-fn outside_tmux_there_is_no_pane_binding() {
+fn a_record_for_another_cli_process_is_not_read() {
     let home = machine_key_home();
-    store_for_pane(home.path());
+    session_credential::store(home.path(), &[cli_pid_key(1)], &credential()).unwrap();
 
     in_surroundings(home.path(), Surroundings::default(), || {
-        assert!(pane_binding().is_none());
+        assert!(cli_binding().is_none());
     });
 }
 
 #[test]
-fn an_unspawned_request_presents_its_pane_token_and_no_machine_key() {
+fn a_managed_run_has_no_cli_binding() {
     let home = machine_key_home();
-    store_for_pane(home.path());
+    store_for_this_cli(home.path());
+
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            run_id: Some("run-1"),
+            ..Surroundings::default()
+        },
+        || assert!(cli_binding().is_none()),
+    );
+}
+
+#[test]
+fn an_unspawned_request_presents_its_cli_token_and_no_machine_key() {
+    let home = machine_key_home();
+    store_for_this_cli(home.path());
     let cwd = tempdir().unwrap();
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -170,10 +170,8 @@ fn an_unspawned_request_presents_its_pane_token_and_no_machine_key() {
     in_surroundings(
         home.path(),
         Surroundings {
-            tmux: Some(TMUX),
-            pane: Some("%4"),
-            run_id: None,
             daemon_url: Some(url.as_str()),
+            ..Surroundings::default()
         },
         || {
             let dialer = Dialer::with_context(cwd.path(), Map::new()).unwrap();
@@ -193,4 +191,83 @@ fn an_unspawned_request_presents_its_pane_token_and_no_machine_key() {
     );
     assert!(header_values(&head, "X-Gobby-Terminal-Context").is_empty());
     assert!(!head.contains(MACHINE_KEY), "machine key must not be sent");
+}
+
+#[test]
+fn an_unspawned_request_without_a_record_is_refused_before_any_connection() {
+    // No bootstrap file: an unspawned client must never read the machine key.
+    let home = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            daemon_url: Some(url.as_str()),
+            ..Surroundings::default()
+        },
+        || {
+            let dialer = Dialer::with_context(cwd.path(), Map::new())
+                .expect("an unspawned dialer reads no machine key");
+            let answer = dialer.request("GET", "/api/probe", None, RequestOptions::default());
+
+            assert_eq!(answer["success"], json!(false));
+            assert_eq!(answer["error_code"], json!("session_credential_unbound"));
+            assert!(
+                answer["error"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
+            );
+        },
+    );
+
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock),
+        "the refusal makes no connection"
+    );
+}
+
+#[test]
+fn a_rejected_cli_token_is_never_retried_with_the_machine_key() {
+    let home = machine_key_home();
+    store_for_this_cli(home.path());
+    let cwd = tempdir().unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let served = listener.try_clone().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = served.accept().unwrap();
+        let head = read_head(&mut stream);
+        stream
+            .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\n\r\n{}")
+            .unwrap();
+        head
+    });
+
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            daemon_url: Some(url.as_str()),
+            ..Surroundings::default()
+        },
+        || {
+            let dialer = Dialer::with_context(cwd.path(), Map::new()).unwrap();
+            let answer = dialer.request("GET", "/api/probe", None, RequestOptions::default());
+            assert_eq!(answer["success"], json!(false));
+        },
+    );
+
+    let head = server.join().unwrap();
+    assert_eq!(
+        header_values(&head, "Authorization"),
+        vec![format!("Bearer {TOKEN}")]
+    );
+    listener.set_nonblocking(true).unwrap();
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock),
+        "no second connection carries the machine key"
+    );
 }

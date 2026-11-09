@@ -49,6 +49,7 @@ from gobby.utils.local_token import (
     AgentApiTokenRejection,
     classify_agent_api_token,
     daemon_bootstrap_path,
+    read_local_api_token,
     read_managed_signing_key,
     verify_expired_agent_api_token,
     verify_managed_payload,
@@ -333,15 +334,9 @@ class AuthService:
                 machine_id=browser.claims.machine_id,
                 browser_session=browser,
             )
-        if (
-            self.verified_front_door_identity(request) is not None
-            and GRANT_HEADER not in request.headers
-            and presents_session_selector(request)
-        ):
-            # The machine-wide bearer names no session. A caller-chosen session,
-            # run, execution or terminal selector would make it act as that session.
-            # A presented runtime grant is itself session-bound: the grant path
-            # checks the selector against its principal before admitting.
+        if self._machine_bearer_selects_session(request):
+            # The machine-wide key names no session. A caller-chosen session, run, execution
+            # or terminal selector would make it act as that session, behind a front door too.
             return AuthDecision(
                 allowed=False,
                 code=SESSION_REQUIRES_BOUND_CREDENTIAL,
@@ -554,6 +549,41 @@ class AuthService:
             user_id=self._machine_owner(claims),
             machine_id=claims.machine_id,
             bearer_claims=claims,
+        )
+
+    def _machine_bearer_selects_session(self, request: HTTPConnection) -> bool:
+        """Return whether a session selector rides a bearer that may not name a session.
+
+        The machine-wide key names no session, with or without a verified front door: gdaemon
+        injects front-door identity for every live api_keys row, so a verified front door
+        proves a key, not the operator. Break-glass is not an exemption either. Agent and
+        session bearers are verified where they are checked, so they never reach this
+        predicate as machine keys.
+        """
+        if not presents_session_selector(request):
+            return False
+        if self.break_glass_admits(request):
+            return True
+        if self.verified_front_door_identity(request) is not None:
+            return True
+        return self._presents_machine_bearer(request)
+
+    def _presents_machine_bearer(self, request: HTTPConnection) -> bool:
+        """Return whether the request's bearer is the machine-wide key itself.
+
+        Any other bearer, invalid ones included, is left to the normal rejection so it keeps
+        its existing answer. The machine key is not a managed capability, so classification
+        cannot tell it from an invalid bearer; the comparison is exact.
+        """
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return False
+        parts = authorization.split(maxsplit=1)
+        if not parts or parts[0].casefold() != "bearer" or len(parts) != 2:
+            return False
+        machine_key = read_local_api_token(self._bootstrap_file)
+        return machine_key is not None and hmac.compare_digest(
+            parts[1].encode(), machine_key.encode()
         )
 
     def _accepted_bearer(

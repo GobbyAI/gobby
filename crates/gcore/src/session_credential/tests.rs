@@ -43,12 +43,20 @@ fn extract_leaves_a_body_without_credential_untouched() {
 }
 
 #[test]
+fn cli_pid_key_names_the_golden_record_file() {
+    assert_eq!(cli_pid_key(4242), "cli-pid:4242");
+    assert_eq!(
+        record_path(Path::new("/home"), &cli_pid_key(4242))
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("d94d9bec-bb52-5978-b9f8-1c9d4c49d457.json")
+    );
+}
+
+#[test]
 fn store_then_load_round_trips_under_each_key() {
     let home = tempfile::tempdir().unwrap();
-    let keys = vec![
-        provider_key("provider-abc"),
-        "pane:/tmp/tmux-1/default:%4".to_string(),
-    ];
+    let keys = vec![provider_key("provider-abc"), cli_pid_key(4242)];
 
     store(home.path(), &keys, &credential()).unwrap();
 
@@ -86,39 +94,10 @@ fn provider_binding_refuses_a_different_provider_session() {
 }
 
 #[test]
-fn pane_binding_reads_the_record_stored_for_that_pane() {
-    let home = tempfile::tempdir().unwrap();
-    let key = pane_key(Some("/tmp/tmux-501/default,4242,0"), Some("%4")).unwrap();
-    store(home.path(), &[key], &credential()).unwrap();
-
-    assert_eq!(
-        bound_for_pane(
-            home.path(),
-            Some("/tmp/tmux-501/default,4242,0"),
-            Some("%4")
-        ),
-        Some(credential())
-    );
-    assert!(bound_for_pane(home.path(), None, Some("%4")).is_none());
-    assert!(
-        bound_for_pane(
-            home.path(),
-            Some("/tmp/tmux-501/default,4242,0"),
-            Some("%5")
-        )
-        .is_none()
-    );
-}
-
-#[test]
-fn pane_key_needs_both_tmux_socket_and_pane() {
-    assert_eq!(
-        pane_key(Some("/tmp/tmux-501/default,4242,0"), Some("%4")).as_deref(),
-        Some("pane:/tmp/tmux-501/default:%4")
-    );
-    assert!(pane_key(None, Some("%4")).is_none());
-    assert!(pane_key(Some("/tmp/tmux-501/default,4242,0"), None).is_none());
-    assert!(pane_key(Some("/tmp/tmux-501/default,4242,0"), Some("")).is_none());
+fn blank_managed_marker_is_not_managed() {
+    assert!(marker_is_set(std::ffi::OsStr::new("run-1")));
+    assert!(!marker_is_set(std::ffi::OsStr::new("")));
+    assert!(!marker_is_set(std::ffi::OsStr::new("   ")));
 }
 
 #[test]

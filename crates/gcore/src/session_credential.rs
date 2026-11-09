@@ -64,27 +64,28 @@ pub fn provider_key(provider_session_id: &str) -> String {
     format!("provider:{provider_session_id}")
 }
 
-/// Store key for a tmux pane, which the MCP client can derive without the provider id.
-///
-/// The socket is the first comma-separated field of `$TMUX`, the value both the hook
-/// client and the MCP client see for the same pane.
-pub fn pane_key(tmux: Option<&str>, tmux_pane: Option<&str>) -> Option<String> {
-    let pane = tmux_pane.filter(|pane| !pane.is_empty())?;
-    let socket = tmux?
-        .split(',')
-        .next()
-        .filter(|socket| !socket.is_empty())?;
-    Some(format!("pane:{socket}:{pane}"))
+/// Store key for the CLI process that owns a session, stable across CLI restarts of the
+/// same terminal identity. The hook client and the MCP client derive the same key.
+pub fn cli_pid_key(pid: u32) -> String {
+    format!("cli-pid:{pid}")
 }
 
 /// Whether this process runs inside a spawned, managed agent run.
 pub fn is_managed_environment() -> bool {
-    managed_environment_with(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    managed_environment_with(|name| {
+        std::env::var_os(name).is_some_and(|value| marker_is_set(&value))
+    })
 }
 
 /// Whether any spawned-run marker is set, reading each one through `is_set`.
 fn managed_environment_with(is_set: impl Fn(&str) -> bool) -> bool {
     MANAGED_ENVIRONMENT_VARS.into_iter().any(is_set)
+}
+
+/// A marker names a managed run only when it holds text. Blank values count as unset, as the
+/// Python proxy's `strip()` check treats them.
+fn marker_is_set(value: &std::ffi::OsStr) -> bool {
+    !value.to_string_lossy().trim().is_empty()
 }
 
 /// Remove the credential field from a hook response body, returning the rest.
@@ -129,15 +130,6 @@ pub fn load(home: &Path, key: &str) -> Option<SessionCredential> {
 pub fn bound_for_provider(home: &Path, provider_session_id: &str) -> Option<SessionCredential> {
     load(home, &provider_key(provider_session_id))
         .filter(|credential| credential.provider_session_id == provider_session_id)
-}
-
-/// The record stored for one tmux pane, if the pane key is derivable.
-pub fn bound_for_pane(
-    home: &Path,
-    tmux: Option<&str>,
-    tmux_pane: Option<&str>,
-) -> Option<SessionCredential> {
-    load(home, &pane_key(tmux, tmux_pane)?)
 }
 
 fn record_path(home: &Path, key: &str) -> PathBuf {

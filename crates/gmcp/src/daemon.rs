@@ -2,7 +2,7 @@
 
 use crate::{contract::WRAPPER_CONTRACT, session_binding, terminal_context};
 use anyhow::Context;
-use gobby_core::session_credential::SESSION_ID_HEADER;
+use gobby_core::session_credential::{self, SESSION_ID_HEADER};
 use gobby_core::{daemon_url::daemon_url, local_token, project};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -107,7 +107,13 @@ impl Dialer {
                 .build(),
             tool_timeouts: Mutex::new(None),
             state: Mutex::new(CachedState {
-                auth: auth_headers()?,
+                // Only a managed run carries the machine key; an unspawned client never
+                // reads it.
+                auth: if session_credential::is_managed_environment() {
+                    auth_headers()?
+                } else {
+                    Headers::new()
+                },
                 caller_project: caller_project(cwd),
                 last_preflight: None,
             }),
@@ -197,6 +203,13 @@ impl Dialer {
         body: Option<&Value>,
         options: &RequestOptions<'_>,
     ) -> anyhow::Result<Answer> {
+        // An unspawned client sends only its own session's credential. Without one it
+        // refuses locally, before any connection, so the machine key never travels for it.
+        let managed = session_credential::is_managed_environment();
+        let binding = session_binding::cli_binding();
+        if !managed && binding.is_none() {
+            return Ok(Answer::Final(unbound_refusal()));
+        }
         // A restart may change the port; resolve the endpoint on every request.
         let base = daemon_url()?.trim_end_matches('/').to_owned();
         if options.preflight {
@@ -258,15 +271,14 @@ impl Dialer {
         if let Some(caller) = caller {
             headers.insert("X-Gobby-Caller-Project-Id".into(), caller);
         }
-        // An unspawned client whose pane holds a session credential presents that
-        // session's own token and names the session; it sends no terminal context.
-        let pane_binding = session_binding::pane_binding();
+        // An unspawned client presents its CLI's session credential and names the
+        // session; it sends no terminal context.
         let session = self.environment_session.as_deref().or_else(|| {
             options
                 .session_id
                 .filter(|id| !id.is_empty() && !self.has_tmux_pane)
         });
-        if let Some(record) = &pane_binding {
+        if let Some(record) = &binding {
             headers.insert(SESSION_ID_HEADER.into(), record.session_id.clone());
         } else if let Some(session) = session {
             headers.insert("X-Gobby-Session-Id".into(), session.into());
@@ -283,7 +295,7 @@ impl Dialer {
             let fresh = auth_headers()?;
             self.cached()?.auth = fresh;
         }
-        let mut auth = match &pane_binding {
+        let mut auth = match &binding {
             Some(record) => Headers::from([(
                 "Authorization".into(),
                 local_token::authorization_bearer(&record.token),
@@ -298,8 +310,9 @@ impl Dialer {
             &headers,
             &auth,
         );
-        // A bound session never falls back to the machine key on rejection.
-        if pane_binding.is_none() && matches!(&response, Ok(response) if response.status() == 401) {
+        // Only a managed run falls back to the machine key on rejection; a bound session
+        // never does.
+        if managed && matches!(&response, Ok(response) if response.status() == 401) {
             auth = auth_headers()?;
             self.cached()?.auth = auth.clone();
             response = self.send(
@@ -411,6 +424,16 @@ fn auth_headers() -> anyhow::Result<Headers> {
         }
     }
     Ok(headers)
+}
+
+/// The local answer for an unspawned client with no session-bound credential. Nothing
+/// was sent, so nothing ran.
+fn unbound_refusal() -> Value {
+    json!({
+        "success": false,
+        "error_code": "session_credential_unbound",
+        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one",
+    })
 }
 
 fn backend_unavailable(text: &str) -> Option<String> {

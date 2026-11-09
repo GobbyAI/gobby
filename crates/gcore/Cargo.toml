@@ -30,6 +30,7 @@ full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics",
 anyhow = "1"
 crc32fast = "1"
 dirs = "6"
+libc = "0.2"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "v5"] }
 serde = { version = "1", features = ["derive"] }

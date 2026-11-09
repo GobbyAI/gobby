@@ -1,20 +1,19 @@
 //! The session-bound credential an unspawned MCP client presents.
 //!
-//! The hook client stores the daemon's credential for its session under the tmux
-//! pane. The MCP client, started in that same pane, reads it back from there. Outside
-//! tmux the two clients share no key, so an unspawned MCP client there has no binding.
+//! The hook client stores the daemon's credential for its session under the CLI
+//! process that runs both the hooks and this MCP client. The MCP client reads it back
+//! by deriving the same CLI pid from its own parent. A managed run never reads one.
 
-use gobby_core::session_credential::{self, SessionCredential};
+use gobby_core::process_identity::current_cli_pid;
+use gobby_core::session_credential::{self, SessionCredential, cli_pid_key};
 
-/// The credential stored for this unspawned client's tmux pane, if one exists.
-pub fn pane_binding() -> Option<SessionCredential> {
+/// The credential stored for this unspawned client's CLI process, if one exists.
+pub fn cli_binding() -> Option<SessionCredential> {
     if session_credential::is_managed_environment() {
         return None;
     }
     let home = gobby_core::gobby_home().ok()?;
-    let tmux = std::env::var("TMUX").ok();
-    let pane = std::env::var("TMUX_PANE").ok();
-    session_credential::bound_for_pane(&home, tmux.as_deref(), pane.as_deref())
+    session_credential::load(&home, &cli_pid_key(current_cli_pid()?))
 }
 
 #[cfg(test)]

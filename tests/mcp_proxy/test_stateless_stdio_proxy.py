@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +9,7 @@ import pytest
 
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
+from tests.mcp_proxy.conftest import BOUND_SESSION_ID
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -35,32 +35,35 @@ def _success_response() -> MagicMock:
 
 
 @pytest.mark.parametrize(
-    ("environment_session", "explicit_session", "context", "expected_session", "ambient"),
+    ("managed_run", "environment_session", "explicit_session", "expected_session"),
     [
-        (None, None, TERMINAL_CONTEXT, None, True),
-        ("env-session", None, TERMINAL_CONTEXT, "env-session", False),
-        (None, "explicit-session", TERMINAL_CONTEXT, None, True),
-        (None, "explicit-session", HEADLESS_CONTEXT, "explicit-session", False),
-        ("env-session", "explicit-session", TERMINAL_CONTEXT, "env-session", False),
-        ("env-session", "explicit-session", HEADLESS_CONTEXT, "env-session", False),
+        # An unspawned CLI speaks only for its bound session: no environment value or wrapper
+        # ref selects another one.
+        (False, None, None, BOUND_SESSION_ID),
+        (False, None, "explicit-session", BOUND_SESSION_ID),
+        (False, "env-session", None, BOUND_SESSION_ID),
+        # A managed run pins its spawn session and ignores the wrapper ref.
+        (True, "env-session", None, "env-session"),
+        (True, "env-session", "explicit-session", "env-session"),
     ],
 )
 async def test_request_identity_header_matrix(
     monkeypatch: pytest.MonkeyPatch,
+    managed_run: bool,
     environment_session: str | None,
     explicit_session: str | None,
-    context: dict[str, object],
-    expected_session: str | None,
-    ambient: bool,
+    expected_session: str,
 ) -> None:
     if environment_session is None:
         monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
     else:
         monkeypatch.setenv("GOBBY_SESSION_ID", environment_session)
+    if managed_run:
+        monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
 
     with patch(
         "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
-        return_value=context,
+        return_value=TERMINAL_CONTEXT,
     ):
         proxy, request = _proxy_with_response(_success_response())
 
@@ -68,11 +71,8 @@ async def test_request_identity_header_matrix(
 
     assert request.await_args is not None
     headers = request.await_args.kwargs["headers"]
-    assert headers.get("X-Gobby-Session-Id") == expected_session
-    if ambient:
-        assert json.loads(headers[TERMINAL_CONTEXT_HEADER]) == context
-    else:
-        assert TERMINAL_CONTEXT_HEADER not in headers
+    assert headers["X-Gobby-Session-Id"] == expected_session
+    assert TERMINAL_CONTEXT_HEADER not in headers
 
 
 async def test_explicit_request_does_not_change_later_ambient_identity(
@@ -90,10 +90,10 @@ async def test_explicit_request_does_not_change_later_ambient_identity(
 
     explicit_headers = request.await_args_list[0].kwargs["headers"]
     ambient_headers = request.await_args_list[1].kwargs["headers"]
-    assert "X-Gobby-Session-Id" not in explicit_headers
-    assert json.loads(explicit_headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
-    assert "X-Gobby-Session-Id" not in ambient_headers
-    assert json.loads(ambient_headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
+    assert explicit_headers["X-Gobby-Session-Id"] == BOUND_SESSION_ID
+    assert ambient_headers["X-Gobby-Session-Id"] == BOUND_SESSION_ID
+    assert TERMINAL_CONTEXT_HEADER not in explicit_headers
+    assert TERMINAL_CONTEXT_HEADER not in ambient_headers
 
 
 async def test_grok_session_id_is_not_caller_header(
@@ -111,14 +111,17 @@ async def test_grok_session_id_is_not_caller_header(
 
     assert request.await_args is not None
     headers = request.await_args.kwargs["headers"]
-    assert "X-Gobby-Session-Id" not in headers
-    assert json.loads(headers[TERMINAL_CONTEXT_HEADER]) == TERMINAL_CONTEXT
+    assert headers["X-Gobby-Session-Id"] == BOUND_SESSION_ID
+    assert "grok-external-id" not in headers.values()
+    assert TERMINAL_CONTEXT_HEADER not in headers
 
 
 async def test_terminal_context_is_captured_once_at_proxy_initialization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    # A managed run without a pinned session is the caller that still sends its terminal context.
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
     with patch(
         "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
         return_value=TERMINAL_CONTEXT,

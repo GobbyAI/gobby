@@ -949,7 +949,7 @@ def _grant_service(revocations: Any | None = None) -> Any:
 
 def _signed_presentation_grant(
     *,
-    session_id: str = "cli-session",
+    session_id: str | None = "cli-session",
     kind: Literal["interactive", "agent_run", "tool_chat"] = "interactive",
     machine_id: str = "machine-1",
     project_id: str = "project-1",
@@ -1029,18 +1029,19 @@ def test_ai_routes_require_identity(temp_db: HubDatabase, tmp_path: Path) -> Non
         assert bearer_only.code == "missing_grant"
 
         presented = service.authenticate(_request(headers, method=method, path=path))
-        assert presented.allowed is True
-        assert presented.principal is not None
-        assert presented.principal.project_id == "project-1"
-        assert presented.principal.machine_id == "machine-1"
+        assert presented.allowed is False
+        assert presented.code == "session_requires_bound_credential"
+        assert presented.status_code == 403
 
 
 def test_modality_grant_presentation_matrix(temp_db: HubDatabase, tmp_path: Path) -> None:
     service, headers = _grant_auth_service(temp_db, tmp_path)
 
     for method, path in _MODALITY_ROUTES:
-        allowed = service.authenticate(_request(headers, method=method, path=path))
-        assert allowed.allowed is True, path
+        presented = service.authenticate(_request(headers, method=method, path=path))
+        assert presented.allowed is False, path
+        assert presented.code == "session_requires_bound_credential", path
+        assert presented.status_code == 403, path
 
         forged = service.authenticate(
             _request(
@@ -1051,8 +1052,8 @@ def test_modality_grant_presentation_matrix(temp_db: HubDatabase, tmp_path: Path
             )
         )
         assert forged.allowed is False, path
-        assert forged.code == "forged_identity"
-        assert forged.status_code == 401
+        assert forged.code == "session_requires_bound_credential", path
+        assert forged.status_code == 403, path
 
 
 def test_agent_bearer_cannot_present_foreign_grant(
@@ -1169,8 +1170,10 @@ def test_revoked_grant_cannot_be_reused_across_requests(
         local_machine_id="machine-1",
         clock=lambda: _GRANT_NOW + 10,
     )
-    allowed = first.authenticate(_request(headers, method="POST", path="/api/embeddings"))
-    assert allowed.allowed is True
+    refused = first.authenticate(_request(headers, method="POST", path="/api/embeddings"))
+    assert refused.allowed is False
+    assert refused.code == "session_requires_bound_credential"
+    assert refused.status_code == 403
 
     store.revoke_grant(grant)
     second = _operator_service(
@@ -1182,8 +1185,8 @@ def test_revoked_grant_cannot_be_reused_across_requests(
     )
     denied = second.authenticate(_request(headers, method="POST", path="/api/embeddings"))
     assert denied.allowed is False
-    assert denied.code == "revoked"
-    assert denied.status_code == 401
+    assert denied.code == "session_requires_bound_credential"
+    assert denied.status_code == 403
 
     lease = SimpleNamespace(
         fencing_epoch=FENCING_EPOCH,
