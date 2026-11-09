@@ -18,14 +18,14 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 490);
+    assert_eq!(identity.latest_asset.version, 493);
     assert_eq!(
         identity.latest_asset.filename,
-        "490_grant_plan_coverage_reads.sql"
+        "493_scope_role_sweeps_to_owning_hub.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "531bf6fd9c8f37232a2deefa28c2433639d6b0a9d04f7612d1ee632ecf4ec6de"
+        "766bf2a98fdcdc08f7f4177cf9b5ee797a310ee1998dc44be1339ea14b7aec1f"
     );
     assert_eq!(
         identity.root_hash,
