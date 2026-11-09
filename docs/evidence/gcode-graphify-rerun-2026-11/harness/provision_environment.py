@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from runtime_boundary import (
+    OWNER_TASK,
     EvidenceError,
     assert_owned_runtime,
     file_record,
@@ -41,7 +42,7 @@ DEFAULT_GOBBY_REPO = Path("/Users/josh/Projects/gobby")
 BASE_SHA = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_SHA = "8b24ac26699aac8b24254a647aa70b208287b492"
 GOBBY_SHA = "0bf234a92e1266e310db2f7bf9245f0bc69a08bb"
-TASK_REF = "#22948"
+TASK_REF = OWNER_TASK
 PROBE_CRATE = "gobby-core"
 PROBE_NAME = "managed_bearer_probe"
 PROBE_SOURCE = f"crates/gcore/examples/{PROBE_NAME}.rs"

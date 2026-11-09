@@ -25,6 +25,7 @@ from typing import Any
 from prepare_daemon import isolated_environment, run_runtime_gobby
 from provision_environment import DEFAULT_RUNTIME_ROOT, _write_json
 from runtime_boundary import (
+    OWNER_TASK,
     EvidenceError,
     assert_owned_runtime,
     contained_file,
@@ -489,7 +490,7 @@ def launch(root: Path, attempt: str, srt: SrtRunner, *, home: Path | None = None
                 "log": str(log_path),
                 "path": env["PATH"],
                 "provider_clis_available": False,
-                "owner_task": "#22948",
+                "owner_task": OWNER_TASK,
             },
             mode=0o600,
         )

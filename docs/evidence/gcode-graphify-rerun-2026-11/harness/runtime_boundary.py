@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+OWNER_TASK = "#25815"
+
 
 class EvidenceError(Exception):
     """A required evidence, ownership, or containment check failed."""
@@ -47,7 +49,8 @@ def assert_owned_runtime(root: Path, owner_session: str) -> None:
         "check failed: ownership['runtime_root'] == str(root)",
     )
     require(
-        ownership["owner_task"] == "#22948", "check failed: ownership['owner_task'] == '#22948'"
+        ownership["owner_task"] == OWNER_TASK,
+        f"check failed: ownership['owner_task'] == {OWNER_TASK!r}",
     )
     require(ownership["owner_session"] == owner_session, "runtime session owner mismatch")
 
