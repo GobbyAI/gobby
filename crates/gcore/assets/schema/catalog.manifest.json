@@ -5625,6 +5625,26 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "worktree_notes.blocker",
+      "definition": "text|text|NO|''::text|NEVER"
+    },
+    {
+      "name": "worktree_notes.next_action",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "worktree_notes.owner",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "worktree_notes.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|clock_timestamp()|NEVER"
+    },
+    {
+      "name": "worktree_notes.worktree_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "worktrees.agent_session_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -7589,6 +7609,14 @@
     {
       "name": "workspaces.workspaces_pkey",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "worktree_notes.worktree_notes_pkey",
+      "definition": "PRIMARY KEY (worktree_id)"
+    },
+    {
+      "name": "worktree_notes.worktree_notes_worktree_id_fkey",
+      "definition": "FOREIGN KEY (worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE"
     },
     {
       "name": "worktrees.worktrees_agent_session_id_machine_id_fkey",
@@ -9577,6 +9605,10 @@
     {
       "name": "workspaces_pkey",
       "definition": "CREATE UNIQUE INDEX workspaces_pkey ON $schema.workspaces USING btree (id)"
+    },
+    {
+      "name": "worktree_notes_pkey",
+      "definition": "CREATE UNIQUE INDEX worktree_notes_pkey ON $schema.worktree_notes USING btree (worktree_id)"
     },
     {
       "name": "worktrees_pkey",
