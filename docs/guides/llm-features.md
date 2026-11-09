@@ -189,8 +189,8 @@ These checks use `DecisionService` and the `ai.decisions` endpoint configuration
 gate is neither an `AICapability` nor a text-generation profile route. The no-decisions
 fallback study (#25817) scored ship rule 1: generated labels on, all three decision checks
 off, with 0 of 15 G regressions. The score proposes that configuration, and no live
-configuration has changed. The full decision study is pending. Its report and the selected
-rule are at `docs/evidence/community-labels-2026-09/label-quality.md`. `CommunityLabeler` in
+configuration has changed. The full decision study is pending. Its [report](../evidence/community-labels-2026-09/label-quality.md) and the selected
+rule are in that file. `CommunityLabeler` in
 `src/gobby/code_index/community_labeler.py` owns the execution path.
 
 OpenRouter decisions default to 64,000 tokens per request (`backend_max_state_tokens`)

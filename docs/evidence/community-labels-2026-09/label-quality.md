@@ -5,6 +5,8 @@ study (D/G/J and carry) has not run.
 
 ## Ship rule
 
+Josh selected this no-decisions fallback on 2026-11-05, on the gobby corpus alone, with C1 removed and the rule-1 bar at zero G regressions. See [study-rating-instructions-2026-10-26.md](study-rating-instructions-2026-10-26.md).
+
 **Rule 1.** G regressions 0/15, so generated community labels ship on and all
 three decision checks stay off. The score proposes this configuration. It does
 not apply it, and no live configuration changed.
@@ -21,13 +23,17 @@ rule 1 when G regressions are 0. The bar was set to zero by #25817 commit
 `b76336f4ea` (was one). Rule 2 needs a passing gate from a decision run; rule 3
 is deterministic-only labeling. Neither applies to this run.
 
+This run has no J, carry or sufficiency data. Every decision check was off, so those metrics are undefined and rule 2 is unreachable for this study.
+
 ## Run provenance
 
 - Plan: `.gobby/plans/community-label-decisions.md` (D4, ship rules).
 - Branch: `--no-decisions`, because the OpenRouter item-4 checklist is unmet.
 - Corpus: gobby only (`d45545c5-ded5-4335-b115-0245752edacf`). C1 was removed
   from the study by #25817 commit `16e7a8e780`.
-- Sample: seed 22604, 15 eligible communities (floor 15). Each community is
+- Readiness at prepare: C1 had 5 eligible communities; gobby had 145 eligible.
+- Sample: seed 22604, 15 eligible gobby communities (floor 15): IDs 17, 5596, 103,
+  5220, 58, 5626, 5580, 48, 5189, 5597, 90, 5613, 5714, 5451, 5253. Each community is
   rated under both arms, giving 30 rows.
 - Generation: 15 of 15 `written_model`, 0 failures. Decision usage: none.
   Schema rejection rate 0. Decision cost $0.
@@ -38,8 +44,12 @@ is deterministic-only labeling. Neither applies to this run.
 
 ## Results
 
-Score at `b76336f4ea`, script sha256
-`22ed4642858a29a30d155694026339a2e9bd6258cbe7e52080223d1138b267d1`.
+Score at `b76336f4ea`. Script sha256 at that commit, unchanged from there to this commit:
+
+- `scripts/community_label_study.py`: `22ed4642858a29a30d155694026339a2e9bd6258cbe7e52080223d1138b267d1`
+- `scripts/decisions_live_capture.py`: `dc305c500377cdfbe94bd8c3c798e685b9d0c94a6608e0e5665301433bb6b03b`
+
+The plan's `1df0ba09baf98b052842cbe186cc8c245d4ad66865631af4ce01d0be6accd0b7` is this file's value at landed 0.5.0 (`c2f3f06f`). The file changed later, last in `208514c004`.
 
 | Metric | Value | Bar | Result |
 | --- | ---: | ---: | --- |
