@@ -145,7 +145,7 @@ def test_default_bin_dir_follows_gobby_home(
 
 def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gobby import sync_registry
-    from gobby.cli import install_setup_impeccable, install_setup_srt
+    from gobby.cli import install_setup_impeccable, install_setup_ocr, install_setup_srt
     from gobby.cli.installers import ide_config, tmux_config
 
     def sync_bundled(*args: object, **kwargs: object) -> dict[str, object]:
@@ -164,6 +164,11 @@ def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setattr(
         install_setup_impeccable,
         "install_impeccable_cli",
+        lambda: SimpleNamespace(installed=False, version="test", path=tmp_path),
+    )
+    monkeypatch.setattr(
+        install_setup_ocr,
+        "install_ocr_cli",
         lambda: SimpleNamespace(installed=False, version="test", path=tmp_path),
     )
     monkeypatch.setattr(tmux_config, "configure_tmux_clipboard", lambda: {"success": True})
