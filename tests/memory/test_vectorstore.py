@@ -170,7 +170,9 @@ async def test_lazy_init_backoff_suppresses_repeated_attempts(
     client.collection_exists = AsyncMock(side_effect=ResponseHandlingException(Exception("down")))
     client.close = AsyncMock()
 
-    with patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as qdrant_cls:
+    with patch(
+        "gobby.memory.vectorstore._new_async_qdrant_client", return_value=client
+    ) as qdrant_cls:
         store = VectorStore(url="http://qdrant:6333", collection_name="retry_test")
 
         with pytest.raises(VectorStoreUnavailableError, match="VectorStore not initialized"):
@@ -201,7 +203,7 @@ async def test_lazy_init_retries_after_backoff(monkeypatch: pytest.MonkeyPatch) 
     client.count = AsyncMock(return_value=SimpleNamespace(count=7))
     client.close = AsyncMock()
 
-    with patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client):
+    with patch("gobby.memory.vectorstore._new_async_qdrant_client", return_value=client):
         store = VectorStore(url="http://qdrant:6333", collection_name="retry_test")
 
         with pytest.raises(VectorStoreUnavailableError):
