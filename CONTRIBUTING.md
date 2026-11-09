@@ -109,9 +109,9 @@ once and is reused by later builds that use the same target directory.
 ### Plain incremental builds
 
 Agent Cargo builds are plain incremental builds with no compiler wrapper. Each agent
-launch sets `CARGO_BUILD_JOBS=4` and removes `CARGO_INCREMENTAL`, `RUSTC_WRAPPER`,
-`SCCACHE_DIR` and `SCCACHE_SERVER_UDS` from the provider's environment, so Cargo's
-default, incremental on, applies. Removing them matters: Cargo reads any set
+launch sets `CARGO_BUILD_JOBS=4` and removes `CARGO_INCREMENTAL`, `RUSTC_WRAPPER`
+and every `SCCACHE_*` variable from the provider's environment, so Cargo's default,
+incremental on, applies. Removing them matters: Cargo reads any set
 `CARGO_INCREMENTAL`, blank included, as incremental off.
 
 Agent builds do not use sccache. Measured on this repository, cross-checkout sccache hits

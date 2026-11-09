@@ -3,10 +3,13 @@
 use super::sandbox::runtime::SandboxLaunch;
 use crate::node_commands::SpawnPayload;
 use anyhow::Result;
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 /// What the native host spawns with: the argv prefix that unsets denied ambient keys and
-/// the Cargo wrapper and incremental keys, and the environment.
+/// the Cargo wrapper, incremental and sccache keys, and the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderEnv {
     pub argv_prefix: Vec<String>,
@@ -83,14 +86,11 @@ pub fn build_env(payload: &SpawnPayload, inputs: &EnvInputs<'_>) -> Result<Provi
     // The sandbox run environment is complete, so its values win over the layers above.
     env.extend(inputs.sandbox_launch.env.clone());
     apply_ambient(&mut env, cli, inputs.ambient);
-    let denied = denied_ambient_keys(cli)
-        .iter()
-        .chain(REMOVED_CARGO_ENV_KEYS)
-        .copied();
+    let denied = exec_removed_keys(cli, &env, inputs.ambient);
     let mut argv_prefix = vec!["/usr/bin/env".to_string()];
     for key in denied {
-        env.remove(key);
-        argv_prefix.extend(["-u".to_string(), key.to_string()]);
+        env.remove(&key);
+        argv_prefix.extend(["-u".to_string(), key]);
     }
     argv_prefix.push("--".to_string());
     for key in ["VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT"] {
@@ -288,6 +288,36 @@ const REMOVED_CARGO_ENV_KEYS: &[&str] = &[
     "SCCACHE_DIR",
     "SCCACHE_SERVER_UDS",
 ];
+
+/// Key prefix every launch removes at exec, as Python's `REMOVED_CARGO_ENV_PREFIXES`. sccache
+/// reads every `SCCACHE_*` setting, so the named list alone leaves some behind.
+const REMOVED_CARGO_ENV_PREFIX: &str = "SCCACHE_";
+
+/// Keys one launch removes at exec: the CLI's denied keys, the named Cargo keys, then each
+/// prefixed key the launch env or the daemon's inherited env carries, sorted and de-duplicated.
+fn exec_removed_keys(
+    cli: &str,
+    env: &BTreeMap<String, String>,
+    ambient: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut denied: Vec<String> = denied_ambient_keys(cli)
+        .iter()
+        .chain(REMOVED_CARGO_ENV_KEYS)
+        .map(|key| (*key).to_string())
+        .collect();
+    let prefixed: BTreeSet<String> = env
+        .keys()
+        .chain(ambient.keys())
+        .filter(|key| key.starts_with(REMOVED_CARGO_ENV_PREFIX))
+        .cloned()
+        .collect();
+    let extra: Vec<String> = prefixed
+        .into_iter()
+        .filter(|key| !denied.contains(key))
+        .collect();
+    denied.extend(extra);
+    denied
+}
 
 /// Ambient keys a provider CLI must not inherit, sorted as Python's `denied_ambient_keys`.
 fn denied_ambient_keys(cli: &str) -> &'static [&'static str] {

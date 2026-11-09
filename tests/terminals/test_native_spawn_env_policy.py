@@ -67,6 +67,13 @@ REPORT_PREFIXED_KEYS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_sccache_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exact argv specs assume the daemon env carries no SCCACHE_* key; a developer shell may.
+    for key in [key for key in os.environ if key.startswith("SCCACHE_")]:
+        monkeypatch.delenv(key)
+
+
 class _RecordingClient:
     host_epoch = "epoch-env-policy"
 

@@ -17,8 +17,8 @@ unsandboxed trees differ) unless the project configures another root. The host p
 records the current roots.
 
 Agent builds are plain incremental builds. Gobby sets `CARGO_BUILD_JOBS=4` and removes
-`CARGO_INCREMENTAL`, `RUSTC_WRAPPER`, `SCCACHE_DIR` and `SCCACHE_SERVER_UDS` when it
-starts an agent CLI. Cargo treats any set `CARGO_INCREMENTAL`, blank included, as
+`CARGO_INCREMENTAL`, `RUSTC_WRAPPER` and every `SCCACHE_*` variable when it starts an
+agent CLI. Cargo treats any set `CARGO_INCREMENTAL`, blank included, as
 incremental off, so a value in a shell profile or daemon environment would slow every
 edit loop.
 
@@ -75,5 +75,5 @@ Recommend it only when measurement shows file-watcher or indexer CPU during buil
   stale executables.
 - Every deletion needs the operator's approval; report sizes first.
 
-_Version: 1.1.0_
+_Version: 1.1.1_
 _Last verified: 2026-11-07_
