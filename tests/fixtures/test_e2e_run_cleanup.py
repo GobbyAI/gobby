@@ -146,6 +146,12 @@ def _assert_socket_headroom(sockets: Path) -> None:
 # started, and daemon-ready followed 38-43 s later (ready at 123 s and 128 s). A 120 s deadline
 # from the parent start expired with both workers healthy. 300 s is about twice that worst case.
 _READY_TIMEOUT_SECONDS = 300
+_SHUTDOWN_TIMEOUT_SECONDS = 60
+# Fixture host start, binary selection and cleanup run outside the readiness and shutdown waits.
+_SETUP_CLEANUP_SECONDS = 120
+_SIGINT_TEST_TIMEOUT_SECONDS = (
+    _SETUP_CLEANUP_SECONDS + _READY_TIMEOUT_SECONDS + _SHUTDOWN_TIMEOUT_SECONDS
+)
 _LOG_TAIL_CHARS = 2000
 
 
@@ -217,6 +223,7 @@ def test_await_ready_timeout_reports_worker_state_and_log_tail(tmp_path: Path) -
     assert "shutdown POST received at 1.0" in message
 
 
+@pytest.mark.timeout(_SIGINT_TEST_TIMEOUT_SECONDS)
 def test_sigint_drains_daemons_and_late_hosts_preserving_another_run(tmp_path: Path) -> None:
     selected = select_native_binary("gterm", required=True)
     assert selected is not None
@@ -271,7 +278,8 @@ def test_sigint_drains_daemons_and_late_hosts_preserving_another_run(tmp_path: P
                     records = [json.loads(path.read_text()) for path in ready]
                     assert len({record["run_id"] for record in records}) == 1
                     process.send_signal(signal.SIGINT)
-                    assert process.wait(timeout=60) == 2, (tmp_path / "pytest.log").read_text()
+                    exit_code = process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+                    assert exit_code == 2, (tmp_path / "pytest.log").read_text()
                     assert foreign.alive(), "Controller cleanup stopped another run's host"
                     for path, record in zip(ready, records, strict=True):
                         home = path.parent
@@ -289,6 +297,13 @@ def test_sigint_drains_daemons_and_late_hosts_preserving_another_run(tmp_path: P
                         process.wait(timeout=10)
                     for path in tmp_path.glob("gw*/run-id"):
                         cleanup_run(path.read_text())
+
+
+def test_sigint_test_timeout_marker_covers_its_named_waits() -> None:
+    sigint_test = test_sigint_drains_daemons_and_late_hosts_preserving_another_run
+    marks = getattr(sigint_test, "pytestmark", [])
+    timeouts = [mark.args[0] for mark in marks if mark.name == "timeout"]
+    assert timeouts == [_SIGINT_TEST_TIMEOUT_SECONDS]
 
 
 def test_prepare_env_stamps_current_run_even_with_explicit_base(
