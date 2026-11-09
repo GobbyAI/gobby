@@ -516,3 +516,33 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         successor.release().await
     }).await
 }
+
+#[tokio::test]
+async fn acquisition_checkout_and_connect_count_against_the_operation_bound() -> Result<()> {
+    database_case(async |db| {
+        let mut owner = db.lease("checkout")?;
+        // Every pooled connection is checked out, so the owner's checkout waits. The
+        // connections return after four seconds, and the insert then blocks on the lock.
+        let mut held = Vec::new();
+        for _ in 0..8 {
+            held.push(db.pool.get().await?);
+        }
+        db.admin
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {}.deployment_runtime IN ACCESS EXCLUSIVE MODE",
+                db.schema
+            ))
+            .await?;
+        let returned = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            drop(held);
+        });
+        // The operation bound covers the whole attempt, checkout included.
+        let result = timeout(Duration::from_secs(7), owner.try_acquire()).await?;
+        assert!(result.is_err());
+        returned.await?;
+        db.admin.batch_execute("ROLLBACK").await?;
+        Ok(())
+    })
+    .await
+}

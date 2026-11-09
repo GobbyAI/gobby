@@ -145,8 +145,10 @@ impl ActiveDaemonLease {
             self.heartbeat().await?;
             return Ok(true);
         }
-        let mut client = self.connect(&self.application_name).await?;
-        let fence = timeout(OPERATION_TIMEOUT, async {
+        // One bound covers checkout, connect and the lock attempt, so a waiting pool
+        // cannot push an attempt past the operation bound.
+        let attempt = timeout(OPERATION_TIMEOUT, async {
+            let mut client = self.connect(&self.application_name).await?;
             let keys = resolve_keys(&client).await?;
             let acquired: bool = client
                 .query_one("SELECT pg_try_advisory_lock($1, $2)", &[&keys.0, &keys.1])
@@ -177,10 +179,10 @@ impl ActiveDaemonLease {
                 signing_secret: row.try_get(1)?,
             };
             transaction.commit().await?;
-            anyhow::Ok(Some(fence))
+            anyhow::Ok(Some((client, fence)))
         })
         .await??;
-        let Some(fence) = fence else {
+        let Some((client, fence)) = attempt else {
             return Ok(false);
         };
         self.authority = Some(Authority { client, fence });
