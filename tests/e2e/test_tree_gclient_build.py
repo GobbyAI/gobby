@@ -72,7 +72,7 @@ def _runner(outcomes: Sequence[object]) -> Callable[..., subprocess.CompletedPro
 def test_build_failure_returns_report_instead_of_raising(
     monkeypatch: pytest.MonkeyPatch, outcomes: Sequence[object], report: str
 ) -> None:
-    monkeypatch.setattr(conftest.subprocess, "run", _runner(outcomes))
+    monkeypatch.setattr(subprocess, "run", _runner(outcomes))
 
     result = conftest.build_tree_gclient.__wrapped__()
 
