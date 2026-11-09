@@ -561,8 +561,10 @@ def test_guard_and_chained_hook_need_no_writable_temp_directory(tmp_path: Path) 
     old = repo.ok(repo.root, "rev-parse", "main")
     repo.wrapper = _without_tmp_writes(repo, log)
 
+    repo.plant_verdict("allow")
     allowed = repo.commit(repo.root, {"docs/ok.md": "ok\n"})
     new = repo.ok(repo.root, "rev-parse", "main")
+    repo.plant_verdict("block")
     refused = repo.commit(repo.root, {"src/gobby/x.py": "x = 2\n"})
 
     assert allowed.returncode == 0, allowed.stderr
