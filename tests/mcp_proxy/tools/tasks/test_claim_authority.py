@@ -13,6 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskLifecycleEventManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_sessions import AgentSessions
@@ -294,6 +295,37 @@ async def test_team_manager_hands_off_a_claim_between_its_own_seats(world: TeamW
         if event.to_state == "claim:handed_off"
     ]
     assert handoffs and handoffs[-1].by_actor == manager
+
+
+@pytest.mark.asyncio
+async def test_team_manager_hands_off_a_claim_after_its_tree_lands(world: TeamWorld) -> None:
+    """A landing marks the team's tree merged while the open task still belongs to that team."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    task = _task(world, TITLE)
+    runbook = world.child(task)
+    binding = await world.admit(runbook, task)
+    manager = _spawned_manager(world, runbook, task)
+    holder = world.case.session("fixture-worker", parent=runbook.id)
+    recipient = world.case.session("fixture-definition-c02389e4", parent=runbook.id)
+    tasks.claim_task(task.id, holder)
+    assert binding.worktree_id is not None
+    LocalWorktreeManager(db).mark_merged(binding.worktree_id)
+
+    result = await _call(
+        tasks,
+        manager,
+        "hand_off_task_claim",
+        {
+            "task_id": task.id,
+            "holder_session_ref": holder,
+            "recipient_session_ref": recipient,
+            "reason": "Re-seat after the team's tree landed.",
+        },
+    )
+
+    assert result.get("success") is True, result
+    assert tasks.get_task(task.id).claimed_by_session_id == recipient
 
 
 @pytest.mark.asyncio
