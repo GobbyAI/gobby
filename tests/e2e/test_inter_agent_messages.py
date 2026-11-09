@@ -16,6 +16,7 @@ Test scenario:
 """
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -28,12 +29,13 @@ from tests.e2e.conftest import (
 pytestmark = pytest.mark.e2e
 
 
-def unwrap_result(result: dict) -> dict:
+def unwrap_result(result: dict[str, Any]) -> dict[str, Any]:
     """Unwrap MCP tool call result from wrapper response."""
     # MCP call_tool endpoint returns {"success": bool, "result": {...}}
     # The actual tool result is in result["result"]
     if "result" in result:
-        return result["result"]
+        inner: dict[str, Any] = result["result"]
+        return inner
     return result
 
 
@@ -105,6 +107,8 @@ class TestInterAgentMessagingE2E:
                 "target": "session",
                 "target_id": child_session_id,
                 "content": "Hello child, please process this task!",
+                # Responses are brief by default; this test reads the full message.
+                "brief": False,
             },
         )
         result = unwrap_result(raw_result)
@@ -151,6 +155,7 @@ class TestInterAgentMessagingE2E:
                 "target": "session",
                 "target_id": parent_session_id,
                 "content": "Task completed successfully, parent!",
+                "brief": False,
             },
         )
         result = unwrap_result(raw_result)
