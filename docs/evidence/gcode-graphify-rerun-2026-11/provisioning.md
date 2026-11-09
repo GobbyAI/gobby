@@ -32,6 +32,11 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
 1. `provision_environment.py init --owner-session <session>`: creates the runtime root, archives
    the sources at `GOBBY_SHA`, copies the templates and corpora, and writes the manifests.
    It refuses an existing root.
+1a. `provision_environment.py write-manifest --owner-session <session>`: writes
+   `config/project-manifest.json` for the 54 projects in "Project set". It refuses a missing sealed corpus.
+1b. `provision_environment.py materialize-workspaces --owner-session <session>`: copies each project's
+   corpus to `workspaces/<name>`, keeping symlinks. It checks all 54 targets before it copies anything,
+   and refuses an existing workspace.
 2. `provision_environment.py write-compose --owner-session <session> ...`: refuses any reference that is not
    digest-pinned or that names `:latest`, renders `config/compose.yaml` and checks the rendered text for
    `:latest`, and records `receipts/image-references.json`. Then it runs `docker image inspect` on each
@@ -44,9 +49,10 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
    - builds `tools/graphify/venv` (`graphifyy==0.9.103`) and `tools/gobby/venv` (`uv sync --frozen`
      from `sources/gobby`), each through a probe receipt;
    - copies the installed binary set into `gobby-home/bin` through `install_binary_set`, with member names from `runtime_gobby.py` (`binary-set-files`); runs `prepare_daemon.py` and `prepare_identity.py`. Every step that touches `gobby` in step 3 runs in `runtime_gobby.py` under `tools/gobby/venv/bin/python` (the gobby-sync environment) with `-I`, one subprocess per operation (`binary-set-files`, `identity`, `prepare-daemon`, `prepare-identity`). Each operation first checks that its `gobby` resolves under `sources/gobby`; every operation except `binary-set-files` also checks that `gdaemon` resolves to `gobby-home/bin/gdaemon`, and refuses otherwise. `prepare()`, `prepare_identity()` and `launch_services.py` load no `gobby` module in the harness process; the tests check this. `prepare-identity` writes the account file before it creates the user, and keeps a file that already exists. Before any write, `prepare_daemon.py` probes the configured embedding provider: `qwen3-embedding:0.6b-q8_0` at `http://localhost:11434/v1` (Ollama), with `GET <api_base>/models`, no proxy, and no key. It refuses when the provider is unreachable, does not answer JSON, or does not list the model. The isolated config takes model, `api_base` and dim 1024 from these values; operator config is never read;
-   - runs `gobby init --name <case>` in each corpus workspace with the daemon ports bound by
-     nothing, through probe receipts;
-   - asserts zero `code_indexed_file_states` rows for every workspace project.
+   - runs `gobby init --name <name>` in each of the 54 workspaces that `config/project-manifest.json`
+     lists, with the daemon ports bound by nothing, through probe receipts. `_workspaces(root)` reads
+     the manifest and refuses any list other than `project_entries()`;
+   - asserts zero `code_indexed_file_states` rows for each of the 54 workspace projects.
 4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules and the gobby package under "Gobby modules checked before step 4". It launches the supervised path, `gobby-home/bin/gdaemon serve`, with `GOBBY_BACKEND_COMMAND` set to `tools/gobby/venv/bin/python -m gobby.runner --config <bootstrap>`, so gdaemon runs the backend. The step records the launch in `active-launches.json`, then polls `GET http://127.0.0.1:<daemon_port>/api/health` (120 probes, one second apart). It passes only when the daemon answers HTTP 200 with JSON `status` `"ok"` and the wrapper is still alive. HTTP 200 with `status` `"degraded"` is a failure: the probe keeps polling until the budget runs out, then the step refuses and names the degraded components (`degraded_services`, and `hook_runtime <state>` when the hook runtime is incompatible). A failed launch stops its srt wrapper group and keeps its records (`receipts/daemon-launch-<attempt>.json`, `receipts/active-launches.json`, `logs/install/daemon-<attempt>.log`). Its error carries the note `cleanup unproven`, because gdaemon starts its backend in a process group the harness cannot observe. Any kept record blocks every later launch, whatever its attempt name, before the port probe runs. The refusal names every kept record, the recorded process group (the srt wrapper's), and the clear command: confirm with `ps -axo pid,pgid,comm` that no gdaemon or backend process remains, then `rm -- <every named record>`. The backend's process group is not recorded.
 5. `record_installations.py --owner-session <session> --attempt <id>`.
 6. `launch_services.py observe --owner-session <session> --attempt <id>` writes the after-snapshot
@@ -96,12 +102,30 @@ Gobby package aggregate, expected:
 
 Residual: third-party packages that gobby imports are not hashed.
 
+### Status at this candidate (M1)
+
+Read-only, no launch. The values use the same formulas as `compare_package_copies` and
+`package_digest`. The pin copy is `git archive 0bf234a9 src/gobby`.
+
+| Copy | Files | `.py` | Other | Aggregate digest |
+| --- | --- | --- | --- | --- |
+| Pin archive | 3031 | 2190 | 841 | `467edf61...` (matches the expected value) |
+| Runtime `sources/gobby/src/gobby` | 3031 | 2190 | 841 | `467edf61...` (byte-identical to the pin) |
+| Epic tree `src/gobby` at `55a3814291` | 3039 | 2196 | 843 | `62f58212...` |
+
+- The four direct-import modules hash equal in all three copies.
+- Against the pin, the epic tree has 8 files that the pin lacks and 69 changed files. No file is only in the pin.
+- `verify_gobby_modules` therefore refuses at step 4, before the daemon starts. That refusal is the correct result under the current pin. The pin is not changed here. Moving the pin, or landing the epic's gobby changes first, is the lead's decision.
+- `tools/gobby/venv` is not built. Its side is proven only through the archive, which equals the pin.
+
 ## Command lines for attempt `rerun2611b`
 
 Run from the worktree root, as the orchestrator. Every line uses the same owner session. Every command runs `uv run --no-sync`: a plain `uv run` rebuilds the gobby package in this checkout.
 
 ```bash
 uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py init --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
+uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py write-manifest --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
+uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py materialize-workspaces --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b
 uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/provision_environment.py write-compose --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --postgres-image gobby-postgres-local@sha256:443364cb8e901fcbf902ee0435e9fc2333cb000d7351e22bd78485365e4d3d02 --qdrant-image qdrant/qdrant@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc --falkordb-image falkordb/falkordb@sha256:e93fcd753fe612fb0a222166a0620a1ae31b826a12f223c3b6d06038d9d7a364
 uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_services.py provision --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611b
 uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/launch_daemon.py --owner-session 7674aa11-70a3-40d5-91dd-1fe46140732b --attempt rerun2611b
@@ -114,6 +138,49 @@ uv run --no-sync python docs/evidence/gcode-graphify-rerun-2026-11/harness/valid
 The write-compose images are the September digests from `receipts/image-references.json`
 (recorded 2026-09-07). `gobby-postgres-local` is a locally built image name, so it must exist on
 this machine before step 2. Otherwise the orchestrator picks new digests.
+
+## Project set (criterion 2.1.3)
+
+The criterion set is 54 gcode projects. Every project draws from `corpora/gcode/<case>` into its own
+`workspaces/<name>`. This replaces the 24 comparator workspaces that `_workspaces()` registered
+before (`corpora/graphify/<case>` and `corpora/gcode/<case>`). The Graphify side has no project set
+in this manifest; the lead must confirm that before the live run.
+
+- Six scored cases C1 to C6. Each has six repetitions (`gcode-<case>-r<1..6>`, role `repetition`) and
+  two spares (`gcode-<case>-spare<1|2>`, role `spare`, repetition slots 7 and 8): 48 projects.
+- Six singles: `gcode-C7-interrupted` and `gcode-C7-clean` (C7), `gcode-C8-baseline` (C8-baseline),
+  `gcode-C8-change` (C8-change), `gcode-C1-labels-properties` (C1), `gcode-C0-probe` (C0): 6 projects.
+- `project_entries()` is the single definition. `write-manifest` writes `config/project-manifest.json`
+  with `count` 54. `read_project_manifest` refuses any manifest that differs from `project_entries()`
+  ("criterion 2.1.3"). `launch_services._workspaces(root)` registers exactly those projects.
+- Tests: `test_project_manifest.py`, eight tests. All were RED on the stubs before the implementation.
+
+## Docker call sites and the seat-run boundary
+
+Ruling 64fbdf7f: the Orchestrator runs `write-compose` and `provision` on the host lane, and the
+other Docker-reaching steps are live steps of the same orchestrator root pane. No developer seat runs
+any of them.
+
+| Call site | Docker command | Reached from |
+| --- | --- | --- |
+| `provision_environment.py` `ensure_images` | `docker image inspect`, `docker pull` (through `_docker_command`) | `write-compose`, step 2 |
+| `provision_environment.py` `external_state_snapshot` | `docker ps`, `docker volume ls` (through `_command_observation`) | `launch_services.py` `provision`, `observe`, `teardown` |
+| `launch_services.py` `docker` (helper) | `docker <args>` through `subprocess.run` | `prepare`, `check_fresh`, `record_services`, `_verify_services`, `teardown` |
+| `launch_services.py` `start_services` | `docker compose ... up --wait` | `provision`, `start` |
+
+| Subcommand or action | Docker | Who runs it |
+| --- | --- | --- |
+| `provision_environment.py write-compose` | yes | Orchestrator, host lane |
+| `launch_services.py provision` (step 3), `observe` (step 6), `check`, `start`, `teardown` | yes | Orchestrator, live step |
+| `provision_environment.py init`, `refresh-manifest`, `build-probe`, `write-manifest`, `materialize-workspaces` | no | seat-run |
+| `verify_corpora.py` `main`, `verify_corpora`, `compare_manifests` | no | seat-run |
+| `binary_set.py` `install_binary_set` | no | seat-run |
+
+`test_docker_boundary.py` enforces the seat-run column statically. From each seat-run branch and
+function it follows bare-name and attribute references into harness functions, and fails if any
+reached function contains the string `"docker"`. The walk over-approximates, since it matches names
+rather than resolved imports. The positive control requires the same walk to reach Docker from
+`write-compose`.
 
 ## C0 (step 7)
 
@@ -157,6 +224,11 @@ The stderr is also kept in `logs/c0/<attempt>/gcode-index-cold.stderr`, and no
 gate. `gcode schema-identity --json` is recorded as unchecked output in
 `logs/c0/<attempt>/gcode-schema-identity.stdout`. The archived six-key identity
 is checked at step 8 by `validate_environment.py --live`, through `schema_head.schema_head_proof`.
+
+Exit status (H2). A Graphify marker counts only when the extract exits 0 (`evaluate_c0`). A marker
+printed before a nonzero exit fails C0. The inventory needs exit 0 from both the top-level help and
+the export help (`_inventory_ok`). Regression tests: `test_a_graphify_marker_printed_with_a_failing_exit_does_not_pass_c0`
+and `test_a_graphify_export_help_that_exits_nonzero_fails_the_inventory`. Both were RED before the fix.
 
 ## Receipts
 
@@ -226,3 +298,17 @@ is checked at step 8 by `validate_environment.py --live`, through `schema_head.s
   stops and reports the exact error. The orchestrator does not retry with a hand-edited grant.
 - Known live risk: September saw `malformed grant: grant project does not match local project`
   under the isolated grant. It is the likely first live failure, at step 3 or step 8.
+- Reviewer readings (6f1201aa), checked against the code at this candidate:
+  1. Embedding provider key: not established. The embedding `api_key` is optional in
+     `src/gobby/config/ai.py`, and the harness sends no key to Ollama. Whether the provider needs one is a live question.
+  2. Nomic prefix: refuted. The harness adds no nomic prefix. `query_prefix` was removed at `70ec575688`.
+     The only `nomic-embed-text` string is a wrong-model fixture in `test_daemon_preparation.py`.
+  3. `embedding_readiness` (`prepare_daemon.py`): confirmed call graph. Only `prepare` calls it, and only
+     `launch_services.provision` calls `prepare`. `launch_daemon.launch` does not call it. Its gate is
+     `daemon_health_failure`, which requires status `ok`. Not a defect under the provision order; no change.
+  4. Degraded status on the startup path: open. A static read cannot settle it. The live status run decides.
+  5. Health loop: confirmed bounded. 120 probes, one second apart, with a two-second timeout per probe.
+     Each answered probe returns at once, so the loop takes about 120 s. When no probe answers, the worst case is 360 s. No change.
+- Open, not resolved by this candidate: startup (reading 4), lease (the `malformed grant` risk above),
+  and AI (the embedding provider and its key, reading 1).
+- Package equality (M1): the step-4 refusal under the current pin is correct. See "Status at this candidate (M1)".

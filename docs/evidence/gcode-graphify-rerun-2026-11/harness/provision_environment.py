@@ -77,6 +77,16 @@ COMPARATOR_CASES = {
     "gcode": INDEX_CASES,
 }
 CHANGED_CASES = frozenset({"C3", "C8-change", "C9-change"})
+PROJECT_MANIFEST = "config/project-manifest.json"
+SCORED_CASES = ("C1", "C2", "C3", "C4", "C5", "C6")
+SINGLE_PROJECTS = (
+    ("gcode-C7-interrupted", "C7", "interrupted"),
+    ("gcode-C7-clean", "C7", "clean"),
+    ("gcode-C8-baseline", "C8-baseline", "baseline"),
+    ("gcode-C8-change", "C8-change", "change"),
+    ("gcode-C1-labels-properties", "C1", "labels-properties"),
+    ("gcode-C0-probe", "C0", "probe"),
+)
 
 PORTS = {
     "postgres": 61234,
@@ -506,6 +516,70 @@ def refresh_manifest(root: Path, comparator: str, case: str) -> None:
     )
 
 
+def project_entries() -> list[dict[str, Any]]:
+    """The 54 criterion 2.1.3 projects: 6 repetitions and 2 spares per scored case, plus singles.
+
+    Spares take the repetition slots 7 and 8, so each case owns eight slots, six scored.
+    """
+    entries: list[dict[str, Any]] = []
+    for case in SCORED_CASES:
+        for repetition in range(1, 7):
+            entries.append(
+                _project_entry(f"gcode-{case}-r{repetition}", case, "repetition", repetition)
+            )
+        for spare in (1, 2):
+            entries.append(_project_entry(f"gcode-{case}-spare{spare}", case, "spare", 6 + spare))
+    for name, case, role in SINGLE_PROJECTS:
+        entries.append(_project_entry(name, case, role, 1))
+    return entries
+
+
+def _project_entry(name: str, case: str, role: str, repetition: int) -> dict[str, Any]:
+    return {
+        "name": name,
+        "case": case,
+        "role": role,
+        "repetition": repetition,
+        "corpus": f"corpora/gcode/{case}",
+        "workspace": f"workspaces/{name}",
+    }
+
+
+def write_project_manifest(root: Path) -> dict[str, Any]:
+    entries = project_entries()
+    for entry in entries:
+        require((root / entry["corpus"]).is_dir(), f"missing sealed corpus {entry['corpus']}")
+    manifest = {"count": len(entries), "projects": entries}
+    _write_json(root / PROJECT_MANIFEST, manifest)
+    return manifest
+
+
+def read_project_manifest(root: Path) -> list[dict[str, Any]]:
+    path = root / PROJECT_MANIFEST
+    require(path.is_file(), f"missing project manifest {PROJECT_MANIFEST}")
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    expected = project_entries()
+    require(
+        recorded.get("count") == len(expected) and recorded.get("projects") == expected,
+        "project manifest is not the criterion 2.1.3 set",
+    )
+    return expected
+
+
+def materialize_workspaces(root: Path) -> None:
+    pairs = [
+        (root / project["corpus"], root / project["workspace"])
+        for project in read_project_manifest(root)
+    ]
+    for _, workspace in pairs:
+        require(
+            not workspace.exists() and not workspace.is_symlink(),
+            f"refusing to overwrite workspace {workspace.relative_to(root)}",
+        )
+    for corpus, workspace in pairs:
+        shutil.copytree(corpus, workspace, symlinks=True)
+
+
 def write_compose(
     root: Path,
     postgres_image: str,
@@ -729,6 +803,10 @@ def _parse_args() -> argparse.Namespace:
     probe.add_argument("--owner-session", required=True)
     probe.add_argument("--probe-source", type=Path, required=True)
     probe.add_argument("--candidate", required=True)
+    manifest = subparsers.add_parser("write-manifest")
+    manifest.add_argument("--owner-session", required=True)
+    materialize = subparsers.add_parser("materialize-workspaces")
+    materialize.add_argument("--owner-session", required=True)
     return parser.parse_args()
 
 
@@ -763,6 +841,10 @@ def main() -> int:
             args.gobby_repo.resolve(),
             _command_run,
         )
+    elif args.command == "write-manifest":
+        write_project_manifest(root)
+    elif args.command == "materialize-workspaces":
+        materialize_workspaces(root)
     else:  # pragma: no cover - argparse enforces subcommands
         raise EvidenceError(args.command)
     return 0

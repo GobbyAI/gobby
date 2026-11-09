@@ -861,6 +861,22 @@ def test_graphify_marker_is_the_september_pattern_and_passes_only_when_observed(
     assert _checks(outputs)["graphify-marker"] is False
 
 
+def test_a_graphify_marker_printed_with_a_failing_exit_does_not_pass_c0() -> None:
+    outputs = _passing_outputs(_manifest())
+    outputs["graphify-extract"] = CommandResult(
+        stdout=SEPTEMBER_EXTRACT_OUTPUT, stderr="extract failed", returncode=1
+    )
+
+    assert _checks(outputs)["graphify-marker"] is False
+
+
+def test_a_graphify_export_help_that_exits_nonzero_fails_the_inventory() -> None:
+    outputs = _passing_outputs(_manifest())
+    outputs["graphify-export-help"] = CommandResult(stdout=EXPORT_HELP, stderr="", returncode=1)
+
+    assert _checks(outputs)["graphify-inventory"] is False
+
+
 @pytest.mark.parametrize(
     ("rows", "clean", "expected"),
     [(None, 9, False), (0, 9, False), (9, 9, False), (1, 9, True), (8, 9, True)],

@@ -446,7 +446,9 @@ def _pin_line(result: CommandResult | None, expected: str) -> bool:
 
 
 def _inventory_ok(help_result: CommandResult | None, export_result: CommandResult | None) -> bool:
-    if help_result is None or export_result is None or help_result.returncode != 0:
+    if help_result is None or export_result is None:
+        return False
+    if help_result.returncode != 0 or export_result.returncode != 0:
         return False
     names = set(re.findall(r"^\s+([a-z][a-z-]*)", help_result.stdout, re.M))
     return (
@@ -478,6 +480,8 @@ def evaluate_c0(
     marker_seen = (
         graphify_marker_pattern is not None
         and extract is not None
+        # A marker printed before a failing exit is not evidence: the extract must exit 0.
+        and extract.returncode == 0
         and re.search(graphify_marker_pattern, extract.stdout + extract.stderr) is not None
     )
     checks = {

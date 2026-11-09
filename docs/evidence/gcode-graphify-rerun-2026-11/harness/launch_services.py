@@ -18,7 +18,6 @@ import prepare_daemon
 import prepare_identity
 from binary_set import install_binary_set
 from provision_environment import (
-    COMPARATOR_CASES,
     COMPOSE_PROJECT,
     CONTAINERS,
     DEFAULT_RUNTIME_ROOT,
@@ -30,6 +29,7 @@ from provision_environment import (
     _sha256_file,
     _write_json,
     external_state_snapshot,
+    read_project_manifest,
 )
 from record_installations import probe
 from runtime_boundary import EvidenceError, assert_owned_runtime, require, write_once
@@ -242,11 +242,9 @@ def _verify_services(root: Path) -> None:
         )
 
 
-def _workspaces() -> list[tuple[str, Path]]:
+def _workspaces(root: Path) -> list[tuple[str, Path]]:
     return [
-        (f"{comparator}-{case}", Path("corpora") / comparator / case)
-        for comparator, cases in COMPARATOR_CASES.items()
-        for case in cases
+        (project["name"], Path(project["workspace"])) for project in read_project_manifest(root)
     ]
 
 
@@ -287,7 +285,7 @@ def _build_environments(root: Path, attempt: str) -> None:
 def _init_workspaces(root: Path, attempt: str) -> None:
     _assert_daemon_down()
     gobby = str(root / "tools/gobby/venv/bin/gobby")
-    for name, relative in _workspaces():
+    for name, relative in _workspaces(root):
         probe(root, attempt, f"init-{name}", [gobby, "init", "--name", name], root / relative)
 
 
@@ -304,7 +302,7 @@ def _indexed_row_counts(root: Path) -> dict[str, int]:
         password=services["BAKEOFF_POSTGRES_PASSWORD"],
         connect_timeout=5,
     ) as conn:
-        for name, relative in _workspaces():
+        for name, relative in _workspaces(root):
             project = json.loads((root / relative / ".gobby/project.json").read_text())["id"]
             row = conn.execute(
                 "SELECT count(*) FROM code_indexed_file_states WHERE project_id = %s", (project,)
