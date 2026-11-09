@@ -705,7 +705,14 @@ class WebSocketServer(
             if self.native_publisher is not None:
                 # Native mode serves no websockets listener. The bind is the readiness
                 # signal, so a failed bind raises here and reaches the subsystem failure path.
-                await self.native_publisher.bind()
+                # The sampler starts on this path, and a retryable bind failure also enters
+                # the publisher's bounded rebind loop before the exception propagates.
+                self.native_publisher.ensure_sampler()
+                try:
+                    await self.native_publisher.bind()
+                except BaseException as exc:
+                    self.native_publisher.fail_bind_into_rebind(exc)
+                    raise
             else:
                 self._server = await serve(
                     self.handle_connection,

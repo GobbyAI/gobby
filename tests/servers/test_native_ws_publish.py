@@ -249,6 +249,18 @@ def _publisher(daemon: _Daemon) -> NativePublisher:
     )
 
 
+def _running_server(
+    publisher: NativePublisher, monkeypatch: pytest.MonkeyPatch
+) -> tuple[WebSocketServer, AsyncMock]:
+    server = WebSocketServer(CONFIG, MagicMock(), AsyncMock(return_value="u"))
+    server.native_publisher = publisher
+    shutdown = AsyncMock()
+    server.lease_registry = MagicMock()
+    server.lease_registry.shutdown_lifecycle_publication = shutdown
+    monkeypatch.setattr(server, "_cleanup_idle_sessions", AsyncMock())
+    return server, shutdown
+
+
 async def _until(predicate: Callable[[], bool], timeout: float = 1.0) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():
@@ -854,6 +866,49 @@ async def test_a_stalled_loop_is_reported_while_the_publisher_runs(
     lag = next(r.getMessage() for r in caplog.records if "event loop lag" in r.getMessage())
     measured = float(lag.split("lag ")[1].split("s ")[0])
     assert measured >= 1.5  # The 2 s jump registers; the sample starts a few ms after it.
+
+
+@pytest.mark.asyncio
+async def test_server_start_reports_a_stalled_loop(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The production server start owns the sampler. publisher.start is not required."""
+    monkeypatch.setattr(native_publish, "LOOP_LAG_INTERVAL", 0.05)
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    stalled = 0.0
+    monkeypatch.setattr(loop, "time", lambda: real_time() + stalled)
+    server, _shutdown = _running_server(_publisher(_Daemon()), monkeypatch)
+    await server.start()
+    try:
+        await asyncio.sleep(0)  # The sampler registers its first sleep.
+        stalled += 2.0
+        await _until(lambda: any("event loop lag" in r.getMessage() for r in caplog.records))
+    finally:
+        await server.stop()
+    lag = next(r.getMessage() for r in caplog.records if "event loop lag" in r.getMessage())
+    measured = float(lag.split("lag ")[1].split("s ")[0])
+    assert measured >= 1.5
+
+
+@pytest.mark.asyncio
+async def test_server_start_rebinds_after_a_transient_bind_failure(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed startup bind stays visible and the publisher rebinds within its interval."""
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.01)
+    daemon = _Daemon()
+    daemon.bind_status = [503]
+    publisher = _publisher(daemon)
+    server, shutdown = _running_server(publisher, monkeypatch)
+    with pytest.raises(Exception, match="bind answered 503"):
+        await server.start()
+    try:
+        await _until(lambda: publisher.generation == GEN1)
+    finally:
+        await publisher.stop()
+    shutdown.assert_awaited_once()
+    assert any("Native WS bind failed" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.parametrize(

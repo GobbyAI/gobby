@@ -99,6 +99,7 @@ class NativePublisher:
         self._bound = asyncio.Event()
         self._sender: asyncio.Task[None] | None = None
         self._rebind: asyncio.Task[None] | None = None
+        self._sampler: asyncio.Task[None] | None = None
         self._background: set[asyncio.Task[None]] = set()
         self._stopped = False
         self._closed = False
@@ -131,12 +132,26 @@ class NativePublisher:
 
     async def start(self) -> None:
         """Bind once; a failure enters the rebind loop instead of raising."""
-        self._spawn(self._sample_loop_lag())
+        self.ensure_sampler()
         try:
             await self.bind()
         except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
-            logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
-            self._schedule_rebind(immediate=False)
+            self.fail_bind_into_rebind(exc)
+
+    def ensure_sampler(self) -> None:
+        """Start the loop-lag sampler once. stop() cancels it with the other background tasks."""
+        if self._stopped:
+            return
+        if self._sampler is not None and not self._sampler.done():
+            return
+        self._sampler = self._spawn(self._sample_loop_lag())
+
+    def fail_bind_into_rebind(self, exc: BaseException) -> None:
+        """Log a retryable bind failure and enter the bounded rebind loop."""
+        if self._stopped or not isinstance(exc, (_BindFailed, httpx.HTTPError, TimeoutError)):
+            return
+        logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
+        self._schedule_rebind(immediate=False)
 
     async def bind(self, label: str = "bind") -> str:
         token = await self._await_token()
@@ -422,10 +437,11 @@ class NativePublisher:
                 logger.warning("Native WS rebind failed: %r", exc)
             await asyncio.sleep(REBIND_INTERVAL)
 
-    def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+    def _spawn(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+        return task
 
     async def _sample_loop_lag(self) -> None:
         # A fixed sleep wakes late by exactly the time this loop was busy or starved.
