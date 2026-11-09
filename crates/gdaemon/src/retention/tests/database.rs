@@ -411,10 +411,7 @@ async fn serial_db_archive_accumulates_each_key_across_prunes() -> Result<()> {
         )
         .await?;
     assert_eq!(prune_batch(&session, CUTOFF).await?, 1);
-    assert_eq!(
-        db.key_totals().await?,
-        vec![("m1".to_owned(), 13, 3, 4, 5)]
-    );
+    assert_eq!(db.key_totals().await?, vec![("m1".to_owned(), 13, 3, 4, 5)]);
     assert_eq!(db.totals().await?, (13, 3, 4, 5));
     Ok(())
 }
