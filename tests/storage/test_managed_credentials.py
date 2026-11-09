@@ -1375,8 +1375,8 @@ def test_other_daemon_waits_for_expired_lease_then_recovers_terminal_and_orphan_
             agent_run_id=fixture.agent_run_id,
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
+        _plant_login_role(fixture.database_url, orphan_role)
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
-            admin.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(orphan_role)))
             admin.execute(
                 "UPDATE public.agent_runs SET status = 'error' WHERE id = %s",
                 (fixture.agent_run_id,),
@@ -2230,10 +2230,22 @@ def _drop_role_if_exists(database_url: str, role_name: str) -> None:
 
 
 def _plant_login_role(database_url: str, role_name: str) -> None:
+    """Create an issuer-owned login role and claim it for this hub.
+
+    The binding trigger writes the ownership marker when a role gets its first binding.
+    A planted role stands in for a role this hub created, so it carries the same marker.
+    """
     with psycopg.connect(database_url, autocommit=True) as admin:
         admin.execute("SET ROLE gobby_agent_issuer")
         try:
             admin.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(role_name)))
+            marker = admin.execute(f"SELECT {AUTH_SCHEMA}.role_owner_marker()").fetchone()
+            assert marker is not None
+            admin.execute(
+                sql.SQL("COMMENT ON ROLE {} IS {}").format(
+                    sql.Identifier(role_name), sql.Literal(marker[0])
+                )
+            )
         finally:
             admin.execute("RESET ROLE")
 
