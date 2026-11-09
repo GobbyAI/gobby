@@ -941,6 +941,42 @@ def test_two_live_seats_bound_to_one_leaf_refuse_and_name_the_task_and_both_sess
     assert team.holder("a") == team.seat("dev-a")
 
 
+def test_idle_stale_seat_on_the_leaf_does_not_make_the_stage_ambiguous(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_epic(
+        temp_db,
+        sample_project,
+        seats=[("dev-a", "build", "a"), ("dev-a2", "build", "a")],
+        claims={"a": "dev-a"},
+    )
+    temp_db.execute("UPDATE sessions SET status = 'idle' WHERE id = %s", (team.seat("dev-a2"),))
+
+    team.attest("a", team.seat("dev-a"), "test-before", IMPLEMENT, sha=C1)
+
+    assert team.holder("a") == team.seat("dev-a")
+    recorded = list_attestations(temp_db, team.leaves["a"])
+    assert [(item.kind, item.session_id) for item in recorded] == [
+        ("test-before", team.seat("dev-a"))
+    ]
+
+
+def test_single_idle_seat_on_the_leaf_still_serves_the_stage(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    team = _build_epic(
+        temp_db,
+        sample_project,
+        seats=[("dev-a", "build", "a")],
+        claims={"a": "dev-a"},
+    )
+    temp_db.execute("UPDATE sessions SET status = 'idle' WHERE id = %s", (team.seat("dev-a"),))
+
+    team.attest("a", team.seat("dev-a"), "test-before", IMPLEMENT, sha=C1)
+
+    assert [item.kind for item in list_attestations(temp_db, team.leaves["a"])] == ["test-before"]
+
+
 def _stall_flow() -> PipelineDefinition:
     """The implement, check and validate flow at a pinned version, so a stall must name it."""
     return _flow().model_copy(update={"version": "2.3.0"})
