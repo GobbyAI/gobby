@@ -77,6 +77,9 @@ WriteKind = Literal["text", "key", "paste", "input"]
 STATE_VERSION = 1
 _HUMAN_ORIGINS = frozenset({"operator", "attention"})
 _INTERRUPT_KEYS = frozenset({"escape", "ctrl_c"})
+# The reason a composer read gives when its only human input moved the cursor or sent control
+# keys: the draft holds no typed text, so an idle empty pane frame can confirm it empty.
+CURSOR_DRAFT_REASON = "cursor"
 # Terminal replies are answers the viewer gives to the program's own queries (cursor
 # position, device attributes, DSR, DECRPM, kitty flags, DCS, OSC). They edit nothing,
 # so a composer holding only replies stays empty.
@@ -160,6 +163,14 @@ class ComposerLedger:
         """Start ``terminal_id`` clean now: an operator vouching for its composer."""
         with self._lock:
             self._entries[terminal_id] = _Entry(clean_seq=self._next())
+
+    def cursor_mark(self, terminal_id: str) -> int | None:
+        """The human input mark of a cursor-only draft; ``None`` for any other composer state."""
+        return None
+
+    def confirm_empty(self, terminal_id: str, mark: int) -> bool:
+        """Clear the cursor-only draft ``mark`` names, once an idle empty frame confirmed it."""
+        return False
 
     def record_spawn(self, terminal_id: str, epoch: str) -> None:
         """A terminal committed on host ``epoch`` starts with an empty composer.
