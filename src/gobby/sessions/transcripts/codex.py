@@ -404,6 +404,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
         payload = data.get("payload")
         if not isinstance(payload, dict):
             return None, [], []
+        if line_type == "event_msg" and payload.get("type") == "task_complete":
+            self._execution_chain.turn_completed()
 
         timestamp = _parse_timestamp(data)
         outcomes: list[CodexNestedExecOutcome] = []

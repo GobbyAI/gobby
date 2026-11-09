@@ -8,11 +8,12 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
+from gobby.adapters.codex_impl.cell_boundaries import CellBoundaries
 from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, may_type_input, static_code
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls, repeated_spans
 from gobby.adapters.codex_impl.pending_execution import ExecutionResolution, PendingExecution
-from gobby.config.validation_detection import classify_validation_segments
-from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
+from gobby.adapters.codex_impl.runner_summary import runner_summary_result
+from gobby.adapters.codex_impl.typed_latch import TypedLatch, failed_typed_write
 from gobby.hooks.normalization import normalize_tool_display_fields
 from gobby.hooks.tool_outcomes import ToolOutcome, ToolOutcomeStatus
 
@@ -580,6 +581,8 @@ class ExecutionChainCorrelator:
         self._ambiguous_cells: dict[str, None] = {}
         self._ambiguous_sessions: dict[str, None] = {}
         self._sticky_unattributed: dict[str, None] = {}
+        self._typed_latches: dict[str, TypedLatch] = {}
+        self._boundaries = CellBoundaries()
         self._live_sequence = 0
         self._overflowed = False
         self._pending_overflowed = False
@@ -635,7 +638,7 @@ class ExecutionChainCorrelator:
                 if isinstance(arguments, str)
                 else execution is None and write_stdin_sends_input(arguments)
             ):
-                self._mark_sticky_unattributed()
+                self._mark_sticky_unattributed(call_id, session_id)
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
             typed = extract_direct_write_stdin_command(arguments)
@@ -644,7 +647,7 @@ class ExecutionChainCorrelator:
                 if execution is not None:
                     execution = _typed_into(execution, typed)
             if execution is None and write_stdin_sends_input(arguments):
-                self._mark_sticky_unattributed()
+                self._mark_sticky_unattributed(call_id, session_id)
         elif name in WAIT_NAMES:
             decoded = arguments
             if isinstance(arguments, str):
@@ -656,6 +659,9 @@ class ExecutionChainCorrelator:
                 cell_id = _normalize_session_id(decoded.get("cell_id"))
                 if cell_id is not None and cell_id not in self._ambiguous_cells:
                     execution = self._cells.get(cell_id)
+                    if execution is None and self._boundaries.revives(cell_id):
+                        # The rollout ended this cell, but a wait on it can still observe it.
+                        execution = PendingExecution(call_id)
         if execution is None:
             return False
         code_mode = name in FUNCTIONS_EXEC_NAMES or name in WAIT_NAMES
@@ -663,6 +669,11 @@ class ExecutionChainCorrelator:
         return True
 
     def resolve_output(self, call_id: str, output: Any) -> ExecutionResolution:
+        latch = self._typed_latches.get(call_id)
+        if latch is not None and failed_typed_write(output, latch.session_id):
+            # A typed script that failed on a session that never existed never reached a shell.
+            del self._typed_latches[call_id]
+            self._refresh_sticky()
         execution = self._calls.pop(call_id, None)
         if execution is None:
             return ExecutionResolution("unrelated")
@@ -673,6 +684,7 @@ class ExecutionChainCorrelator:
         if yielded_cell is not None:
             pending = replace(execution, cell_id=yielded_cell)
             self._retire_cells(execution.outer_call_id, keep=yielded_cell)
+            self._boundaries.yielded(yielded_cell)
             self._set_pending(self._cells, yielded_cell, pending)
             return ExecutionResolution("pending", execution=pending)
 
@@ -719,7 +731,7 @@ class ExecutionChainCorrelator:
             active = self._sessions.get(execution.session_id)
             if active is not None and active.outer_call_id == execution.outer_call_id:
                 output_text = "\n".join(_iter_output_text(output))[-16_000:]
-                summary = self._runner_summary_result(execution, output_text)
+                summary = runner_summary_result(execution, output_text)
                 if summary is not None:
                     return ExecutionResolution("terminal", execution=execution, results=(summary,))
         if execution.session_id is None:
@@ -746,29 +758,10 @@ class ExecutionChainCorrelator:
         if self._sessions.get(session_id) is pending and len(results) == 1:
             runner_output = results[0].get("output")
             if isinstance(runner_output, str):
-                summary = self._runner_summary_result(pending, runner_output)
+                summary = runner_summary_result(pending, runner_output)
                 if summary is not None:
                     return ExecutionResolution("terminal", execution=pending, results=(summary,))
         return ExecutionResolution("pending", execution=pending)
-
-    @staticmethod
-    def _runner_summary_result(execution: PendingExecution, output: str) -> dict[str, Any] | None:
-        if not execution.literal_command:
-            return None
-        matches = classify_validation_segments(execution.literal_command)
-        if len(matches) != 1 or matches[0].is_compound or "test" not in matches[0].categories:
-            return None
-        if runner_reported_failures(output):
-            success = False
-        elif runner_reported_success(output):
-            success = True
-        else:
-            return None
-        return {
-            "success": success,
-            "output": output,
-            "outcome_provenance": "codex.execution_chain.runner_output",
-        }
 
     def correlate(self, data: dict[str, Any]) -> dict[str, Any]:
         """Correlate one live completed item and promote terminal results to Bash."""
@@ -843,15 +836,37 @@ class ExecutionChainCorrelator:
     def abandon_unresolved_calls(self) -> None:
         """Drop calls whose output a compaction boundary discarded.
 
-        Cells and sessions keep their state: a yielded cell or running process still
-        has its own output or session id and resolves later.
+        Sessions keep their state, and so does a yielded cell unless its turn already
+        ended (CellBoundaries): a live cell still has its own output and resolves later.
         """
         self._calls.clear()
+        self._boundaries.compacted(self._cells)
+        self._refresh_sticky()
 
-    def _mark_sticky_unattributed(self) -> None:
+    def turn_completed(self) -> None:
+        """A task_complete record: each cell pending now awaits the compaction that ends it."""
+        self._boundaries.turn_completed(self._cells)
+
+    def _mark_sticky_unattributed(self, call_id: str, session_id: str | None) -> None:
         """Typed input may reach a shell no execution owns: mark exactly the pending cells."""
-        pending = self._cells.values()
-        self._sticky_unattributed = dict.fromkeys(cell.outer_call_id for cell in pending)
+        marked = tuple(cell.outer_call_id for cell in self._cells.values())
+        self._typed_latches[call_id] = TypedLatch(session_id, marked)
+        self._refresh_sticky()
+
+    def _refresh_sticky(self) -> None:
+        """Keep each latch's cells that are still pending; a latch with none left is dropped."""
+        pending = {entry.outer_call_id for entry in (*self._calls.values(), *self._cells.values())}
+        self._typed_latches = {
+            call_id: latch
+            for call_id, latch in self._typed_latches.items()
+            if pending.intersection(latch.outer_call_ids)
+        }
+        self._sticky_unattributed = dict.fromkeys(
+            outer
+            for latch in self._typed_latches.values()
+            for outer in latch.outer_call_ids
+            if outer in pending
+        )
 
     def snapshot_state(self) -> dict[str, Any]:
         return {
@@ -861,6 +876,11 @@ class ExecutionChainCorrelator:
             "ambiguous_cells": list(self._ambiguous_cells),
             "ambiguous_sessions": list(self._ambiguous_sessions),
             "sticky_unattributed": list(self._sticky_unattributed),
+            "typed_latches": {
+                key: {"session_id": latch.session_id, "outer_call_ids": list(latch.outer_call_ids)}
+                for key, latch in self._typed_latches.items()
+            },
+            "cell_boundaries": self._boundaries.snapshot(),
             "complete": not self._overflowed,
             "pending_complete": not self._pending_overflowed,
         }
@@ -874,6 +894,12 @@ class ExecutionChainCorrelator:
         self._ambiguous_cells = self._hydrate_ambiguities(state.get("ambiguous_cells"))
         self._ambiguous_sessions = self._hydrate_ambiguities(state.get("ambiguous_sessions"))
         self._sticky_unattributed = self._hydrate_ambiguities(state.get("sticky_unattributed"))
+        typed = state.get("typed_latches")
+        self._typed_latches = {
+            key: TypedLatch(value["session_id"], tuple(value["outer_call_ids"]))
+            for key, value in (typed.items() if isinstance(typed, Mapping) else ())
+        }
+        self._boundaries.hydrate(state.get("cell_boundaries"))
 
     def _hydrate_map(self, value: Any) -> dict[str, PendingExecution]:
         if not isinstance(value, dict):
