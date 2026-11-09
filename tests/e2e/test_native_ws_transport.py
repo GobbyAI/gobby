@@ -40,6 +40,7 @@ from gobby.utils.break_glass import break_glass_path
 from gobby.utils.local_token import issue_agent_api_token, read_managed_signing_key
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
+    DAEMON_HEALTH_LOG_TAIL_CHARS,
     CLIEventSimulator,
     DaemonInstance,
     create_host_socket_dir,
@@ -47,8 +48,8 @@ from tests.e2e.conftest import (
     spawn_daemon_instance,
     stop_terminal_host,
 )
-from tests.e2e.native_ws_probe_bootstrap import RECORDS_FILE
 from tests.e2e.test_external_terminal_attach import _gterm_bin_dir
+from tests.fixtures.native_ws_probe_records import RECORDS_FILE
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.e2e
@@ -175,11 +176,62 @@ async def _admitted(url: str, token: str) -> bool:
     return True
 
 
-async def _wait_admitted(url: str, token: str, timeout: float = 60.0) -> None:
+_ADMIT_LOG_MARKERS = ("native ws", "respawn", "loop lag", "websocket", "backend", "bridge")
+
+
+def _admit_timeout_detail(daemon: DaemonInstance) -> str:
+    """Daemon log tail and backend pid state captured before teardown."""
+
+    def excerpt(path: Path, label: str) -> str:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError as exc:
+            return f"{label}: <unable to read {path}: {exc}>"
+        if not text:
+            return f"{label}: <empty {path}>"
+        matched = [
+            line
+            for line in text.splitlines()
+            if any(marker in line.casefold() for marker in _ADMIT_LOG_MARKERS)
+        ]
+        markers = "\n".join(matched[-80:]) or "<no marker lines>"
+        return (
+            f"{label} markers ({path}):\n{markers}\n"
+            f"{label} tail:\n{text[-DAEMON_HEALTH_LOG_TAIL_CHARS:]}"
+        )
+
+    pid_lines: list[str] = []
+    backend_pids = _backend_pids(daemon)
+    if not backend_pids:
+        pid_lines.append("backend pids: none")
+    for pid in backend_pids:
+        try:
+            pid_lines.append(f"backend pid {pid}: status={psutil.Process(pid).status()}")
+        except psutil.Error as exc:
+            pid_lines.append(f"backend pid {pid}: <{exc}>")
+    daemon_status = "running" if daemon.is_alive() else f"exited({daemon.process.poll()})"
+    return "\n".join(
+        (
+            f"daemon pid {daemon.pid}: {daemon_status}",
+            *pid_lines,
+            excerpt(daemon.log_file, "daemon log"),
+            excerpt(daemon.error_log_file, "daemon error log"),
+        )
+    )
+
+
+async def _wait_admitted(
+    url: str,
+    token: str,
+    timeout: float = 60.0,
+    *,
+    daemon: DaemonInstance | None = None,
+) -> None:
     deadline = time.monotonic() + timeout
     while not await _admitted(url, token):
         if time.monotonic() > deadline:
-            pytest.fail(f"native WS at {url} did not admit within {timeout:.0f}s")
+            detail = f"\n{_admit_timeout_detail(daemon)}" if daemon is not None else ""
+            pytest.fail(f"native WS at {url} did not admit within {timeout:.0f}s{detail}")
         await asyncio.sleep(0.25)
 
 
@@ -403,7 +455,7 @@ async def test_backend_respawn_retires_generation_and_refuses_stale_proof(
         await browser_ws.close()
 
     # Respawn rebinds with no manual bind: a new backend, and a new generation.
-    await _wait_admitted(probe_daemon.ws_url, token)
+    await _wait_admitted(probe_daemon.ws_url, token, daemon=probe_daemon)
     (second_pid,) = _backend_pids(probe_daemon)
     assert second_pid != first_pid
     records = _bind_records(probe_daemon)
@@ -452,7 +504,7 @@ async def test_backend_respawn_retires_generation_and_refuses_stale_proof(
 async def test_failure_reconnect_and_shutdown_are_bounded(daemon_instance: DaemonInstance) -> None:
     token = daemon_token(daemon_instance.gobby_home)
     bearer = [("Authorization", f"Bearer {token}")]
-    await _wait_admitted(daemon_instance.ws_url, token)
+    await _wait_admitted(daemon_instance.ws_url, token, daemon=daemon_instance)
     (backend,) = _backend_pids(daemon_instance)
 
     # Backend failure closes the public socket promptly, with a documented pair.
@@ -477,7 +529,7 @@ async def test_failure_reconnect_and_shutdown_are_bounded(daemon_instance: Daemo
         assert (closed.value.rcvd.code, closed.value.rcvd.reason) in BACKEND_LOSS_CLOSES
 
     # A reconnect after the backend restart starts from the initial welcome.
-    await _wait_admitted(daemon_instance.ws_url, token)
+    await _wait_admitted(daemon_instance.ws_url, token, daemon=daemon_instance)
     await _welcome(daemon_instance.ws_url, bearer)
 
     # The reconnect also starts from the entry mode's initial subscription state. Direct
@@ -564,7 +616,7 @@ def test_gterm_remains_available_without_daemon(
     daemon_instance.restart()
     assert host.poll() is None, "gterm host exited across the daemon restart"
     assert _control_socket_accepts(socket_dir)
-    asyncio.run(_wait_admitted(daemon_instance.ws_url, token))
+    asyncio.run(_wait_admitted(daemon_instance.ws_url, token, daemon=daemon_instance))
 
 
 @pytest.mark.asyncio
@@ -633,6 +685,6 @@ async def test_running_pane_keeps_its_process_across_daemon_stop_and_restart(
         await asyncio.to_thread(daemon_instance.restart)
         assert host.poll() is None, "gterm host exited across the daemon restart"
         await drive("restarted", 555555, 444444)
-        await _wait_admitted(daemon_instance.ws_url, token)
+        await _wait_admitted(daemon_instance.ws_url, token, daemon=daemon_instance)
     finally:
         await client.close()
