@@ -8,14 +8,13 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use tokio::sync::{oneshot, Mutex, MutexGuard, Notify, OwnedMutexGuard, OwnedRwLockWriteGuard};
 
-use super::backpressure::OnWritten;
 use super::handover::{
     commit_state, monotonic_now_ns, stage_state, UpgradeAttempt, UpgradeOutcome, UpgradeReason,
     UpgradeRecord, FORMAT_VERSION, STATE_FILE,
@@ -27,8 +26,10 @@ use super::state::{CommitState, HostState};
 use crate::pty::actor::{HandoffAckFault, PtyIoActorHandle};
 
 mod capture;
+mod serve;
 
 use capture::{capture, CaptureSpec};
+pub(crate) use serve::drain_endpoint;
 
 /// Decision 10's budget, fixed when the attempt takes `upgrade_lock`.
 const BUDGET: Duration = Duration::from_secs(15);
@@ -122,6 +123,10 @@ pub(crate) struct Attempts {
     served: AtomicBool,
     /// Wakes a drain waiting in `await_served`.
     read: Notify,
+    /// Sequence of the recorded outcome; `replace_record` bumps it. A reply
+    /// carries the sequence of its record, so an older reply cannot mark a newer
+    /// record, even one with the same attempt id.
+    record_seq: AtomicU64,
 }
 
 impl Attempts {
@@ -136,30 +141,6 @@ impl Attempts {
         self.lock.lock().await
     }
 
-    /// Records that a client read the recorded outcome. Called under the
-    /// `upgrade` lock, from `mark_served`.
-    pub(crate) fn mark_outcome_served(&self) {
-        self.served.store(true, Ordering::SeqCst);
-        self.read.notify_waiters();
-    }
-
-    /// Waits up to `grace` for a client to read the recorded outcome; a read
-    /// that already happened returns at once.
-    async fn await_served(&self, grace: Duration) {
-        let served = async {
-            loop {
-                // Create the waiter before checking, so a read between the check
-                // and the wait is not missed.
-                let read = self.read.notified();
-                if self.served.load(Ordering::SeqCst) {
-                    return;
-                }
-                read.await;
-            }
-        };
-        let _ = tokio::time::timeout(grace, served).await;
-    }
-
     fn update(&self, change: impl FnOnce(&mut LiveAttempt)) {
         if let Some(live) = self
             .live
@@ -172,28 +153,6 @@ impl Attempts {
     }
 }
 
-/// Waits for the attempt in flight to settle. When an outcome is recorded, it
-/// gives a client up to `SERVE_GRACE` to read it, then runs `teardown` while
-/// `upgrade_lock` is held. The returned guard keeps the lock to shutdown, and the
-/// second value is what `teardown` returned.
-pub(crate) async fn drain_endpoint<R>(
-    state: &HostState,
-    teardown: impl FnOnce() -> R,
-) -> (MutexGuard<'_, ()>, R) {
-    let settled = state.attempts.settled().await;
-    let recorded = state
-        .upgrade
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .as_ref()
-        .is_some_and(|record| record.outcome.is_some());
-    if recorded {
-        state.attempts.await_served(SERVE_GRACE).await;
-    }
-    let torn_down = teardown();
-    (settled, torn_down)
-}
-
 impl HostState {
     /// Adds `generation` and `upgrade` to `ping` (Decision 13), with explicit
     /// nulls when idle.
@@ -202,39 +161,15 @@ impl HostState {
         ping["upgrade"] = upgrade_record(self);
         ping
     }
-
-    /// The write hook for a reply that carries a recorded outcome: the outcome
-    /// counts as served only once the reply is written.
-    pub(super) fn served_reply(self: &Arc<Self>, reply: &Value) -> Option<OnWritten> {
-        let attempt_id = reply["upgrade"]["last_outcome"]["attempt_id"]
-            .as_str()?
-            .to_owned();
-        let state = Arc::clone(self);
-        Some(OnWritten(Box::new(move || {
-            mark_served(&state, &attempt_id)
-        })))
-    }
-}
-
-/// Marks the recorded outcome served while it is still the current record. A
-/// reply for an older record must not mark a newer one.
-fn mark_served(state: &HostState, attempt_id: &str) {
-    let upgrade = state.upgrade.lock().unwrap_or_else(PoisonError::into_inner);
-    if upgrade
-        .as_ref()
-        .is_some_and(|record| record.attempt.attempt_id == attempt_id)
-    {
-        state.attempts.mark_outcome_served();
-    }
 }
 
 fn upgrade_record(state: &HostState) -> Value {
-    let last = state
-        .upgrade
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+    let upgrade = state.upgrade.lock().unwrap_or_else(PoisonError::into_inner);
+    let record_seq = state.attempts.record_seq.load(Ordering::SeqCst);
+    let last = upgrade
         .as_ref()
-        .and_then(outcome_json);
+        .and_then(|record| outcome_json(record, record_seq));
+    drop(upgrade);
     let live = state
         .attempts
         .live
@@ -258,7 +193,7 @@ fn upgrade_record(state: &HostState) -> Value {
     }
 }
 
-fn outcome_json(record: &UpgradeRecord) -> Option<Value> {
+fn outcome_json(record: &UpgradeRecord, record_seq: u64) -> Option<Value> {
     let (outcome, reason, errno) = match record.outcome? {
         UpgradeOutcome::Succeeded => ("succeeded", None, None),
         UpgradeOutcome::Fallback(reason) => ("fallback", Some(reason.as_str()), None),
@@ -273,6 +208,7 @@ fn outcome_json(record: &UpgradeRecord) -> Option<Value> {
         "outcome": outcome,
         "candidate_sha256": (!sha.is_empty()).then_some(sha),
         "reason": reason,
+        "record_seq": record_seq,
     });
     if let Some(errno) = errno {
         value["errno"] = json!(errno);
@@ -524,15 +460,7 @@ impl Attempt {
 
     /// Records the terminal outcome, which returns `ping` to idle.
     fn record(&self, outcome: UpgradeOutcome, candidate_sha256: String) {
-        let mut upgrade = self
-            .state
-            .upgrade
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        // Cleared under the lock that `upgrade_record` marks under, so a read
-        // of the previous outcome cannot mark this one.
-        self.state.attempts.served.store(false, Ordering::SeqCst);
-        *upgrade = Some(UpgradeRecord {
+        self.state.replace_record(UpgradeRecord {
             attempt: UpgradeAttempt {
                 attempt_id: self.attempt_id.clone(),
                 candidate_sha256,
@@ -540,7 +468,6 @@ impl Attempt {
             },
             outcome: Some(outcome),
         });
-        drop(upgrade);
         *self
             .state
             .attempts

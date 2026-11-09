@@ -142,7 +142,7 @@ async fn stale_reply_does_not_mark_a_newer_outcome() {
     let written = state
         .served_reply(&reply)
         .expect("a reply with a recorded outcome carries a hook");
-    *state.upgrade.lock().unwrap() = Some(UpgradeRecord {
+    state.replace_record(UpgradeRecord {
         attempt: UpgradeAttempt {
             attempt_id: "attempt-newer".into(),
             candidate_sha256: "candidate".into(),
@@ -156,5 +156,31 @@ async fn stale_reply_does_not_mark_a_newer_outcome() {
     assert!(
         started.elapsed() >= SERVE_GRACE,
         "a reply for an older record marked the newer outcome served"
+    );
+}
+
+/// Two records can carry the same attempt id. A reply built from the older
+/// record must not mark the newer one, even though the ids match.
+#[tokio::test(start_paused = true)]
+async fn stale_reply_does_not_mark_a_newer_record_with_the_same_attempt() {
+    let state = recorded_host();
+    let reply = state.with_upgrade(json!({"ok": true}));
+    let written = state
+        .served_reply(&reply)
+        .expect("a reply with a recorded outcome carries a hook");
+    state.replace_record(UpgradeRecord {
+        attempt: UpgradeAttempt {
+            attempt_id: "attempt-drain".into(),
+            candidate_sha256: "candidate".into(),
+            previous_sha256: "previous".into(),
+        },
+        outcome: Some(UpgradeOutcome::Aborted(UpgradeReason::HostDraining)),
+    });
+    (written.0)();
+    let started = tokio::time::Instant::now();
+    let _settled = drain_endpoint(&state, || {}).await;
+    assert!(
+        started.elapsed() >= SERVE_GRACE,
+        "a reply for an older record with the same attempt id marked the newer record served"
     );
 }
