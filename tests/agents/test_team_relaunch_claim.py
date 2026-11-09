@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_admission_records import team_binding
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -205,34 +204,6 @@ async def _spawn_seat(
     )
     assert reply["success"] is True, reply
     return str(reply["run_id"])
-
-
-async def test_seat_spawns_bind_the_team_record_on_admit_and_relaunch(world: TeamWorld) -> None:
-    db = world.case.db
-    task = world.case.task(TITLE)
-
-    original = world.child(task, RUNBOOK)
-    admitted = await _admit(world, original, task)
-    assert admitted["success"] is True, admitted
-    team = admitted["team"]
-    developer = await _spawn_seat(world, original, DEVELOPER, DEVELOPER, team)
-    reviewer = await _spawn_seat(world, original, REVIEWER, REVIEWER, team)
-    bound = team_binding(db, team["team_id"])
-    assert bound is not None
-    assert bound.primaries == {"fullstack": developer}
-    assert bound.reviewers == {REVIEWER: reviewer}
-    world.finish(original)
-
-    # The relaunch replaces the bound runs: the team record names each live seat once.
-    relaunch = world.child(task, RUNBOOK)
-    rejoined = await _admit(world, relaunch, task, team_id=team["team_id"])
-    assert rejoined["success"] is True, rejoined
-    relaunched_developer = await _spawn_seat(world, relaunch, DEVELOPER, DEVELOPER, team)
-    relaunched_reviewer = await _spawn_seat(world, relaunch, REVIEWER, REVIEWER, team)
-    bound = team_binding(db, team["team_id"])
-    assert bound is not None
-    assert bound.primaries == {"fullstack": relaunched_developer}
-    assert bound.reviewers == {REVIEWER: relaunched_reviewer}
 
 
 async def _pod_awaiting_validation(world: TeamWorld) -> tuple[Any, Any, str]:

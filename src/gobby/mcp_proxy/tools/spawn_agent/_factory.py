@@ -39,7 +39,7 @@ from ._remote_routing import (
     spawn_remote_route,
 )
 from ._request import first_string, non_empty_string
-from ._seat_adoption import bind_seat_reply, pipeline_caller, pipeline_invocation_reply
+from ._seat_adoption import pipeline_caller, pipeline_invocation_reply
 from ._spawn_guards import enforce_spawn_caller
 
 if TYPE_CHECKING:
@@ -501,7 +501,7 @@ def create_spawn_agent_registry(
                 ),
             )
             if invocation_reply is not None:
-                return await bind_seat_reply(db, invoking_pipeline, agent, invocation_reply)
+                return invocation_reply
         elif reserved_run_id is not None:
             return {"success": False, "error": "reserved_run_id requires a pipeline caller"}
 
@@ -801,6 +801,6 @@ def create_spawn_agent_registry(
             ),
             project_context_authoritative=project_context_authoritative,
         )
-        return await bind_seat_reply(db, invoking_pipeline, agent, result)
+        return result
 
     return registry

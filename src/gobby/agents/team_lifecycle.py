@@ -29,6 +29,7 @@ from gobby.agents.team_admission_records import (
     own_record,
     record_team,
     recorded_team,
+    reviewer_names,
     team_binding,
 )
 from gobby.agents.team_launch_inputs import reviewer_refusal
@@ -244,10 +245,11 @@ def _bound_tab(recorded: str | None, proposed: str | None) -> str | None:
 
 def _bound_reviewer(reviewers: Any, reviewer_agent: str | None, team_id: str) -> None:
     """A team binds its reviewer definitions; a join must name one the team already binds."""
-    if reviewer_agent is None or not isinstance(reviewers, dict) or not reviewers:
+    names = reviewer_names(reviewers)
+    if reviewer_agent is None or not names:
         return
-    if reviewer_agent not in reviewers:
-        bound = ", ".join(sorted(reviewers))
+    if reviewer_agent not in names:
+        bound = ", ".join(sorted(names))
         raise TeamAdmissionRefused(
             "reviewer_mismatch", f"{reviewer_agent} cannot join team {team_id} bound to {bound}"
         )
@@ -552,61 +554,6 @@ def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
         if team is not None:
             return team
     return None
-
-
-def bind_reviewer_run(
-    db: HubDatabase, team_id: str, project_id: str, definition: str, run_id: str
-) -> None:
-    """Record ``run_id`` as the live seat of reviewer ``definition`` on team ``team_id``."""
-    _bind_run(db, team_id, project_id, "reviewers", definition, run_id)
-
-
-def bind_primary_run(
-    db: HubDatabase, team_id: str, project_id: str, domain: str, run_id: str
-) -> None:
-    """Record ``run_id`` as the live primary of implementation ``domain`` on team ``team_id``."""
-    _bind_run(db, team_id, project_id, "primaries", domain, run_id)
-
-
-# The attestation kinds a seat definition declares for its role on a team.
-_PRIMARY_KIND = "implementation"
-_REVIEWER_KIND = "independent-review"
-_UNDOMAINED_DOMAIN = "fullstack"
-
-
-def bind_seat_run(db: HubDatabase, caller: Session, agent: str, run_id: str) -> None:
-    """Bind a seat that pipeline ``caller`` launched to its team by the kinds ``agent`` writes.
-
-    A definition writing the implementation kind is the team's primary for the task's domain;
-    one writing the independent-review kind is a reviewer. Any other seat binds nothing.
-    """
-    from gobby.workflows.agent_resolver import resolve_agent_with_row
-
-    binding = _caller_binding(db, caller)
-    if binding is None:
-        return
-    resolved = resolve_agent_with_row(agent, db, project_id=binding.project_id)
-    if resolved is None:
-        return
-    writes = set(resolved[0].task_attestation_writes)
-    if _REVIEWER_KIND in writes:
-        bind_reviewer_run(db, binding.team_id, binding.project_id, agent, run_id)
-    if _PRIMARY_KIND in writes:
-        task = LocalTaskManager(db).get_task(binding.task_id)
-        domain = task.implementation_domain or _UNDOMAINED_DOMAIN
-        bind_primary_run(db, binding.team_id, binding.project_id, domain, run_id)
-
-
-def _bind_run(
-    db: HubDatabase, team_id: str, project_id: str, key: str, name: str, run_id: str
-) -> None:
-    executions = LocalPipelineExecutionManager(db, project_id)
-    step = admission_step(executions, team_id)
-    record = recorded_team(step)
-    if step is None or record is None:
-        raise TeamAdmissionRefused("team_missing", f"team {team_id} has no admission record")
-    bound = {**(record.get(key) or {}), name: run_id}
-    merge_step_output(executions, step, team={**record, key: bound})
 
 
 def _task_id(db: HubDatabase, ref: str, binding: TeamBinding) -> str | None:
