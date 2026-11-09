@@ -200,6 +200,7 @@ def _seat_for_task(
     *,
     home: str,
     child: str | None,
+    idle: set[str],
 ) -> str | None:
     """The live seat that serves ``task`` for ``stage_name``; ``seats`` maps session to run task.
 
@@ -207,7 +208,9 @@ def _seat_for_task(
     rest, the seats bound to this task win: its claim holder, its run's task, or the admission's
     step output when that run names no task. A run that names only the team's task is shared by
     the team's leaves, so it never binds one of them. Unbound seats serve only when none is bound.
-    Two seats left in the chosen set are ambiguous, and the error names the task and both sessions.
+    An idle seat is a stale leftover while another seat in the chosen set is not idle, so it never
+    makes the stage ambiguous; a lone idle seat still serves. Two seats left in the chosen set are
+    ambiguous, and the error names the task and both sessions.
     """
     eligible = {
         sid: run_task for sid, run_task in seats.items() if run_task in (None, home, task.id)
@@ -220,6 +223,7 @@ def _seat_for_task(
         or (run_task is None and sid == child)
     }
     pool = bound or set(eligible)
+    pool = (pool - idle) or pool
     if len(pool) > 1:
         raise ValueError(
             f"claim flow stage {stage_name!r} has ambiguous live pipeline seats for task "
@@ -339,10 +343,12 @@ def advance_claim_flow(
         # Relaunches join the same admission; their active runs replace ended step outputs.
         agent = seat_agent(stage_name)
         live: dict[str, str | None] = {}
+        idle: set[str] = set()
         home = team.task_id
         if agent:
             rows = conn.execute(
-                "SELECT ar.child_session_id, ar.task_id FROM agent_runs ar "
+                "SELECT ar.child_session_id, ar.task_id, s.status AS session_status "
+                "FROM agent_runs ar "
                 "JOIN sessions s ON s.id = ar.child_session_id "
                 "WHERE ar.status IN ('queued', 'running', 'pending') "
                 "AND ar.machine_id = %s AND ar.agent_name = %s "
@@ -355,6 +361,7 @@ def advance_claim_flow(
                     list(LIVE_SESSION_STATUSES),
                 ),
             ).fetchall()
+            idle = {str(row["child_session_id"]) for row in rows if row["session_status"] == "idle"}
             seated = {
                 str(row["child_session_id"]): (
                     seat_team(db, str(row["child_session_id"])),
@@ -381,7 +388,7 @@ def advance_claim_flow(
                         for sid, (member, run_task) in seated.items()
                         if member and member.team_id == parent
                     }
-        seat_id = _seat_for_task(stage_name, task, live, home=home, child=child)
+        seat_id = _seat_for_task(stage_name, task, live, home=home, child=child, idle=idle)
         if seat_id is None and child in live:
             # The admitted seat runs another leaf of this team; it never serves this task.
             return None
