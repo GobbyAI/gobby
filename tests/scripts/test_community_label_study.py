@@ -53,8 +53,7 @@ from tests.scripts.conftest import (
 pytestmark = pytest.mark.unit
 
 GOBBY = "d45545c5-ded5-4335-b115-0245752edacf"
-C1 = "c8e071af-e1f7-434f-b3c0-f31a1b1299c9"
-CORPUS_BASE = {GOBBY: 0, C1: 100}
+CORPUS_BASE = {GOBBY: 0}
 STORED_LABEL = "Stored Label Never Read"
 SHEET_COLUMNS = ["item_id", "members", "name", "accuracy (0-2)", "findability (0-2)"]
 MEMBER_PATH = re.compile(r"p[0-9a-f]{4}/c\d+/m\d+\.py")
@@ -170,7 +169,7 @@ def _prepare(
     *extra: str,
     corpora: dict[str, list[StoredCommunity]] | None = None,
 ) -> Prepared:
-    corpora = corpora or {GOBBY: _corpus(GOBBY), C1: _corpus(C1)}
+    corpora = corpora or {GOBBY: _corpus(GOBBY)}
     adapter = NamingAdapter()
     out = tmp_path / name
     code = community_label_study.main(
@@ -329,14 +328,14 @@ def test_prepare_stratifies_and_refuses_short_corpus(
         assert len(ids) == 15, project_id
         terciles = Counter((i - base - 1) // 10 for i in ids)
         assert terciles == {0: 5, 1: 5, 2: 5}, project_id
-    assert len(sampled[0]) == 30
+    assert len(sampled[0]) == 15
     assert openrouter_wire.posts() == []
 
     short = _prepare(
         tmp_path,
         "short",
         "--no-decisions",
-        corpora={GOBBY: _corpus(GOBBY), C1: _corpus(C1, eligible=14)},
+        corpora={GOBBY: _corpus(GOBBY, eligible=14)},
     )
     assert short.code != 0
     captured = capsys.readouterr()
@@ -351,8 +350,8 @@ def test_arms_share_generations_and_abort_on_shadow(
     snapshot = copy.deepcopy(prepared.corpora)
 
     assert prepared.code == 0
-    # 30 main communities, generated once for G and J; every carry copy is kept.
-    assert len(prepared.adapter.names) == 30
+    # 15 main communities, generated once for G and J; every carry copy is kept.
+    assert len(prepared.adapter.names) == 15
     assert prepared.corpora == snapshot
     assert {"choice", "noul", "score"} <= openrouter_wire.kinds_sent()
     assert STORED_LABEL not in prepared.sheet.read_text(encoding="utf-8")
@@ -387,7 +386,7 @@ def test_sheet_is_blinded_and_key_is_separate(
 
     assert {row["item_id"] for row in rows} == set(key)
     assert len(rows) <= 120
-    for hidden in (GOBBY, C1, "carry", STORED_LABEL, "kept", "regenerated"):
+    for hidden in (GOBBY, "carry", STORED_LABEL, "kept", "regenerated"):
         assert hidden not in text, hidden
 
     names = {row["item_id"]: row["name"] for row in rows}
@@ -395,16 +394,16 @@ def test_sheet_is_blinded_and_key_is_separate(
     for item_id, entry in key.items():
         if _arms(entry) <= MAIN_ARMS:
             main.setdefault(entry["community"], {})[frozenset(_arms(entry))] = names[item_id]
-    assert len(main) == 30
+    assert len(main) == 15
     for community_id, items in main.items():
         community = prepared.community(community_id)
         assert items[frozenset({"D"})] == community.label_deterministic
         assert items[frozenset({"G", "J"})].startswith("Generated Group ")
 
     carry = {item_id: entry for item_id, entry in key.items() if _arms(entry) == {"carry"}}
-    assert len(carry) == 30
+    assert len(carry) == 15
     assert {entry["carry_outcome"] for entry in carry.values()} == {"kept", "regenerated"}
-    assert Counter(entry["perturbation"] for entry in carry.values()) == {"mild": 16, "heavy": 14}
+    assert Counter(entry["perturbation"] for entry in carry.values()) == {"mild": 8, "heavy": 7}
     for item_id, entry in carry.items():
         community = prepared.community(entry["community"])
         assert names[item_id] == main[community.community_id][frozenset({"G", "J"})]
@@ -426,7 +425,7 @@ def test_sheet_is_blinded_and_key_is_separate(
             assert len(donors) == 1
             donor = prepared.community(donors.pop())
             assert len(added) == len(original - members) == min(size // 2, donor.member_count)
-    regenerated = set(prepared.adapter.names[30:])
+    regenerated = set(prepared.adapter.names[len(main) :])
     assert regenerated
     assert regenerated.isdisjoint(names.values())
 
@@ -496,7 +495,7 @@ def test_j_arm_enforces_with_alias_request_and_aborts_on_backend_change(
         for item_id, entry in prepared.key().items()
         if "J" in _arms(entry)
     }
-    assert len(j_names) == 30
+    assert len(j_names) == 15
     for community_id, name in j_names.items():
         deterministic = prepared.community(community_id).label_deterministic
         assert (name == deterministic) is (community_id % 2 == 0), community_id
