@@ -308,6 +308,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     event.data.setdefault("cwd", event.cwd)
                     await asyncio.to_thread(normalize_tool_fields, event.data)
 
+                # The owner's transcript is the only evidence that a background call ended.
+                transcript_value = event.data.get("transcript_path")
+                transcript_path = transcript_value if isinstance(transcript_value, str) else None
                 # A background Bash call that ended settles its worktree overlap before it
                 # adopts its edits, and both happen before this call's claimed-edit guards
                 # read the ledger.
@@ -318,7 +321,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 ):
                     try:
                         if await settle_background_worktree_shell_calls(
-                            self._session_var_manager, session_id
+                            self._session_var_manager, session_id, transcript_path
                         ):
                             await asyncio.to_thread(
                                 mark_session_had_edits_if_claimed,
@@ -333,14 +336,18 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         logger.warning("Failed to settle background worktree calls", exc_info=True)
                     try:
                         await asyncio.to_thread(
-                            self._session_var_manager.settle_pending_shell_calls, session_id
+                            self._session_var_manager.settle_pending_shell_calls,
+                            session_id,
+                            transcript_path,
                         )
                     except _DATABASE_TIMEOUTS:
                         raise
                     except Exception:
                         logger.warning("Failed to settle background shell edits", exc_info=True)
                     try:
-                        await self._session_var_manager.settle_background_git_operations(session_id)
+                        await self._session_var_manager.settle_background_git_operations(
+                            session_id, transcript_path
+                        )
                     except _DATABASE_TIMEOUTS:
                         raise
                     except Exception:
