@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from gobby.utils.native_bin import resolve_native_bin
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -106,14 +107,6 @@ def git_repo_with_origin(
     WorktreeGitManager.create_worktree fetches from origin, so we need
     to set up a bare repo as origin for the test.
     """
-    # Remove the pre-existing project.json created by e2e_project_dir
-    # This allows the daemon to auto-initialize the project properly
-    # (creating it in the database, not just the file)
-    gobby_dir = e2e_project_dir / ".gobby"
-    project_json = gobby_dir / "project.json"
-    if project_json.exists():
-        project_json.unlink()
-
     # Create a bare repo to serve as "origin"
     origin_path = tmp_path_factory.mktemp("origin")
     subprocess.run(
@@ -202,7 +195,9 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    project_id = "00000000-0000-4000-8000-000000000003"
+    # The seeded e2e project already binds this root on the local machine, so the
+    # register route's insert conflicts and it skips the checkout write.
+    project_id = "00000000-0000-0000-0000-000000000e2e"
     project_name = e2e_project_dir.name
     cli_events.register_test_project(
         project_id=project_id,
@@ -211,9 +206,19 @@ def git_repo_with_origin(
     )
     wait_for_project_registration(daemon_instance, project_id)
 
-    # Write project.json with the created project's ID
-    project_json = gobby_dir / "project.json"
-    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
+    # An overlay pin requires the parent indexed on this machine. Production has
+    # that from `gobby init`, which runs `gcode index --project` (cli/init.py:65).
+    gcode_bin = resolve_native_bin("gcode")
+    assert gcode_bin is not None, "gcode binary not resolvable for the e2e run"
+    indexed = subprocess.run(
+        [gcode_bin, "index", "--project", str(e2e_project_dir)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+        env=daemon_instance.env,
+    )
+    assert indexed.returncode == 0, indexed.stderr or indexed.stdout
 
     return e2e_project_dir
 
