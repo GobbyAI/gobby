@@ -331,6 +331,8 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Base and target manifests read by unbumped_binaries. Its only caller,
     # _unbumped_binaries in src/gobby/tasks/land_commit.py, runs it through asyncio.to_thread.
     ("src/gobby/install/bin_release_identity.py", "_revision_manifests.read"),
+    # compose_report runs only through asyncio.to_thread in compose_status_report.
+    ("src/gobby/status_report/collect.py", "_run_git"),
     # Canonical shell normalization runs off the loop: HookManager and the rule
     # engine offload it, chat _fire_lifecycle and Codex approvals use
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py
