@@ -385,6 +385,29 @@ impl BackendSupervisor {
             ),
         };
         self.report(&line);
+        self.record_progress(pid, started_at);
+    }
+
+    /// Adds a progress record to the startup timings file that the readiness bootstrap opened.
+    /// Production has no such file, so nothing is written there outside that harness.
+    fn record_progress(&self, pid: u32, started_at: Instant) {
+        let timings = self.config.home.join("logs").join("startup-timings.jsonl");
+        if !timings.is_file() {
+            return;
+        }
+        let record = serde_json::json!({
+            "pid": pid,
+            "stage": "backend wait",
+            "state": "progress",
+            "duration_seconds": started_at.elapsed().as_secs_f64(),
+        });
+        let written = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&timings)
+            .and_then(|mut file| writeln!(file, "{record}"));
+        if let Err(error) = written {
+            self.report(&format!("startup timings progress not recorded: {error}"));
+        }
     }
 }
 
