@@ -77,6 +77,10 @@ class _SyncGitVisitor(ast.NodeVisitor):
             for alias in node.names:
                 if alias.name in _SUBPROCESS_CALLS:
                     self.subprocess_call_names[alias.asname or alias.name] = alias.name
+        elif node.module == "gobby.utils.spawn":
+            for alias in node.names:
+                if alias.name in _SPAWN_CALLS:
+                    self.subprocess_call_names[alias.asname or alias.name] = alias.name
         elif node.module == "gobby.utils":
             for alias in node.names:
                 if alias.name == "spawn":
@@ -316,6 +320,10 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/workflows/git_utils.py", "resolve_git_worktree_root"),
     ("src/gobby/workflows/task_dirty_state.py", "committable_task_paths"),
     ("src/gobby/workflows/task_dirty_state.py", "task_dirty_paths"),
+    # Status report git reads run only through compose_report, which the status-report
+    # route calls with asyncio.to_thread (mcp_proxy/tools/communications.py); no other
+    # caller reaches collect_status.
+    ("src/gobby/status_report/collect.py", "_run_git"),
     # Daemon boundaries that run only on worker threads, each with a test proving
     # no event loop runs there.
     # Only navigation_requires_index asks, from rule conditions on the rule-engine
@@ -418,6 +426,12 @@ _ALLOWED_SYNC_FACADE_CALLERS = {
         "verify_bundled_integrity",
     ),
 }
+
+
+def test_scanner_sees_git_argv_through_a_name_imported_from_spawn() -> None:
+    visitor = _SyncGitVisitor("sample.py")
+    visitor.visit(ast.parse('from gobby.utils.spawn import run\nrun(["git", "status"])\n'))
+    assert [use.scope for use in visitor.uses] == ["<module>"]
 
 
 def test_runtime_git_has_no_unapproved_synchronous_boundaries() -> None:

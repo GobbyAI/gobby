@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import re
 import stat
@@ -809,6 +810,73 @@ async def test_invalid_worker_arguments_resolve_completion(tmp_path: Path, inval
     assert isinstance(result, GitFailed)
     assert result.returncode is None
     assert result.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_worker_resolves_completion_when_the_leader_was_reaped_elsewhere() -> None:
+    class ReapedElsewhere:
+        """A leader another reaper already collected: every wait reports ECHILD."""
+
+        pid = 2**22
+        returncode = None
+
+        def communicate(self, _input_bytes: bytes | None) -> tuple[bytes, bytes]:
+            raise ChildProcessError(errno.ECHILD, "reaped elsewhere")
+
+        def wait(self) -> int:
+            raise ChildProcessError(errno.ECHILD, "reaped elsewhere")
+
+    loop = asyncio.get_running_loop()
+    completion: asyncio.Future[GitOk | GitFailed] = loop.create_future()
+    daemon_git._run_git_worker(
+        loop,
+        completion,
+        daemon_git._ProcessControl(),
+        ("git", "status"),
+        spawn=lambda _input_bytes: cast(daemon_git._GitProcess, ReapedElsewhere()),
+        input_text=None,
+    )
+    result = await asyncio.wait_for(completion, timeout=5)
+    assert isinstance(result, GitFailed)
+    assert result.returncode is None
+    assert "reaped elsewhere" in result.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stream_worker_resolves_completion_when_the_leader_was_reaped_elsewhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ReapedElsewhere:
+        """A leader another reaper already collected: every wait reports ECHILD."""
+
+        pid = 2**22
+        returncode = None
+
+        def wait(self) -> int:
+            raise ChildProcessError(errno.ECHILD, "reaped elsewhere")
+
+    monkeypatch.setattr(
+        daemon_git,
+        "_spawn_git",
+        lambda *_args, **_kwargs: cast(daemon_git._GitProcess, ReapedElsewhere()),
+    )
+    loop = asyncio.get_running_loop()
+    completion: asyncio.Future[GitOk | GitFailed] = loop.create_future()
+    daemon_git._stream_git_worker(
+        loop,
+        completion,
+        daemon_git._ProcessControl(),
+        ("git", "status"),
+        cwd=str(tmp_path),
+        env=None,
+        consume=None,
+    )
+    result = await asyncio.wait_for(completion, timeout=5)
+    assert isinstance(result, GitFailed)
+    assert result.returncode is None
+    assert "reaped elsewhere" in result.stderr
 
 
 @pytest.mark.unit
