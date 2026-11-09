@@ -300,11 +300,10 @@ pub async fn run() -> io::Result<()> {
     // An attempt in flight answers first: one still probing rechecks, finds
     // the host draining, and defers before the sockets go; an accepted one
     // aborts at its next cutoff.
-    let mut socket_dir_removed = false;
     let teardown = || {
         ticker.abort();
 
-        socket_dir_removed = state.socket_dir_removed.load(Ordering::SeqCst);
+        let socket_dir_removed = state.socket_dir_removed.load(Ordering::SeqCst);
         if socket_dir_removed {
             info!(reason = "socket_dir_removed", "gterm host shutting down");
         }
@@ -314,11 +313,12 @@ pub async fn run() -> io::Result<()> {
         let _ = fs::remove_file(&control_path);
         let _ = fs::remove_file(&frames_path);
         let _ = fs::remove_file(&args.pid_file);
+        socket_dir_removed
     };
     #[cfg(all(unix, feature = "vt-engine"))]
-    let _settled = upgrade::drain_endpoint(&state, teardown).await;
+    let (_settled, socket_dir_removed) = upgrade::drain_endpoint(&state, teardown).await;
     #[cfg(not(all(unix, feature = "vt-engine")))]
-    teardown();
+    let socket_dir_removed = teardown();
     if !socket_dir_removed {
         tokio::time::sleep(Duration::from_millis(args.shutdown_grace_ms)).await;
     }

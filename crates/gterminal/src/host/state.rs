@@ -303,6 +303,14 @@ impl HostState {
         ping
     }
 
+    #[cfg(not(all(unix, feature = "vt-engine")))]
+    pub(super) fn served_reply(
+        self: &Arc<Self>,
+        _reply: &Value,
+    ) -> Option<super::backpressure::OnWritten> {
+        None
+    }
+
     pub async fn list_json(&self) -> Value {
         let inner = self.inner.lock().await;
         let (epoch, seq) = self.events.cursor().await;

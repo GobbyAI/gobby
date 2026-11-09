@@ -10,7 +10,7 @@ use tokio::net::{unix::OwnedReadHalf, UnixStream};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
-use super::backpressure::{enqueue_control, send_control, send_event, ControlOutbound};
+use super::backpressure::{enqueue_control, send_event, ControlClose, ControlOutbound};
 use super::events::EventReceiver;
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
@@ -92,6 +92,22 @@ fn with_id(mut value: Value, id: &Option<Value>) -> Value {
     value
 }
 
+/// Queues a reply. A reply that carries a recorded outcome counts as served
+/// only once its write succeeds.
+async fn send_reply(
+    tx: &mpsc::Sender<ControlOutbound>,
+    state: &Arc<HostState>,
+    reply: Value,
+) -> Result<(), ControlClose> {
+    let outbound = match state.served_reply(&reply) {
+        Some(on_written) => ControlOutbound::Served(reply, on_written),
+        None => ControlOutbound::Reply(reply),
+    };
+    tx.send(outbound)
+        .await
+        .map_err(|_| ControlClose::Disconnected)
+}
+
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let conn_id = state.alloc_conn();
     let (reader, writer) = stream.into_split();
@@ -124,7 +140,12 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         }) = ordered_rx.recv().await
         {
             let result = dispatch_ordered(&ordered_state, conn_id, &request, &mut ledger).await;
-            let _ = send_control(&ordered_outbound, with_id(result.response, &request.id)).await;
+            let _ = send_reply(
+                &ordered_outbound,
+                &ordered_state,
+                with_id(result.response, &request.id),
+            )
+            .await;
             ordered_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")
@@ -297,7 +318,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     .expect("event task lock poisoned")
                     .push(event_task);
             }
-            let _ = send_control(&task_outbound, with_id(response, &request.id)).await;
+            let _ = send_reply(&task_outbound, &task_state, with_id(response, &request.id)).await;
             if let Some(replied) = replied {
                 let _ = replied.send(());
             }

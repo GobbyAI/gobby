@@ -8,13 +8,14 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{oneshot, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockWriteGuard};
+use tokio::sync::{oneshot, Mutex, MutexGuard, Notify, OwnedMutexGuard, OwnedRwLockWriteGuard};
 
+use super::backpressure::OnWritten;
 use super::handover::{
     commit_state, monotonic_now_ns, stage_state, UpgradeAttempt, UpgradeOutcome, UpgradeReason,
     UpgradeRecord, FORMAT_VERSION, STATE_FILE,
@@ -44,6 +45,10 @@ const REPLY_WAIT: Duration = Duration::from_secs(1);
 /// Upper bounds on test-fault holds, so no fault is unbounded.
 const FAULT_DELAY_CAP: Duration = Duration::from_secs(5);
 const FAULT_STALL_CAP: Duration = Duration::from_secs(60);
+/// How long a drain waits for a client to read a recorded outcome. It bounds
+/// serving only: it never produces an outcome, and it starts after the alarm
+/// is disarmed.
+const SERVE_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -112,6 +117,11 @@ pub(crate) struct Attempts {
     lock: Arc<Mutex<()>>,
     live: StdMutex<Option<LiveAttempt>>,
     context: OnceLock<UpgradeContext>,
+    /// Set once a client reads the recorded outcome; cleared when an attempt
+    /// writes a new record. Both happen under the `upgrade` lock.
+    served: AtomicBool,
+    /// Wakes a drain waiting in `await_served`.
+    read: Notify,
 }
 
 impl Attempts {
@@ -126,10 +136,29 @@ impl Attempts {
         self.lock.lock().await
     }
 
-    /// Records that the recorded outcome reached a client. RED shape only: the
-    /// fix makes the control endpoint call it when it serves the outcome.
-    #[cfg(test)]
-    pub(crate) fn mark_outcome_served(&self) {}
+    /// Records that a client read the recorded outcome. Called under the
+    /// `upgrade` lock, from `mark_served`.
+    pub(crate) fn mark_outcome_served(&self) {
+        self.served.store(true, Ordering::SeqCst);
+        self.read.notify_waiters();
+    }
+
+    /// Waits up to `grace` for a client to read the recorded outcome; a read
+    /// that already happened returns at once.
+    async fn await_served(&self, grace: Duration) {
+        let served = async {
+            loop {
+                // Create the waiter before checking, so a read between the check
+                // and the wait is not missed.
+                let read = self.read.notified();
+                if self.served.load(Ordering::SeqCst) {
+                    return;
+                }
+                read.await;
+            }
+        };
+        let _ = tokio::time::timeout(grace, served).await;
+    }
 
     fn update(&self, change: impl FnOnce(&mut LiveAttempt)) {
         if let Some(live) = self
@@ -143,15 +172,26 @@ impl Attempts {
     }
 }
 
-/// Waits for the attempt in flight to settle, then runs `teardown` while
-/// `upgrade_lock` is held. The returned guard keeps the lock to shutdown.
-pub(crate) async fn drain_endpoint(
+/// Waits for the attempt in flight to settle. When an outcome is recorded, it
+/// gives a client up to `SERVE_GRACE` to read it, then runs `teardown` while
+/// `upgrade_lock` is held. The returned guard keeps the lock to shutdown, and the
+/// second value is what `teardown` returned.
+pub(crate) async fn drain_endpoint<R>(
     state: &HostState,
-    teardown: impl FnOnce(),
-) -> MutexGuard<'_, ()> {
+    teardown: impl FnOnce() -> R,
+) -> (MutexGuard<'_, ()>, R) {
     let settled = state.attempts.settled().await;
-    teardown();
-    settled
+    let recorded = state
+        .upgrade
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|record| record.outcome.is_some());
+    if recorded {
+        state.attempts.await_served(SERVE_GRACE).await;
+    }
+    let torn_down = teardown();
+    (settled, torn_down)
 }
 
 impl HostState {
@@ -161,6 +201,30 @@ impl HostState {
         ping["generation"] = json!(self.generation);
         ping["upgrade"] = upgrade_record(self);
         ping
+    }
+
+    /// The write hook for a reply that carries a recorded outcome: the outcome
+    /// counts as served only once the reply is written.
+    pub(super) fn served_reply(self: &Arc<Self>, reply: &Value) -> Option<OnWritten> {
+        let attempt_id = reply["upgrade"]["last_outcome"]["attempt_id"]
+            .as_str()?
+            .to_owned();
+        let state = Arc::clone(self);
+        Some(OnWritten(Box::new(move || {
+            mark_served(&state, &attempt_id)
+        })))
+    }
+}
+
+/// Marks the recorded outcome served while it is still the current record. A
+/// reply for an older record must not mark a newer one.
+fn mark_served(state: &HostState, attempt_id: &str) {
+    let upgrade = state.upgrade.lock().unwrap_or_else(PoisonError::into_inner);
+    if upgrade
+        .as_ref()
+        .is_some_and(|record| record.attempt.attempt_id == attempt_id)
+    {
+        state.attempts.mark_outcome_served();
     }
 }
 
@@ -460,11 +524,15 @@ impl Attempt {
 
     /// Records the terminal outcome, which returns `ping` to idle.
     fn record(&self, outcome: UpgradeOutcome, candidate_sha256: String) {
-        *self
+        let mut upgrade = self
             .state
             .upgrade
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(UpgradeRecord {
+            .unwrap_or_else(PoisonError::into_inner);
+        // Cleared under the lock that `upgrade_record` marks under, so a read
+        // of the previous outcome cannot mark this one.
+        self.state.attempts.served.store(false, Ordering::SeqCst);
+        *upgrade = Some(UpgradeRecord {
             attempt: UpgradeAttempt {
                 attempt_id: self.attempt_id.clone(),
                 candidate_sha256,
@@ -472,6 +540,7 @@ impl Attempt {
             },
             outcome: Some(outcome),
         });
+        drop(upgrade);
         *self
             .state
             .attempts

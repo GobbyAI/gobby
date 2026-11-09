@@ -2404,7 +2404,7 @@ fn sigterm_before_exec_aborts_and_exits() {
         &mut ctl,
         &gterm_bin(),
         "attempt-term-write",
-        json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
+        json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 1000}),
     );
     eprintln!(
         "SIGTERM handover accepted at {:?}: {accepted}",
