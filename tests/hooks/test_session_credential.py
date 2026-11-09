@@ -394,3 +394,110 @@ def test_front_door_start_attests_the_peer_port_gdaemon_observed(
     claimant = claim.call_args.kwargs["claimant"]
     assert claimant is not None
     assert claimant.pid == os.getpid()
+
+
+# Droid's TUI and exec backend are live processes: the hook enriches each parent pid with its
+# create time, and an unverifiable pid is dropped with no identity. The test process stands in
+# for the TUI, and its parent for the exec backend.
+DROID_TUI_PID = os.getpid()
+DROID_BACKEND_PID = os.getppid()
+DROID_NEXT_BACKEND_PID = 6262
+DROID_PROVIDER_SESSION = "provider-session-droid"
+
+
+def _droid_claimant(*, backend_pid: int, cli_pid: int) -> Claimant:
+    # Droid runs each hook through an exec backend whose parent is the TUI. The hook's
+    # parent is the backend, and the stabilized CLI pid is the TUI.
+    return Claimant(pid=HOOK_PID, parent_pid=backend_pid, cli_pid=cli_pid)
+
+
+def _stored_parent_pid(temp_db: HubDatabase, external_id: str) -> tuple[Any, int | None]:
+    row = temp_db.fetchone(
+        "SELECT id, terminal_context FROM sessions "
+        "WHERE external_id = %s AND session_type = 'terminal'",
+        (external_id,),
+    )
+    assert row is not None
+    context = parse_terminal_context_value(row["terminal_context"]) or {}
+    return row["id"], context.get("parent_pid")
+
+
+def test_droid_second_start_from_the_same_tui_is_attested(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    _machine_caller(hook_route)
+    cwd = str(tmp_path / "isolated-checkout")
+
+    with patch(
+        "gobby.hooks.session_claimant.resolve_claimant",
+        return_value=_droid_claimant(backend_pid=DROID_BACKEND_PID, cli_pid=DROID_TUI_PID),
+    ):
+        first = _post_session_start(
+            hook_route,
+            session_id=DROID_PROVIDER_SESSION,
+            start_source="resume",
+            terminal_context={"parent_pid": DROID_BACKEND_PID},
+            cwd=cwd,
+        )
+
+    with patch(
+        "gobby.hooks.session_claimant.resolve_claimant",
+        return_value=_droid_claimant(backend_pid=DROID_NEXT_BACKEND_PID, cli_pid=DROID_TUI_PID),
+    ):
+        # The body names the stabilized TUI, as enrichment stores it for a Droid exec backend.
+        second = _post_session_start(
+            hook_route,
+            session_id=DROID_PROVIDER_SESSION,
+            start_source="resume",
+            terminal_context={"parent_pid": DROID_TUI_PID},
+            cwd=cwd,
+        )
+
+    session_id, stored_parent = _stored_parent_pid(temp_db, DROID_PROVIDER_SESSION)
+    assert first[SESSION_CREDENTIAL_FIELD]["session_id"] == str(session_id)
+    assert second[SESSION_CREDENTIAL_FIELD]["session_id"] == str(session_id)
+    # The session stores the TUI the live check compares, not the Droid exec backend.
+    assert stored_parent == DROID_TUI_PID
+
+
+def test_droid_start_from_a_different_tui_is_refused(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    _machine_caller(hook_route)
+    cwd = str(tmp_path / "isolated-checkout")
+
+    with patch(
+        "gobby.hooks.session_claimant.resolve_claimant",
+        return_value=_droid_claimant(backend_pid=DROID_BACKEND_PID, cli_pid=DROID_TUI_PID),
+    ):
+        _post_session_start(
+            hook_route,
+            session_id=DROID_PROVIDER_SESSION,
+            start_source="resume",
+            terminal_context={"parent_pid": DROID_BACKEND_PID},
+            cwd=cwd,
+        )
+
+    with patch(
+        "gobby.hooks.session_claimant.resolve_claimant",
+        return_value=_droid_claimant(backend_pid=DROID_NEXT_BACKEND_PID, cli_pid=OTHER_CLI_PID),
+    ):
+        response = _session_start_response(
+            hook_route,
+            session_id=DROID_PROVIDER_SESSION,
+            start_source="resume",
+            terminal_context={"parent_pid": DROID_NEXT_BACKEND_PID},
+            cwd=cwd,
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {"code": "session_claimant_mismatch"}
+    assert SESSION_CREDENTIAL_FIELD not in response.text
+    _, stored_parent = _stored_parent_pid(temp_db, DROID_PROVIDER_SESSION)
+    assert stored_parent == DROID_TUI_PID

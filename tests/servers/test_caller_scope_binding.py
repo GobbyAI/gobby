@@ -248,7 +248,10 @@ def test_authenticate_resolves_caller_user(
         local_machine_id=hub,
         front_door_secret=_FRONT_DOOR_SECRET,
     )
-    front_door_grant = encode_grant_header(_signed_presentation_grant(machine_id=hub))
+    # Without a bearer, only a session-less interactive grant is admitted.
+    front_door_grant = encode_grant_header(
+        _signed_presentation_grant(machine_id=hub, session_id=None)
+    )
     grant_front_door = service.authenticate(
         _request(
             {
@@ -264,6 +267,23 @@ def test_authenticate_resolves_caller_user(
     )
     assert grant_front_door.allowed is True
     assert grant_front_door.user_id == TEST_USER_ID
+
+    # A session-bound grant needs its session's own credential; the front door alone is not it.
+    session_grant = encode_grant_header(_signed_presentation_grant(machine_id=hub))
+    unbound = service.authenticate(
+        _request(
+            {
+                "X-Gobby-Front-Door": _FRONT_DOOR_SECRET,
+                "X-Gobby-User-Id": TEST_USER_ID,
+                "X-Gobby-Machine-Id": hub,
+                "X-Gobby-Key-Id": "key-1",
+                "X-Gobby-Runtime-Grant": session_grant,
+            },
+            method="POST",
+            path="/api/admin/savings/record",
+        )
+    )
+    assert (unbound.allowed, unbound.code) == (False, "forged_identity")
 
     bearer_headers = _bearer(temp_db, session_manager, sample_project, hub)
     agent_grant = encode_grant_header(
@@ -285,7 +305,7 @@ def test_authenticate_resolves_caller_user(
     assert grant_bearer.allowed is True
     assert grant_bearer.user_id == TEST_USER_ID
 
-    cookie_grant = encode_grant_header(_signed_presentation_grant(machine_id=hub))
+    cookie_grant = encode_grant_header(_signed_presentation_grant(machine_id=hub, session_id=None))
     grant_cookie = service.authenticate(
         _request(
             {

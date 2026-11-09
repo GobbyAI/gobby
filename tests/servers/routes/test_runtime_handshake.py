@@ -40,6 +40,7 @@ from gobby.servers.routes.runtime_handshake import create_runtime_handshake_rout
 from gobby.utils.local_token import (
     derive_managed_signing_key,
     issue_agent_api_token,
+    issue_session_api_token,
     read_managed_api_token,
     verify_agent_api_token,
 )
@@ -694,10 +695,17 @@ def test_epoch_bump_rejects_prior_grants(tmp_path: Path) -> None:
 
     server = _config_server(grants, tmp_path / "local_cli_token")
     client = TestClient(server.app)
+    # A session's grant is presented with that session's own credential, never the machine key.
+    session_token = issue_session_api_token(
+        derive_managed_signing_key(OPERATOR_TOKEN),
+        session_id=SESSION_ID,
+        project_id=PROJECT_ID,
+        machine_id=LOCAL_MACHINE_ID,
+    )
     response = client.get(
         "/api/runtime/config",
         headers={
-            "Authorization": f"Bearer {OPERATOR_TOKEN}",
+            "Authorization": f"Bearer {session_token}",
             "X-Gobby-Runtime-Grant": encode_grant_header(grant),
             "X-Gobby-Machine-Id": grant.principal.machine_id,
             "X-Gobby-Caller-Project-Id": grant.principal.project_id,

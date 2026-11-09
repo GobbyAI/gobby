@@ -49,7 +49,7 @@ class SessionStartClaim:
 
     refusal: str | None = None
     proven: bool = False
-    raw_parent_pid: int | None = None
+    cli_pid: int | None = None
 
 
 @dataclass(frozen=True)
@@ -152,7 +152,8 @@ def claim_session_start(
 
     A daemon-internal replay has no proof and mints nothing. An unresolved claimant is
     refused. An existing session is refused unless its stored CLI pid is the claimant's.
-    A new session is proven by its claimant's parent, which the handler records.
+    A new session is proven by its claimant's CLI pid, which the handler records. That is
+    the stabilized pid the live check compares, not the raw parent of a Droid exec backend.
     """
     if claimant is None:
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
@@ -163,7 +164,7 @@ def claim_session_start(
         # A shared host cannot attest one session: never mint, and never touch a live row.
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED) if live else SessionStartClaim()
     if live is None:
-        return SessionStartClaim(proven=True, raw_parent_pid=claimant.parent_pid)
+        return SessionStartClaim(proven=True, cli_pid=claimant.cli_pid)
     if live.parent_pid != claimant.cli_pid:
         logger.warning("Machine SessionStart claimant does not own the live session")
         return SessionStartClaim(refusal=SESSION_CLAIMANT_MISMATCH)

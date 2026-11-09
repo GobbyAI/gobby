@@ -149,8 +149,8 @@ def _claim_session_start(
 ) -> SessionStartClaim:
     """Attest a machine-bearer SessionStart's kernel-proven claimant before its handler runs.
 
-    The claimant's parent becomes the stored CLI pid of a new session, in place of the
-    body's own parent pid, which is never proof.
+    The claimant's proven CLI pid becomes the stored parent pid of a new session, in place of
+    the body's own parent pid, which is never proof.
     """
     if payload.get("hook_type") != HookType.SESSION_START.value:
         return SessionStartClaim()
@@ -180,11 +180,11 @@ def _claim_session_start(
         source=source,
         machine_id=identity.machine_id,
     )
-    if claim.refusal is None and claim.raw_parent_pid is not None:
+    if claim.refusal is None and claim.cli_pid is not None:
         terminal_context = input_data.get("terminal_context")
         input_data["terminal_context"] = {
             **(terminal_context if isinstance(terminal_context, dict) else {}),
-            "parent_pid": claim.raw_parent_pid,
+            "parent_pid": claim.cli_pid,
         }
     return claim
 
