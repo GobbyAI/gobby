@@ -68,6 +68,12 @@ def publish_fleet_document(path: Path, document: dict[str, Any]) -> bytes:
     return payload
 
 
+def remove_fleet_state(path: Path) -> None:
+    """Remove the state file under the writers' lock, so no refresh can put it back."""
+    with _fleet_state_lock(path):
+        path.unlink(missing_ok=True)
+
+
 def write_healthy_fleet_state(path: Path, *, sampled_at: float) -> bytes:
     """Write a healthy state file and return the exact bytes written."""
     return publish_fleet_document(path, healthy_fleet_document(sampled_at))

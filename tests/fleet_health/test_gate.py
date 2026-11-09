@@ -15,6 +15,7 @@ from gobby.fleet_health import (
 )
 from gobby.fleet_health.ledger import ledger_path, read_admissions, write_admissions
 from gobby.fleet_health.state import fleet_state_path
+from tests.fixtures.fleet_state import remove_fleet_state
 from tests.fleet_health.support import write_fleet_state
 
 pytestmark = pytest.mark.unit
@@ -48,7 +49,7 @@ def test_non_healthy_fleet_refuses_spawns_and_launches_with_reasons(state: str) 
 
 
 def test_missing_state_file_refuses_as_unstable() -> None:
-    fleet_state_path().unlink(missing_ok=True)
+    remove_fleet_state(fleet_state_path())
     refusal = spawn_refusal(NOW)
     assert refusal is not None
     assert refusal.code == FLEET_UNHEALTHY
