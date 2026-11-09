@@ -416,13 +416,16 @@ const SPAWN_DEADLINE: Duration = Duration::from_secs(10);
 /// exec therefore blocks whichever thread calls it for as long as the stall lasts. The helper
 /// thread keeps that blocked call, and the async wait gives up at the deadline. A child produced
 /// after the deadline is dropped on the helper thread, and `kill_on_drop` ends it.
-async fn spawn_bounded(mut command: Command, deadline: Duration) -> Result<Child> {
+async fn spawn_bounded(
+    spawn: impl FnOnce() -> io::Result<Child> + Send + 'static,
+    deadline: Duration,
+) -> Result<Child> {
     let (spawned, outcome) = oneshot::channel();
     let runtime = tokio::runtime::Handle::current();
     std::thread::spawn(move || {
         let _runtime = runtime.enter();
         // A failed send means the caller gave up; dropping the returned child kills it.
-        let _ = spawned.send(command.spawn());
+        let _ = spawned.send(spawn());
     });
     match timeout(deadline, outcome).await {
         Ok(Ok(child)) => child.context("spawn backend"),
@@ -445,7 +448,7 @@ impl BackendChild {
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
-        // child reads it to EOF. The parent drops its read end after spawn.
+        // child reads it to EOF. The spawn closure drops its read end after spawn.
         let secret = match config.front_door_secret.as_deref() {
             Some(secret) => {
                 let (secret_reader, mut secret_writer) = std::io::pipe()?;
@@ -487,9 +490,18 @@ impl BackendChild {
                 Ok(())
             });
         }
-        let mut child = spawn_bounded(command, SPAWN_DEADLINE).await?;
+        // The helper owns both read ends until command.spawn returns, so the raw numbers that
+        // pre_exec captures stay valid even when the caller gives up at the deadline.
+        let read_ends = (reader, secret);
+        let mut child = spawn_bounded(
+            move || {
+                let _read_ends = read_ends;
+                command.spawn()
+            },
+            SPAWN_DEADLINE,
+        )
+        .await?;
         let group = i32::try_from(child.id().context("spawned backend has no PID")?)?;
-        drop(reader);
         let mut token = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut token);
         let token = URL_SAFE_NO_PAD.encode(token);
@@ -502,7 +514,6 @@ impl BackendChild {
             }
             _ => {}
         }
-        drop(secret);
         let mut stderr = child.stderr.take().context("backend stderr pipe missing")?;
         let (last, last_line) = watch::channel(String::new());
         let stderr = tokio::spawn(async move {
