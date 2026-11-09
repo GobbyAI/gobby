@@ -365,9 +365,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # FoundWorkGateAnalyzer offloads the complete cover calculation through
     # _uncovered_failure_commands (test_found_work_gate's off-loop regression).
     ("src/gobby/workflows/validation_cover.py", "_tracked_at_head"),
-    # commit_workspace runs ensure_workspace, the only caller of _init_git_dir, through
-    # asyncio.to_thread before it commits, so the git init never runs on the loop.
-    ("src/gobby/agents/agent_workspaces.py", "_init_git_dir"),
     # _checkout_root is reached through assigned_run_checkout and _team_checkout from
     # spawn_workspace_write_paths, which grant_seat_workspace_paths calls through
     # asyncio.to_thread in the spawn and resume executors and through run_db in the
