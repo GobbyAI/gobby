@@ -70,7 +70,9 @@ class ChatSessionMessagesMixin:
         """Load prior conversation messages as one context part, with nothing cut.
 
         Returns the formatted history wrapped in ``<conversation-history>``, or None when
-        no text messages exist or an error occurs. The delivery queue pages long history.
+        no text messages exist. A read error raises: an empty result would look like no
+        history, and the prompt hook would then clear the injection that is still owed.
+        The delivery queue pages long history.
         """
         if not self._message_manager:
             return None
@@ -78,48 +80,40 @@ class ChatSessionMessagesMixin:
         if not target_id:
             return None
 
-        try:
-            messages: list[dict[str, Any]] = []
-            after_seq = 0
-            while True:
-                batch = await self._message_manager.get_messages(
-                    target_id, after_seq=after_seq, limit=_HISTORY_PAGE_SIZE
-                )
-                messages.extend(batch)
-                if len(batch) < _HISTORY_PAGE_SIZE:
-                    break
-                after_seq = batch[-1]["seq"]
-            if not messages:
-                return None
-
-            text_messages = [
-                m
-                for m in messages
-                if m.get("role") in ("user", "assistant")
-                and m.get("content_type") == "text"
-                and m.get("content")
-            ]
-            if not text_messages:
-                return None
-
-            entries = [
-                f"{'**User:**' if m['role'] == 'user' else '**Assistant:**'} {m['content']}"
-                for m in text_messages
-            ]
-            return (
-                "<conversation-history>\n"
-                "The following is the prior conversation history for this session, "
-                "restored after session recreation. Use it to maintain continuity.\n\n"
-                + "\n\n".join(entries)
-                + "\n</conversation-history>"
+        messages: list[dict[str, Any]] = []
+        after_seq = 0
+        while True:
+            batch = await self._message_manager.get_messages(
+                target_id, after_seq=after_seq, limit=_HISTORY_PAGE_SIZE
             )
-        except _EXPECTED_CHAT_ERRORS as e:
-            logger.warning(
-                "Failed to load history context for %s: %s",
-                self.conversation_id,
-                e,
-            )
+            messages.extend(batch)
+            if len(batch) < _HISTORY_PAGE_SIZE:
+                break
+            after_seq = batch[-1]["seq"]
+        if not messages:
             return None
+
+        text_messages = [
+            m
+            for m in messages
+            if m.get("role") in ("user", "assistant")
+            and m.get("content_type") == "text"
+            and m.get("content")
+        ]
+        if not text_messages:
+            return None
+
+        entries = [
+            f"{'**User:**' if m['role'] == 'user' else '**Assistant:**'} {m['content']}"
+            for m in text_messages
+        ]
+        return (
+            "<conversation-history>\n"
+            "The following is the prior conversation history for this session, "
+            "restored after session recreation. Use it to maintain continuity.\n\n"
+            + "\n\n".join(entries)
+            + "\n</conversation-history>"
+        )
 
     async def send_message(
         self,

@@ -698,15 +698,15 @@ class TestHistoryInjection:
         assert resumed.kwargs["after_seq"] == _HISTORY_PAGE_SIZE
 
     @pytest.mark.asyncio
-    async def test_load_history_context_handles_error(self, session: ChatSession) -> None:
-        """Returns None on expected storage errors instead of raising."""
+    async def test_load_history_context_raises_on_storage_error(self, session: ChatSession) -> None:
+        """A read error raises; an empty result would drop the owed history injection (#25851)."""
         mock_manager = AsyncMock()
         mock_manager.get_messages.side_effect = psycopg.Error("DB error")
         session.db_session_id = "test-db-id"
         session._message_manager = mock_manager
 
-        result = await session._load_history_context()
-        assert result is None
+        with pytest.raises(psycopg.Error, match="DB error"):
+            await session._load_history_context()
 
 
 class TestShimLaunchContract:
