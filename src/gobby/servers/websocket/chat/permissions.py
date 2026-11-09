@@ -75,7 +75,9 @@ class ManagedWebChatPermissionsMixin:
     plan_auto_switch: bool = False
 
     conversation_id: str
-    _on_prompt_delivered: Callable[[], None] | None
+    _on_prompt_delivered: Callable[..., None] | None
+    _owed_settle: Callable[[], None] | None
+    _deferred_contexts: list[str]
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
@@ -356,12 +358,29 @@ class ManagedWebChatPermissionsMixin:
         return "\n".join(parts)
 
     def _clear_plan_feedback(self) -> None:
-        """Drop plan feedback once a payload carrying it is built.
+        """Drop plan feedback once a payload carrying it is delivered.
 
         Only the active-plan context carries feedback, so the same condition gates the clear.
         """
         if self.chat_mode == "plan" and not self._plan_approved:
             self._plan_feedback = None
+
+    def _arm_owed_context_settle(self) -> None:
+        """Arm the settle that drops the owed context this payload carries, on delivery.
+
+        Called once the payload is built, so a send that raises before delivery keeps the
+        feedback and the fragments owed. The settle drops only what the payload carried:
+        feedback changed during the send stays owed, and so do fragments queued after the build.
+        """
+        feedback = self._plan_feedback
+        carried = len(self._deferred_contexts)
+
+        def settle() -> None:
+            if self._plan_feedback is feedback:
+                self._clear_plan_feedback()
+            del self._deferred_contexts[:carried]
+
+        self._owed_settle = settle
 
     async def _wait_for_tool_approval(
         self, tool_name: str, input_data: dict[str, Any]

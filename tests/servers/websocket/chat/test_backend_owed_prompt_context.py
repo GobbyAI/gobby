@@ -23,14 +23,22 @@ DEFERRED = "Lifecycle directive: run gcode first"
 
 
 class _RecordingBackend:
-    """Records what each send was given and yields no stream events."""
+    """Records what each send was given, acknowledges delivery, and yields no stream events."""
 
     def __init__(self) -> None:
         self.sent: list[str] = []
 
-    def send_message(self, session: object, *args: object, **kwargs: object) -> AsyncIterator[Any]:
+    def send_message(self, session: Any, *args: object, **kwargs: object) -> AsyncIterator[Any]:
         self.sent.append(repr((args, kwargs)))
+        session._acknowledge_prompt_delivery()
         return _no_events()
+
+
+class _FailingBackend:
+    """Raises before any delivery, so nothing is acknowledged."""
+
+    def send_message(self, session: object, *args: object, **kwargs: object) -> AsyncIterator[Any]:
+        raise RuntimeError("send failed before delivery")
 
 
 async def _no_events() -> AsyncIterator[Any]:
@@ -68,6 +76,34 @@ async def test_a_blocked_prompt_keeps_plan_feedback_and_deferred_context_for_the
     session._on_before_agent = None
     [event async for event in session.send_message("revise it")]
     assert len(backend.sent) == 1
+    assert FEEDBACK in backend.sent[0]
+    assert DEFERRED in backend.sent[0]
+    assert session._plan_feedback is None
+    assert session._deferred_contexts == []
+
+
+@pytest.mark.parametrize(
+    "session_cls", [ACPManagedChatSession, CodexManagedChatSession, DroidManagedChatSession]
+)
+@pytest.mark.asyncio
+async def test_a_send_that_raises_before_delivery_keeps_plan_feedback_and_deferred_context_owed(
+    session_cls: type[Any],
+) -> None:
+    session = session_cls(conversation_id="conv-owed")
+    session.chat_mode = "plan"
+    session._connected = True
+    session._plan_feedback = FEEDBACK
+    session._deferred_contexts.append(DEFERRED)
+    session._backend = _FailingBackend()
+
+    with pytest.raises(RuntimeError, match="send failed before delivery"):
+        [event async for event in session.send_message("revise it")]
+    assert session._plan_feedback == FEEDBACK
+    assert session._deferred_contexts == [DEFERRED]
+
+    backend = _RecordingBackend()
+    session._backend = backend
+    [event async for event in session.send_message("revise it")]
     assert FEEDBACK in backend.sent[0]
     assert DEFERRED in backend.sent[0]
     assert session._plan_feedback is None

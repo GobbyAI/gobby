@@ -94,7 +94,7 @@ class ChatSessionPermissionsMixin:
     interrupt: Callable[[], Awaitable[None]]
     _plan_broadcast_sent: bool
     _on_mode_persist: Callable[[str], None] | None
-    _on_prompt_delivered: Callable[[], None] | None
+    _on_prompt_delivered: Callable[..., None] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
     project_path: str | None
     _pending_approvals: dict[str, PendingApproval]

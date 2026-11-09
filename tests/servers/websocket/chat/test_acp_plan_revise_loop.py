@@ -47,6 +47,7 @@ class _RecordingBackend:
                 str(block.get("text", "")) for block in prompt if isinstance(block, dict)
             )
         self._prompts.append(text)
+        session._acknowledge_prompt_delivery()
         for ev in self._events:
             yield ev
 

@@ -164,7 +164,8 @@ class ManagedChatSessionBase:
     _message_manager: Any | None = field(default=None, repr=False)
     _config: Any | None = field(default=None, repr=False)
     _deferred_contexts: list[str] = field(default_factory=list, repr=False)
-    _on_prompt_delivered: Callable[[], None] | None = field(default=None, repr=False)
+    _on_prompt_delivered: Callable[..., None] | None = field(default=None, repr=False)
+    _owed_settle: Callable[[], None] | None = field(default=None, repr=False)
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
         default=None, repr=False
     )
@@ -346,18 +347,24 @@ class ManagedChatSessionBase:
             self._deferred_contexts.append(context.strip())
 
     def _acknowledge_prompt_delivery(self) -> None:
-        callback, self._on_prompt_delivered = self._on_prompt_delivered, None
+        """Settle owed one-shot context once the backend has delivered the payload.
+
+        The lifecycle callback runs first. If it raises, the callback and the armed settle
+        stay owed to the retry.
+        """
+        callback = self._on_prompt_delivered
         if callback is not None:
             callback()
+            if self._on_prompt_delivered is callback:
+                self._on_prompt_delivered = None
+        settle, self._owed_settle = self._owed_settle, None
+        if settle is not None:
+            settle()
 
     def _deferred_context(self) -> str | None:
         """Return queued lifecycle context fragments. They stay queued until the payload builds."""
         merged = "\n\n".join(part for part in self._deferred_contexts if part)
         return merged or None
-
-    def _clear_deferred_context(self) -> None:
-        """Drop the queued lifecycle context fragments once a payload carrying them is built."""
-        self._deferred_contexts.clear()
 
     def _resolve_context_window(self) -> int | None:
         """Resolve context window metadata for this provider/model pair."""

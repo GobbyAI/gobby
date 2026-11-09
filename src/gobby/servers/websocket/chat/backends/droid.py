@@ -214,8 +214,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
             full_prompt = prompt
             if context_parts:
                 full_prompt = f"{'\n\n'.join(context_parts)}\n\n{prompt}"
-            self._clear_plan_feedback()
-            self._clear_deferred_context()
+            self._arm_owed_context_settle()
 
             self._is_first_turn = False
             pending_tool_calls: dict[str, dict[str, Any]] = {}

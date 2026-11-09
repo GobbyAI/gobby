@@ -133,8 +133,7 @@ class ACPManagedChatSession(
                 agent_capabilities=getattr(self._backend, "agent_capabilities", {}),
                 prefix_text="\n\n".join(context_parts) if context_parts else None,
             )
-            self._clear_plan_feedback()
-            self._clear_deferred_context()
+            self._arm_owed_context_settle()
 
             self._is_first_turn = False
             saw_content_delta = False

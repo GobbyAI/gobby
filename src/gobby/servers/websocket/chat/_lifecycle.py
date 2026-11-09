@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -143,8 +144,13 @@ class ChatLifecycleMixin:
         # workflow actions can look up the session via session_manager.get(session_id).
         session = self._chat_sessions.get(conversation_id)
 
-        def pending_prompt_delivery() -> None:
-            """Reserve this attempt until evaluation finishes; no receipt exists yet."""
+        def pending_prompt_delivery(after_commit: Callable[[], None] | None = None) -> None:
+            """Reserve this attempt until evaluation finishes; no receipt exists yet.
+
+            No payload is owed, so only the caller's commit runs.
+            """
+            if after_commit is not None:
+                after_commit()
 
         if event_type is HookEventType.BEFORE_AGENT and session is not None:
             # Mode changes/context reset clear this reservation while we await rules.
@@ -431,7 +437,14 @@ class ChatLifecycleMixin:
             if event_type is HookEventType.BEFORE_AGENT and session is not None:
                 payload = response.metadata.get(STAGED_EFFECTS_FIELD)
 
-                def acknowledge_prompt() -> None:
+                def acknowledge_prompt(after_commit: Callable[[], None] | None = None) -> None:
+                    """Commit the lifecycle payload, then the caller's commit, then mark messages.
+
+                    The payload commit writes only set and union values, so a raise before
+                    ``after_commit`` consumes nothing and the retry re-applies it unchanged.
+                    ``after_commit`` is the caller's success boundary. The message marks run
+                    after it and do not raise, so an output that reached this point ships.
+                    """
                     variable_manager = workflow_handler._session_var_manager
                     if payload and variable_manager is not None:
                         commit_staged_effects(
@@ -446,6 +459,8 @@ class ChatLifecycleMixin:
                             "not applied for %s",
                             db_session_id,
                         )
+                    if after_commit is not None:
+                        after_commit()
                     self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
                 if session._on_prompt_delivered is pending_prompt_delivery:

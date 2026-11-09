@@ -32,6 +32,7 @@ from gobby.hooks.receipt_effects import (
     take_worker_staging,
     worker_staging_scope,
 )
+from gobby.hooks.replay_decision import commit_staged_effects
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, UnpageableContextError
 from gobby.servers.chat_session_helpers import (
     _bound_resp_context,
@@ -40,6 +41,7 @@ from gobby.servers.chat_session_helpers import (
 )
 from gobby.servers.chat_session_hooks import ChatSessionHooksMixin
 from gobby.servers.websocket.chat import ChatMixin
+from gobby.servers.websocket.chat._pending_messages import ChatPendingMessagesMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -550,10 +552,12 @@ async def test_a_prompt_whose_receipt_fails_keeps_its_one_shot_context_and_its_a
     _owe_one_shot_context(chat)
     acknowledgments: list[str] = []
 
-    def acknowledge() -> None:
+    def acknowledge(after_commit: Callable[[], None] | None = None) -> None:
         acknowledgments.append("receipt")
         if len(acknowledgments) == 1:
             raise RuntimeError("receipt commit failed")
+        if after_commit is not None:
+            after_commit()
 
     chat._on_prompt_delivered = acknowledge
     with pytest.raises(RuntimeError, match="receipt commit failed"):
@@ -563,6 +567,122 @@ async def test_a_prompt_whose_receipt_fails_keeps_its_one_shot_context_and_its_a
     assert "<history>earlier turns</history>" in context
     assert "revise step 2" in context
     assert acknowledgments == ["receipt", "receipt"]
+    assert chat._on_prompt_delivered is None
+
+
+@pytest.mark.asyncio
+async def test_a_queue_commit_that_raises_after_the_lifecycle_commit_keeps_the_backlog(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The queue commit is the success boundary: a raise there consumes no backlog.
+
+    The lifecycle commit runs first and is idempotent. Marks and clears follow the queue
+    commit, so a retry re-ships the same backlog and the lifecycle receipt stays owed.
+    """
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000c")
+    chat = _ChatHooks(temp_db, session_id)
+    await chat.prompt("allow", [("rule:policy", "o" * 6_000), ("rule:common", "c" * 5_000)])
+    assert _queue(temp_db, session_id) == [["rule:common", "c" * 5_000]]
+    _owe_one_shot_context(chat)
+    events: list[str] = []
+
+    def acknowledge(after_commit: Callable[[], None] | None = None) -> None:
+        events.append("lifecycle commit")
+        if after_commit is not None:
+            after_commit()
+        events.append("marks")
+
+    chat._on_prompt_delivered = acknowledge
+    real_commit = commit_staged_effects
+    queue_commits: list[bool] = []
+
+    def failing_queue_commit(*args: Any, **kwargs: Any) -> None:
+        queue_commits.append(True)
+        if len(queue_commits) == 1:
+            raise RuntimeError("queue commit failed")
+        real_commit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "gobby.servers.chat_session_hooks.commit_staged_effects", failing_queue_commit
+    )
+    with pytest.raises(RuntimeError, match="queue commit failed"):
+        await chat.prompt("allow", [("rule:reminder", "be brief")])
+
+    assert events == ["lifecycle commit"]
+    assert _queue(temp_db, session_id) == [["rule:common", "c" * 5_000]]
+    assert chat._pending_plan == "revise step 2"
+    assert chat._needs_history_injection is True
+    assert chat._on_prompt_delivered is acknowledge
+
+    context = _delivered_context(await chat.prompt("allow", [("rule:reminder", "be brief")]))
+    assert "<history>earlier turns</history>" in context
+    assert "revise step 2" in context
+    assert "c" * 5_000 in context
+    assert events == ["lifecycle commit", "lifecycle commit", "marks"]
+    assert _queue(temp_db, session_id) is None
+    assert chat._on_prompt_delivered is None
+
+
+@pytest.mark.asyncio
+async def test_a_message_mark_that_raises_after_the_queue_commit_still_ships_the_backlog(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Marks run after the queue commit and cannot withhold the output that carries the backlog."""
+
+    class _FailingMessages:
+        def mark_delivered(self, message_id: str, db_session_id: str) -> None:
+            raise RuntimeError("mark failed")
+
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000e")
+    chat = _ChatHooks(temp_db, session_id)
+    await chat.prompt("allow", [("rule:policy", "o" * 6_000), ("rule:common", "c" * 5_000)])
+    cast(Any, chat).inter_session_msg_manager = _FailingMessages()
+
+    def acknowledge(after_commit: Callable[[], None] | None = None) -> None:
+        if after_commit is not None:
+            after_commit()
+        ChatPendingMessagesMixin._mark_pending_messages_delivered(
+            cast(Any, chat), ["message-1"], session_id
+        )
+
+    chat._on_prompt_delivered = acknowledge
+    context = _delivered_context(await chat.prompt("allow", [("rule:reminder", "be brief")]))
+
+    assert "c" * 5_000 in context
+    assert "be brief" in context
+    assert _queue(temp_db, session_id) is None
+    assert chat._on_prompt_delivered is None
+
+
+@pytest.mark.asyncio
+async def test_a_lifecycle_commit_that_raises_consumes_no_backlog(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = _register_session(temp_db, monkeypatch, "21000000-0000-4000-8000-00000000000d")
+    chat = _ChatHooks(temp_db, session_id)
+    await chat.prompt("allow", [("rule:policy", "o" * 6_000), ("rule:common", "c" * 5_000)])
+    _owe_one_shot_context(chat)
+    lifecycle_commits: list[bool] = []
+
+    def acknowledge(after_commit: Callable[[], None] | None = None) -> None:
+        lifecycle_commits.append(True)
+        if len(lifecycle_commits) == 1:
+            raise RuntimeError("lifecycle commit failed")
+        if after_commit is not None:
+            after_commit()
+
+    chat._on_prompt_delivered = acknowledge
+    with pytest.raises(RuntimeError, match="lifecycle commit failed"):
+        await chat.prompt("allow", [("rule:reminder", "be brief")])
+
+    assert _queue(temp_db, session_id) == [["rule:common", "c" * 5_000]]
+    assert chat._pending_plan == "revise step 2"
+    assert chat._on_prompt_delivered is acknowledge
+
+    context = _delivered_context(await chat.prompt("allow", [("rule:reminder", "be brief")]))
+    assert "c" * 5_000 in context
+    assert "revise step 2" in context
+    assert _queue(temp_db, session_id) is None
     assert chat._on_prompt_delivered is None
 
 

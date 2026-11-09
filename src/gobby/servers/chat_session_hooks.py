@@ -57,7 +57,7 @@ class ChatSessionHooksMixin:
     _session_manager_ref: Any | None
     _transcript_path_captured: bool
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
-    _on_prompt_delivered: Callable[[], None] | None
+    _on_prompt_delivered: Callable[..., None] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_post_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_pre_compact: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
@@ -73,12 +73,19 @@ class ChatSessionHooksMixin:
             "session_id": self.db_session_id,
         }
 
-    def _staged_hook(self, hook: _HookFn) -> _HookFn:
+    def _staged_hook(
+        self,
+        hook: _HookFn,
+        settle: Callable[[dict[str, Any]], None] | None = None,
+    ) -> _HookFn:
         """Commit the context queue a hook output staged, once the output ships unblocked.
 
         The queue is staged while the output is built, so the staging scope wraps the
         build, and the staged queue commits only when the output is not a block. A blocked
         output delivers nothing, so the queue it would have changed stays as it was.
+
+        ``settle`` replaces that plain commit for a hook that owes one-shot state. It receives
+        the staged queue and owns the commit, so it must commit before it clears anything.
         """
 
         async def _staged(
@@ -90,7 +97,10 @@ class ChatSessionHooksMixin:
                 output = await hook(inp, tool_use_id, ctx)
                 staged = take_worker_staging()
             if not _withholds(output):
-                self._commit_staged_context(staged)
+                if settle is None:
+                    self._commit_staged_context(staged)
+                else:
+                    settle(staged)
             return output
 
         return _staged
@@ -110,6 +120,23 @@ class ChatSessionHooksMixin:
             staged=staged,
             variable_manager=SessionVariableManager(db),
         )
+
+    def _settle_prompt_delivery(self, staged: dict[str, Any]) -> None:
+        """Commit a shipped prompt's staged queue, then settle its one-shot context.
+
+        Order: the lifecycle payload commit (idempotent), then the queue commit, which is the
+        success boundary, then the message marks, then the clears. A raise before the queue
+        commit consumes no queue, so the retry ships the same sources and the receipt stays owed.
+        """
+        acknowledge = self._on_prompt_delivered
+        if acknowledge is None:
+            self._commit_staged_context(staged)
+        else:
+            acknowledge(lambda: self._commit_staged_context(staged))
+            if self._on_prompt_delivered is acknowledge:
+                self._on_prompt_delivered = None
+        getattr(self, "_clear_plan_feedback", lambda: None)()
+        self._needs_history_injection = False
 
     def _build_sdk_hooks(self) -> dict[str, list[HookMatcher]] | None:
         """Build SDK hook matchers from lifecycle callbacks."""
@@ -152,8 +179,8 @@ class ChatSessionHooksMixin:
                 extra_parts: list[ContextPart] = []
 
                 # Plan feedback and first-prompt history are one-shot, owed to a prompt that ships.
-                # A blocked prompt owes nothing. Otherwise they are cleared only after the output
-                # and its receipt succeed, so any raise before then leaves them for the retry.
+                # A blocked prompt owes nothing. This hook only reads them: _settle_prompt_delivery
+                # clears them after the output ships and its queue commit succeeds.
                 owes_one_shot = resp is None or resp.get("decision") != "block"
                 history_owed = owes_one_shot and self._needs_history_injection
                 if owes_one_shot:
@@ -162,7 +189,7 @@ class ChatSessionHooksMixin:
                     if history_owed:
                         history_ctx = await cast(Any, self)._load_history_context()
 
-                    # Read plan feedback after the last await, so the clear below drops only
+                    # Read plan feedback after the last await, so the settle drops only
                     # feedback this output carries; nothing can add feedback in between.
                     plan_ctx = getattr(self, "_plan_mode_context", lambda: None)()
                     if plan_ctx:
@@ -170,20 +197,13 @@ class ChatSessionHooksMixin:
                     if history_ctx:
                         extra_parts.append(("history", history_ctx))
 
-                output = _response_to_prompt_output(resp, persist=persist, extra_parts=extra_parts)
-
-                if output.get("decision") != "block":
-                    acknowledge = getattr(self, "_on_prompt_delivered", None)
-                    if acknowledge is not None:
-                        acknowledge()
-                        self._on_prompt_delivered = None
-                    getattr(self, "_clear_plan_feedback", lambda: None)()
-                    if history_owed:
-                        self._needs_history_injection = False
-                return output
+                return _response_to_prompt_output(resp, persist=persist, extra_parts=extra_parts)
 
             hooks["UserPromptSubmit"] = [
-                HookMatcher(matcher=None, hooks=[self._staged_hook(_prompt_hook)])
+                HookMatcher(
+                    matcher=None,
+                    hooks=[self._staged_hook(_prompt_hook, settle=self._settle_prompt_delivery)],
+                )
             ]
 
         if self._on_pre_tool:

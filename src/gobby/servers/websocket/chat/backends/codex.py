@@ -208,8 +208,7 @@ class CodexManagedChatSession(
                 context_parts.append(gate_context)
 
             context_prefix = "\n\n".join(part for part in context_parts if part)
-            self._clear_plan_feedback()
-            self._clear_deferred_context()
+            self._arm_owed_context_settle()
 
             self.last_activity = datetime.now(UTC)
             self.message_index += 1
