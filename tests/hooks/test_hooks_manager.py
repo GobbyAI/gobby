@@ -2770,8 +2770,17 @@ _ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
     HookEventType.SUBAGENT_STOP,
 }
 
+# Claude main-thread compaction hooks are held until the next main-thread event settles them
+# (#25683). A held hook reaches no session resolution, so it never materializes here; the
+# held contract is covered by the compaction ownership and settle tests.
+_HELD_CLAUDE_COMPACTION_EVENTS = frozenset({HookEventType.PRE_COMPACT, HookEventType.POST_COMPACT})
+
 _FIRST_HOOK_CASES = tuple(
-    (event_type, event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS)
+    (
+        event_type,
+        event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS
+        and event_type not in _HELD_CLAUDE_COMPACTION_EVENTS,
+    )
     for event_type in HookEventType
     if event_type is not HookEventType.SESSION_START
 )
