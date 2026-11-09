@@ -148,9 +148,13 @@ async fn plain_spawn_blocks_for_a_child_stalled_before_exec() {
 #[tokio::test]
 async fn bounded_spawn_returns_at_its_deadline_for_a_stalled_child() {
     let started = std::time::Instant::now();
-    let error = spawn_bounded(|| stalled_command().spawn(), Duration::from_millis(200))
-        .await
-        .expect_err("a stalled child must not hold the spawn past its deadline");
+    let error = spawn_bounded(
+        Vec::new(),
+        || stalled_command().spawn(),
+        Duration::from_millis(200),
+    )
+    .await
+    .expect_err("a stalled child must not hold the spawn past its deadline");
     let waited = started.elapsed();
     assert!(waited < STALL, "bounded spawn blocked for {waited:?}");
     assert!(error.to_string().contains("did not exec"), "{error:#}");
@@ -162,7 +166,11 @@ async fn bounded_spawn_returns_at_its_deadline_for_a_stalled_child() {
 /// makes the ordering independent of host load.
 #[tokio::test(start_paused = true)]
 async fn bounded_spawn_leaves_the_runtime_free_while_a_child_is_stalled() {
-    let spawn = spawn_bounded(|| stalled_command().spawn(), Duration::from_millis(500));
+    let spawn = spawn_bounded(
+        Vec::new(),
+        || stalled_command().spawn(),
+        Duration::from_millis(500),
+    );
     tokio::pin!(spawn);
     tokio::select! {
         biased;
@@ -177,10 +185,11 @@ async fn bounded_spawn_leaves_the_runtime_free_while_a_child_is_stalled() {
     );
 }
 
-/// The descriptor hazard. `BackendChild::spawn` hands the liveness read end to the spawn closure, and
-/// a `pre_exec` clears CLOEXEC on its raw number. The caller gives up while the helper is stalled
-/// before fork. The helper keeps the number occupied, so no unrelated descriptor can take it, and
-/// the child must not inherit any descriptor besides the liveness pipe.
+/// The descriptor hazard. `BackendChild::spawn` hands the liveness read end to `spawn_bounded`, and
+/// a `pre_exec` clears CLOEXEC on its raw number. The caller gives up while the spawn is stalled
+/// before fork. If the caller had released the read end, an unrelated descriptor would take its
+/// number, and the child would inherit it. The helper must keep the number occupied until spawn
+/// returns, so the child finds the liveness pipe there.
 #[tokio::test]
 async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_caller_gave_up() {
     use std::io::Read;
@@ -188,12 +197,10 @@ async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_calle
 
     let (reader, _writer) = std::io::pipe().expect("liveness pipe");
     let read_fd = reader.as_raw_fd();
-    let (_probe, probe_writer) = std::io::pipe().expect("probe pipe");
-    let probe_fd = probe_writer.as_raw_fd();
     let (mut done, done_writer) = std::io::pipe().expect("completion pipe");
     let (release, gate) = std::sync::mpsc::channel::<()>();
-    // The child reports on stderr whether the probe's number is open in it.
-    let script = format!("test -e /dev/fd/{probe_fd} && echo leaked >&2; echo done >&2");
+    // The child reports `unexpected` when its liveness number is not a pipe, then `done`.
+    let script = format!("test -p /dev/fd/{read_fd} || echo unexpected >&2; echo done >&2");
     let mut command = Command::new("/bin/sh");
     // Stdout is discarded; the child's report travels on stderr.
     command
@@ -213,9 +220,8 @@ async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_calle
         });
     }
     let error = spawn_bounded(
+        vec![reader],
         move || {
-            // The helper owns the liveness read end until spawn returns, as production does.
-            let _liveness = reader;
             // The helper stays stalled before fork until the test releases it.
             let _ = gate.recv();
             command.spawn()
@@ -226,19 +232,18 @@ async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_calle
     .expect_err("a spawn stalled before fork must miss its deadline");
     assert!(error.to_string().contains("did not exec"), "{error:#}");
 
-    // The caller has given up, but the helper still holds the liveness read end, so its number is
-    // occupied and an unrelated descriptor cannot take it.
+    // The caller has given up. A released liveness number is free, and an unrelated descriptor
+    // opened now takes it. An owner that still holds the number leaves it occupied.
     // SAFETY: fcntl on a descriptor number only reads its flags.
-    let held = unsafe { libc::fcntl(read_fd, libc::F_GETFD) };
-    assert!(
-        held >= 0,
-        "the helper released the liveness read end before spawn returned"
-    );
-    assert_ne!(
-        probe_writer.as_raw_fd(),
-        read_fd,
-        "an unrelated descriptor took the liveness read end's number"
-    );
+    if unsafe { libc::fcntl(read_fd, libc::F_GETFD) } < 0 {
+        let unrelated = std::fs::File::open("/dev/null").expect("unrelated descriptor");
+        // SAFETY: dup2 writes only the target number, which is free in this branch.
+        let taken = unsafe { libc::dup2(unrelated.as_raw_fd(), read_fd) };
+        assert_eq!(
+            taken, read_fd,
+            "the unrelated descriptor missed the freed number"
+        );
+    }
 
     release.send(()).expect("release the stalled spawn");
     let mut completed = String::new();
@@ -246,6 +251,6 @@ async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_calle
         .expect("read the child's completion");
     assert_eq!(
         completed, "done\n",
-        "the child must run to completion without inheriting the unrelated descriptor"
+        "the child must find the liveness pipe at its number, not an unrelated descriptor"
     );
 }

@@ -416,7 +416,11 @@ const SPAWN_DEADLINE: Duration = Duration::from_secs(10);
 /// exec therefore blocks whichever thread calls it for as long as the stall lasts. The helper
 /// thread keeps that blocked call, and the async wait gives up at the deadline. A child produced
 /// after the deadline is dropped on the helper thread, and `kill_on_drop` ends it.
+///
+/// The helper owns `read_ends` until spawn returns. A `pre_exec` captures their raw numbers, so
+/// those numbers stay occupied when the caller gives up at the deadline.
 async fn spawn_bounded(
+    read_ends: Vec<io::PipeReader>,
     spawn: impl FnOnce() -> io::Result<Child> + Send + 'static,
     deadline: Duration,
 ) -> Result<Child> {
@@ -424,6 +428,7 @@ async fn spawn_bounded(
     let runtime = tokio::runtime::Handle::current();
     std::thread::spawn(move || {
         let _runtime = runtime.enter();
+        let _read_ends = read_ends;
         // A failed send means the caller gave up; dropping the returned child kills it.
         let _ = spawned.send(spawn());
     });
@@ -448,7 +453,7 @@ impl BackendChild {
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
-        // child reads it to EOF. The spawn closure drops its read end after spawn.
+        // child reads it to EOF. spawn_bounded owns its read end until spawn returns.
         let secret = match config.front_door_secret.as_deref() {
             Some(secret) => {
                 let (secret_reader, mut secret_writer) = std::io::pipe()?;
@@ -492,15 +497,8 @@ impl BackendChild {
         }
         // The helper owns both read ends until command.spawn returns, so the raw numbers that
         // pre_exec captures stay valid even when the caller gives up at the deadline.
-        let read_ends = (reader, secret);
-        let mut child = spawn_bounded(
-            move || {
-                let _read_ends = read_ends;
-                command.spawn()
-            },
-            SPAWN_DEADLINE,
-        )
-        .await?;
+        let read_ends: Vec<io::PipeReader> = std::iter::once(reader).chain(secret).collect();
+        let mut child = spawn_bounded(read_ends, move || command.spawn(), SPAWN_DEADLINE).await?;
         let group = i32::try_from(child.id().context("spawned backend has no PID")?)?;
         let mut token = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut token);
