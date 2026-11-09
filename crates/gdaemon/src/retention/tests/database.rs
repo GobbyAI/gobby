@@ -52,7 +52,7 @@ impl Fixture {
             .await?;
         admin
             .batch_execute(include_str!(
-                "../../../../gcore/assets/schema/migrations/490_token_event_per_key_archive.sql"
+                "../../../../gcore/assets/schema/migrations/491_token_event_per_key_archive.sql"
             ))
             .await?;
         admin

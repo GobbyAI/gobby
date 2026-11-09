@@ -478,9 +478,15 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 490,
-        filename: "490_token_event_per_key_archive.sql",
+        filename: "490_grant_plan_coverage_reads.sql",
+        checksum: "531bf6fd9c8f37232a2deefa28c2433639d6b0a9d04f7612d1ee632ecf4ec6de",
+        sql: include_str!("../../assets/schema/migrations/490_grant_plan_coverage_reads.sql"),
+    },
+    EmbeddedMigration {
+        version: 491,
+        filename: "491_token_event_per_key_archive.sql",
         checksum: "a91fb9ab01e17ef35047ec9282f1dbe66af7e67f9c7cb86db19e0b8339634679",
-        sql: include_str!("../../assets/schema/migrations/490_token_event_per_key_archive.sql"),
+        sql: include_str!("../../assets/schema/migrations/491_token_event_per_key_archive.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

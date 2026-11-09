@@ -444,6 +444,30 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             assert_eq!(check_expression, "false");
         }
     }
+    // Migration 490 lets the gcode capability role read plan-coverage tasks scoped to its bound
+    // project, and reads dependencies only through a task that role can see.
+    let task_policies = actual
+        .remove("tasks")
+        .expect("tasks must carry the plan-coverage gcode read policy");
+    assert_eq!(
+        task_policies
+            .iter()
+            .map(|(name, command, _, _)| (name.as_str(), command.as_str()))
+            .collect::<Vec<_>>(),
+        [("gobby_gcode_project_read", "SELECT")]
+    );
+    assert!(task_policies[0].2.contains("current_project_id"));
+    let dependency_policies = actual
+        .remove("task_dependencies")
+        .expect("task_dependencies must carry the plan-coverage gcode read policy");
+    assert_eq!(
+        dependency_policies
+            .iter()
+            .map(|(name, command, _, _)| (name.as_str(), command.as_str()))
+            .collect::<Vec<_>>(),
+        [("gobby_gcode_project_read", "SELECT")]
+    );
+    assert!(dependency_policies[0].2.contains("FROM tasks t"));
     assert!(
         actual.is_empty(),
         "unexpected gcode RLS policies: {actual:?}"
@@ -2342,11 +2366,11 @@ fn prior_420_receipt_upgrades_retention_schema_and_matches_fresh() -> anyhow::Re
         return Ok(());
     };
     install_baseline(&mut client)?;
-    // Reconstruct the exact pre-465 catalog and its released baseline receipt. The 490 receipt
-    // goes too, since 490 alters the table that 465 creates.
+    // Reconstruct the exact pre-465 catalog and its released baseline receipt. The 491 receipt
+    // goes too, since 491 alters the table that 465 creates.
     client.batch_execute(
         "DROP INDEX idx_token_events_event_at; DROP TABLE token_event_retention_totals; \
-         DELETE FROM schema_migrations WHERE version IN (465, 490);",
+         DELETE FROM schema_migrations WHERE version IN (465, 491);",
     )?;
     client.execute(
         "UPDATE schema_migrations SET checksum=$1 WHERE version=420",
