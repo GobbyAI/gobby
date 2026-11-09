@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 import time
-from pathlib import Path
 
 from gobby.fleet_health.state import fleet_state_path
+from tests.fixtures.fleet_state import publish_fleet_document
 
 
 def write_fleet_state(
@@ -21,8 +18,6 @@ def write_fleet_state(
     ramp_window_seconds: int = 900,
 ) -> None:
     """Write the state file under the test Gobby home, sampled at ``at`` (default: now)."""
-    path = fleet_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     document = {
         "schema_version": 1,
         "state": state,
@@ -36,13 +31,4 @@ def write_fleet_state(
         "thresholds_source": "defaults",
         "watcher_pid": 1,
     }
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=path.parent, delete=False
-    ) as file:
-        staged = Path(file.name)
-        try:
-            json.dump(document, file)
-            file.close()
-            os.replace(staged, path)
-        finally:
-            staged.unlink(missing_ok=True)
+    publish_fleet_document(fleet_state_path(), document)

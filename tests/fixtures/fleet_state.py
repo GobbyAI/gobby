@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
@@ -43,20 +44,46 @@ def _publish(path: Path, payload: bytes) -> None:
             staged.unlink(missing_ok=True)
 
 
+@contextmanager
+def _fleet_state_lock(path: Path) -> Iterator[None]:
+    """Hold the one lock every writer of the state file takes, so no write lands mid-check.
+
+    The lock is a sibling file, because publishing replaces the state file's inode.
+    flock conflicts across open file descriptions, so two threads of one test conflict too.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(f"{path.name}.lock").open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def publish_fleet_document(path: Path, document: dict[str, Any]) -> bytes:
+    """Publish a state document under the lock and return the exact bytes written."""
+    payload = json.dumps(document).encode("utf-8")
+    with _fleet_state_lock(path):
+        _publish(path, payload)
+    return payload
+
+
 def write_healthy_fleet_state(path: Path, *, sampled_at: float) -> bytes:
     """Write a healthy state file and return the exact bytes written."""
-    payload = json.dumps(healthy_fleet_document(sampled_at)).encode("utf-8")
-    _publish(path, payload)
-    return payload
+    return publish_fleet_document(path, healthy_fleet_document(sampled_at))
 
 
 def refresh_healthy_fleet_state(path: Path, *, last: bytes, sampled_at: float) -> bytes | None:
-    """Re-stamp the state while it still holds the bytes last written; None means another writer owns it."""
-    if path.read_bytes() != last:
-        return None
-    payload = json.dumps(healthy_fleet_document(sampled_at)).encode("utf-8")
-    _publish(path, payload)
-    return payload
+    """Re-stamp the state while it still holds the bytes last written; None means another writer owns it.
+
+    The check and the replace run under the lock, so a negative write cannot land between them.
+    """
+    with _fleet_state_lock(path):
+        if path.read_bytes() != last:
+            return None
+        payload = json.dumps(healthy_fleet_document(sampled_at)).encode("utf-8")
+        _publish(path, payload)
+        return payload
 
 
 @contextmanager
