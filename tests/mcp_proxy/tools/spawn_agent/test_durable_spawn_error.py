@@ -270,25 +270,47 @@ UNBOUND_FRONT_DOOR = {
 }
 
 
-def _front_door(generation: str | None) -> SimpleNamespace:
-    publisher = SimpleNamespace(generation=generation)
+class _ReachedGate(Exception):
+    """Raised by a stub just past the front-door gate, proving admission went on."""
+
+
+def _front_door(*, bound_within_wait: bool) -> SimpleNamespace:
+    """A publisher that is unbound at the call and binds (or not) inside its wait."""
+    publisher = SimpleNamespace(
+        generation=None, wait_bound=AsyncMock(return_value=bound_within_wait)
+    )
     return SimpleNamespace(websocket_server=SimpleNamespace(native_publisher=publisher))
 
 
-async def test_spawn_is_refused_while_the_native_front_door_is_unbound(
+async def test_spawn_is_refused_once_the_front_door_stays_unbound_past_its_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(None))
+    front_door = _front_door(bound_within_wait=False)
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: front_door)
     runner = Mock()
     result = await _implementation.spawn_agent_impl("launch while the front door is down", runner)
     assert result == UNBOUND_FRONT_DOOR
+    front_door.websocket_server.native_publisher.wait_bound.assert_awaited_once_with()
     runner.run_storage.create.assert_not_called()
 
 
-def test_front_door_refusal_clears_once_the_publisher_is_bound(
+async def test_a_transient_unbind_waits_for_the_rebind_instead_of_failing_the_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(None))
-    assert _runtime.native_front_door_refusal() == UNBOUND_FRONT_DOOR
-    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door("gen-1"))
-    assert _runtime.native_front_door_refusal() is None
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(bound_within_wait=True))
+
+    def reached_gate() -> None:
+        raise _ReachedGate
+
+    monkeypatch.setattr(_implementation, "start_spawn_phase", reached_gate)
+    with pytest.raises(_ReachedGate):
+        await _implementation.spawn_agent_impl("launch across a transient unbind", Mock())
+
+
+async def test_front_door_refusal_clears_once_the_publisher_is_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(bound_within_wait=False))
+    assert await _runtime.native_front_door_refusal() == UNBOUND_FRONT_DOOR
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(bound_within_wait=True))
+    assert await _runtime.native_front_door_refusal() is None

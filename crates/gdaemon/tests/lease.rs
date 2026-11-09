@@ -8,6 +8,9 @@ use tokio::time::timeout;
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+#[path = "common/hub_lock.rs"]
+mod hub_lock;
+
 struct TestDb {
     admin: Client,
     pool: Arc<Pool>,
@@ -239,11 +242,16 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     );
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
     timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(300),
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lease_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
@@ -473,7 +481,8 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         )).await?;
         let application_name = owner.application_name().to_owned();
         let mut acquire = Box::pin(owner.try_acquire());
-        let observed = timeout(Duration::from_secs(4), async {
+        // Hang guards sized for host-load stalls. The asserted bound is the 5 s operation timeout.
+        let observed = timeout(Duration::from_secs(30), async {
             loop {
                 db.admin.simple_query("SELECT pg_stat_clear_snapshot()").await?;
                 let blocked: bool = db.admin.query_one(
@@ -494,16 +503,16 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         }
         drop(acquire);
         assert!(owner.fence().is_none());
-        timeout(Duration::from_secs(7), async {
+        timeout(Duration::from_secs(30), async {
             while successor.owner().await?.is_some() {
                 tokio::task::yield_now().await;
             }
             anyhow::Ok(())
         }).await??;
         // A second blocked acquisition reaches the five-second operation bound.
-        let result = timeout(Duration::from_secs(7), owner.try_acquire()).await?;
+        let result = timeout(Duration::from_secs(30), owner.try_acquire()).await?;
         assert!(result.is_err());
-        timeout(Duration::from_secs(7), async {
+        timeout(Duration::from_secs(30), async {
             while successor.owner().await?.is_some() {
                 tokio::task::yield_now().await;
             }

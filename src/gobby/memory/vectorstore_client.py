@@ -10,19 +10,12 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from qdrant_client import AsyncQdrantClient, QdrantClient
-from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
-from qdrant_client.http.models.models import (
-    CreateAlias,
-    CreateAliasOperation,
-    DeleteAlias,
-    DeleteAliasOperation,
-)
-from qdrant_client.models import Distance, VectorParams
 
 from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
 
 if TYPE_CHECKING:
+    from qdrant_client import AsyncQdrantClient, QdrantClient
+
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -31,13 +24,6 @@ QDRANT_CLIENT_TIMEOUT_SECONDS = 5
 _UNINITIALIZED_MESSAGE = "VectorStore not initialized. Call initialize() first."
 _INITIAL_RETRY_BACKOFF_SECONDS = 5.0
 _MAX_RETRY_BACKOFF_SECONDS = 300.0
-_QDRANT_CLIENT_CLOSE_ERRORS = (
-    OSError,
-    RuntimeError,
-    ResponseHandlingException,
-    UnexpectedResponse,
-    httpx.TransportError,
-)
 _QDRANT_TIMEOUT_HINT_METHODS = frozenset({"query_batch_points", "retrieve"})
 
 type QdrantClientLike = QdrantClient | AsyncQdrantClient
@@ -59,6 +45,8 @@ def _accepts_timeout_kwarg(method: Any) -> bool:
 
 def _vector_size(vectors_cfg: Any) -> int | None:
     """Extract vector size from a Qdrant vectors config when available."""
+    from qdrant_client.models import VectorParams
+
     return vectors_cfg.size if isinstance(vectors_cfg, VectorParams) else None
 
 
@@ -75,6 +63,8 @@ class VectorStoreCollectionDimensionError(RuntimeError):
 
 def is_recoverable_vector_store_error(error: BaseException) -> bool:
     """Return True for transient VectorStore/Qdrant availability errors."""
+    from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+
     if isinstance(
         error,
         VectorStoreUnavailableError | ResponseHandlingException | EmbeddingGenerationLeaseLost,
@@ -301,6 +291,9 @@ class VectorStoreClient:
         collection_name: str,
         dim: int,
     ) -> bool:
+        from qdrant_client.http.exceptions import UnexpectedResponse
+        from qdrant_client.models import Distance, VectorParams
+
         try:
             await self.call(
                 client,
@@ -428,6 +421,8 @@ class VectorStoreClient:
 
     async def create_alias(self, collection_name: str, alias_name: str) -> None:
         """Create or repoint an alias to a physical collection."""
+        from qdrant_client.http.models.models import CreateAlias, CreateAliasOperation
+
         store = self._store
         client = await store._ensure_initialized()
         async with store._collection_lifecycle_lock:
@@ -450,6 +445,8 @@ class VectorStoreClient:
 
     async def delete_alias(self, alias_name: str) -> None:
         """Delete an alias without deleting its underlying collection."""
+        from qdrant_client.http.models.models import DeleteAlias, DeleteAliasOperation
+
         store = self._store
         client = await store._ensure_initialized()
         async with store._collection_lifecycle_lock:
@@ -488,6 +485,8 @@ class VectorStoreClient:
 
     async def _close_clients(self, clients: list[QdrantClientLike]) -> None:
         """Close each distinct client, containing teardown failures."""
+        from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+
         seen: set[int] = set()
         for client in clients:
             identity = id(client)
@@ -496,5 +495,11 @@ class VectorStoreClient:
             seen.add(identity)
             try:
                 await self.call(client, "close", timeout_hint=False)
-            except _QDRANT_CLIENT_CLOSE_ERRORS as close_error:
+            except (
+                OSError,
+                RuntimeError,
+                ResponseHandlingException,
+                UnexpectedResponse,
+                httpx.TransportError,
+            ) as close_error:
                 logger.warning("Failed to close Qdrant client: %s", close_error)

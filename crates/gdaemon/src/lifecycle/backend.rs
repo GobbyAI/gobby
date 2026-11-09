@@ -22,7 +22,7 @@ use std::{
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
-    sync::watch,
+    sync::{oneshot, watch},
     task::JoinHandle,
     time::{Instant, interval, interval_at, sleep_until, timeout},
 };
@@ -248,7 +248,7 @@ impl BackendSupervisor {
             if shutdown_requested(shutdown) {
                 return Ok(SupervisorExit::Stopped);
             }
-            let mut backend = BackendChild::spawn(&self.config)?;
+            let mut backend = BackendChild::spawn(&self.config).await?;
             let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
@@ -405,6 +405,32 @@ async fn shutdown_signal(shutdown: &mut watch::Receiver<bool>) {
     }
 }
 
+/// Longest the supervisor waits for a backend spawn to reach exec.
+const SPAWN_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Spawn on a helper thread and wait at most `deadline` for the child to exec, without blocking
+/// the runtime.
+///
+/// `Command::spawn` returns only after the child execs: std reads an exec-status pipe until its
+/// write end closes, and a forked child keeps that end open until exec. A child stalled before
+/// exec therefore blocks whichever thread calls it for as long as the stall lasts. The helper
+/// thread keeps that blocked call, and the async wait gives up at the deadline. A child produced
+/// after the deadline is dropped on the helper thread, and `kill_on_drop` ends it.
+async fn spawn_bounded(mut command: Command, deadline: Duration) -> Result<Child> {
+    let (spawned, outcome) = oneshot::channel();
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::spawn(move || {
+        let _runtime = runtime.enter();
+        // A failed send means the caller gave up; dropping the returned child kills it.
+        let _ = spawned.send(command.spawn());
+    });
+    match timeout(deadline, outcome).await {
+        Ok(Ok(child)) => child.context("spawn backend"),
+        Ok(Err(_)) => bail!("spawn backend thread ended early"),
+        Err(_) => bail!("spawn backend did not exec within {deadline:?}"),
+    }
+}
+
 struct BackendChild {
     child: Child,
     group: Option<i32>,
@@ -415,7 +441,7 @@ struct BackendChild {
 }
 
 impl BackendChild {
-    fn spawn(config: &BackendConfig) -> Result<Self> {
+    async fn spawn(config: &BackendConfig) -> Result<Self> {
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
@@ -461,7 +487,7 @@ impl BackendChild {
                 Ok(())
             });
         }
-        let mut child = command.spawn().context("spawn backend")?;
+        let mut child = spawn_bounded(command, SPAWN_DEADLINE).await?;
         let group = i32::try_from(child.id().context("spawned backend has no PID")?)?;
         drop(reader);
         let mut token = [0u8; 32];
