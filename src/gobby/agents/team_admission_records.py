@@ -101,6 +101,22 @@ def recorded_team(step: StepExecution | None) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
+def reviewer_names(value: Any) -> list[str]:
+    """The reviewer definitions a stored admission names.
+
+    A list names them. A mapping, as persisted before reviewers became a list, names them by key.
+    Null names none. Any other stored value is refused rather than read as none.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, dict)):
+        return list(value)
+    raise TeamAdmissionRefused(
+        "team_record_invalid",
+        f"reviewers must be a list or a mapping, not {type(value).__name__}",
+    )
+
+
 def binding_from_record(record: dict[str, Any] | None) -> TeamBinding | None:
     if record is None:
         return None
@@ -109,7 +125,7 @@ def binding_from_record(record: dict[str, Any] | None) -> TeamBinding | None:
         value = record.get(item.name)
         if item.name == "reviewers":
             # The admission intent carries no reviewers list unless a reviewer is named.
-            values[item.name] = list(value) if isinstance(value, list) else []
+            values[item.name] = reviewer_names(value)
             continue
         if item.name == "mode":
             # Records admitted before epic mode carry no mode: they are single-task teams.

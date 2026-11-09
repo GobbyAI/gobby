@@ -29,6 +29,7 @@ from gobby.agents.team_admission_records import (
     own_record,
     record_team,
     recorded_team,
+    reviewer_names,
     team_binding,
 )
 from gobby.agents.team_launch_inputs import reviewer_refusal
@@ -244,10 +245,11 @@ def _bound_tab(recorded: str | None, proposed: str | None) -> str | None:
 
 def _bound_reviewer(reviewers: Any, reviewer_agent: str | None, team_id: str) -> None:
     """A team binds its reviewer definitions; a join must name one the team already binds."""
-    if reviewer_agent is None or not isinstance(reviewers, list) or not reviewers:
+    names = reviewer_names(reviewers)
+    if reviewer_agent is None or not names:
         return
-    if reviewer_agent not in reviewers:
-        bound = ", ".join(sorted(reviewers))
+    if reviewer_agent not in names:
+        bound = ", ".join(sorted(names))
         raise TeamAdmissionRefused(
             "reviewer_mismatch", f"{reviewer_agent} cannot join team {team_id} bound to {bound}"
         )

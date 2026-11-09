@@ -130,3 +130,44 @@ async def test_research_spike_admits_a_research_reviewer_devteam(world: TeamWorl
     reply = await admit(world, owner, spike, "fixture-definition-82cde3b3")
     assert reply["success"] is True, reply
     assert world.admit_step_output(owner)["team"]["reviewers"] == ["fixture-definition-82cde3b3"]
+
+
+async def test_persisted_dict_admission_refuses_readmission_with_another_reviewer(
+    world: TeamWorld,
+) -> None:
+    # A record persisted in the name -> None shape still names its reviewer on readmission.
+    task = world.case.task(TITLE)
+    owner = world.child(task)
+    reply = await admit(world, owner, task, "fixture-definition-3d77e16a")
+    assert reply["success"] is True, reply
+    output = world.admit_step_output(owner)
+    output["team"]["reviewers"] = {"fixture-definition-3d77e16a": None}
+    world.rewrite_admit_output(owner, output)
+
+    reply = await admit(world, owner, task, "fixture-definition-e08ba693")
+
+    assert reply["success"] is False, reply
+    assert reply["error_code"] == "reviewer_mismatch", reply
+
+
+async def test_persisted_dict_admission_refuses_join_with_another_reviewer(
+    world: TeamWorld,
+) -> None:
+    # A record persisted in the name -> None shape still names its reviewer on join.
+    task = world.case.task(TITLE)
+    owner = world.child(task)
+    reply = await admit(world, owner, task, "fixture-definition-3d77e16a")
+    assert reply["success"] is True, reply
+    team = world.admit_step_output(owner)["team"]
+    output = world.admit_step_output(owner)
+    output["team"]["reviewers"] = {"fixture-definition-3d77e16a": None}
+    world.rewrite_admit_output(owner, output)
+    world.finish(owner)
+
+    mismatch = world.child(task)
+    reply = await admit(
+        world, mismatch, task, "fixture-definition-e08ba693", team_id=team["team_id"]
+    )
+
+    assert reply["success"] is False, reply
+    assert reply["error_code"] == "reviewer_mismatch", reply
