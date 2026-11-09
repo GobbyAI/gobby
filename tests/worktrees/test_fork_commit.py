@@ -1,7 +1,6 @@
 """Worktree forks preserve the selected commit, independently of remote state."""
 
 import subprocess
-from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +9,6 @@ import pytest
 
 from gobby.worktrees.creation import WorktreeCreationResult, create_worktree
 from gobby.worktrees.git import GitOperationResult, WorktreeGitManager
-from gobby.worktrees.git._runner import GitRunner
 
 
 def git(repo: Path, *args: str) -> str:
@@ -241,30 +239,6 @@ async def test_detached_default_has_no_side_effects(repo: Path, tmp_path: Path) 
     assert not result.success
     assert result.error_code == "detached_head_requires_base"
     assert not child.parent.exists()
-
-
-# A loaded host's git query takes this long: longer than the old 5 s deadline, far below any real one.
-SLOW_GIT_SECONDS = 8
-
-
-@pytest.fixture
-def loaded_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Git queries with a deadline under SLOW_GIT_SECONDS take that long, as on a loaded host."""
-    original = GitRunner._run_git
-
-    async def slowed(
-        self: GitRunner,
-        args: list[str],
-        cwd: str | Path | None = None,
-        timeout: int = 30,
-        check: bool = False,
-        env: Mapping[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        if timeout < SLOW_GIT_SECONDS:
-            raise subprocess.TimeoutExpired(["git", *args], timeout)
-        return await original(self, args, cwd=cwd, timeout=timeout, check=check, env=env)
-
-    monkeypatch.setattr(GitRunner, "_run_git", slowed)
 
 
 @pytest.mark.parametrize("base", [None, "main"])
