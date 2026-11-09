@@ -460,10 +460,13 @@ def _compacted() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("polls", [1, 3])
-def test_unwaited_yielded_cell_from_a_finished_turn_does_not_refuse_a_later_literal_cwd_proof(
+def test_unwaited_yielded_cell_from_a_finished_turn_still_refuses_a_literal_cwd_proof(
     event_handlers: EventHandlers, tmp_path: Path, polls: int
 ) -> None:
-    """The probe shape: a computed launch yields, empty polls keep it running, then the turn ends and compacts."""
+    """The probe shape: a computed launch yields, empty polls keep it running, then the turn ends and compacts.
+
+    A turn end and a compaction do not end a live cell: only an observed exit does.
+    """
     workdir = tmp_path / "task"
     records = [
         _cell("launch", _computed_launch(PYTEST, workdir)),
@@ -472,9 +475,9 @@ def test_unwaited_yielded_cell_from_a_finished_turn_does_not_refuse_a_later_lite
     for index in range(polls):
         records += _wait_result(f"poll-{index}", "cell-y", _yielded("cell-y"))
     records += [_task_complete(), _compacted(), _cell("ruff", _literal(RUFF, workdir))]
-    event, response = _hook(event_handlers, tmp_path, records, command=RUFF)
-    assert response.decision == "allow", response.reason
-    assert current_tool_cwd(event.data) == workdir
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
 
 
 def test_unwaited_yielded_cell_in_the_current_turn_still_refuses_a_literal_cwd_proof(
@@ -543,10 +546,10 @@ def test_cell_yielded_after_the_turn_end_survives_a_later_compaction(
     assert "cannot prove its working directory" in (response.reason or "")
 
 
-def test_wait_that_reyields_an_ended_cell_keeps_later_literal_cwd_proof_refused(
+def test_wait_after_the_turn_end_that_still_runs_keeps_later_literal_cwd_proof_refused(
     event_handlers: EventHandlers, tmp_path: Path
 ) -> None:
-    """A late wait proves the cell is live again: the ended cell must stay tracked."""
+    """A wait after the turn end and compaction observes a live cell, which keeps refusing."""
     workdir = tmp_path / "task"
     records = [
         _cell("launch", _computed_launch(PYTEST, workdir)),
@@ -561,7 +564,7 @@ def test_wait_that_reyields_an_ended_cell_keeps_later_literal_cwd_proof_refused(
     assert "cannot prove its working directory" in (response.reason or "")
 
 
-def test_wait_that_completes_an_ended_cell_admits_a_later_literal_cwd_proof(
+def test_wait_that_completes_a_turn_ended_cell_admits_a_later_literal_cwd_proof(
     event_handlers: EventHandlers, tmp_path: Path
 ) -> None:
     """A wait that observes the cell finish leaves nothing running to refuse for."""
@@ -579,40 +582,62 @@ def test_wait_that_completes_an_ended_cell_admits_a_later_literal_cwd_proof(
     assert current_tool_cwd(event.data) == workdir
 
 
-def test_synthetic_sticky_latch_is_released_by_task_complete_then_compaction(
-    event_handlers: EventHandlers, tmp_path: Path
-) -> None:
-    """Synthetic guard, not the probe shape: a typed write latches the open cell until both boundaries end it."""
-    workdir = tmp_path / "task"
-    records = [
+def _latched_cell_records(workdir: Path, *between: dict[str, Any]) -> list[dict[str, Any]]:
+    """A yielded cell, then a typed write into an unmapped session that latches it."""
+    return [
         _cell("launch", _launch(PYTEST, workdir)),
         _cell_output("launch", _yielded("cell-y")),
         _cell("typed", _typed_into_dead_session(SESSION_ID)),
         _cell_output("typed", "Output:\nls\n"),
-        _task_complete(),
-        _compacted(),
+        *between,
         _cell("ruff", _literal(RUFF, workdir)),
     ]
+
+
+def test_typed_latch_survives_a_turn_end_and_compaction_and_names_its_cell(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A turn end and a compaction do not clear a typed latch: only an observed exit does."""
+    workdir = tmp_path / "task"
+    records = _latched_cell_records(workdir, _task_complete(), _compacted())
+    _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
+    assert response.decision == "block"
+    assert "cannot prove its working directory" in (response.reason or "")
+    assert "held by cell cell-y" in (response.reason or "")
+    assert "wait on cell cell-y until it exits" in (response.reason or "")
+
+
+def test_waiting_a_latched_cell_to_exit_clears_its_latch(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """Observing the latched cell finish releases the latch: a later literal proof is admitted."""
+    workdir = tmp_path / "task"
+    completed = "Script completed\nWall time 0.0 seconds\nOutput:\n"
+    records = _latched_cell_records(workdir, *_wait_result("wait", "cell-y", completed))
     event, response = _hook(event_handlers, tmp_path, records, command=RUFF)
     assert response.decision == "allow", response.reason
     assert current_tool_cwd(event.data) == workdir
 
 
-def test_synthetic_re_yielding_wait_re_tracks_a_released_sticky_cell(
+def test_unreadable_wait_result_keeps_the_typed_latch(
     event_handlers: EventHandlers, tmp_path: Path
 ) -> None:
-    """Synthetic guard: a wait that re-yields the released cell makes it pending again, so it refuses."""
+    """An unreadable wait result is no proof of exit, so the latched cell keeps refusing."""
     workdir = tmp_path / "task"
-    records = [
-        _cell("launch", _launch(PYTEST, workdir)),
-        _cell_output("launch", _yielded("cell-y")),
-        _cell("typed", _typed_into_dead_session(SESSION_ID)),
-        _cell_output("typed", "Output:\nls\n"),
-        _task_complete(),
-        _compacted(),
-        *_wait_result("wait", "cell-y", _yielded("cell-y")),
-        _cell("ruff", _literal(RUFF, workdir)),
-    ]
+    records = _latched_cell_records(workdir, *_wait_result("wait", "cell-y", "Output:\npartial"))
     _, response = _hook(event_handlers, tmp_path, records, command=RUFF)
     assert response.decision == "block"
-    assert "cannot prove its working directory" in (response.reason or "")
+    assert "wait on cell cell-y until it exits" in (response.reason or "")
+
+
+def test_a_new_session_starts_without_a_typed_latch(
+    event_handlers: EventHandlers, tmp_path: Path
+) -> None:
+    """A new session's rollout carries no latch, so its literal proof is admitted."""
+    workdir = tmp_path / "task"
+    next_session = tmp_path / "next-session"
+    next_session.mkdir()
+    records = [_cell("ruff", _literal(RUFF, workdir))]
+    event, response = _hook(event_handlers, next_session, records, command=RUFF)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir

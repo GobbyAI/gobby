@@ -1,7 +1,8 @@
-"""A failed literal write releases its latch only when that write is the cell's only typing code."""
+"""Typed latches: a failed sole literal write releases; only an observed exit clears a live cell."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -50,6 +51,27 @@ def test_failed_literal_write_that_is_the_only_typing_code_releases_its_latch() 
     assert chain.snapshot_state()["sticky_unattributed"] == ["launch"]
     chain.resolve_output("typed", FAILED_WRITE)
     assert chain.snapshot_state()["sticky_unattributed"] == []
+
+
+def test_compaction_keeps_a_typed_latch_on_its_live_cell() -> None:
+    """A compaction does not end a live cell, so its typed latch holds."""
+    chain = _pending_launch()
+    chain.register_call("typed", "exec", LITERAL_WRITE)
+    chain.abandon_unresolved_calls()
+    state = chain.snapshot_state()
+    assert "cell-y" in state["cells"]
+    assert state["sticky_unattributed"] == ["launch"]
+
+
+def test_unreadable_wait_result_keeps_a_typed_latch_and_its_cell() -> None:
+    """A wait with no readable outcome is no proof the cell exited: the cell stays live."""
+    chain = _pending_launch()
+    chain.register_call("typed", "exec", LITERAL_WRITE)
+    assert chain.register_call("wait", "wait", json.dumps({"cell_id": "cell-y"}))
+    chain.resolve_output("wait", "Output:\npartial")
+    state = chain.snapshot_state()
+    assert "cell-y" in state["cells"]
+    assert state["sticky_unattributed"] == ["launch"]
 
 
 @pytest.mark.parametrize(

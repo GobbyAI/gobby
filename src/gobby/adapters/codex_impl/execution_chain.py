@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
-from gobby.adapters.codex_impl.cell_boundaries import CellBoundaries
 from gobby.adapters.codex_impl.cell_shell_reach import (
     may_reach_shell,
     may_type_input,
@@ -587,7 +586,6 @@ class ExecutionChainCorrelator:
         self._ambiguous_sessions: dict[str, None] = {}
         self._sticky_unattributed: dict[str, None] = {}
         self._typed_latches: dict[str, TypedLatch] = {}
-        self._boundaries = CellBoundaries()
         self._live_sequence = 0
         self._overflowed = False
         self._pending_overflowed = False
@@ -667,9 +665,6 @@ class ExecutionChainCorrelator:
                 cell_id = _normalize_session_id(decoded.get("cell_id"))
                 if cell_id is not None and cell_id not in self._ambiguous_cells:
                     execution = self._cells.get(cell_id)
-                    if execution is None and self._boundaries.revives(cell_id):
-                        # The rollout ended this cell, but a wait on it can still observe it.
-                        execution = PendingExecution(call_id)
         if execution is None:
             return False
         code_mode = name in FUNCTIONS_EXEC_NAMES or name in WAIT_NAMES
@@ -692,7 +687,6 @@ class ExecutionChainCorrelator:
         if yielded_cell is not None:
             pending = replace(execution, cell_id=yielded_cell)
             self._retire_cells(execution.outer_call_id, keep=yielded_cell)
-            self._boundaries.yielded(yielded_cell)
             self._set_pending(self._cells, yielded_cell, pending)
             return ExecutionResolution("pending", execution=pending)
 
@@ -742,11 +736,15 @@ class ExecutionChainCorrelator:
                 summary = runner_summary_result(execution, output_text)
                 if summary is not None:
                     return ExecutionResolution("terminal", execution=execution, results=(summary,))
-        if execution.session_id is None:
-            self._clear_execution(execution)
-        elif execution.cell_id is not None:
-            # A truncated PTY chunk is undecidable, not proof that the shell ended.
-            self._cells.pop(execution.cell_id, None)
+        # Only an observed exit clears a typed latch: a completed cell, never an unreadable one.
+        completed = _functions_exec_terminal_result(output) is not None
+        if not self._latched(execution.outer_call_id) or completed:
+            if execution.session_id is None:
+                self._clear_execution(execution)
+            elif execution.cell_id is not None:
+                # A truncated PTY chunk is undecidable, not proof that the shell ended.
+                self._cells.pop(execution.cell_id, None)
+            self._refresh_sticky()
         return ExecutionResolution(
             "unknown",
             execution=execution,
@@ -844,22 +842,20 @@ class ExecutionChainCorrelator:
     def abandon_unresolved_calls(self) -> None:
         """Drop calls whose output a compaction boundary discarded.
 
-        Sessions keep their state, and so does a yielded cell unless its turn already
-        ended (CellBoundaries): a live cell still has its own output and resolves later.
+        Cells and sessions keep their state: a yielded cell or running process still
+        has its own output or session id and resolves later.
         """
         self._calls.clear()
-        self._boundaries.compacted(self._cells)
-        self._refresh_sticky()
-
-    def turn_completed(self) -> None:
-        """A task_complete record: each cell pending now awaits the compaction that ends it."""
-        self._boundaries.turn_completed(self._cells)
 
     def _mark_sticky_unattributed(self, call_id: str, session_id: str | None) -> None:
         """Typed input may reach a shell no execution owns: mark exactly the pending cells."""
         marked = tuple(cell.outer_call_id for cell in self._cells.values())
         self._typed_latches[call_id] = TypedLatch(session_id, marked)
         self._refresh_sticky()
+
+    def _latched(self, outer_call_id: str) -> bool:
+        """Whether a live typed latch marks this execution's cell."""
+        return any(outer_call_id in latch.outer_call_ids for latch in self._typed_latches.values())
 
     def _refresh_sticky(self) -> None:
         """Keep each latch's cells that are still pending; a latch with none left is dropped."""
@@ -888,7 +884,6 @@ class ExecutionChainCorrelator:
                 key: {"session_id": latch.session_id, "outer_call_ids": list(latch.outer_call_ids)}
                 for key, latch in self._typed_latches.items()
             },
-            "cell_boundaries": self._boundaries.snapshot(),
             "complete": not self._overflowed,
             "pending_complete": not self._pending_overflowed,
         }
@@ -907,7 +902,6 @@ class ExecutionChainCorrelator:
             key: TypedLatch(value["session_id"], tuple(value["outer_call_ids"]))
             for key, value in (typed.items() if isinstance(typed, Mapping) else ())
         }
-        self._boundaries.hydrate(state.get("cell_boundaries"))
 
     def _hydrate_map(self, value: Any) -> dict[str, PendingExecution]:
         if not isinstance(value, dict):
@@ -992,6 +986,7 @@ class ExecutionChainCorrelator:
         self._retire_cells(execution.outer_call_id)
         if execution.session_id is not None:
             self._sessions.pop(execution.session_id, None)
+        self._refresh_sticky()
 
 
 DynamicExecCorrelator = ExecutionChainCorrelator
