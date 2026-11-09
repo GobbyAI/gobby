@@ -37,4 +37,7 @@ def configure_build_root(value: str | None) -> Path:
 
 def agent_build_root() -> Path:
     """Return the root build folders are written under in this process."""
+    if _configured is not None:
+        # A dedicated volume can disappear after startup; never recreate its root.
+        validate_build_root(str(_configured))
     return _configured if _configured is not None else default_build_root()
