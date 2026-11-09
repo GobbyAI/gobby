@@ -1,13 +1,17 @@
-"""The live-team definition that blocker resolution and team admission share.
+"""The live-team definition that team admission and claim authority share.
 
 A team is live while its admit step execution holds the team record, the record has no
-teardown outcome, and its worktree row is active. Team admission reads these rows through
-``gobby.agents.team_scope``; blocker resolution embeds the same SQL through
-``gobby.storage.tasks._team_blockers``. The SQL is written once, here.
+teardown outcome, and its worktree row is live: active, or merged by a landing while the
+open task's team keeps working. ``gobby.agents.team_scope`` reads these rows and checks
+trees against the same ``LIVE_TREE_STATUSES``. The SQL is written once, here.
 """
+
+from gobby.storage.worktrees import WorktreeStatus
 
 ADMISSION_STEP = "admit"
 EPIC_MODE = "epic"
+LIVE_TREE_STATUSES = frozenset({WorktreeStatus.ACTIVE.value, WorktreeStatus.MERGED.value})
+_LIVE_TREE_STATUS_SQL = ", ".join(f"'{status}'" for status in sorted(LIVE_TREE_STATUSES))
 
 
 def live_team_rows_sql() -> str:
@@ -23,5 +27,5 @@ def live_team_rows_sql() -> str:
         WHERE se.step_id = '{ADMISSION_STEP}'
           AND se.output_json #>> '{{team,team_id}}' = se.execution_id::text
           AND se.output_json #>> '{{teardown,outcome}}' IS NULL
-          AND w.status = 'active'
+          AND w.status IN ({_LIVE_TREE_STATUS_SQL})
     """
