@@ -301,40 +301,25 @@ class AttentionStateManager:
         *,
         live_session_statuses: Sequence[str],
     ) -> list[AttentionRosterRow]:
-        """Load every machine's runs, sessions, tasks, and terminals in one round trip."""
+        """Load every machine's live runs, sessions, tasks, and terminals in one round trip.
+
+        Only live work is listed. An ended run or session leaves the roster even while its
+        task stays open or claimed, so the operator's sidebar shows no row it cannot open
+        (Josh, 2026-11-09: "dumbass agents left a bunch of dead agents showing up in my
+        sidebar"). An open task with no live seat therefore carries no marker.
+        """
         rows = self.db.fetchall(
             """
             WITH eligible_runs AS MATERIALIZED (
                 SELECT id FROM agent_runs WHERE status IN ('queued', 'running', 'pending')
-                UNION
-                SELECT run.id
-                FROM tasks owned
-                JOIN agent_runs run ON run.task_id = owned.id
-                WHERE owned.closed_at IS NULL
-                UNION
-                SELECT run.id
-                FROM tasks owned
-                JOIN agent_runs run ON run.child_session_id = owned.claimed_by_session_id
-                WHERE owned.closed_at IS NULL AND owned.claimed_by_session_id IS NOT NULL
             ), eligible_sessions AS MATERIALIZED (
                 SELECT id FROM sessions WHERE status = ANY(%s)
-                UNION
-                SELECT claimed_by_session_id FROM tasks
-                WHERE closed_at IS NULL AND claimed_by_session_id IS NOT NULL
             )
             SELECT
                 'run' AS roster_kind,
                 run.id::text AS source_id,
                 run.child_session_id::text AS session_id,
-                CASE
-                    WHEN task.id IS NOT NULL AND task.closed_at IS NULL
-                         AND NOT COALESCE(
-                             child.status = ANY(%s),
-                             run.status IN ('queued', 'running', 'pending')
-                         )
-                        THEN 'dead'::text
-                    ELSE COALESCE(child.status, run.status)::text
-                END AS lifecycle_status,
+                COALESCE(child.status, run.status)::text AS lifecycle_status,
                 task.id::text AS task_id,
                 CASE
                     WHEN task.id IS NULL THEN NULL
@@ -384,12 +369,6 @@ class AttentionStateManager:
             ) claimed ON TRUE
             LEFT JOIN tasks task ON task.id = COALESCE(claimed.id, run.task_id)
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
-            WHERE run.status IN ('queued', 'running', 'pending')
-               OR (task.id IS NOT NULL AND task.closed_at IS NULL
-                   AND NOT COALESCE(
-                       child.status = ANY(%s),
-                       run.status IN ('queued', 'running', 'pending')
-                   ))
 
             UNION ALL
 
@@ -397,11 +376,7 @@ class AttentionStateManager:
                 'session' AS roster_kind,
                 session.id::text AS source_id,
                 session.id::text AS session_id,
-                CASE
-                    WHEN claimed.id IS NOT NULL AND NOT (session.status = ANY(%s))
-                        THEN 'dead'::text
-                    ELSE session.status::text
-                END AS lifecycle_status,
+                session.status::text AS lifecycle_status,
                 claimed.id::text AS task_id,
                 CASE
                     WHEN claimed.id IS NULL THEN NULL
@@ -468,12 +443,10 @@ class AttentionStateManager:
                          owned.updated_at DESC, owned.id
                 LIMIT 1
             ) claimed ON TRUE
-            WHERE session.status = ANY(%s) OR claimed.id IS NOT NULL
 
             ORDER BY roster_kind, source_id
             """,
-            # Candidate sessions, run lifecycle/retention, session lifecycle/retention.
-            (list(live_session_statuses),) * 5,
+            (list(live_session_statuses),),
         )
         return [AttentionRosterRow.from_row(row) for row in rows]
 
