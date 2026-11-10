@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -627,24 +629,47 @@ async def _mcp_precheck(
     return None
 
 
+_NO_FOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
 def _clear_generated_untracked(worktree: Path, relpaths: list[str]) -> str | None:
     """Delete spawn-generated untracked paths so a non-forced removal can proceed.
 
-    Only paths inside the tree are touched; a symlink is unlinked, never followed.
+    Every component is opened relative to its parent's descriptor without following a
+    symlink, so a parent swapped for a symlink after git status cannot redirect the unlink
+    or rmtree outside the tree. A final symlink is unlinked, never followed.
     """
     for relpath in relpaths:
         rel = Path(relpath)
         if rel.is_absolute() or not rel.parts or ".." in rel.parts:
             return f"Refusing to clear a path outside the worktree: {relpath}"
-        target = worktree / rel
         try:
-            if target.is_symlink() or target.is_file():
-                target.unlink()
-            elif target.is_dir():
-                shutil.rmtree(target)
+            _clear_one_generated_path(worktree, rel.parts)
+        except FileNotFoundError:
+            continue
         except OSError as exc:
             return f"Cannot clear generated path {relpath}: {exc}"
     return None
+
+
+def _clear_one_generated_path(worktree: Path, parts: tuple[str, ...]) -> None:
+    """Remove ``parts`` under ``worktree`` through no-follow descriptors only.
+
+    A symlinked root or parent raises (ELOOP or ENOTDIR) instead of being traversed.
+    """
+    parent_fd = os.open(worktree, _NO_FOLLOW_DIR)
+    try:
+        for part in parts[:-1]:
+            child_fd = os.open(part, _NO_FOLLOW_DIR, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = child_fd
+        name = parts[-1]
+        if stat.S_ISDIR(os.lstat(name, dir_fd=parent_fd).st_mode):
+            shutil.rmtree(name, dir_fd=parent_fd)
+        else:
+            os.unlink(name, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
 
 
 async def _verify_removed(git_manager: WorktreeGitManager, worktree_path: str) -> str | None:
