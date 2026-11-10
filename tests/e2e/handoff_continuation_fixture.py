@@ -235,7 +235,18 @@ async def handoff_fixture(
             clean = True
         finally:
             await trace.close()
-            if clean and process is not None and process.poll() is None:
+            if not clean and proof is not None:
+                # A failed case still stops its private host (and the real seat in it) so it
+                # cannot hold the shared test hub and fail the next case; logs are kept below.
+                try:
+                    control = await _open_control(host)
+                    try:
+                        await control.host_shutdown(grace_ms=1000)
+                    finally:
+                        await control.close()
+                except (OSError, RuntimeError, ValueError, TimeoutError):
+                    pass
+            if process is not None and process.poll() is None:
                 await asyncio.to_thread(terminate_process_tree, process.pid)
             if spec.artifact_dir is not None:
                 artifact = spec.artifact_dir / f"handoff-proof-{uuid4()}.json"

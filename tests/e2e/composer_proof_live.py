@@ -233,19 +233,11 @@ class LiveProof:
                     start = len(ws.messages)
                     item = await self.terminal(terminal_id)
             locator = self.locator(item)
-            own = Surface(
-                provider,
-                str(item.get("session_id")),
-                terminal_id,
-                locator.frame_host_epoch,
-                str(item.get("project_id")),
-            )
+            own, details = await self.row_surface(provider, item)
             self.scope.require_surface(own, own)
-            details = await self.call(
-                "gobby-sessions", "get_session", {"session_id": own.session_id}
-            )
             if (
-                details.get("source") != provider
+                own.terminal_id != terminal_id
+                or details.get("source") != provider
                 or details.get("project_id") != self.scope.project_id
             ):
                 raise ProofRefused("real provider registration mismatch")
@@ -292,16 +284,27 @@ class LiveProof:
             raise ProofRefused("native host binding outside private proof root")
         return locator
 
+    async def row_surface(
+        self, provider: str, row: dict[str, Any]
+    ) -> tuple[Surface, dict[str, Any]]:
+        """Surface of a terminal row plus its bound session's details.
+
+        Terminal rows carry no project; the daemon's session record names it.
+        """
+        session_id = str(row.get("session_id"))
+        details = await self.call("gobby-sessions", "get_session", {"session_id": session_id})
+        surface = Surface(
+            provider,
+            session_id,
+            str(row.get("id")),
+            self.locator(row).frame_host_epoch,
+            str(details.get("project_id")),
+        )
+        return surface, details
+
     async def validate(self, seat: Seat) -> dict[str, Any]:
         row = await self.terminal(seat.surface.terminal_id)
-        locator = _attach_locator(row)
-        observed = Surface(
-            seat.surface.provider,
-            str(row.get("session_id")),
-            str(row.get("id")),
-            locator.frame_host_epoch,
-            str(row.get("project_id")),
-        )
+        observed, _ = await self.row_surface(seat.surface.provider, row)
         self.scope.require_surface(seat.surface, observed)
         if self.locator(row) != seat.locator:
             raise ProofRefused("native attachment binding changed")

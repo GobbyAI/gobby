@@ -7,7 +7,7 @@ from pathlib import Path
 from gobby.agents.idle_detector import IdleDetector
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_protocol import frames_socket_path
-from tests.e2e.composer_proof import ProofRefused, Surface
+from tests.e2e.composer_proof import ProofRefused
 from tests.e2e.composer_proof_live import Frames, LiveProof, ProofWsSession, Seat
 from tests.e2e.composer_proof_runner import main as composer_main
 from tests.e2e.conftest import daemon_token
@@ -48,16 +48,13 @@ async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
                 start = len(ws.messages)
                 item = await proof.terminal(terminal_id)
         locator = proof.locator(item)
-        own = Surface(
-            provider,
-            str(item.get("session_id")),
-            terminal_id,
-            locator.frame_host_epoch,
-            str(item.get("project_id")),
-        )
+        own, details = await proof.row_surface(provider, item)
         proof.scope.require_surface(own, own)
-        details = await proof.call("gobby-sessions", "get_session", {"session_id": own.session_id})
-        if details.get("source") != provider or details.get("project_id") != proof.scope.project_id:
+        if (
+            own.terminal_id != terminal_id
+            or details.get("source") != provider
+            or details.get("project_id") != proof.scope.project_id
+        ):
             raise ProofRefused("real provider registration mismatch")
         await ws.attach(terminal_id, delivery="direct", request_id=f"proof-{provider}")
         control = await ws.take(terminal_id, takeover=False)
