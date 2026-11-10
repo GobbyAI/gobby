@@ -311,7 +311,13 @@ fn fetch_daemon_peer(
             return PeerDoctorOutcome::TransportError(format!("read local CLI token: {error}"));
         }
     };
-    let response = match daemon_doctor_request(&client, &url, &token, grant).send() {
+    let bearer = match gobby_core::grant::presentation_bearer(grant, &token) {
+        Ok(bearer) => bearer,
+        Err(error) => {
+            return PeerDoctorOutcome::TransportError(format!("present grant: {error}"));
+        }
+    };
+    let response = match daemon_doctor_request(&client, &url, &bearer, grant).send() {
         Ok(response) => response,
         Err(error) => {
             return PeerDoctorOutcome::TransportError(format!("send peer doctor request: {error}"));

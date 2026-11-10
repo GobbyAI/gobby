@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +19,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.users import LocalUserManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.workflows.dirty_edit_grants import (
     OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE,
     approved_dirty_paths,
@@ -95,13 +95,14 @@ def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
 def test_dirty_path_approval_route_refuses_managed_claims(
     db: HubDatabase, seat: Session, tmp_path: Path
 ) -> None:
+    server = _server(db)
     token = issue_agent_api_token(
-        derive_managed_signing_key(BOOTSTRAP_KEY),
+        cast(bytes, server.auth_service.managed_signing_key()),
         agent_run_id=str(uuid.uuid4()),
         session_id=seat.id,
         project_id="project-123",
     )
-    response = TestClient(_server(db).app).post(
+    response = TestClient(server.app).post(
         _route(seat.id),
         json=_body(tmp_path),
         headers={"Authorization": f"Bearer {token}"},

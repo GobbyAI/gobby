@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx2 import Response
@@ -20,7 +20,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.users import LocalUserManager
 from gobby.utils import api_key_format
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.postgres import TEST_USER_EMAIL, TEST_USER_ID
 from tests.servers.conftest import create_http_server
@@ -194,7 +194,7 @@ def test_management_routes_admit_only_resolved_principals(db: HubDatabase) -> No
         "UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00+00:00'",
     )
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key(BOOTSTRAP_KEY),
+        cast(bytes, server.auth_service.managed_signing_key()),
         agent_run_id=str(uuid.uuid4()),
         session_id="session-123",
         project_id="project-123",

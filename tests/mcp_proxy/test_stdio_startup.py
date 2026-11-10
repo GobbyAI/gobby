@@ -385,7 +385,7 @@ def test_bridge_import_defers_config_and_storage_layers() -> None:
 
 # The bridge's first tool call against a daemon that serves tool timeouts of its own.
 _FIRST_TOOL_CALL = """
-import asyncio, logging, sys
+import asyncio, logging, os, sys
 import httpx
 import gobby.cli, gobby.mcp_proxy.stdio
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
@@ -407,6 +407,9 @@ deps = DaemonProxyDependencies(
     http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
     logger=logging.getLogger("probe"),
 )
+# A managed run carries its own capability, so the probe needs no bound CLI session record.
+os.environ["GOBBY_AGENT_RUN_ID"] = "probe-run"
+os.environ["GOBBY_AGENT_API_TOKEN"] = "probe-agent-token"
 proxy = DaemonProxy(60887, deps_factory=lambda: deps)
 result = asyncio.run(proxy.call_tool("example", "ready"))
 """

@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 
 AGENT_RUN_ID_HEADER = "X-Gobby-Agent-Run-Id"
 TERMINAL_CONTEXT_HEADER = "X-Gobby-Terminal-Context"
+SESSION_ID_HEADER = "X-Gobby-Session-Id"
+MANAGED_EXECUTION_ID_HEADER = "X-Gobby-Managed-Execution-Id"
+
+# Headers that name a session, run or execution a request acts as. Only a
+# session-bound credential may carry them; machine-bearer callers never do.
+SESSION_SELECTOR_HEADERS = (
+    SESSION_ID_HEADER,
+    AGENT_RUN_ID_HEADER,
+    MANAGED_EXECUTION_ID_HEADER,
+    TERMINAL_CONTEXT_HEADER,
+)
 
 
 @dataclass(frozen=True)

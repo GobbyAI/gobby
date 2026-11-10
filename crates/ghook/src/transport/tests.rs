@@ -370,7 +370,14 @@ fn quarantine_writes_pair() {
 #[test]
 fn post_and_cleanup_captures_success_response_body() {
     let dir = tempdir().unwrap();
-    let inbox = dir.path().join("inbox");
+    // An unspawned caller: the machine key never travels with a session selector header.
+    with_transport_test_env(dir.path(), || {
+        post_and_cleanup_captures_success_response_body_in(dir.path())
+    });
+}
+
+fn post_and_cleanup_captures_success_response_body_in(dir: &std::path::Path) {
+    let inbox = dir.join("inbox");
     let mut headers = BTreeMap::new();
     headers.insert("X-Gobby-Session-Id".to_string(), "s".to_string());
     let envelope = Envelope::new(
@@ -395,7 +402,7 @@ fn post_and_cleanup_captures_success_response_body() {
         let request = read_http_request(&mut stream);
         assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
         assert!(request.contains(&format!("{ENVELOPE_ID_HEADER}: {envelope_id}")));
-        assert!(request.contains("X-Gobby-Session-Id: s"));
+        assert!(!request.contains("X-Gobby-Session-Id: s"));
         assert!(request.contains("\"hook_type\":\"SessionStart\""));
         assert!(request.contains("\"input_data\":{\"session_id\":\"s\"}"));
         assert!(request.contains("\"source\":\"codex\""));

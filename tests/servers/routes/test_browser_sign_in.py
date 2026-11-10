@@ -4,7 +4,7 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
@@ -156,7 +156,7 @@ def managed_headers(
     from gobby.servers.auth_service import AuthService
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
-    from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+    from gobby.utils.local_token import issue_agent_api_token
 
     project_id = str(sample_project["id"])
     session = SessionManager(hub_db).register(
@@ -172,7 +172,7 @@ def managed_headers(
     bootstrap.write_text("api_key: isolated-operator-key\n")
     sign_in_server.auth_service = AuthService(lambda: hub_db, bootstrap_file=bootstrap)
     token = issue_agent_api_token(
-        derive_managed_signing_key("isolated-operator-key"),
+        cast(bytes, sign_in_server.auth_service.managed_signing_key()),
         agent_run_id=run.id,
         session_id=session.id,
         project_id=project_id,

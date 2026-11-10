@@ -28,7 +28,7 @@ from gobby.servers.routes.mcp.tools import create_mcp_router
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.session_context import SeededContextTokens
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.servers.conftest import create_http_server
@@ -177,7 +177,7 @@ def _agent_bridge_client(
         break_glass_file=tmp_path / "missing-break-glass",
     )
     token = issue_agent_api_token(
-        derive_managed_signing_key("bridge-operator-token"),
+        cast(bytes, server.auth_service.managed_signing_key()),
         agent_run_id=run.id,
         session_id=own.id,
         project_id=project_id,

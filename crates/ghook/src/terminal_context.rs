@@ -60,7 +60,7 @@ pub fn enabled_for_hook(hook_type: &str) -> bool {
         )
 }
 
-fn normalized_hook_type(hook_type: &str) -> String {
+pub(crate) fn normalized_hook_type(hook_type: &str) -> String {
     hook_type
         .chars()
         .filter(|ch| !matches!(ch, '-' | '_'))

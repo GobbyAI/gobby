@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod daemon_start;
 mod restart_hold;
 pub mod server;
+mod session_binding;
 pub mod shaping;
 pub mod terminal_context;
 pub mod tools;

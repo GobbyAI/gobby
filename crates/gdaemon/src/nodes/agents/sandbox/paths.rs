@@ -219,7 +219,9 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
 /// `credential_roots`: install credentials, the daemon's startup files, and the operator's
 /// canonical bootstrap, which the oracle appends last. The oracle denies the bootstrap the daemon
 /// bound at startup. `PolicyInputs` carries no bound path, so the default
-/// `gobby_home/bootstrap.yaml` stands in for it.
+/// `gobby_home/bootstrap.yaml` stands in for it. The capability signing key (and the directory
+/// its bytes are staged in) can forge any session token, and the session-credentials store holds
+/// live session tokens; a sandboxed seat presents its own run token and needs neither.
 fn credential_roots(gobby: &Path, operator_bootstrap: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = vec![
         gobby.join("bootstrap.yaml"),
@@ -228,6 +230,9 @@ fn credential_roots(gobby: &Path, operator_bootstrap: Option<&Path>) -> Vec<Path
         gobby.join("tools").join("srt"),
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
+        gobby.join("session-credentials"),
+        gobby.join("capability_signing_key"),
+        gobby.join(".capability_signing_key-staging"),
     ];
     roots.extend(operator_bootstrap.map(Path::to_path_buf));
     roots

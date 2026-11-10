@@ -318,7 +318,8 @@ async def test_barrier_replays_fresh_envelope_end_to_end(tmp_path: Path) -> None
     assert is_envelope_processed(envelope_id, processed_dir=inbox_dir / "processed")
     post.assert_awaited_once()
     assert post.await_args is not None
-    assert post.await_args.kwargs == {"envelope_id": envelope_id}
+    assert set(post.await_args.kwargs) == {"envelope_id", "app"}
+    assert post.await_args.kwargs["envelope_id"] == envelope_id
 
 
 @pytest.mark.asyncio
@@ -758,11 +759,14 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
         "n-0000000000001-abcd",
         processed_dir=inbox_dir / "processed",
     )
+    # Session selector headers are dropped on replay: the operator-token replay
+    # is a machine caller, and the envelope body names its session.
+    # See tests/hooks/test_inbox_replay_selectors.py.
     mock_client.post.assert_awaited_once_with(
         "/api/hooks/execute",
         json=envelope,
         headers={
-            **envelope["headers"],
+            "X-Gobby-Project-Id": "proj-123",
             ENVELOPE_ID_HEADER: "n-0000000000001-abcd",
             "Authorization": "Bearer test-operator-token",
         },
@@ -1385,7 +1389,8 @@ async def test_barrier_horizon_replays_pre_horizon_and_skips_live(tmp_path: Path
     assert live_path.exists()
     post.assert_awaited_once()
     assert post.await_args is not None
-    assert post.await_args.kwargs == {"envelope_id": "n-1000-stale"}
+    assert set(post.await_args.kwargs) == {"envelope_id", "app"}
+    assert post.await_args.kwargs["envelope_id"] == "n-1000-stale"
 
 
 @pytest.mark.asyncio
@@ -2068,7 +2073,9 @@ async def test_drain_skips_session_after_adapter_timeout_and_replays_others(
         paths[envelope_id] = _write_inbox_envelope(inbox_dir, envelope_id, envelope)
     posted: list[str | None] = []
 
-    async def post(envelope: dict[str, Any], *, envelope_id: str | None = None) -> httpx.Response:
+    async def post(
+        envelope: dict[str, Any], *, envelope_id: str | None = None, app: object = None
+    ) -> httpx.Response:
         posted.append(envelope_id)
         if envelope["headers"]["X-Gobby-Session-Id"] == "wedged-session":
             return httpx.Response(503, json={"status": "retry", "retry_kind": "adapter_timeout"})
@@ -2094,7 +2101,9 @@ async def test_drain_keeps_replaying_session_after_other_503(tmp_path: Path) -> 
         _write_inbox_envelope(inbox_dir, envelope_id, envelope)
     posted: list[str | None] = []
 
-    async def post(envelope: dict[str, Any], *, envelope_id: str | None = None) -> httpx.Response:
+    async def post(
+        envelope: dict[str, Any], *, envelope_id: str | None = None, app: object = None
+    ) -> httpx.Response:
         posted.append(envelope_id)
         return httpx.Response(503, json={"status": "retry", "retry_kind": "preflight_timeout"})
 

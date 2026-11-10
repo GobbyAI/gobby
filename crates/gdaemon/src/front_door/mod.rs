@@ -284,14 +284,18 @@ fn upgrade_required() -> Response<Body> {
     response
 }
 
+/// The socket peer port gdaemon observed for a request. Set only by `observe_peer`.
+pub const PEER_PORT_HEADER: &str = "x-gobby-peer-port";
+
 /// Client-supplied forwarding headers. Each is dropped before any route or
 /// splice sees the request, so the backend only learns the observed peer.
-const FORWARDING_HEADERS: [&str; 5] = [
+const FORWARDING_HEADERS: [&str; 6] = [
     "forwarded",
     "x-forwarded-for",
     "x-forwarded-proto",
     "x-forwarded-host",
     "x-real-ip",
+    PEER_PORT_HEADER,
 ];
 
 /// Replace every forwarding header with the transport's own view: the peer's
@@ -330,4 +334,14 @@ fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
         HeaderName::from_static("x-forwarded-proto"),
         HeaderValue::from_static(scheme),
     );
+    // The accepted socket's own port, which the backend cannot see behind uvicorn's proxy
+    // rewrite. Trusted only with the front-door secret, which the backend verifies.
+    headers.insert(
+        HeaderName::from_static(PEER_PORT_HEADER),
+        HeaderValue::from(peer.port()),
+    );
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
