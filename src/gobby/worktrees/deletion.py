@@ -22,6 +22,7 @@ from gobby.agents.isolation_git_hygiene import blocking_status_lines
 from gobby.storage.worktrees import WorktreeStatus
 from gobby.utils.daemon_git import pending_unreaped_children, unreaped_children_scope
 from gobby.utils.git import run_thread_to_completion
+from gobby.utils.nofollow_dirs import open_nofollow_dir
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
 from gobby.worktrees.git import worktree_registration_is_absent
@@ -629,9 +630,6 @@ async def _mcp_precheck(
     return None
 
 
-_NO_FOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
-
 def _clear_generated_untracked(worktree: Path, relpaths: list[str]) -> str | None:
     """Delete spawn-generated untracked paths so a non-forced removal can proceed.
 
@@ -657,12 +655,8 @@ def _clear_one_generated_path(worktree: Path, parts: tuple[str, ...]) -> None:
 
     A symlinked root or parent raises (ELOOP or ENOTDIR) instead of being traversed.
     """
-    parent_fd = os.open(worktree, _NO_FOLLOW_DIR)
+    parent_fd = open_nofollow_dir(worktree, parts[:-1])
     try:
-        for part in parts[:-1]:
-            child_fd = os.open(part, _NO_FOLLOW_DIR, dir_fd=parent_fd)
-            os.close(parent_fd)
-            parent_fd = child_fd
         name = parts[-1]
         if stat.S_ISDIR(os.lstat(name, dir_fd=parent_fd).st_mode):
             shutil.rmtree(name, dir_fd=parent_fd)

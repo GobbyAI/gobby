@@ -68,7 +68,7 @@ fn graph_and_vector_commands_request_only_needed_services() {
         config::ServiceConfigSelection::falkordb_only()
     );
     assert_eq!(
-        services_for(&["vector", "cleanup-orphans"]),
+        services_for(&["vector", "reconcile"]),
         config::ServiceConfigSelection::qdrant_only()
     );
     assert_eq!(

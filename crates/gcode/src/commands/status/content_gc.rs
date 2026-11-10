@@ -8,10 +8,22 @@ use postgres::Client;
 use crate::config::{Context, ServiceConfigSelection};
 use crate::db;
 use crate::graph::code_graph;
+use crate::index::indexer::effective_excludes;
+use crate::index::walker::HistoryPathEligibility;
 use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::vector::code_symbols;
 
 mod history;
+
+/// Retention verdict for one candidate version, before recent history is read.
+enum Retention {
+    /// The root is not a checkout now, so its candidates are kept.
+    Keep,
+    /// The current config does not index this path, so history cannot protect it.
+    Collect,
+    /// The path is indexed, so recent history at this path decides.
+    ConsultHistory,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ContentGcCandidate {
@@ -39,13 +51,12 @@ pub(super) struct ContentGcTotals {
 }
 
 pub(super) fn discover_content_gc(
-    database_url: &str,
+    ctx: &Context,
     retention_days: u32,
-    project_filter: Option<&str>,
 ) -> anyhow::Result<Vec<ContentGcCandidate>> {
-    let mut conn = db::connect_readonly(database_url)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
-    let project_filter = project_filter.map(db::id_param).transpose()?;
+    let project_id = db::id_param(&ctx.project_id)?;
     let retention_days = i32::try_from(retention_days).context("GC retention days exceed i32")?;
     let rows = conn.query(
         "SELECT f.id::text AS id,
@@ -94,7 +105,7 @@ pub(super) fn discover_content_gc(
           AND s.file_path = f.file_path
           AND s.file_content_hash = f.content_hash
          WHERE f.last_referenced_at < NOW() - make_interval(days => $2)
-           AND ($3::uuid IS NULL OR f.project_id = $3)
+           AND f.project_id = $3
            AND NOT EXISTS (
                SELECT 1 FROM code_indexed_file_states fs
                WHERE fs.project_id = f.project_id
@@ -110,24 +121,49 @@ pub(super) fn discover_content_gc(
          GROUP BY f.id, f.project_id, f.file_path, f.content_hash,
                   f.graph_synced, f.vectors_synced, ps.root_path
          ORDER BY f.project_id, f.file_path, f.content_hash",
-        &[&machine_id, &retention_days, &project_filter],
+        &[&machine_id, &retention_days, &project_id],
     )?;
 
-    // Recent-history lookups are one git batch per repository root: every
-    // candidate path of a root is checked against that root's history in a
-    // single call, so the cost is bounded by that history rather than by the
-    // candidate count (two git subprocesses per candidate path timed out the
-    // daemon's prune on a 4,800-path backlog, #21085).
-    let mut paths_by_root: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+    // Retention order: a root that is not an existing directory keeps its
+    // candidates. Under an existing root, a path the current config does not
+    // index is collected without a history lookup, because history cannot
+    // protect it. Only indexed paths consult history, once per root, so the
+    // cost is bounded by that history rather than by the candidate count (two
+    // git subprocesses per candidate path timed out the daemon's prune on a
+    // 4,800-path backlog, #21085). A history error keeps those paths.
+    let excludes = effective_excludes(&ctx.indexing.extra_excludes);
+    let mut eligibility_by_root: HashMap<PathBuf, Option<HistoryPathEligibility>> = HashMap::new();
+    let mut eligible_paths_by_root: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+    let mut verdicts = Vec::with_capacity(rows.len());
     for row in &rows {
         let root_path = PathBuf::from(row.try_get::<_, String>("root_path")?);
-        paths_by_root
-            .entry(root_path)
-            .or_default()
-            .insert(row.try_get("file_path")?);
+        let file_path: String = row.try_get("file_path")?;
+        let eligibility = eligibility_by_root
+            .entry(root_path.clone())
+            .or_insert_with(|| {
+                root_path.is_dir().then(|| {
+                    HistoryPathEligibility::new(
+                        &root_path,
+                        &excludes,
+                        ctx.indexing.respect_gitignore,
+                    )
+                })
+            });
+        let retention = match eligibility {
+            None => Retention::Keep,
+            Some(eligibility) if !eligibility.is_eligible(&file_path) => Retention::Collect,
+            Some(_) => {
+                eligible_paths_by_root
+                    .entry(root_path.clone())
+                    .or_default()
+                    .insert(file_path);
+                Retention::ConsultHistory
+            }
+        };
+        verdicts.push((root_path, retention));
     }
     let mut protected_by_root: HashMap<PathBuf, Option<HashSet<(String, String)>>> = HashMap::new();
-    for (root_path, paths) in &paths_by_root {
+    for (root_path, paths) in &eligible_paths_by_root {
         let looked_up = match history::recent_path_hashes(root_path, retention_days, paths) {
             Ok(protected) => Some(protected),
             Err(error) => {
@@ -142,17 +178,22 @@ pub(super) fn discover_content_gc(
         protected_by_root.insert(root_path.clone(), looked_up);
     }
     let mut candidates = Vec::new();
-    for row in rows {
-        let root_path = PathBuf::from(row.try_get::<_, String>("root_path")?);
+    for (row, (root_path, retention)) in rows.into_iter().zip(verdicts) {
         let version = (
             row.try_get::<_, String>("file_path")?,
             row.try_get::<_, String>("content_hash")?,
         );
-        match protected_by_root.get(&root_path) {
-            Some(Some(protected)) if !protected.contains(&version) => {}
-            // Protected by recent git history at this path, or history
-            // unavailable: retain.
-            _ => continue,
+        let retained = match retention {
+            Retention::Keep => true,
+            Retention::Collect => false,
+            Retention::ConsultHistory => match protected_by_root.get(&root_path) {
+                Some(Some(protected)) => protected.contains(&version),
+                // History unavailable: retain.
+                _ => true,
+            },
+        };
+        if retained {
+            continue;
         }
         let (file_path, content_hash) = version;
         candidates.push(ContentGcCandidate {

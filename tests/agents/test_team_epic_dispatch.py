@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -12,6 +15,8 @@ import pytest
 
 from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_lifecycle import managed_task_team
+from gobby.code_index.eligibility import code_index_id_for_root
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
@@ -21,6 +26,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.land_commit import land_candidate, task_landing_target
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import (
     DeletionSurface,
@@ -30,6 +36,7 @@ from gobby.worktrees.deletion import (
 )
 from gobby.worktrees.executor import run_worktree_delete
 from gobby.worktrees.git import WorktreeGitManager
+from tests.fixtures.gcode_binary import built_gcode_bin, cache_interactive_grant, interactive_grant
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import (
     TITLE,
@@ -307,6 +314,177 @@ async def test_pod_adopts_its_leafs_clean_tree_on_the_leaf_branch(world: TeamWor
     assert git_in(path, "branch", "--show-current") == branch
     assert git_in(path, "rev-parse", "HEAD") == head
     assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+async def test_pod_adoption_gives_a_markerless_leaf_tree_its_isolation_marker(
+    world: TeamWorld,
+) -> None:
+    """Adoption skips the isolation preflight, so it repairs the marker itself: a leaf tree
+    without one resolves as a bare checkout and its index refresh is refused."""
+    project_json = Path(world.case.repo) / ".gobby" / "project.json"
+    project_json.parent.mkdir(exist_ok=True)
+    project_json.write_text(json.dumps({"id": world.case.project_id}))
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    _, path, _ = leaf_tree(team, epic, leaf)
+    epic_head = git_in(tree_of(team.binding), "rev-parse", team.binding.branch)
+    assert not (path / ".gobby" / "isolation.json").exists()
+
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    assert tree_of(pod) == path
+    assert (path / ".gobby" / "isolation.json").is_file()
+    marker = json.loads((path / ".gobby" / "isolation.json").read_text())
+    assert Path(marker["ancestor_checkout_path"]).resolve() == Path(world.case.repo).resolve()
+    assert marker["base_commit"] == epic_head
+    # The gcode freshness fixture in crates/gcode/src/freshness/tests.rs mirrors this key set.
+    assert set(marker) == {
+        "parent_project_path",
+        "parent_project_id",
+        "base_commit",
+        "ancestor_checkout_path",
+        "ancestor_checkout_identity",
+    }
+    assert marker["parent_project_id"] == world.case.project_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_admitted_leaf_tree_serves_its_edit_through_built_gcode(
+    world: TeamWorld,
+    postgres_database_url: str,
+    postgres_schema: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admission hands gcode a markerless leaf tree; the built binary indexes it as an isolated
+    overlay, serves the leaf's own edited body, and registers no checkout row for the overlay."""
+    gcode = built_gcode_bin()
+    repo = Path(world.case.repo)
+    (repo / ".gobby").mkdir(exist_ok=True)
+    (repo / ".gobby" / "project.json").write_text(json.dumps({"id": world.case.project_id}))
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "sample.py").write_text("def epic_body():\n    return 1\n")
+    git_in(repo, "add", "pkg/sample.py")
+    git_in(repo, "commit", "-m", "seed the parent body")
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    _, path, _ = leaf_tree(team, epic, leaf)
+
+    machine = require_machine_id()
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    (home / "machine_id").write_text(machine, encoding="utf-8")
+    daemon_url = "http://127.0.0.1:1"
+    dsn = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    grant = interactive_grant(project_id=world.case.project_id, machine_id=machine, dsn=dsn)
+    cache_interactive_grant(home, daemon_url, grant)
+    cache_interactive_grant(
+        home,
+        daemon_url,
+        interactive_grant(
+            project_id=world.case.project_id,
+            machine_id=machine,
+            dsn=dsn,
+            code_overlay_project_id=code_index_id_for_root(path),
+        ),
+    )
+    env = os.environ.copy()
+    env.pop("GOBBY_AGENT_RUN_ID", None)
+    env.pop("GOBBY_MANAGED_EXECUTION_ID", None)
+    env.update(
+        GOBBY_HOME=str(home),
+        GOBBY_DAEMON_URL=daemon_url,
+        DATABASE_URL=dsn,
+        GCODE_BROKER_TIMEOUT_MS="1",
+    )
+
+    def run_gcode(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [gcode, "--project", str(root), *args],
+            cwd=root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+
+    indexed = run_gcode(repo, "index", "--full", "--quiet")
+    assert indexed.returncode == 0, indexed.stderr
+
+    async def pin(_gateway: object, root: Path) -> None:
+        pinned = run_gcode(root, "pin", "--quiet")
+        assert pinned.returncode == 0, pinned.stderr
+
+    monkeypatch.setattr("gobby.code_index.gcode_gateway.GcodeGateway.pin_project", pin)
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+    assert tree_of(pod) == path
+    marker = json.loads((path / ".gobby" / "isolation.json").read_text())
+    assert marker == {
+        "parent_project_path": str(repo.resolve()),
+        "parent_project_id": world.case.project_id,
+        "base_commit": git_in(repo, "rev-parse", team.binding.branch),
+        "ancestor_checkout_path": str(repo.resolve()),
+        "ancestor_checkout_identity": world.case.project_id,
+    }
+    (path / "pkg" / "sample.py").write_text("def leaf_body():\n    return 2\n")
+    served = run_gcode(path, "--format", "json", "symbol-at", "pkg/sample.py:1")
+    assert served.returncode == 0, served.stderr
+    assert "leaf_body" in served.stdout, served.stdout
+    assert "epic_body" not in served.stdout, served.stdout
+
+    overlay_id = code_index_id_for_root(path)
+    checkouts = world.case.db.fetchone(
+        "SELECT COUNT(*) AS n FROM project_checkouts WHERE project_id = %s", (overlay_id,)
+    )
+    assert checkouts is not None and checkouts["n"] == 0
+    assert CodeIndexStorage(world.case.db).get_file(overlay_id, "pkg/sample.py") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["ancestor_checkout_path", "ancestor_checkout_identity"])
+async def test_adopted_tree_repairs_untrusted_pin_before_gcode(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    repo = Path(world.case.repo)
+    (repo / ".gobby").mkdir(exist_ok=True)
+    (repo / ".gobby" / "project.json").write_text(json.dumps({"id": world.case.project_id}))
+    (repo / ".gitignore").write_text(".gobby/\n")
+    git_in(repo, "add", ".gitignore")
+    git_in(repo, "commit", "-m", "ignore local isolation metadata")
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    _, path, _ = leaf_tree(team, epic, leaf)
+    marker = {
+        "parent_project_path": str(repo.resolve()),
+        "parent_project_id": world.case.project_id,
+        "base_commit": git_in(repo, "rev-parse", team.binding.branch),
+        "ancestor_checkout_path": str(repo.resolve()),
+        "ancestor_checkout_identity": world.case.project_id,
+    }
+    marker[field] = "/untrusted-checkout" if field.endswith("path") else "untrusted-project"
+    (path / ".gobby").mkdir(exist_ok=True)
+    (path / ".gobby" / "isolation.json").write_text(json.dumps(marker))
+
+    async def pin(_gateway: object, root: Path) -> None:
+        repaired = json.loads((root / ".gobby" / "isolation.json").read_text())
+        assert repaired["ancestor_checkout_path"] == str(repo.resolve())
+        assert repaired["ancestor_checkout_identity"] == world.case.project_id
+
+    monkeypatch.setattr("gobby.code_index.gcode_gateway.GcodeGateway.pin_project", pin)
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+    assert tree_of(pod) == path
 
 
 @pytest.mark.asyncio

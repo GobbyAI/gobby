@@ -19,7 +19,8 @@ import pytest
 
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
-from gobby.code_index.gcode_gateway import GcodeCommandResult, GcodeGateway
+from gobby.code_index.gcode_gateway import GcodeCommandResult, GcodeGateway, GcodeIndexLock
+from gobby.code_index.trigger import CodeIndexTrigger
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from tests.fixtures.landing_case import LandingCase, make_landing_case
@@ -38,6 +39,7 @@ class _Refreshes:
     def __init__(self, *, raises: bool = False, returncode: int = 0) -> None:
         self.calls: list[tuple[Path, set[str]]] = []
         self.envs: list[object] = []
+        self.locks: list[object] = []
         self._raises = raises
         self._returncode = returncode
 
@@ -46,6 +48,7 @@ class _Refreshes:
     ) -> GcodeCommandResult:
         self.calls.append((Path(project_root).resolve(), set(files)))
         self.envs.append(kwargs.get("env"))
+        self.locks.append(kwargs.get("lock", GcodeIndexLock.SKIP))
         if self._raises:
             raise RuntimeError("gcode unavailable")
         return GcodeCommandResult(
@@ -108,6 +111,55 @@ async def test_fast_forward_landing_refreshes_index_for_landed_paths(case: Landi
     assert result["landed"] is True, result
     assert result["mode"] == "ff"
     assert refreshes.calls == [(case.repo.resolve(), {"src/landed.py", "docs/landed.md"})]
+
+
+async def test_landing_refresh_waits_for_a_busy_index_lock(case: LandingCase) -> None:
+    # A skip-if-locked refresh exits 3 without indexing, and the landing dropped that
+    # result, so the landed paths stayed stale. The refresh waits for the lock instead.
+    sha = case.candidate("lane", {"src/landed.py": "landed = 1\n"})
+    task = case.reviewed(sha)
+    _dirty_tracked_file(case)
+    refreshes = _Refreshes()
+
+    with patch.object(
+        GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes.__call__
+    ):
+        result = await case.land(task, sha)
+
+    assert result["landed"] is True, result
+    assert refreshes.locks == [GcodeIndexLock.WAIT]
+
+
+@pytest.mark.parametrize(
+    ("raises", "returncode"), [(True, 0), (False, 2)], ids=["raises", "nonzero-exit"]
+)
+async def test_landing_refresh_that_never_indexes_hands_its_paths_to_the_trigger(
+    case: LandingCase, raises: bool, returncode: int
+) -> None:
+    # A refresh killed at the landing timeout, or refused by the gate, indexes nothing.
+    # The code-index trigger retries the landed paths with backoff until the lock frees.
+    sha = case.candidate("lane", {"src/landed.py": "landed = 1\n", "docs/landed.md": "doc\n"})
+    task = case.reviewed(sha)
+    _dirty_tracked_file(case)
+    refreshes = _Refreshes(raises=raises, returncode=returncode)
+    trigger = MagicMock(spec=CodeIndexTrigger)
+    code_index = MagicMock(spec=CodeIndexContext, launch_factory=None, index_trigger=trigger)
+
+    with patch.object(
+        GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes.__call__
+    ):
+        result = await case.land(task, sha, code_index=code_index)
+
+    assert result["landed"] is True, result
+    repo = case.repo.resolve()
+    queued = {
+        Path(call.args[0]).resolve().relative_to(repo).as_posix()
+        for call in trigger.notify_file_changed.call_args_list
+    }
+    assert queued == {"src/landed.py", "docs/landed.md"}
+    assert {call.args[1] for call in trigger.notify_file_changed.call_args_list} == {
+        task.project_id
+    }
 
 
 async def test_merge_landing_refreshes_index_for_candidate_paths(case: LandingCase) -> None:

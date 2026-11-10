@@ -9,14 +9,16 @@ use crate::projection::{
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
     CodeSymbolVectorLifecycleOutput, EmbeddingSource, RebuiltSymbol, VectorLifecycleError,
-    VectorOrphanCleanup, embedding_source_from_context,
+    embedding_source_from_context,
 };
 use gobby_core::progress::ProgressBar;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::PathBuf;
+
+pub(crate) mod reconcile;
 
 pub(crate) fn lifecycle_from_context(
     ctx: &Context,
@@ -90,6 +92,13 @@ pub fn sync_file(
         }
         Err(err) => return Err(err.into()),
     };
+    code_symbols::prune_stale_file_points(
+        &lifecycle,
+        &mut conn,
+        &ctx.project_id,
+        &file_path,
+        &symbols,
+    )?;
     if !db::mark_vectors_synced(
         &mut conn,
         &ctx.project_id,
@@ -439,27 +448,6 @@ fn record_symbol_done(
     }
 }
 
-pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    index_lock::with_exclusive_project_lock(ctx, || {
-        let qdrant = ctx
-            .qdrant
-            .as_ref()
-            .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
-        let mut conn = db::connect_readonly(&ctx.database_url)?;
-        // The Qdrant collection is shared; keep every path any machine references.
-        let indexed_file_paths =
-            db::list_all_machine_indexed_file_paths(&mut conn, &ctx.project_id)?
-                .into_iter()
-                .collect::<HashSet<_>>();
-        let cleanup = code_symbols::cleanup_orphan_file_vectors(
-            qdrant,
-            &ctx.project_id,
-            &indexed_file_paths,
-        )?;
-        print_orphan_cleanup(&cleanup, format)
-    })
-}
-
 fn print_lifecycle_output(
     output: &CodeSymbolVectorLifecycleOutput,
     report: ProjectionSyncReport,
@@ -531,27 +519,6 @@ fn file_lock_payload(mut payload: Value, locks: &ProjectFileLockSet) -> Value {
         ),
     );
     payload
-}
-
-fn print_orphan_cleanup(cleanup: &VectorOrphanCleanup, format: Format) -> anyhow::Result<()> {
-    let payload = serde_json::json!({
-        "project_id": cleanup.project_id.as_str(),
-        "projection": "vector",
-        "action": "cleanup_orphans",
-        "collection": cleanup.collection.as_str(),
-        "status": ProjectionStatus::Ok,
-        "vector_files_scanned": cleanup.vector_files_scanned,
-        "orphan_files_deleted": cleanup.orphan_files_deleted,
-        "vectors_deleted": cleanup.vectors_deleted,
-        "summary": format!(
-            "Removed {} orphaned vector file(s) and {} vector point(s)",
-            cleanup.orphan_files_deleted, cleanup.vectors_deleted
-        ),
-    });
-    match format {
-        Format::Json => output::print_json(&payload),
-        Format::Text => output::print_text(&serde_json::to_string(&payload)?),
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

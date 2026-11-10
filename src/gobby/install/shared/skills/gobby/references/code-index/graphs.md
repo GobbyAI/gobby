@@ -39,8 +39,11 @@ subgraph per community.
 For authorized projection repair, `graph sync-file --file <path>` replays one
 indexed file, `graph rebuild` replays project facts, and `graph cleanup-orphans`
 removes projections absent from PostgreSQL. Vector counterparts are `vector
-sync-file`, `vector rebuild`, and `vector cleanup-orphans`. Vector cleanup
-does not need embeddings. Clear operations have no confirmation prompt:
+sync-file` and `vector rebuild`. `vector reconcile` is the read-only inventory
+of code-symbol vectors against PostgreSQL: it scrolls the project's Qdrant
+collection, reads PostgreSQL, and reports orphan and missing classes with an
+inventory digest. It deletes nothing. Vector orphan deletion needs the reviewed
+apply procedure in `recovery.md`. Clear operations have no confirmation prompt:
 `graph clear` and `vector clear` remove project projections; only operator
 purge work uses `--project-id` without a checkout or vector `--drop-collection`.
 
@@ -59,6 +62,6 @@ Guides: [Graph operations](../../../../../../../../docs/guides/gcode-user-guide.
 [ownership contract](../../../../../../../../docs/guides/gcode-graph-core.md#ownership-boundaries),
 [HTTP routes](../../../../../../../../docs/guides/code-index.md#http-endpoints).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
 
-_Last verified: 2026-09-23_
+_Last verified: 2026-11-05_

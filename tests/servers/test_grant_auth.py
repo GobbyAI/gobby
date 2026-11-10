@@ -9,7 +9,12 @@ import pytest
 
 from gobby.runtime_grants import RequiredCapability
 from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal
-from gobby.servers.grant_auth import AuthDecision, bearer_matches_grant, present_or_reject
+from gobby.servers.grant_auth import (
+    AuthDecision,
+    bearer_matches_grant,
+    match_grant_route,
+    present_or_reject,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import AgentApiTokenClaims
 
@@ -104,6 +109,12 @@ def test_present_or_reject_does_not_leak_decode_errors() -> None:
     assert decision.code == "invalid_signature"
     assert decision.message == "invalid grant"
     assert raw not in (decision.message or "")
+
+
+def test_removed_savings_route_has_no_grant_entry() -> None:
+    # gcode's savings POST had no daemon handler; the reporting and its grant
+    # entry are removed together (#25704), so the table names only served routes.
+    assert match_grant_route("POST", "/api/admin/savings/record") is None
 
 
 def test_interactive_grant_through_forwarded_machine_is_refused(
