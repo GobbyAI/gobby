@@ -229,6 +229,7 @@ pub fn prepare_launch_with(
         home,
         &run_inputs.env,
         &inputs.credential_authority_roots,
+        inputs.operator_bootstrap.as_deref(),
     )
     .map_err(lift)?;
 

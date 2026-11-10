@@ -1654,28 +1654,6 @@
     },
     {
       "activation": "live",
-      "default": 2000,
-      "description": "Maximum characters per individual history message before truncation.",
-      "key": "chat_history.max_message_chars",
-      "machineExport": false,
-      "namespace": "chat_history",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 30000,
-      "description": "Maximum total characters of combined history context to inject.",
-      "key": "chat_history.max_total_chars",
-      "machineExport": false,
-      "namespace": "chat_history",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": "~/.gobby/clones",
       "description": "Base directory for git clones (survives reboots, unlike /tmp).",
       "key": "clones_dir",
@@ -2130,6 +2108,16 @@
       "namespace": "communications",
       "secrecy": "none",
       "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "",
+      "key": "communications.operator_alert_channel",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "string",
       "visibility": "public"
     },
     {

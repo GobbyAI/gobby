@@ -19,7 +19,7 @@ from gobby.runtime_grants import (
 from gobby.runtime_grants.schema import BrokerOperation, GrantBundle, GrantPrincipal
 from gobby.runtime_grants.service import ConfigCapture
 from gobby.servers.browser_sessions import BrowserSession
-from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.local_token import SESSION_TOKEN_KIND, AgentApiTokenClaims
 
 if TYPE_CHECKING:
     from starlette.requests import HTTPConnection
@@ -245,8 +245,12 @@ def bearer_matches_grant(
     Grant fields may be omitted (narrower); they may not name a different owner.
     """
     if claims is None:
-        return principal.kind == "interactive" and (
-            local_machine_id is None or principal.machine_id == local_machine_id
+        # The machine key (operator) presents only session-less interactive grants. A grant
+        # bound to a session needs that session's own credential, never the machine key.
+        return (
+            principal.kind == "interactive"
+            and principal.session_id is None
+            and (local_machine_id is None or principal.machine_id == local_machine_id)
         )
     if principal.project_id != claims.project_id:
         return False
@@ -264,7 +268,13 @@ def bearer_matches_grant(
         # owner claim; the token's kind says which (absent means tool_chat).
         managed_kind = claims.kind or "tool_chat"
         return managed_kind in {"tool_chat", "maintenance"} and principal.kind == managed_kind
-    return False
+    # An unspawned session's own credential carries no owner. It admits only the
+    # interactive grant bound to that same session, never a grant of another session.
+    return (
+        claims.kind == SESSION_TOKEN_KIND
+        and principal.kind == "interactive"
+        and principal.session_id == claims.session_id
+    )
 
 
 def identity_headers_match(request: HTTPConnection, principal: GrantPrincipal) -> bool:

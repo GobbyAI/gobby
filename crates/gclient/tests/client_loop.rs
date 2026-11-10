@@ -3005,7 +3005,13 @@ async fn select_spawn_attach_terminate_loop() {
             .expect("connect live daemon");
         let mut workspace = Workspace::live(daemon);
         workspace.select_project("project-selected");
-        let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+        let (frames_tx, mut frames_rx) = watch::channel(String::new());
+        let mut terminal = Terminal::new(CountingBackend {
+            inner: TestBackend::new(96, 30),
+            draws: Arc::new(AtomicUsize::new(0)),
+            frames: Some(frames_tx),
+        })
+        .expect("test terminal");
         let mut chrome = Chrome::dark();
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
@@ -3031,6 +3037,11 @@ async fn select_spawn_attach_terminate_loop() {
                 "event-before-reply must attach the spawned terminal once"
             );
 
+            let retired_attachment = websocket_requests(&mock, "terminal_set_viewport")[0]
+                ["attachment_id"]
+                .as_str()
+                .expect("initial attachment")
+                .to_string();
             mock.drop_websockets();
             timeout(Duration::from_secs(1), async {
                 while mock.websocket_handshakes() < 2 {
@@ -3039,17 +3050,25 @@ async fn select_spawn_attach_terminate_loop() {
             })
             .await
             .expect("spawned panes reconnect");
-            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
-
-            let viewports = websocket_requests(&mock, "terminal_set_viewport");
             let terminal_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-            let attachment_id = viewports
-                .iter()
-                .rev()
-                .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
-                .and_then(|request| request.get("attachment_id"))
-                .and_then(Value::as_str)
-                .expect("fresh attachment after reconnect");
+            // Geometry can publish multiple viewports for the old attachment.
+            // Only a different attachment proves the reconnect made progress.
+            let attachment_id = timeout(WAIT_BUDGET, async {
+                loop {
+                    let fresh = websocket_requests(&mock, "terminal_set_viewport")
+                        .into_iter()
+                        .rev()
+                        .filter(|request| request["terminal_id"] == terminal_id)
+                        .filter_map(|request| request["attachment_id"].as_str().map(str::to_owned))
+                        .find(|attachment| attachment != &retired_attachment);
+                    if let Some(attachment) = fresh {
+                        break attachment;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("fresh attachment after reconnect");
             mock.send_event_and_wait(json!({
                 "type": "terminal_frame",
                 "terminal_id": terminal_id,
@@ -3058,7 +3077,9 @@ async fn select_spawn_attach_terminate_loop() {
                 "payload": encoded_frame("spawned-reconnected"),
             }))
             .await;
-            settle_live_event().await;
+            // Transport setup precedes pane installation; observe the applied
+            // frame before closing input, which can stop pending loop jobs.
+            wait_for_drawn_text(&mut frames_rx, "spawned-reconnected").await;
             drop(input_tx);
         };
 
@@ -6270,8 +6291,20 @@ async fn moving_pane_to_new_tab_keeps_its_process_and_closes_placeholder() {
 
 #[tokio::test]
 async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
+    async fn wait_for_order(frames: &mut watch::Receiver<String>, first: &str, second: &str) {
+        timeout(WAIT_BUDGET, frames.wait_for(|frame| {
+            matches!((frame.find(first), frame.find(second)), (Some(a), Some(b)) if a < b)
+        }))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {first} before {second}"))
+        .expect("loop keeps the frame recorder open");
+    }
+
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
+    for terminal in ["terminal-a", "terminal-b", "terminal-c"] {
+        mock.set_attach_backend(terminal, "tmux");
+    }
     for _ in 0..3 {
         mock.enqueue(
             "GET",
@@ -6288,6 +6321,11 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
             (&["terminal-c"], "terminal-c"),
         ],
     );
+    for (tab, title) in seeded.iter().zip(["Reorder-A", "Reorder-B", "Reorder-C"]) {
+        mock.apply_workspace_op(json!({"op": "tab.rename", "tab": tab.0, "title": title}));
+    }
+    // A move may commit after several input events would otherwise be handled.
+    let move_release = mock.hold_ws("workspace_op", |op| op["op"] == "tab.move");
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
@@ -6297,19 +6335,39 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
         .reconcile_subscribe_first()
         .await
         .expect("attach workspace");
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (frames_tx, mut frames_rx) = watch::channel(String::new());
+    let mut terminal = Terminal::new(CountingBackend {
+        inner: TestBackend::new(120, 40),
+        draws: Arc::new(AtomicUsize::new(0)),
+        frames: Some(frames_tx),
+    })
+    .expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
         send_chord(&input_tx, KeyCode::Char('2'), KeyModifiers::NONE).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
         send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "workspace_op", 2).await;
+        move_release.notify_one();
+        wait_for_order(&mut frames_rx, "Reorder-B", "Reorder-A").await;
         send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
-        settle_live_event().await;
+        // Input follows the edge key in the channel, proving it was handled
+        // before the rightward move, even though it publishes no workspace op.
+        wait_for_drawn_text(&mut frames_rx, "Focused").await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        assert_eq!(
+            websocket_requests(&mock, "workspace_op")
+                .iter()
+                .filter(|op| op["op"] == "tab.move")
+                .count(),
+            1,
+            "edge key must not send a move"
+        );
         send_chord(&input_tx, KeyCode::Right, KeyModifiers::SHIFT).await;
-        settle_live_event().await;
+        wait_for_order(&mut frames_rx, "Reorder-A", "Reorder-B").await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -11386,6 +11444,13 @@ fn focused_report_count(mock: &MockDaemon) -> usize {
 }
 
 /// Wait until `expected` focused reports reached the daemon, for any terminal.
+async fn wait_for_drawn_text(frames: &mut watch::Receiver<String>, text: &str) {
+    timeout(WAIT_BUDGET, frames.wait_for(|frame| frame.contains(text)))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for drawn {text:?}"))
+        .expect("loop keeps the frame recorder open");
+}
+
 async fn wait_for_focus_reports(mock: &MockDaemon, expected: usize) {
     timeout(WAIT_BUDGET, async {
         while focused_report_count(mock) < expected {

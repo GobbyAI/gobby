@@ -95,7 +95,7 @@ async def test_notice_is_a_system_global_that_wakes_active_seats(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("notice", [HOLD_NOTICE, BACK_NOTICE], ids=["hold", "back"])
-async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
+async def test_restart_notices_wake_every_recipient_under_the_fanout_rule(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -145,7 +145,9 @@ async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
 
     await send_daemon_notice(runner, notice)
 
-    assert sorted(dispatcher.calls) == sorted([active, claimed])
+    # The fanout rule applies to every live recipient with no claimed-task filter: each one
+    # owes a wake, and the dispatcher decides per seat what that wake does.
+    assert sorted(dispatcher.calls) == sorted([active, claimed, *parked])
     rows = temp_db.fetchall("SELECT to_session, content, metadata_json FROM inter_session_messages")
     assert sorted(row["to_session"] for row in rows) == sorted([active, claimed, *parked])
     for row in rows:
@@ -153,7 +155,7 @@ async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
         metadata = row["metadata_json"]
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
-        assert metadata["wake_requested"] is (row["to_session"] in {active, claimed})
+        assert metadata["wake_requested"] is True
 
 
 @pytest.mark.asyncio

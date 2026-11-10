@@ -7,7 +7,7 @@ use super::{PolicyInputs, tables};
 use crate::node_commands::Sandbox;
 use anyhow::{Result, anyhow, bail};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     iter::once,
     os::unix::fs::PermissionsExt,
@@ -109,23 +109,42 @@ pub(super) fn lexical_normal(path: &Path) -> PathBuf {
 /// `Path.resolve(strict=False)`: canonicalize the longest existing prefix and
 /// re-append the rest, so a path that does not exist yet still resolves.
 pub(super) fn resolve_nonstrict(path: &Path) -> PathBuf {
-    let normal = lexical_normal(path);
-    let mut existing = normal.clone();
-    let mut rest: Vec<std::ffi::OsString> = Vec::new();
-    loop {
-        if let Ok(canonical) = existing.canonicalize() {
-            let mut out = canonical;
-            for part in rest.iter().rev() {
-                out.push(part);
-            }
-            return out;
+    Resolver::default().resolve(&lexical_normal(path))
+}
+
+/// Memoizes `resolve_nonstrict` across one list of paths, so the filesystem is probed
+/// once per directory rather than once per entry. Filesystem changes between calls are
+/// not seen, so a resolver lives for one list only.
+#[derive(Default)]
+pub(super) struct Resolver {
+    memo: HashMap<PathBuf, PathBuf>,
+}
+
+impl Resolver {
+    /// Resolves a lexically normal path. A path that does not exist resolves as its
+    /// parent does, plus its name, so each missing entry costs one `lstat`.
+    pub(super) fn resolve(&mut self, path: &Path) -> PathBuf {
+        if let Some(resolved) = self.memo.get(path) {
+            return resolved.clone();
         }
-        match (existing.file_name(), existing.parent()) {
-            (Some(name), Some(parent)) => {
-                rest.push(name.to_os_string());
-                existing = parent.to_path_buf();
-            }
-            _ => return normal,
+        let resolved = self.resolve_uncached(path);
+        self.memo.insert(path.to_path_buf(), resolved.clone());
+        resolved
+    }
+
+    fn resolve_uncached(&mut self, path: &Path) -> PathBuf {
+        let parent_and_name = path.parent().zip(path.file_name());
+        if fs::symlink_metadata(path).is_err()
+            && let Some((parent, name)) = parent_and_name
+        {
+            return self.resolve(parent).join(name);
+        }
+        match path.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(_) => match parent_and_name {
+                Some((parent, name)) => self.resolve(parent).join(name),
+                None => path.to_path_buf(),
+            },
         }
     }
 }
@@ -152,9 +171,10 @@ pub(super) fn canonical_paths<S: AsRef<str>>(
     base: Option<&Path>,
     home: &Path,
 ) -> Vec<String> {
+    let mut resolver = Resolver::default();
     dedupe(
         raws.into_iter()
-            .map(|raw| text(&canonical_pathbuf(raw.as_ref(), base, home))),
+            .map(|raw| text(&resolver.resolve(&absolute_path(raw.as_ref(), base, home)))),
     )
 }
 
@@ -164,12 +184,10 @@ pub(super) fn deny_paths<S: AsRef<str>>(
     base: Option<&Path>,
     home: &Path,
 ) -> Vec<String> {
+    let mut resolver = Resolver::default();
     dedupe(raws.into_iter().flat_map(|raw| {
-        let raw = raw.as_ref();
-        [
-            text(&absolute_path(raw, base, home)),
-            text(&canonical_pathbuf(raw, base, home)),
-        ]
+        let absolute = absolute_path(raw.as_ref(), base, home);
+        [text(&absolute), text(&resolver.resolve(&absolute))]
     }))
 }
 
@@ -198,16 +216,20 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
     )
 }
 
-/// Default install credentials and startup files, mirroring the Python `credential_roots`
-/// oracle: the runtime-home credentials and break-glass pair, trusted hub-resolved and
-/// bound-daemon authorities, then the canonical operator bootstrap and break-glass pair under
-/// `home/.gobby`. The runtime-home pair is the no-hub stand-in for the bound pair. The canonical
-/// entries come last so `deny_paths`, which keeps first occurrences, leaves the order unchanged
-/// when the hub already sends them.
-fn credential_roots(gobby: &Path, home: &Path, authority_roots: &[PathBuf]) -> Vec<PathBuf> {
-    // `home` is `$HOME`, a no-hub stand-in for the passwd entry. Production hubs send the
-    // passwd-derived operator pair in `authority_roots`, which dedupes against these entries.
-    let canonical = home.join(".gobby");
+/// `credential_roots`: install credentials, the daemon's startup files, the trusted hub's
+/// resolved credential authorities, and the operator's canonical bootstrap, which the oracle
+/// appends last. The runtime-home break-glass pair is the no-hub stand-in for the bound pair.
+/// `hub` is the Python oracle's own list, sent by the hub and never by the seat environment, so
+/// with `deny_paths` keeping first occurrences the result follows the oracle's order. Without a
+/// hub list, `gobby_home/bootstrap.yaml` stands in for the bound bootstrap. The capability
+/// signing key (and the directory its bytes are staged in) can forge any session token, and the
+/// session-credentials store holds live session tokens; a sandboxed seat presents its own run
+/// token and needs neither.
+fn credential_roots(
+    gobby: &Path,
+    hub: &[PathBuf],
+    operator_bootstrap: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
@@ -216,12 +238,21 @@ fn credential_roots(gobby: &Path, home: &Path, authority_roots: &[PathBuf]) -> V
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
     ];
-    roots.extend_from_slice(authority_roots);
+    roots.extend_from_slice(hub);
     roots.extend([
-        canonical.join("bootstrap.yaml"),
-        canonical.join("break_glass"),
-        canonical.join(".break_glass-staging"),
+        gobby.join("session-credentials"),
+        gobby.join("capability_signing_key"),
+        gobby.join(".capability_signing_key-staging"),
     ]);
+    // The passwd account's canonical bootstrap and the break-glass pair beside it, as the
+    // oracle denies them; the hub list already carries them, so this matters without a hub.
+    if let Some(bootstrap) = operator_bootstrap {
+        roots.push(bootstrap.to_path_buf());
+        if let Some(account_gobby) = bootstrap.parent() {
+            roots.push(account_gobby.join("break_glass"));
+            roots.push(account_gobby.join(".break_glass-staging"));
+        }
+    }
     roots
 }
 
@@ -249,9 +280,10 @@ fn sensitive_roots(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
-    authority_roots: &[PathBuf],
+    hub: &[PathBuf],
+    operator_bootstrap: Option<&Path>,
 ) -> Vec<String> {
-    let mut roots = credential_roots(gobby, home, authority_roots);
+    let mut roots = credential_roots(gobby, hub, operator_bootstrap);
     roots.push(gobby.join("gcode-runtime"));
     roots.push(managed_execution_root(gobby));
     roots.extend(private_srt_socket_roots(gobby, env));
@@ -263,7 +295,8 @@ fn sensitive_write_roots(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
-    authority_roots: &[PathBuf],
+    hub: &[PathBuf],
+    operator_bootstrap: Option<&Path>,
 ) -> Vec<String> {
     let mut roots = vec![
         home.join(".ssh"),
@@ -272,7 +305,7 @@ fn sensitive_write_roots(
         home.join(".kube"),
         home.join(".config").join("gcloud"),
     ];
-    roots.extend(credential_roots(gobby, home, authority_roots));
+    roots.extend(credential_roots(gobby, hub, operator_bootstrap));
     roots.extend(private_srt_socket_roots(gobby, env));
     deny_paths(roots.iter().map(|root| text(root)), None, home)
 }
@@ -708,9 +741,10 @@ pub(super) fn assert_sensitive_path_contract(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
-    authority_roots: &[PathBuf],
+    hub: &[PathBuf],
+    operator_bootstrap: Option<&Path>,
 ) -> Result<()> {
-    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env, authority_roots)
+    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env, hub, operator_bootstrap)
         .into_iter()
         .map(PathBuf::from)
         .collect();
@@ -850,6 +884,8 @@ pub(super) fn compute(
 ) -> Result<ResolvedPaths> {
     let home = inputs.home.as_path();
     let gobby = inputs.gobby_home.as_path();
+    let hub = inputs.credential_authority_roots.as_slice();
+    let operator_bootstrap = inputs.operator_bootstrap.as_deref();
     let provider = inputs.provider.as_str();
     let workspace = canonical_pathbuf(&text(&inputs.workspace), None, home);
 
@@ -882,7 +918,7 @@ pub(super) fn compute(
         home,
     );
     let mut deny_read_paths = deny_paths(
-        sensitive_roots(gobby, home, env, &inputs.credential_authority_roots)
+        sensitive_roots(gobby, home, env, hub, operator_bootstrap)
             .into_iter()
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
@@ -896,7 +932,7 @@ pub(super) fn compute(
         .map(|path| canonical_pathbuf(path, Some(&workspace), home))
         .collect();
     let deny_write_paths = deny_paths(
-        sensitive_write_roots(gobby, home, env, &inputs.credential_authority_roots)
+        sensitive_write_roots(gobby, home, env, hub, operator_bootstrap)
             .into_iter()
             .chain(provider_control_write_paths(
                 &workspace,
@@ -923,7 +959,8 @@ pub(super) fn compute(
         gobby,
         home,
         env,
-        &inputs.credential_authority_roots,
+        hub,
+        operator_bootstrap,
     )?;
     assert_credential_read_contract(
         &read_paths,
@@ -956,3 +993,7 @@ pub(super) fn compute(
         provider: provider.to_string(),
     })
 }
+
+#[cfg(test)]
+#[path = "paths/tests.rs"]
+mod tests;

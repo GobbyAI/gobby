@@ -7,6 +7,7 @@ Extracted from base.py as part of Strangler Fig decomposition.
 
 import asyncio
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Any, Final
 
@@ -18,6 +19,7 @@ from gobby.adapters.agy_contract import (
     strip_unbudgeted_force_continue,
 )
 from gobby.config.hooks import HookTimeoutConfig
+from gobby.hooks import session_claimant
 from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
 from gobby.hooks.adapter_execution import (
     AdapterHookCancelled,
@@ -40,6 +42,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
+from gobby.hooks.hook_types import HookType
 from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
@@ -51,6 +54,8 @@ from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
 )
+from gobby.hooks.session_claimant import SessionStartClaim
+from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD, mint_session_credential
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
     StartupClaimPreflightTimeout,
@@ -124,6 +129,105 @@ def _run_bound_platform_session(
         external_ids=conversation_ids,
     )
     return current_session_id if earlier_session_id is None else earlier_session_id
+
+
+def _provider_session_id(input_data: Any) -> str | None:
+    if not isinstance(input_data, dict):
+        return None
+    return next(
+        (
+            value
+            for key in _PROVIDER_SESSION_KEYS
+            if isinstance(value := input_data.get(key), str) and value
+        ),
+        None,
+    )
+
+
+def _claim_session_start(
+    server: "HTTPServer", request: Request, payload: dict[str, Any]
+) -> SessionStartClaim:
+    """Attest every machine-bearer hook's kernel-proven claimant before its handler runs.
+
+    The claimant's proven CLI pid becomes the stored parent pid of a new session, in place of
+    the body's own parent pid, which is never proof.
+    """
+    if request.headers.get(AGENT_RUN_ID_HEADER):
+        return SessionStartClaim()
+    identity = server.auth_service.verified_front_door_identity(request)
+    input_data = payload.get("input_data")
+    source = payload.get("source")
+    external_id = _provider_session_id(input_data)
+    db = getattr(getattr(server, "services", None), "database", None)
+    if (
+        identity is None
+        or not isinstance(input_data, dict)
+        or not isinstance(source, str)
+        or external_id is None
+        or db is None
+    ):
+        return SessionStartClaim()
+    claimant = session_claimant.front_door_claimant(
+        request.headers, daemon_port=server.bootstrap_config.daemon_port
+    )
+    claim = session_claimant.claim_session_start(
+        db,
+        claimant=claimant,
+        daemon_pid=os.getpid(),
+        external_id=external_id,
+        source=source,
+        machine_id=identity.machine_id,
+    )
+    if claim.refusal is None and claim.cli_pid is not None:
+        terminal_context = input_data.get("terminal_context")
+        input_data["terminal_context"] = {
+            **(terminal_context if isinstance(terminal_context, dict) else {}),
+            "parent_pid": claim.cli_pid,
+        }
+    return claim
+
+
+def _attach_session_credential(
+    server: "HTTPServer",
+    request: Request,
+    payload: dict[str, Any],
+    response: dict[str, Any],
+    *,
+    db: Any,
+    proven: bool,
+) -> dict[str, Any]:
+    """Hand a machine-started session its own token after its hook is persisted.
+
+    Only a start whose claimant the kernel proved owns the session gets one. A managed
+    agent token never reaches this branch, and a run-bound start already holds its own
+    token. A daemon-internal replay and a start without proof mint nothing.
+    """
+    if not proven or payload.get("hook_type") != HookType.SESSION_START.value:
+        return response
+    if request.headers.get(AGENT_RUN_ID_HEADER):
+        return response
+    identity = server.auth_service.verified_front_door_identity(request)
+    input_data = payload.get("input_data")
+    source = payload.get("source")
+    if identity is None or not isinstance(input_data, dict) or not isinstance(source, str):
+        return response
+    external_id = _provider_session_id(input_data)
+    if external_id is None or db is None:
+        return response
+    try:
+        credential = mint_session_credential(
+            db,
+            signing_key=server.auth_service.managed_signing_key(),
+            external_id=external_id,
+            source=source,
+            machine_id=identity.machine_id,
+        )
+    except Exception as exc:
+        logger.warning("Session credential mint failed: %s", type(exc).__name__)
+        return response
+    if credential is None:
+        return response
+    return {**response, SESSION_CREDENTIAL_FIELD: credential}
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -242,6 +346,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         inc_counter("hooks_total")
         hook_type: str | None = None  # Track for error handling
         source: str | None = None  # Track for error handling
+        session_claim = SessionStartClaim()
         adapter: Any | None = None
         claim_lease: StartupClaimLease | None = None
         owner_token: str | None = None
@@ -306,6 +411,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
+                response = _attach_session_credential(
+                    server,
+                    request,
+                    payload,
+                    response,
+                    db=receipt_db,
+                    proven=session_claim.proven,
+                )
                 return receipt_guarded_response(response, db=receipt_db)
             if envelope_id:
                 try:
@@ -320,6 +433,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
+            response = _attach_session_credential(
+                server,
+                request,
+                payload,
+                response,
+                db=receipt_db,
+                proven=session_claim.proven,
+            )
             return receipt_guarded_response(response, db=receipt_db)
 
         async def mark_processed_and_return(response: dict[str, Any]) -> Any:
@@ -418,6 +539,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             if _envelope_machine_mismatch(server, request, payload["input_data"]):
                 return JSONResponse(status_code=403, content={"code": "hook_machine_mismatch"})
+
+            session_claim = await asyncio.to_thread(_claim_session_start, server, request, payload)
+            if session_claim.refusal is not None:
+                return JSONResponse(status_code=403, content={"code": session_claim.refusal})
 
             if envelope_id:
                 owner_token = await asyncio.to_thread(claim_envelope_processing, envelope_id)

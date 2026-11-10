@@ -13,7 +13,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 
 use super::FrontDoorState;
-use super::health::{bad_gateway, unavailable};
+use super::health::{bad_gateway, unavailable_waiting};
 
 pub type ProxyClient = Client<HttpConnector, Body>;
 
@@ -60,7 +60,10 @@ impl ForwardError {
     /// The typed 503 for a refused connection, else the 502.
     pub fn into_response(self, state: &FrontDoorState) -> Response<Body> {
         match self {
-            Self::Unavailable => unavailable(state.target, state.backend_state),
+            Self::Unavailable => {
+                let wait = state.backend_wait();
+                unavailable_waiting(state.target, state.backend_state, wait.as_deref())
+            }
             Self::BadGateway(error) => bad_gateway(state.target, &*error),
         }
     }

@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -43,7 +43,6 @@ from gobby.storage.terminals import TerminalManager
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
-    derive_managed_signing_key,
     issue_agent_api_token,
 )
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -506,12 +505,12 @@ def test_signed_spawned_agent_bearer_cannot_read_definition_credentials(
         parent_session_id=session.id, provider="claude", prompt="definition boundary"
     )
     token = issue_agent_api_token(
-        derive_managed_signing_key(operator_token),
+        cast(bytes, server.auth_service.managed_signing_key()),
         agent_run_id=run.id,
         session_id=session.id,
         project_id=sample_project["id"],
     )
-    claims = classify_agent_api_token(token, derive_managed_signing_key(operator_token))
+    claims = classify_agent_api_token(token, cast(bytes, server.auth_service.managed_signing_key()))
     assert isinstance(claims, AgentApiTokenClaims)
     assert claims.agent_run_id == run.id
     assert claims.session_id == session.id
@@ -1705,6 +1704,7 @@ class TestUpdateDefinitionNestedFields:
             ("read_all_agent_workspaces", True),
             ("task_step_writes", ["implementation"]),
             ("capabilities", ["land_tasks"]),
+            ("spawner_capabilities", ["fixture-authority"]),
             ("resumable_team_agents", ["fixture-worker"]),
         ],
     )

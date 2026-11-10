@@ -7,6 +7,7 @@ pub mod external_roots;
 mod grant_glob;
 mod grok_home;
 mod monitor;
+mod operator_account;
 mod paths;
 mod prewarm;
 mod ps_shim;
@@ -15,6 +16,8 @@ mod settings;
 mod tables;
 mod verify;
 mod workspace_scope;
+
+pub use operator_account::operator_bootstrap_path;
 
 use crate::node_commands::{Sandbox, SandboxBackend};
 use anyhow::{Result, bail};
@@ -43,6 +46,10 @@ pub struct PolicyInputs {
     pub gobby_home: PathBuf,
     /// Additional credential roots resolved by the trusted hub, never by the seat environment.
     pub credential_authority_roots: Vec<PathBuf>,
+    /// The operator account's bootstrap credential, from the passwd entry (see
+    /// `operator_bootstrap_path`). `None` when the account has no passwd entry. The policy denies
+    /// it whatever HOME or GOBBY_HOME name, so the environment never supplies it.
+    pub operator_bootstrap: Option<PathBuf>,
     pub env: BTreeMap<String, String>,
     pub provider_executable: Option<PathBuf>,
     pub daemon_port: u16,

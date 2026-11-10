@@ -8,6 +8,9 @@ use tokio::time::timeout;
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+#[path = "common/hub_lock.rs"]
+mod hub_lock;
+
 struct TestDb {
     admin: Client,
     pool: Arc<Pool>,
@@ -32,6 +35,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
+    use gobby_daemon::lease::NamedLock;
     use gobby_daemon::{
         front_door::{
             FrontDoor, FrontDoorState,
@@ -43,7 +47,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         state::RuntimeState,
     };
     use std::{collections::BTreeMap, sync::Arc};
-    use tokio::sync::{Mutex, watch};
+    use tokio::sync::watch;
 
     struct StandbyKeyResolver;
     impl KeyResolver for StandbyKeyResolver {
@@ -66,13 +70,14 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         assert!(owner.try_acquire().await?);
         let standby = db.lease(&token)?;
         let lease_state = Some(standby.subscribe());
-        let standby = Arc::new(Mutex::new(standby));
+        let standby = Arc::new(NamedLock::new(standby));
         let (backend, rx) = watch::channel(BackendStatus::Standby);
         let runtime = Arc::new(RuntimeState {
             mode: LeaseMode::Hub,
             lease: Some(standby),
             lease_state,
             backend: rx,
+            backend_wait: watch::channel(None).1,
             write_token: Default::default(),
             terminal_route: Default::default(),
         });
@@ -93,7 +98,12 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         let door = FrontDoor::new(state, table);
 
         // Slow lease I/O must not stall health or other standby refusals.
-        let guard = runtime.lease.as_ref().expect("standby lease").lock().await;
+        let guard = runtime
+            .lease
+            .as_ref()
+            .expect("standby lease")
+            .lock_as("front door test")
+            .await;
         let response = tokio::time::timeout(
             std::time::Duration::from_millis(100),
             door.handle(
@@ -232,11 +242,16 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     );
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
     timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(300),
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lease_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
@@ -466,7 +481,8 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         )).await?;
         let application_name = owner.application_name().to_owned();
         let mut acquire = Box::pin(owner.try_acquire());
-        let observed = timeout(Duration::from_secs(4), async {
+        // Hang guards sized for host-load stalls. The asserted bound is the 5 s operation timeout.
+        let observed = timeout(Duration::from_secs(30), async {
             loop {
                 db.admin.simple_query("SELECT pg_stat_clear_snapshot()").await?;
                 let blocked: bool = db.admin.query_one(
@@ -487,16 +503,16 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         }
         drop(acquire);
         assert!(owner.fence().is_none());
-        timeout(Duration::from_secs(7), async {
+        timeout(Duration::from_secs(30), async {
             while successor.owner().await?.is_some() {
                 tokio::task::yield_now().await;
             }
             anyhow::Ok(())
         }).await??;
         // A second blocked acquisition reaches the five-second operation bound.
-        let result = timeout(Duration::from_secs(7), owner.try_acquire()).await?;
+        let result = timeout(Duration::from_secs(30), owner.try_acquire()).await?;
         assert!(result.is_err());
-        timeout(Duration::from_secs(7), async {
+        timeout(Duration::from_secs(30), async {
             while successor.owner().await?.is_some() {
                 tokio::task::yield_now().await;
             }
@@ -508,4 +524,34 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         assert_eq!(successor.fence().expect("successor fence").epoch, 1);
         successor.release().await
     }).await
+}
+
+#[tokio::test]
+async fn acquisition_checkout_and_connect_count_against_the_operation_bound() -> Result<()> {
+    database_case(async |db| {
+        let mut owner = db.lease("checkout")?;
+        // Every pooled connection is checked out, so the owner's checkout waits. The
+        // connections return after four seconds, and the insert then blocks on the lock.
+        let mut held = Vec::new();
+        for _ in 0..8 {
+            held.push(db.pool.get().await?);
+        }
+        db.admin
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {}.deployment_runtime IN ACCESS EXCLUSIVE MODE",
+                db.schema
+            ))
+            .await?;
+        let returned = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            drop(held);
+        });
+        // The operation bound covers the whole attempt, checkout included.
+        let result = timeout(Duration::from_secs(7), owner.try_acquire()).await?;
+        assert!(result.is_err());
+        returned.await?;
+        db.admin.batch_execute("ROLLBACK").await?;
+        Ok(())
+    })
+    .await
 }

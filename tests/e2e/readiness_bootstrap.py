@@ -233,7 +233,8 @@ def main() -> None:
         watch_pytest_parent(),
         (log_dir / "startup-threads.log").open("w") as threads,
         (log_dir / "startup-tasks.log").open("w") as tasks,
-        (log_dir / "startup-timings.jsonl").open("w") as timings,
+        # Append: the supervisor adds progress records to this file during silent waits.
+        (log_dir / "startup-timings.jsonl").open("a") as timings,
         stage_timings(timings) as stage,
     ):
 

@@ -66,6 +66,21 @@ impl FrontDoorState {
             ws_listener: false,
         }
     }
+
+    /// The supervisor's current wait reason for the backend, reported beside its state when
+    /// the supervisor is waiting. Read from the runtime so the listener state stays small.
+    pub fn backend_wait(&self) -> Option<String> {
+        #[cfg(unix)]
+        {
+            self.runtime
+                .as_ref()
+                .and_then(|runtime| runtime.backend_wait.borrow().clone())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
 }
 
 /// A listener's request handler: upgrades are spliced, everything else is routed.
@@ -190,11 +205,17 @@ impl FrontDoor {
                         "state": "refused", "refusal": reason, "target": state.target.to_string()
                     }}),
                 ),
-                _ if runtime.standby() => Some(serde_json::json!({
-                    "error": "standby", "status": "unavailable", "state": "standby", "backend": {
-                        "state": "standby", "target": state.target.to_string()
+                _ if runtime.standby() => {
+                    let mut body = serde_json::json!({
+                        "error": "standby", "status": "unavailable", "state": "standby", "backend": {
+                            "state": "standby", "target": state.target.to_string()
+                        }
+                    });
+                    if let Some(wait) = runtime.backend_wait.borrow().clone() {
+                        body["backend"]["wait"] = serde_json::json!(wait);
                     }
-                })),
+                    Some(body)
+                }
                 _ => None,
             };
             if let Some(body) = refusal {
@@ -263,14 +284,18 @@ fn upgrade_required() -> Response<Body> {
     response
 }
 
+/// The socket peer port gdaemon observed for a request. Set only by `observe_peer`.
+pub const PEER_PORT_HEADER: &str = "x-gobby-peer-port";
+
 /// Client-supplied forwarding headers. Each is dropped before any route or
 /// splice sees the request, so the backend only learns the observed peer.
-const FORWARDING_HEADERS: [&str; 5] = [
+const FORWARDING_HEADERS: [&str; 6] = [
     "forwarded",
     "x-forwarded-for",
     "x-forwarded-proto",
     "x-forwarded-host",
     "x-real-ip",
+    PEER_PORT_HEADER,
 ];
 
 /// Replace every forwarding header with the transport's own view: the peer's
@@ -309,4 +334,14 @@ fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
         HeaderName::from_static("x-forwarded-proto"),
         HeaderValue::from_static(scheme),
     );
+    // The accepted socket's own port, which the backend cannot see behind uvicorn's proxy
+    // rewrite. Trusted only with the front-door secret, which the backend verifies.
+    headers.insert(
+        HeaderName::from_static(PEER_PORT_HEADER),
+        HeaderValue::from(peer.port()),
+    );
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

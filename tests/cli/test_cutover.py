@@ -25,8 +25,18 @@ from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME
 
 cutover_module = importlib.import_module("gobby.cli.cutover")
+_CATALOG_TEST_TIMEOUT_SECONDS: int = (
+    cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS
+    + cutover_module.CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS
+    + 300
+)
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolated_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.cli.installers.fleet_service.reload_fleet_service", lambda: None)
 
 
 def test_cutover_refuses_node_bootstrap_before_build(
@@ -144,7 +154,7 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 
 
 @pytest.mark.integration
-@pytest.mark.timeout(1260)  # Two 600s Cargo children plus fixture/assertion margin.
+@pytest.mark.timeout(_CATALOG_TEST_TIMEOUT_SECONDS)
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
     subprocess.run(
@@ -153,7 +163,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
         check=True,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS,
     )
     candidate = cargo_release_dir(repo).parent / "debug/gdaemon"
     assert candidate.is_file(), "the checkout build must produce its routed gdaemon candidate"
@@ -161,7 +171,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
 
 
 @pytest.mark.integration
-@pytest.mark.timeout(1260)  # Fixture build and freshness proof each allow 600s.
+@pytest.mark.timeout(_CATALOG_TEST_TIMEOUT_SECONDS)
 def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
 ) -> None:
@@ -203,9 +213,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
         ],
         cwd=fixture,
         check=True,
-        capture_output=True,
         text=True,
-        timeout=600,
+        timeout=cutover_module.CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS,
     )
     candidate = cargo_release_dir(fixture).parent / "debug/examples/catalog_candidate_24042"
     assert candidate.is_file(), "the native fixture build must produce its routed catalog candidate"
@@ -342,6 +351,15 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
     promotion = Mock(wraps=bin_set_coherence.promote_workspace_binary_set)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
     restarted: list[bytes] = []
+    from gobby.cli.installers import fleet_service
+
+    sampled: list[bytes] = []
+
+    def reload_watcher() -> None:
+        assert restarted == []
+        sampled.append((bin_dir / "gdaemon").read_bytes())
+
+    monkeypatch.setattr(fleet_service, "reload_fleet_service", reload_watcher)
 
     assert _run_live_cutover(root, bin_dir, restarted) is None
 
@@ -365,6 +383,7 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
         == identity
     )
     assert restarted == [(bin_dir / "gdaemon").read_bytes()]
+    assert sampled == restarted
 
 
 def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(

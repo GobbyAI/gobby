@@ -42,6 +42,7 @@ def test_audit_fix_preserves_archived_usage(runner: CliRunner) -> None:
         "cache_read_tokens": 4,
     }
     store.get_session_totals.side_effect = [archive, lifetime]
+    store.archived_message_keys.return_value = frozenset()
     event = TokenEvent(
         session_id="sess-retention",
         project_id=None,
@@ -78,11 +79,134 @@ def test_audit_fix_preserves_archived_usage(runner: CliRunner) -> None:
         context_window=None,
         model=None,
     )
-    assert store.record_batch.call_args.args[0] == [event]
-    assert (
-        store.delete_session_events.call_args.kwargs["retention_cutoff"]
-        == store.record_batch.call_args.kwargs["retention_cutoff"]
+    # Repair writes only in-window events and never deletes the whole session, so the
+    # archive, which the stored rows do not hold, is untouched.
+    assert store.repair_keyed_events.call_args.args[0] == [event]
+    store.delete_session_events.assert_not_called()
+
+
+def test_audit_fix_replaces_unkeyed_row_with_keyed_event(runner: CliRunner) -> None:
+    # A stored row without a message_id is drift and is deleted. The keyed transcript event
+    # takes its place, so the usage survives the delete.
+    database = MagicMock(spec=HubDatabase)
+    database.fetchall.return_value = [
+        {
+            "id": 1,
+            "message_id": None,
+            "api_calls": None,
+            "event_at": datetime.now(UTC),
+            "input_tokens": 7,
+            "output_tokens": 5,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+    ]
+    session = _make_session("sess-unkeyed")
+    session.usage_input_tokens = 7
+    session.usage_output_tokens = 5
+    manager = Mock()
+    manager.get.return_value = session
+    store = Mock(spec=TokenEventStore)
+    store.get_session_totals.return_value = {
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+    }
+    store.archived_message_keys.return_value = frozenset()
+    event = TokenEvent(
+        session_id="sess-unkeyed",
+        project_id=None,
+        message_id="m-1",
+        source="claude",
+        origin="transcript",
+        model=None,
+        input_tokens=7,
+        output_tokens=5,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        event_at=datetime.now(UTC),
     )
+    with (
+        patch.object(tokens_module, "require_cli_database", return_value=database),
+        patch.object(tokens_module, "resolve_project_ref", return_value=None),
+        patch.object(tokens_module, "resolve_session_id", return_value="sess-unkeyed"),
+        patch.object(tokens_module, "SessionManager", return_value=manager),
+        patch.object(tokens_module, "TokenEventStore", return_value=store),
+        patch.object(
+            tokens_module,
+            "ReportedUsageStore",
+            return_value=Mock(list_runs=Mock(return_value=[])),
+        ),
+        patch.object(tokens_module, "_load_session_messages", return_value=[]),
+        patch.object(tokens_module, "_messages_to_events", return_value=([event], None)),
+    ):
+        result = runner.invoke(
+            tokens_module.tokens, ["audit", "--session", "sess-unkeyed", "--fix"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "audited=1 stale=1 missing=1 repaired=1" in result.output
+    database.execute.assert_any_call("DELETE FROM token_events WHERE id = ANY(%s)", ([1],))
+    store.record.assert_not_called()
+    store.repair_keyed_events.assert_called_once_with([event])
+
+
+@pytest.mark.parametrize(
+    ("archived_keys", "reinserted"),
+    [
+        (frozenset(), True),
+        (frozenset({"other-key"}), True),
+        (frozenset({"late-key"}), False),
+        (frozenset({""}), False),
+    ],
+)
+def test_audit_fix_reinserts_expired_event_only_when_its_key_is_unarchived(
+    runner: CliRunner, archived_keys: frozenset[str], reinserted: bool
+) -> None:
+    # An expired transcript event with no stored row was pruned, so lifetime totals miss it while
+    # the session row counts it. The audit re-inserts it only when its key is unarchived. An
+    # archived key, or an unkeyed ('') archive row that may hold it, means re-inserting would
+    # double count it.
+    database = MagicMock(spec=HubDatabase)
+    session = _make_session("sess-late")
+    session.usage_input_tokens = 7
+    session.usage_output_tokens = 5
+    manager = Mock()
+    manager.get.return_value = session
+    store = Mock(spec=TokenEventStore)
+    store.get_session_totals.return_value = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+    }
+    store.archived_message_keys.return_value = archived_keys
+    event = TokenEvent(
+        session_id="sess-late",
+        project_id=None,
+        message_id="late-key",
+        source="claude",
+        origin="transcript",
+        model=None,
+        input_tokens=7,
+        output_tokens=5,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        event_at=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    with (
+        patch.object(tokens_module, "require_cli_database", return_value=database),
+        patch.object(tokens_module, "resolve_project_ref", return_value=None),
+        patch.object(tokens_module, "resolve_session_id", return_value="sess-late"),
+        patch.object(tokens_module, "SessionManager", return_value=manager),
+        patch.object(tokens_module, "TokenEventStore", return_value=store),
+        patch.object(tokens_module, "_load_session_messages", return_value=[]),
+        patch.object(tokens_module, "_messages_to_events", return_value=([event], None)),
+    ):
+        result = runner.invoke(tokens_module.tokens, ["audit", "--session", "sess-late", "--fix"])
+    assert result.exit_code == 0, result.output
+    inserted = [row for call in store.repair_keyed_events.call_args_list for row in call.args[0]]
+    assert inserted == ([event] if reinserted else [])
 
 
 @pytest.mark.parametrize(
@@ -116,13 +240,17 @@ class _FakeDatabase:
 
     def fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         self.fetchall_calls.append((query, params))
-        return self.rows
+        # Only the audit's session listing has rows; the stored-row read sees an empty ledger.
+        return self.rows if "FROM sessions" in query else []
 
     def close(self) -> None:
         self.closed = True
 
 
 class _FakeStore:
+    def archived_message_keys(self, session_id: str) -> frozenset[str]:
+        return frozenset()
+
     def get_session_totals(self, session_id: str) -> dict[str, int]:
         return {
             "input_tokens": 0,
@@ -236,4 +364,4 @@ def test_audit_all_continues_after_transcript_failure(
     assert result.exit_code == 0
     assert "sess-1: bad transcript" in result.output
     assert "sess-2: ok" in result.output
-    assert "audited=1 drifted=0" in result.output
+    assert "audited=1 stale=0 missing=0" in result.output

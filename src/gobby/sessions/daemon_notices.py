@@ -1,9 +1,9 @@
 """Daemon-owned restart notices: a hold before a restart stops the daemon, DAEMON BACK after.
 
 The daemon sends both as system-sender globals, so no session composes them by hand.
-The globals wake active seats and seats holding a claimed task; a parked seat with no
-claimed task reads the notice on its next turn. A coordination wait resumes through its
-own completion path.
+The globals apply the fanout wake rule to every live recipient, with no claimed-task
+filter: an idle seat with an empty composer is woken, and an active turn reads the notice
+from its hook mailbox. A coordination wait resumes through its own completion path.
 """
 
 from __future__ import annotations

@@ -45,7 +45,6 @@ from gobby.storage.users import LocalUserManager
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
-    derive_managed_signing_key,
     issue_agent_api_token,
 )
 from gobby.utils.machine_id import get_machine_id
@@ -362,7 +361,7 @@ def test_bridge_admission_matrix_matches_entry_owners(
 ) -> None:
     cookie = f"gobby_session={AuthStore(temp_db).create_session(TEST_USER_ID)[0]}"
     managed = issue_agent_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, bridge_auth.managed_signing_key()),
         agent_run_id="run-1",
         session_id="session-1",
         project_id="project-1",

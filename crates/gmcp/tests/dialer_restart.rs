@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 const TOOL_PATH: &str = "/api/mcp/gobby-agents/tools/wait_for_coordination/";
 
+/// Run `test` as a managed run: these tests cover the machine-key wire contract, which
+/// an unspawned client never uses. Unspawned behavior is covered in `session_binding`.
 fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     fs::write(home.path().join("bootstrap.yaml"), "api_key: first\n")?;
@@ -28,7 +30,7 @@ fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow
             ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
             ("GOBBY_MANAGED_EXECUTION_ID", None),
             ("GOBBY_AGENT_API_TOKEN", None),
-            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_AGENT_RUN_ID", Some("run")),
             ("GOBBY_SESSION_ID", None),
             ("GOBBY_PROJECT_ID", None),
         ],

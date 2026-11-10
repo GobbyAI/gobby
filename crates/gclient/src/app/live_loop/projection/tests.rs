@@ -131,9 +131,15 @@ async fn a_model_backed_pane_keeps_focus_after_leaving_the_unresolved_set() {
     sync_live_chrome(&mut workspace, &mut chrome);
     let pending = chrome.viewer.panes.intern("pane-b");
     chrome.viewer.unresolved.clear();
+    let tab = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .find(|tab| tab.layout.pane_ids().contains(&pending))
+        .expect("the split tab holds the pending pane");
 
     assert!(
-        super::awaiting_pane(&workspace, &chrome.viewer, pending),
+        super::awaiting_pane(&workspace, &chrome.viewer, tab, pending),
         "the model still holds this pane and its open has not failed; resolving the terminal must not make its focus stale"
     );
 }

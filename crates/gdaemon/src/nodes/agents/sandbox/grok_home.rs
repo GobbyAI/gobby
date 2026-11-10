@@ -40,6 +40,7 @@ pub(super) fn prepare(
         inputs.home.as_path(),
         &inputs.env,
     );
+    let operator_bootstrap = inputs.operator_bootstrap.as_deref();
     let raw_source = env
         .get("GROK_HOME")
         .cloned()
@@ -73,6 +74,7 @@ pub(super) fn prepare(
         user_home,
         env,
         &inputs.credential_authority_roots,
+        operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
         &source_list,
@@ -99,6 +101,7 @@ pub(super) fn prepare(
         user_home,
         env,
         &inputs.credential_authority_roots,
+        operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
         &[
@@ -148,6 +151,7 @@ pub(super) fn prepare(
         user_home,
         env,
         &inputs.credential_authority_roots,
+        operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
         &resolved_runtime,

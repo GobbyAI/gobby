@@ -813,6 +813,7 @@ class TestInitSubsystems:
                 "gobby.runner_init.servers.ProviderCapacityService.create_default",
                 return_value=capacity_service,
             ) as capacity_factory,
+            patch("gobby.runner_init.servers.build_operator_alert_sink") as alert_sink_factory,
             patch(
                 "gobby.runner_init.servers.LocalContextStore",
                 return_value=local_context_store,
@@ -864,6 +865,7 @@ class TestInitSubsystems:
             runner.database,
             machine_id="machine-1",
             run_db=None,
+            alert_sink=alert_sink_factory.return_value,
         )
         capability_service.prepare.assert_called_once_with()
         assert fake_client.start_calls == 0
@@ -1212,8 +1214,8 @@ class TestInitSubsystems:
                 await runner._startup_recovery_task
 
         expected_events = [
-            "code-index",
             "websocket",
+            "code-index",
             "ui",
             "prewarm",
         ]
@@ -1416,7 +1418,7 @@ class TestShutdownDaemonServices:
         assert spawn_readiness_blocker(services) == "daemon_shutdown_in_progress"
         assert services.startup_ready is False
         assert services.shutdown_in_progress is True
-        start_websocket.assert_not_called()
+        start_websocket.assert_called_once()
         start_ui.assert_not_called()
         start_automation.assert_not_awaited()
 
@@ -1503,7 +1505,7 @@ class TestShutdownDaemonServices:
         assert runner.http_server.services.startup_ready is False
         assert runner.http_server.services.shutdown_in_progress is True
         start_core_services.assert_not_awaited()
-        start_websocket.assert_not_called()
+        start_websocket.assert_called_once()
         start_automation.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -5127,6 +5129,7 @@ async def test_core_startup_failure_prevents_restart_recovery() -> None:
                     bootstrap_config=BootstrapConfig(),
                     agent_runner=object(),
                     agent_lifecycle_monitor=monitor,
+                    websocket_server=None,
                     http_bound_at_ms=1_700_000_000_000,
                     wake_dispatcher=SimpleNamespace(
                         reconcile_restart_active_sessions=reconcile_sessions

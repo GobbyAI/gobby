@@ -6,12 +6,10 @@ chat_session_helpers.py to eliminate duplication across SDK consumers.
 
 from __future__ import annotations
 
-import logging
-import re
-from collections.abc import Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
-
-import psycopg
+from collections.abc import Sequence
+from dataclasses import dataclass
+from functools import cache
+from typing import NamedTuple
 
 
 def sanitize_error(e: Exception) -> str:
@@ -45,489 +43,255 @@ ADDITIONAL_CONTEXT_LIMIT = 9_950
 # Reserved under the ship limit for overflow instruction + adapter metadata.
 INLINE_CONTEXT_HEADROOM = 450
 
-# Contributors dropped last when additionalContext overflows: the session's identity.
-PROTECTED_CONTEXT_LABELS: tuple[str, ...] = ("agent_prompt",)
+# Most label characters the continuation breadcrumb names before it counts the rest.
+CONTINUATION_LABEL_BUDGET = 400
+
+
+_CONTINUATION_PREFIX = "context continues on the next delivery: "
+# Finest boundary first: a page cuts at a paragraph, else a line, else a word.
+_PAGE_SEPARATORS = ("\n\n", "\n", " ")
+
+ContextPart = tuple[str, str]
+
+
+class ContextPiece(NamedTuple):
+    """One queued piece: a whole part (``number`` 0) or one numbered page of a part.
+
+    ``part`` is the part's label and ``body`` its text, or a page's raw text without its header.
+    Page state lives in ``number`` and ``total``; no label or text is parsed to recover it.
+    """
+
+    part: str
+    body: str
+    number: int = 0
+    total: int = 0
+
+    @property
+    def label(self) -> str:
+        """The label a delivery names this piece by."""
+        return f"{self.part} (page {self.number}/{self.total})" if self.number else self.part
+
+    @property
+    def text(self) -> str:
+        """The text a delivery ships for this piece, with the header a page carries."""
+        return f"[{self.label}]\n{self.body}" if self.number else self.body
 
 
 @dataclass(frozen=True)
-class ContextFit:
-    """Shipped additionalContext text and the whole contributors dropped to fit it."""
+class ContextDelivery:
+    """One delivery: the rendered text, the parts it ships, and the ordered pieces that wait."""
 
     text: str
-    omitted: list[tuple[str, str]]
+    shipped: list[ContextPart]
+    remaining: list[ContextPiece]
 
 
-@dataclass(frozen=True, slots=True)
-class MarkdownSection:
-    """One preamble or level-two Markdown section."""
-
-    title: str
-    display_title: str
-    order: int
-    heading: str
-    body: str
-    trimmed: bool = False
-
-    @property
-    def text(self) -> str:
-        """Render this section with its original heading."""
-        return f"{self.heading}{self.body}"
+class UnpageableContextError(ValueError):
+    """A part holds a run no page can hold whole and no boundary can split. Nothing is cut."""
 
 
-@dataclass(frozen=True, slots=True)
-class BudgetResult:
-    """Section allocation result in original document order."""
-
-    sections: tuple[MarkdownSection, ...]
-    omitted_titles: tuple[str, ...]
-
-    @property
-    def text(self) -> str:
-        """Render kept sections in original document order."""
-        return "".join(section.text for section in self.sections)
+# Longest context label a page header carries. Rule names are bounded to it at load.
+MAX_CONTEXT_LABEL_CHARS = 200
+# Page numbers in a header count up to six digits, as the breadcrumb's queue count does.
+_PAGE_NUMBER_DIGITS = 6
 
 
-_SECTION_HEADING_RE = re.compile(r"^##(?:[ \t]+(?P<title>.*?)[ \t]*|[ \t]*)\r?\n?$")
-_FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
-MANDATORY_HANDOFF_SECTION_TITLES = ("next steps", "current state")
-_SECTION_TRIM_MARKER = "\n\n[section trimmed]\n"
-_PREAMBLE_PRIORITY = 25
+def _page_room(limit: int) -> int:
+    """Characters a page body may use beside its header at ``limit``."""
+    return limit - _breadcrumb_reserve(limit) - len("\n\n")
 
 
-def split_markdown_sections(text: str) -> list[MarkdownSection]:
-    """Split text into a preamble and fence-aware level-two sections."""
-    sections: list[MarkdownSection] = []
-    heading = ""
-    display_title = "Preamble"
-    title = ""
-    body: list[str] = []
-    order = 0
-    fence: str | None = None
+@cache
+def minimum_additional_context_limit() -> int:
+    """Smallest ship limit whose page holds the longest label, its header and one character.
 
-    for line in text.splitlines(keepends=True):
-        stripped = line.lstrip(" \t")
-        if fence is not None:
-            body.append(line)
-            if stripped.startswith(fence):
-                fence = None
-            continue
-
-        fence_match = _FENCE_RE.match(line)
-        if fence_match is not None:
-            body.append(line)
-            fence = fence_match.group(1)
-            continue
-
-        heading_match = _SECTION_HEADING_RE.match(line)
-        if heading_match is None:
-            body.append(line)
-            continue
-
-        sections.append(
-            MarkdownSection(
-                title=title,
-                display_title=display_title,
-                order=order,
-                heading=heading,
-                body="".join(body),
-            )
-        )
-        order += 1
-        heading = line
-        display_title = (heading_match.group("title") or "").strip()
-        title = display_title.casefold()
-        body = []
-
-    sections.append(
-        MarkdownSection(
-            title=title,
-            display_title=display_title,
-            order=order,
-            heading=heading,
-            body="".join(body),
-        )
-    )
-    return sections
-
-
-def _clean_cut(text: str, budget: int) -> str:
-    """Cut text at the last useful paragraph or newline boundary."""
-    if budget <= 0:
-        return ""
-    if len(text) <= budget:
-        return text
-
-    min_clean_cut = budget // 2
-    cut = text.rfind("\n\n", 0, budget)
-    if cut == -1:
-        newline = text.rfind("\n", 0, budget)
-        cut = newline if newline > min_clean_cut else budget
-    elif cut < min_clean_cut:
-        newline = text.rfind("\n", 0, budget)
-        cut = newline if newline > min_clean_cut else budget
-    return text[:cut].rstrip()
-
-
-def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
-    """Return ``text`` bounded to ``budget``, appending ``breadcrumb`` when cut.
-
-    Truncates at a clean boundary — the last blank-line break, else the last
-    newline, before ``budget`` — so the injected head never ends mid-sentence.
-    When ``text`` already fits within ``budget`` it is returned verbatim with no
-    breadcrumb. The breadcrumb should identify the available durable source.
+    Derived, not fixed: the breadcrumb reserve grows with the limit, so the search runs over the
+    limit itself. Config rejects a limit below this value; nothing is clamped to it.
     """
-    if budget <= 0:
-        return ""
-    if len(text) <= budget:
-        return text
-
-    suffix = f"\n\n{breadcrumb}" if breadcrumb else ""
-    head_budget = budget - len(suffix)
-    if head_budget <= 0:
-        return (breadcrumb or text)[:budget]
-
-    head = _clean_cut(text, head_budget)
-    if not head:
-        return (breadcrumb or text)[:budget]
-    return f"{head}{suffix}"
+    digits = "9" * _PAGE_NUMBER_DIGITS
+    header = len(f"[{'x' * MAX_CONTEXT_LABEL_CHARS} (page {digits}/{digits})]\n")
+    limit = 1
+    while _page_room(limit) - header < 1:
+        limit += 1
+    return limit
 
 
-def _mandatory_section_owners(sections: list[MarkdownSection]) -> list[MarkdownSection]:
-    owners: list[MarkdownSection] = []
-    seen: set[str] = set()
-    for section in sections:
-        if section.title in MANDATORY_HANDOFF_SECTION_TITLES and section.title not in seen:
-            owners.append(section)
-            seen.add(section.title)
-    return owners
+def deliver_context(
+    parts: Sequence[ContextPart | ContextPiece],
+    *,
+    limit: int | None = None,
+) -> ContextDelivery:
+    """Ship the longest in-order run of whole parts that fits ``limit``; queue the rest.
 
-
-def _allocate_mandatory_body_budgets(
-    sections: list[MarkdownSection],
-    budget: int,
-    min_section_chars: int,
-) -> list[int]:
-    lengths = [len(section.body) for section in sections]
-    minimums = [min(length, min_section_chars) for length in lengths]
-    if sum(minimums) > budget:
-        total_length = sum(lengths)
-        allocations: list[int] = []
-        remaining = budget
-        for index, length in enumerate(lengths):
-            share = remaining if index == len(lengths) - 1 else budget * length // total_length
-            allocation = min(length, share)
-            allocations.append(allocation)
-            remaining -= allocation
-        return allocations
-
-    allocations = minimums.copy()
-    remaining = budget - sum(allocations)
-    while remaining > 0:
-        active = [index for index, length in enumerate(lengths) if allocations[index] < length]
-        if not active:
+    ``parts`` is an ordered sequence of ``(label, text)`` pairs, or queued pieces from an
+    earlier delivery; empty texts are skipped. Nothing is dropped or reordered: the first part
+    that does not fit ends the delivery, and it and everything behind it wait for the next one.
+    A part too large to ship alone pages at paragraph boundaries into ``<label> (page i/n)``
+    pieces, each with its own header, and those pages ship consecutively. The text ends with a
+    breadcrumb naming the labels that continue on the next delivery.
+    """
+    ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
+    queue = [piece for piece in map(_piece, parts) if piece.body]
+    shipped: list[ContextPiece] = []
+    while queue:
+        head = queue[0]
+        rest = queue[1:]
+        candidate = _render([*shipped, head], [piece.label for piece in rest], ship_limit)
+        if len(candidate) <= ship_limit:
+            shipped.append(queue.pop(0))
+            continue
+        if shipped:
             break
-        total_weight = sum(lengths[index] for index in active)
-        allocated_this_round = 0
-        for index in active:
-            capacity = lengths[index] - allocations[index]
-            share = max(1, remaining * lengths[index] // total_weight)
-            addition = min(capacity, share, remaining - allocated_this_round)
-            allocations[index] += addition
-            allocated_this_round += addition
-            if allocated_this_round == remaining:
-                break
-        remaining -= allocated_this_round
-    return allocations
+        count, part, first = _remainder(queue)
+        queue[:count] = _page(part, ship_limit, first)
+    waiting = [piece.label for piece in queue]
+    rendered = [(piece.label, piece.text) for piece in shipped]
+    return ContextDelivery(_render(shipped, waiting, ship_limit), rendered, queue)
 
 
-def _trim_section(
-    section: MarkdownSection,
-    budget: int,
-    *,
-    min_body_chars: int = 0,
-) -> MarkdownSection | None:
-    body_budget = budget - len(section.heading) - len(_SECTION_TRIM_MARKER)
-    if body_budget < 0:
-        return None
-
-    body = _clean_cut(section.body, body_budget)
-    required_body_chars = min(len(section.body), min_body_chars, body_budget)
-    if len(body) < required_body_chars:
-        body = section.body[:required_body_chars]
-    stripped_body = body.rstrip()
-    if len(stripped_body) >= required_body_chars:
-        body = stripped_body
-    return replace(
-        section,
-        body=f"{body}{_SECTION_TRIM_MARKER}",
-        trimmed=True,
-    )
+def _piece(part: ContextPart | ContextPiece) -> ContextPiece:
+    """A caller's ``(label, text)`` part, or a piece queued by an earlier delivery."""
+    if isinstance(part, ContextPiece):
+        return part
+    return ContextPiece(part[0], part[1])
 
 
-def _section_priority(
-    section: MarkdownSection,
-    priorities: Mapping[str, int],
-    mandatory_owner_orders: set[int],
-    unknown_priority: int,
-) -> int:
-    if section.title == "":
-        return _PREAMBLE_PRIORITY
-        if (
-            section.title in MANDATORY_HANDOFF_SECTION_TITLES
-            and section.order not in mandatory_owner_orders
-        ):
-            return unknown_priority
-    return priorities.get(section.title, unknown_priority)
-
-
-def _optional_sections_by_priority(
-    sections: list[MarkdownSection],
-    priorities: Mapping[str, int],
-    mandatory_owner_orders: set[int],
-    unknown_priority: int,
-) -> Iterator[MarkdownSection]:
-    buckets: dict[int, list[MarkdownSection]] = {}
-    for section in sections:
-        if section.order in mandatory_owner_orders:
-            continue
-        priority = _section_priority(
-            section,
-            priorities,
-            mandatory_owner_orders,
-            unknown_priority,
-        )
-        buckets.setdefault(priority, []).append(section)
-    for priority in sorted(buckets):
-        yield from buckets[priority]
-
-
-def _budget_result(
-    sections: list[MarkdownSection],
-    kept: list[MarkdownSection],
-) -> BudgetResult:
-    kept_by_order = {section.order: section for section in kept}
-    ordered_kept = tuple(kept_by_order[order] for order in sorted(kept_by_order))
-    omitted_titles = tuple(
-        section.display_title
-        for section in sections
-        if section.text
-        and (section.order not in kept_by_order or kept_by_order[section.order].trimmed)
-    )
-    return BudgetResult(sections=ordered_kept, omitted_titles=omitted_titles)
-
-
-def allocate_section_budget(
-    sections: list[MarkdownSection],
-    priorities: Mapping[str, int],
-    budget: int,
-    *,
-    min_section_chars: int = 200,
-    unknown_priority: int = 60,
-) -> BudgetResult:
-    """Allocate a character budget while preserving mandatory handoff sections."""
-    if budget <= 0:
-        return _budget_result(sections, [])
-
-    mandatory = _mandatory_section_owners(sections)
-    mandatory_orders = {section.order for section in mandatory}
-    marker_reserve = sum(len(section.heading) + len(_SECTION_TRIM_MARKER) for section in mandatory)
-    if marker_reserve > budget:
-        return _budget_result(sections, [])
-
-    mandatory_body_budget = budget - marker_reserve
-    mandatory_bodies_fit = sum(len(section.body) for section in mandatory) <= (
-        mandatory_body_budget
-    )
-    if not mandatory_bodies_fit:
-        body_budgets = _allocate_mandatory_body_budgets(
-            mandatory,
-            mandatory_body_budget,
-            min_section_chars,
-        )
-        trimmed_mandatory = [
-            trimmed
-            for section, body_budget in zip(mandatory, body_budgets, strict=True)
-            if (
-                trimmed := _trim_section(
-                    section,
-                    len(section.heading) + len(_SECTION_TRIM_MARKER) + body_budget,
-                    min_body_chars=min(len(section.body), min_section_chars),
-                )
-            )
-            is not None
-        ]
-        return _budget_result(sections, trimmed_mandatory)
-
-    kept = mandatory.copy()
-    remaining = budget - sum(len(section.text) for section in kept)
-    for section in _optional_sections_by_priority(
-        sections,
-        priorities,
-        mandatory_orders,
-        unknown_priority,
-    ):
-        if len(section.text) <= remaining:
-            kept.append(section)
-            remaining -= len(section.text)
-            continue
-        if remaining >= min_section_chars:
-            trimmed = _trim_section(section, remaining)
-            if trimmed is not None:
-                kept.append(trimmed)
-        break
-
-    return _budget_result(sections, kept)
-
-
-def _overflow_breadcrumb(omitted: list[str], result_id: str | None) -> str:
-    names = ",".join(omitted)
-    if result_id:
-        return f"omitted contributors=[{names}]; get_tool_result result_id={result_id}"
-    return f"omitted contributors=[{names}]"
-
-
-def _render_contributors(
-    kept: list[tuple[str, str]],
-    omitted: list[str],
-    result_id: str | None,
-) -> str:
-    breadcrumb = _overflow_breadcrumb(omitted, result_id) if omitted or result_id else ""
-    if not kept:
-        return breadcrumb
-    body = "\n\n".join(part for _, part in kept)
+def _render(parts: Sequence[ContextPiece], waiting: Sequence[str], limit: int) -> str:
+    body = _join(parts)
+    breadcrumb = _continuation(waiting, limit)
     if not breadcrumb:
         return body
-    return f"{body}\n\n{breadcrumb}"
+    return f"{body}\n\n{breadcrumb}" if body else breadcrumb
 
 
-def _drop_rank(
-    part: tuple[str, str], room: int, protected: Collection[str]
-) -> tuple[bool, bool, int]:
-    """Higher ranks drop first: unshippable parts, then unprotected, then largest."""
-    label, text = part
-    return (len(text) > room, label not in protected, len(text))
+def _join(parts: Sequence[ContextPiece]) -> str:
+    """Whole parts join on a blank line; a page after the first joins its predecessor directly."""
+    text = ""
+    for index, piece in enumerate(parts):
+        continues_page = piece.number > 1
+        if index and not continues_page:
+            text += "\n\n"
+        text += piece.text
+    return text
 
 
-def _room_beside_breadcrumb(
-    index: int,
-    kept: list[tuple[str, str]],
-    omitted: list[tuple[str, str]],
-    limit: int,
-    result_id: str | None,
-) -> int:
-    """Space kept[index] has when it ships alone, beside a breadcrumb naming every other part."""
-    others = [label for label, _ in omitted] + [
-        label for i, (label, _) in enumerate(kept) if i != index
-    ]
-    if not others and not result_id:
-        return limit
-    return limit - len("\n\n") - len(_overflow_breadcrumb(others, result_id))
+def _label_budget(limit: int) -> int:
+    """Characters the breadcrumb may spend naming waiting labels."""
+    return min(CONTINUATION_LABEL_BUDGET, max(1, limit // 4))
 
 
-def _truncate_contributors(
-    parts: list[tuple[str, str]],
-    *,
-    limit: int,
-    result_id: str | None = None,
-    protected: Collection[str] = (),
-) -> ContextFit:
-    kept = list(parts)
-    omitted: list[tuple[str, str]] = []
-    while True:
-        candidate = _render_contributors(kept, [label for label, _ in omitted], result_id)
-        if len(candidate) <= limit:
-            return ContextFit(candidate, omitted)
-        if not kept:
-            return ContextFit(candidate[:limit], omitted)
-        index = max(
-            range(len(kept)),
-            key=lambda i: _drop_rank(
-                kept[i], _room_beside_breadcrumb(i, kept, omitted, limit, result_id), protected
-            ),
-        )
-        omitted.append(kept.pop(index))
+def _breadcrumb_reserve(limit: int) -> int:
+    """The longest breadcrumb any queue can produce at ``limit``.
 
-
-def _persist_additional_context(
-    text: str,
-    *,
-    store: object | None,
-    project_id: str | None,
-    session_id: str | None,
-) -> str | None:
-    save = getattr(store, "save", None)
-    if store is None or not callable(save) or not project_id or not session_id:
-        return None
-    try:
-        result_id = save(
-            project_id=project_id,
-            session_id=session_id,
-            server_name="gobby-context",
-            tool_name="additionalContext",
-            content=text,
-            content_kind="text",
-            total_chars=len(text),
-        )
-    except (OSError, psycopg.Error):
-        return None
-    return result_id if isinstance(result_id, str) and result_id else None
-
-
-def truncate_additional_context(
-    parts: Sequence[tuple[str, str]],
-    *,
-    logger: logging.Logger | None = None,
-    limit: int | None = None,
-    session_id: str | None = None,
-    project_id: str | None = None,
-    store: object | None = None,
-) -> str:
-    """Join labeled contributors and fit them to the ship limit; see ``fit_additional_context``."""
-    return fit_additional_context(
-        parts,
-        logger=logger,
-        limit=limit,
-        session_id=session_id,
-        project_id=project_id,
-        store=store,
-    ).text
-
-
-def fit_additional_context(
-    parts: Sequence[tuple[str, str]],
-    *,
-    logger: logging.Logger | None = None,
-    limit: int | None = None,
-    session_id: str | None = None,
-    project_id: str | None = None,
-    store: object | None = None,
-    protected: Collection[str] = PROTECTED_CONTEXT_LABELS,
-) -> ContextFit:
-    """Join labeled contributors, fit them to the ship limit, and report what was dropped.
-
-    ``parts`` is an ordered sequence of ``(label, text)`` pairs; empty texts are
-    skipped and labels may repeat. Over the limit, whole contributors are dropped
-    (never prefix-sliced): first any part larger than the limit on its own, then
-    unprotected parts largest first, then ``protected`` labels largest first. The
-    breadcrumb names each omitted label. Persists the full aggregate when session,
-    project, and store exist.
+    Named labels stay within the label budget, and the count suffix has room for a queue
+    of up to six digits. A page leaves this room, so it still fits beside its breadcrumb
+    after later parts join the queue and lengthen it.
     """
-    kept = [(label, part) for label, part in parts if part]
-    text = "\n\n".join(part for _, part in kept)
-    ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
-    if len(text) <= ship_limit:
-        return ContextFit(text, [])
-    if logger:
-        logger.warning(
-            "additionalContext truncated aggregate_len=%d limit=%d contributors=%s",
-            len(text),
-            ship_limit,
-            [(label, len(part)) for label, part in kept],
+    longest_prefix = len(_CONTINUATION_PREFIX)
+    return longest_prefix + _label_budget(limit) + len(" (+999999 more)")
+
+
+def _continuation(waiting: Sequence[str], limit: int) -> str:
+    """Name what continues on the next delivery."""
+    if not waiting:
+        return ""
+    budget = _label_budget(limit)
+    named: list[str] = []
+    used = 0
+    for label in waiting:
+        cost = len(label) + (2 if named else 0)
+        if used + cost > budget:
+            break
+        named.append(label)
+        used += cost
+    more = len(waiting) - len(named)
+    names = ", ".join(named)
+    if more:
+        suffix = f"(+{more} more)"
+        names = f"{names} {suffix}" if named else suffix
+    return _CONTINUATION_PREFIX + names
+
+
+def _remainder(queue: Sequence[ContextPiece]) -> tuple[int, ContextPiece, int]:
+    """The head piece's unshipped rest as ``(queue entries, raw part, first page number)``.
+
+    A page run is the consecutive queue entries that carry the head part's remaining pages,
+    matched by their metadata. Those pages may have been cut at a larger limit than the
+    current one, so the run is joined back to its raw text and cut again, numbering on from
+    the head page.
+    """
+    head = queue[0]
+    if not head.number:
+        return 1, head, 1
+    raw: list[str] = []
+    for number in range(head.number, head.total + 1):
+        index = number - head.number
+        if index >= len(queue):
+            break
+        entry = queue[index]
+        if (entry.part, entry.number, entry.total) != (head.part, number, head.total):
+            break
+        raw.append(entry.body)
+    return len(raw), ContextPiece(head.part, "".join(raw)), head.number
+
+
+def _page(part: ContextPiece, limit: int, first: int = 1) -> list[ContextPiece]:
+    """Split one whole part into numbered pages that each fit ``limit`` beside any breadcrumb.
+
+    Pages number from ``first``. Each page leaves room for the longest breadcrumb a queue can
+    produce, so a queued page never outgrows its delivery when later parts join the queue.
+    Pages are cut from raw text and carry their numbers as metadata, so no page is ever cut
+    from another page's header.
+    """
+    room = _page_room(limit)
+    budget = room
+    while budget > 0:
+        bodies = _split_to_budget(part.body, budget)
+        last = first + len(bodies) - 1
+        pages = [
+            ContextPiece(part.part, body, number, last)
+            for number, body in enumerate(bodies, start=first)
+        ]
+        excess = max(len(page.text) - room for page in pages)
+        if excess <= 0:
+            return pages
+        budget -= excess
+    raise ValueError(f"additionalContext limit {limit} is too small to page {part.part}")
+
+
+def _split_to_budget(
+    text: str, budget: int, separators: tuple[str, ...] = _PAGE_SEPARATORS
+) -> list[str]:
+    """Split ``text`` into consecutive pieces of at most ``budget`` characters.
+
+    Each separator stays attached to the unit before it, so the pieces concatenate back
+    to ``text`` exactly. A unit too large for ``budget`` splits again at the next finer
+    separator. A run with no separator left that still exceeds ``budget`` raises
+    UnpageableContextError: no character is ever cut by length.
+    """
+    if len(text) <= budget:
+        return [text]
+    if not separators:
+        raise UnpageableContextError(
+            f"{len(text)}-character run has no paragraph, line or word boundary "
+            f"to page within a {budget}-character page budget"
         )
-    result_id = _persist_additional_context(
-        text,
-        store=store,
-        project_id=project_id,
-        session_id=session_id,
-    )
-    return _truncate_contributors(kept, limit=ship_limit, result_id=result_id, protected=protected)
+    separator, finer = separators[0], separators[1:]
+    segments = text.split(separator)
+    units: list[str] = []
+    for index, segment in enumerate(segments):
+        unit = segment + separator if index < len(segments) - 1 else segment
+        if len(unit) > budget:
+            units.extend(_split_to_budget(unit, budget, finer))
+        else:
+            units.append(unit)
+    pieces: list[str] = []
+    current = ""
+    for unit in units:
+        if current and len(current) + len(unit) > budget:
+            pieces.append(current)
+            current = ""
+        current += unit
+    if current:
+        pieces.append(current)
+    return pieces

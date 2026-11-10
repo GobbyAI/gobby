@@ -6,7 +6,7 @@ use super::{
     provider_command::build_command,
     provider_env::{EnvInputs, build_env},
     sandbox::{
-        PolicyInputs,
+        PolicyInputs, operator_bootstrap_path,
         runtime::{SandboxLaunch, SrtInstallation, prepare_launch_with},
     },
     state::{AgentState, ExitRecord, RunPhase, WorkspaceRecord},
@@ -227,17 +227,31 @@ fn prepare_sandbox(
     prompt_file: &Path,
 ) -> Result<SandboxLaunch, LaunchFailure> {
     let inputs = policy_inputs(gobby_home, context, run_id, payload, cwd);
-    let prepared = prepare_launch_with(&inputs, prompt_file, &context.installation);
-    let removed = remove_prompt_file(prompt_file);
-    let sandbox = prepared
-        .map_err(|error| LaunchFailure::new(ExitReason::PrepareFailed, error.to_string()))?;
-    removed.map_err(|error| {
-        LaunchFailure::new(
-            ExitReason::PrepareFailed,
-            format!("remove prompt file: {error}"),
-        )
-    })?;
-    Ok(sandbox)
+    sandbox_from_inputs(inputs, prompt_file, &context.installation)
+}
+
+/// Launches the sandbox from the resolved policy inputs. The prompt file is removed on every path,
+/// including a failed input resolution, because it exists only for this preparation. A failed
+/// removal is appended to a preparation failure, which keeps its reason.
+fn sandbox_from_inputs(
+    inputs: anyhow::Result<PolicyInputs>,
+    prompt_file: &Path,
+    installation: &SrtInstallation,
+) -> Result<SandboxLaunch, LaunchFailure> {
+    let prepared = inputs.map_err(prepare_error).and_then(|inputs| {
+        prepare_launch_with(&inputs, prompt_file, installation)
+            .map_err(|error| LaunchFailure::new(ExitReason::PrepareFailed, error.to_string()))
+    });
+    let removed =
+        remove_prompt_file(prompt_file).map_err(|error| format!("remove prompt file: {error}"));
+    match (prepared, removed) {
+        (prepared, Ok(())) => prepared,
+        (Ok(_), Err(detail)) => Err(LaunchFailure::new(ExitReason::PrepareFailed, detail)),
+        (Err(mut failure), Err(detail)) => {
+            failure.detail = format!("{}; {detail}", failure.detail);
+            Err(failure)
+        }
+    }
 }
 
 fn policy_inputs(
@@ -246,11 +260,11 @@ fn policy_inputs(
     run_id: &str,
     payload: &SpawnPayload,
     cwd: &Path,
-) -> PolicyInputs {
+) -> anyhow::Result<PolicyInputs> {
     // The cache variables name this run's caches, so they win over the ambient values.
     let mut env = context.ambient.clone();
     env.extend(context.cache_env.clone());
-    PolicyInputs {
+    Ok(PolicyInputs {
         provider: payload.provider.clone(),
         sandbox: payload.sandbox.clone(),
         source_root: PathBuf::from(&payload.source_root),
@@ -272,13 +286,15 @@ fn policy_inputs(
         prewarm_pre_commit_store: payload.prewarm_pre_commit_store,
         platform: context.platform.clone(),
         darwin_user_dirs: None,
+        // From the passwd entry, never the seat HOME: an environment variable cannot redirect it.
+        operator_bootstrap: operator_bootstrap_path()?,
         // The payload carries no seat-folder authority, so these grant nothing.
         definition: None,
         session_seq: None,
         epic_seq: None,
         read_all_agent_workspaces: false,
         predecessor_workspace_folders: Vec::new(),
-    }
+    })
 }
 
 /// The sandbox wrapper with the native env prefix between its `--` and the provider. `wrap`
@@ -671,3 +687,7 @@ pub(super) fn now_ms() -> u64 {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
 }
+
+#[cfg(test)]
+#[path = "launch/tests.rs"]
+mod tests;

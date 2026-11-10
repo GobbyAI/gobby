@@ -701,11 +701,23 @@ class WebSocketServer(
             return
 
         self.lease_registry.start_lifecycle_publication()
+        # A retryable native bind keeps publication and idle cleanup. The rebind loop
+        # does not reopen a registry that shutdown_lifecycle_publication has closed.
+        retrying = False
         try:
             if self.native_publisher is not None:
                 # Native mode serves no websockets listener. The bind is the readiness
                 # signal, so a failed bind raises here and reaches the subsystem failure path.
-                await self.native_publisher.bind()
+                # The sampler starts on this path, and a retryable bind failure also enters
+                # the publisher's bounded rebind loop before the exception propagates.
+                self.native_publisher.ensure_sampler()
+                try:
+                    await self.native_publisher.bind()
+                except BaseException as exc:
+                    retrying = self.native_publisher.fail_bind_into_rebind(exc) is True
+                    if retrying:
+                        self._cleanup_task = asyncio.create_task(self._cleanup_idle_sessions())
+                    raise
             else:
                 self._server = await serve(
                     self.handle_connection,
@@ -719,7 +731,8 @@ class WebSocketServer(
                     logger=websockets_logger,
                 )
         except BaseException:
-            await self.lease_registry.shutdown_lifecycle_publication()
+            if not retrying:
+                await self.lease_registry.shutdown_lifecycle_publication()
             raise
 
         # Start idle session cleanup background task

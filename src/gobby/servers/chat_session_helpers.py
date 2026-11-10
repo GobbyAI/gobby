@@ -23,13 +23,14 @@ from claude_agent_sdk.types import (
     UserPromptSubmitHookSpecificOutput,
 )
 
+from gobby.adapters.capabilities import ContextChannel
 from gobby.adapters.degradation import (
     AdditionalContextPersistKwargs,
+    page_context_for_adapter,
     persist_kwargs_from_mapping,
 )
 from gobby.cli.installers.mcp_config_shared import gmcp_command
-from gobby.hooks.events import ContextPart, HookResponse
-from gobby.llm.sdk_utils import truncate_additional_context as _truncate
+from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +52,19 @@ def _bound_resp_context(
     *,
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> str:
-    """Fit labeled hook additionalContext and persist overflow when session/project exist."""
+    """Fit labeled hook additionalContext to the ship limit, queueing the parts that wait."""
     mapped = persist_kwargs_from_mapping(
         resp,
         store=persist["store"] if persist is not None else None,
         session_id=persist["session_id"] if persist is not None else None,
-        project_id=persist["project_id"] if persist is not None else None,
     )
-    return _truncate(
+    return page_context_for_adapter(
         parts,
-        logger=logger,
+        provider=SessionSource.CLAUDE,
+        hook_type=None,
+        destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+        event_logger=logger,
         session_id=mapped["session_id"],
-        project_id=mapped["project_id"],
         store=mapped["store"],
     )
 
@@ -155,20 +157,27 @@ def build_codex_web_chat_mcp_overrides() -> list[str]:
 def _response_to_prompt_output(
     resp: dict[str, Any] | None,
     persist: AdditionalContextPersistKwargs | None = None,
+    extra_parts: Sequence[ContextPart] = (),
 ) -> SyncHookJSONOutput:
-    """Convert workflow HookResponse dict to UserPromptSubmit SDK output."""
-    if not resp:
-        return SyncHookJSONOutput()
+    """Convert workflow HookResponse dict to UserPromptSubmit SDK output.
+
+    ``extra_parts`` (plan mode, conversation history) join the response's own context
+    in one queue, so they page with it.
+    """
     output = SyncHookJSONOutput()
-    if resp.get("decision") == "block":
+    if resp and resp.get("decision") == "block":
+        # A blocked prompt delivers nothing: it carries no context and commits no queue.
         output["decision"] = "block"
         if resp.get("reason"):
             output["reason"] = resp["reason"]
-    context = resp.get("context")
-    if isinstance(context, str) and context:
+        return output
+    parts = [*_resp_context_parts(resp), *extra_parts]
+    # Always page: a turn with nothing fresh still carries the session's queued remainder.
+    additional_context = _bound_resp_context(resp, parts, persist=persist)
+    if additional_context:
         output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
             hookEventName="UserPromptSubmit",
-            additionalContext=_bound_resp_context(resp, _resp_context_parts(resp), persist=persist),
+            additionalContext=additional_context,
         )
     return output
 
@@ -178,10 +187,8 @@ def _response_to_pre_tool_output(
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PreToolUse SDK output."""
-    if not resp:
-        return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
-    if resp.get("decision") == "block":
+    if resp and resp.get("decision") == "block":
         blocked_specific = PreToolUseHookSpecificOutput(
             hookEventName="PreToolUse",
             permissionDecision="deny",
@@ -189,29 +196,22 @@ def _response_to_pre_tool_output(
         if resp.get("reason"):
             blocked_specific["permissionDecisionReason"] = resp["reason"]
         output["hookSpecificOutput"] = blocked_specific
-    else:
-        specific: PreToolUseHookSpecificOutput | None = None
-        if (
-            resp.get("modified_input") is not None
-            or resp.get("context")
-            or resp.get("auto_approve")
-        ):
-            specific = PreToolUseHookSpecificOutput(
-                hookEventName="PreToolUse",
-            )
-        if specific is None:
-            return output
-        if resp.get("modified_input") is not None:
-            # Rewrite tool input (rewrite_input effect)
-            specific["updatedInput"] = resp["modified_input"]
-        if resp.get("auto_approve"):
-            specific["permissionDecision"] = "allow"
-        context = resp.get("context")
-        if isinstance(context, str) and context:
-            specific["additionalContext"] = _bound_resp_context(
-                resp, _resp_context_parts(resp), persist=persist
-            )
-        output["hookSpecificOutput"] = specific
+        return output
+    # Always page: a tool call with nothing fresh still carries the session's queued remainder.
+    additional_context = _bound_resp_context(resp, _resp_context_parts(resp), persist=persist)
+    modified_input = resp.get("modified_input") if resp else None
+    auto_approve = bool(resp and resp.get("auto_approve"))
+    if modified_input is None and not auto_approve and not additional_context:
+        return output
+    specific = PreToolUseHookSpecificOutput(hookEventName="PreToolUse")
+    if modified_input is not None:
+        # Rewrite tool input (rewrite_input effect)
+        specific["updatedInput"] = modified_input
+    if auto_approve:
+        specific["permissionDecision"] = "allow"
+    if additional_context:
+        specific["additionalContext"] = additional_context
+    output["hookSpecificOutput"] = specific
     return output
 
 
@@ -220,15 +220,14 @@ def _response_to_post_tool_output(
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PostToolUse SDK output."""
-    if not resp:
-        return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
 
-    context = resp.get("context")
-    if isinstance(context, str) and context:
+    # Always page: a tool result with nothing fresh still carries the session's queued remainder.
+    additional_context = _bound_resp_context(resp, _resp_context_parts(resp), persist=persist)
+    if additional_context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(
             hookEventName="PostToolUse",
-            additionalContext=_bound_resp_context(resp, _resp_context_parts(resp), persist=persist),
+            additionalContext=additional_context,
         )
     return output
 
@@ -238,22 +237,21 @@ def _response_to_stop_output(
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to Stop SDK output."""
-    if not resp:
-        return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
-    if resp.get("decision") == "block":
+    if resp and resp.get("decision") == "block":
+        # A blocked stop delivers nothing: it carries no context and commits no queue.
         output["decision"] = "block"
         if resp.get("reason"):
             output["reason"] = resp["reason"]
-    context = resp.get("context")
-    if isinstance(context, str) and context:
+        return output
+    # Always page: a stop with nothing fresh still carries the session's queued remainder.
+    additional_context = _bound_resp_context(resp, _resp_context_parts(resp), persist=persist)
+    if additional_context:
         output["hookSpecificOutput"] = cast(
             Any,
             {  # No SDK TypedDict for Stop
                 "hookEventName": "Stop",
-                "additionalContext": _bound_resp_context(
-                    resp, _resp_context_parts(resp), persist=persist
-                ),
+                "additionalContext": additional_context,
             },
         )
     return output
@@ -288,18 +286,15 @@ def _response_to_compact_output(
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PreCompact SDK output."""
-    if not resp:
-        return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
-    context = resp.get("context")
-    if isinstance(context, str) and context:
+    # Always page: a compaction with nothing fresh still carries the session's queued remainder.
+    additional_context = _bound_resp_context(resp, _resp_context_parts(resp), persist=persist)
+    if additional_context:
         output["hookSpecificOutput"] = cast(
             Any,
             {  # No SDK TypedDict for PreCompact
                 "hookEventName": "PreCompact",
-                "additionalContext": _bound_resp_context(
-                    resp, _resp_context_parts(resp), persist=persist
-                ),
+                "additionalContext": additional_context,
             },
         )
     return output
@@ -311,18 +306,15 @@ def _response_to_subagent_output(
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to SubagentStart/SubagentStop SDK output."""
-    if not resp:
-        return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
-    context = resp.get("context")
-    if isinstance(context, str) and context:
+    # Always page: a subagent event with nothing fresh still carries the session's queued remainder.
+    additional_context = _bound_resp_context(resp, _resp_context_parts(resp), persist=persist)
+    if additional_context:
         output["hookSpecificOutput"] = cast(
             Any,
             {  # No SDK TypedDict for Subagent hooks
                 "hookEventName": event_name,
-                "additionalContext": _bound_resp_context(
-                    resp, _resp_context_parts(resp), persist=persist
-                ),
+                "additionalContext": additional_context,
             },
         )
     return output

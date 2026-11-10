@@ -19,7 +19,7 @@ from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import IdleDetector, plain_text
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameClient
-from gobby.terminals.host_protocol import control_socket_path, frames_socket_path
+from gobby.terminals.host_protocol import frames_socket_path
 from tests.e2e.composer_proof import (
     ProofRefused,
     ProofScope,
@@ -233,19 +233,11 @@ class LiveProof:
                     start = len(ws.messages)
                     item = await self.terminal(terminal_id)
             locator = self.locator(item)
-            own = Surface(
-                provider,
-                str(item.get("session_id")),
-                terminal_id,
-                locator.frame_host_epoch,
-                str(item.get("project_id")),
-            )
+            own, details = await self.row_surface(provider, item)
             self.scope.require_surface(own, own)
-            details = await self.call(
-                "gobby-sessions", "get_session", {"session_id": own.session_id}
-            )
             if (
-                details.get("source") != provider
+                own.terminal_id != terminal_id
+                or details.get("source") != provider
                 or details.get("project_id") != self.scope.project_id
             ):
                 raise ProofRefused("real provider registration mismatch")
@@ -285,22 +277,36 @@ class LiveProof:
         locator = _attach_locator(row)
         if (
             locator.backend != "native"
-            or locator.host_socket != str(control_socket_path(self.scope.root / "h"))
+            or locator.host_socket is None
+            # Attach locators name the host's frames socket (storage/terminals.py).
+            or Path(locator.host_socket).resolve()
+            != frames_socket_path(self.scope.root / "h").resolve()
             or not locator.host_terminal_id
         ):
             raise ProofRefused("native host binding outside private proof root")
         return locator
 
+    async def row_surface(
+        self, provider: str, row: dict[str, Any]
+    ) -> tuple[Surface, dict[str, Any]]:
+        """Surface of a terminal row plus its bound session's details.
+
+        Terminal rows carry no project; the daemon's session record names it.
+        """
+        session_id = str(row.get("session_id"))
+        details = await self.call("gobby-sessions", "get_session", {"session_id": session_id})
+        surface = Surface(
+            provider,
+            session_id,
+            str(row.get("id")),
+            self.locator(row).frame_host_epoch,
+            str(details.get("project_id")),
+        )
+        return surface, details
+
     async def validate(self, seat: Seat) -> dict[str, Any]:
         row = await self.terminal(seat.surface.terminal_id)
-        locator = _attach_locator(row)
-        observed = Surface(
-            seat.surface.provider,
-            str(row.get("session_id")),
-            str(row.get("id")),
-            locator.frame_host_epoch,
-            str(row.get("project_id")),
-        )
+        observed, _ = await self.row_surface(seat.surface.provider, row)
         self.scope.require_surface(seat.surface, observed)
         if self.locator(row) != seat.locator:
             raise ProofRefused("native attachment binding changed")
@@ -643,7 +649,10 @@ class LiveProof:
             )
             if outcome.get("success") is not True:
                 raise ProofRefused("owned proof termination unconfirmed")
-        row = await self.validate(seat)
+        # An exited row releases its session binding, so read it back without validate().
+        row = await self.terminal(seat.surface.terminal_id)
+        if row.get("session_id") not in (None, seat.surface.session_id):
+            raise ProofRefused("terminated proof binding changed")
         if row.get("state") != "exited":
             raise ProofRefused("owned proof termination has no exited readback")
         if recorded is None:

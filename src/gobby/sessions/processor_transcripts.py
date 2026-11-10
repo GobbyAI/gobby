@@ -15,6 +15,7 @@ import psycopg
 
 from gobby.sessions.message_stats import MessageStats, StatsRecord
 from gobby.sessions.observation_tracker import ObservationTracker
+from gobby.sessions.processor_quota import collect_live_quota, latch_quota_end
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_interrupt import lifecycle_interrupt_from_lines
 from gobby.sessions.transcript_normalization import normalize_transcript_records
@@ -225,8 +226,11 @@ class ProcessorTranscriptMixin:
                 extra={"session_id": session_id, "transcript_path": transcript_path},
             )
             await self._reset_transcript_state(session_id, transcript_path)
+            self._quota_caught_up.discard(session_id)
             last_offset = 0
         self._transcript_file_state[session_id] = current_state
+        # A replaced or truncated transcript is history until a caught-up pass reads it again.
+        was_caught_up = session_id in self._quota_caught_up
 
         if transcript_stat.st_size - last_offset > CATCHUP_CHUNK_BYTES:
             # History ingest will take several passes; publish live occupancy from
@@ -282,6 +286,13 @@ class ProcessorTranscriptMixin:
         caught_up = reached_eof or valid_offset >= transcript_stat.st_size
 
         if not new_lines:
+            latch_quota_end(self._quota_caught_up, session_id, caught_up)
+            # An idle parent still ingests subagent appends (plan 2.2.5).
+            idle_parser = self._parsers.get(session_id)
+            if idle_parser is not None:
+                await self._persist_ledger_batch(
+                    session_id, transcript_path, _parser_source(idle_parser)
+                )
             return True
 
         await self._run_db(self._revive_expired_terminal_session, session_id)
@@ -341,6 +352,15 @@ class ProcessorTranscriptMixin:
                     if parser_source == "agy" and isinstance(record, ParsedToolEvent)
                 ),
             ]
+            # The ledger runs inside the parser rollback, ahead of the stats: a failure
+            # here leaves the stats, the offsets, and the parser as they were before the pass.
+            await self._persist_ledger_batch(
+                session_id,
+                transcript_path,
+                parser_source,
+                lines=new_lines,
+                records=parsed_records,
+            )
         except Exception:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)
@@ -393,12 +413,18 @@ class ProcessorTranscriptMixin:
                     },
                 )
 
+        if was_caught_up and caught_up and parser_source is not None:
+            # Each envelope carries its stream cursor, its byte offset in the transcript.
+            positioned = list(zip(new_line_offsets, new_lines, strict=True))
+            await collect_live_quota(self, session_id, parser_source, positioned)
+
         if not stats_records:
             if pending_appender is not None:
                 self._index_appenders[session_id] = pending_appender
             if latest_parsed_index > last_index:
                 self._message_indices[session_id] = latest_parsed_index
             self._byte_offsets[session_id] = valid_offset
+            latch_quota_end(self._quota_caught_up, session_id, caught_up)
             if (
                 pending_appender is not None
                 and appender_stat is not None
@@ -436,6 +462,7 @@ class ProcessorTranscriptMixin:
 
         self._byte_offsets[session_id] = valid_offset
         self._message_indices[session_id] = latest_parsed_index
+        latch_quota_end(self._quota_caught_up, session_id, caught_up)
 
         logger.debug(
             "Processed transcript messages",

@@ -38,8 +38,8 @@ from gobby.runtime_grants.service import (
 from gobby.servers.auth_service import _AGENT_CAPABILITY_MATRIX, AuthService
 from gobby.servers.routes.runtime_handshake import create_runtime_handshake_router
 from gobby.utils.local_token import (
-    derive_managed_signing_key,
     issue_agent_api_token,
+    issue_session_api_token,
     read_managed_api_token,
     verify_agent_api_token,
 )
@@ -56,12 +56,15 @@ from tests.servers.conftest import create_http_server
 pytestmark = pytest.mark.unit
 
 OPERATOR_TOKEN = "handshake-operator-token"
+TEST_SIGNING_KEY = b"h" * 32
 
 
-def test_managed_challenge_uses_derived_signing_key(tmp_path: Path) -> None:
-    from gobby.utils.local_token import derive_managed_signing_key
+def test_managed_challenge_uses_the_persistent_daemon_key(tmp_path: Path) -> None:
+    from tests.fixtures.capability_tokens import daemon_signing_key
 
-    key = derive_managed_signing_key("bootstrap-key")
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text("api_key: bootstrap-key\n")
+    key = daemon_signing_key(bootstrap)
     nonce = os.urandom(16)
     token = issue_agent_api_token(
         key,
@@ -73,8 +76,6 @@ def test_managed_challenge_uses_derived_signing_key(tmp_path: Path) -> None:
     _, encoded_claims, encoded_signature = token.split(".")
     claims = json.loads(base64.urlsafe_b64decode(encoded_claims + "=" * (-len(encoded_claims) % 4)))
     signature = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
-    bootstrap = tmp_path / "bootstrap.yaml"
-    bootstrap.write_text("api_key: bootstrap-key\n")
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
     server.auth_service = AuthService(lambda: server.services.database, bootstrap_file=bootstrap)
     client = TestClient(server.app)
@@ -87,7 +88,7 @@ def test_managed_challenge_uses_derived_signing_key(tmp_path: Path) -> None:
     )
     assert interactive.status_code == 400
     assert interactive.json()["detail"] == "interactive_challenge_is_native"
-    bootstrap.unlink()
+    (tmp_path / "capability_signing_key").write_bytes(b"damaged")
     missing = client.post("/api/runtime/handshake/challenge", json=body)
     assert missing.status_code == 503
     assert missing.json()["detail"] == "signing_key_unavailable"
@@ -172,19 +173,19 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
     assert interactive.value.code == "claims_mismatch"
 
     token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
+    claims = verify_agent_api_token(token, TEST_SIGNING_KEY)
     assert claims is not None
     managed = challenge_proof(
         nonce,
         kind="managed",
-        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
+        signing_key=TEST_SIGNING_KEY,
         claims=claims,
     )
     signature = token.rsplit(".", maxsplit=1)[1]
@@ -216,7 +217,7 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
 def test_challenge_proof_matches_agent_run_token_kind(tmp_path: Path) -> None:
     nonce = os.urandom(16)
     token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
@@ -261,7 +262,7 @@ def test_challenge_rejects_oversized_nonce() -> None:
 def test_machine_claim_binding() -> None:
     handshake = _handshake()
     missing = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
@@ -278,23 +279,19 @@ def test_machine_claim_binding() -> None:
         .decode()
     )
     signed = f"{version}.{encoded}"
-    signature = hmac.new(
-        derive_managed_signing_key(OPERATOR_TOKEN), signed.encode(), hashlib.sha256
-    ).digest()
+    signature = hmac.new(TEST_SIGNING_KEY, signed.encode(), hashlib.sha256).digest()
     unsigned_machine = f"{signed}.{base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}"
-    assert (
-        verify_agent_api_token(unsigned_machine, derive_managed_signing_key(OPERATOR_TOKEN)) is None
-    )
+    assert verify_agent_api_token(unsigned_machine, TEST_SIGNING_KEY) is None
 
     token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
+    claims = verify_agent_api_token(token, TEST_SIGNING_KEY)
     assert claims is not None
     assert claims.machine_id == LOCAL_MACHINE_ID
     with pytest.raises(HandshakeRejection, match="machine"):
@@ -308,14 +305,14 @@ def test_machine_claim_binding() -> None:
 def test_bearer_claim_binding_matrix() -> None:
     handshake = _handshake()
     token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
+    claims = verify_agent_api_token(token, TEST_SIGNING_KEY)
     assert claims is not None
 
     with pytest.raises(HandshakeRejection) as mismatch:
@@ -637,14 +634,14 @@ def test_rejection_log_attributes_principal(
     server = _config_server(_grant_service(), tmp_path / "token")
     claims = verify_agent_api_token(
         issue_agent_api_token(
-            derive_managed_signing_key(OPERATOR_TOKEN),
+            TEST_SIGNING_KEY,
             agent_run_id=AGENT_RUN_ID,
             session_id=SESSION_ID,
             project_id=PROJECT_ID,
             machine_id=LOCAL_MACHINE_ID,
             timeout_seconds=30,
         ),
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
     )
     assert claims is not None
     with (
@@ -694,10 +691,17 @@ def test_epoch_bump_rejects_prior_grants(tmp_path: Path) -> None:
 
     server = _config_server(grants, tmp_path / "local_cli_token")
     client = TestClient(server.app)
+    # A session's grant is presented with that session's own credential, never the machine key.
+    session_token = issue_session_api_token(
+        cast(bytes, server.auth_service.managed_signing_key()),
+        session_id=SESSION_ID,
+        project_id=PROJECT_ID,
+        machine_id=LOCAL_MACHINE_ID,
+    )
     response = client.get(
         "/api/runtime/config",
         headers={
-            "Authorization": f"Bearer {OPERATOR_TOKEN}",
+            "Authorization": f"Bearer {session_token}",
             "X-Gobby-Runtime-Grant": encode_grant_header(grant),
             "X-Gobby-Machine-Id": grant.principal.machine_id,
             "X-Gobby-Caller-Project-Id": grant.principal.project_id,
@@ -714,14 +718,14 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     handshake = _handshake(grants)
     claims = verify_agent_api_token(
         issue_agent_api_token(
-            derive_managed_signing_key(OPERATOR_TOKEN),
+            TEST_SIGNING_KEY,
             agent_run_id=AGENT_RUN_ID,
             session_id=SESSION_ID,
             project_id=PROJECT_ID,
             machine_id=LOCAL_MACHINE_ID,
             timeout_seconds=90,
         ),
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
     )
     assert claims is not None
     grant = handshake.issue_for_agent(
@@ -732,7 +736,7 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     launch = materialize_managed_launch(
         grant,
         dest_dir=tmp_path,
-        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
+        signing_key=TEST_SIGNING_KEY,
         deadline_seconds=90,
     )
     assert launch.grant_path.is_file()
@@ -741,7 +745,7 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     assert "GOBBY_AGENT_API_TOKEN" not in launch.env
     envelope = read_managed_api_token(launch.env)
     assert envelope is not None
-    claims = verify_agent_api_token(envelope, derive_managed_signing_key(OPERATOR_TOKEN))
+    claims = verify_agent_api_token(envelope, TEST_SIGNING_KEY)
     assert claims is not None
     assert claims.project_id == grant.principal.project_id
     assert claims.machine_id == grant.principal.machine_id
@@ -765,14 +769,14 @@ def test_operator_and_agent_grants_are_v2() -> None:
         session_id=SESSION_ID,
     )
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        TEST_SIGNING_KEY,
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    agent_claims = verify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
+    agent_claims = verify_agent_api_token(agent_token, TEST_SIGNING_KEY)
     assert agent_claims is not None
     agent = handshake.issue_for_agent(
         agent_claims,
@@ -858,4 +862,7 @@ def test_maintenance_target_admission_query_covers_indexed_and_soft_deleted_proj
 def _managed_bootstrap(token_file: Path) -> Path:
     bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
     bootstrap.write_text(json.dumps({"api_key": OPERATOR_TOKEN}))
+    key_file = bootstrap.with_name("capability_signing_key")
+    key_file.write_bytes(TEST_SIGNING_KEY)
+    key_file.chmod(0o600)
     return bootstrap

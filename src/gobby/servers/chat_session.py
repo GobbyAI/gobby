@@ -108,8 +108,6 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _needs_history_injection: bool = field(default=False, repr=False)
     _last_model: str | None = field(default=None, repr=False)
     _pending_agent_name: str | None = field(default=None, repr=False)
-    _max_history_message_chars: int = field(default=2000, repr=False)
-    _max_history_total_chars: int = field(default=30_000, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
     _local_context_route: LocalContextRoute | None = field(default=None, repr=False)
     _local_context_observation: LocalContextObservation | None = field(default=None, repr=False)
@@ -137,7 +135,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _sandbox_launch: Any = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
-    _on_prompt_delivered: Callable[[], None] | None = field(default=None, repr=False)
+    _on_prompt_delivered: Callable[..., None] | None = field(default=None, repr=False)
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
         default=None, repr=False
     )

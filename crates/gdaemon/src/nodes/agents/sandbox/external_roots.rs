@@ -11,10 +11,11 @@ pub fn validate_external_write_roots(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
 ) -> Result<(), String> {
     roots
         .iter()
-        .try_for_each(|root| validate_root(root, gobby, home, env))
+        .try_for_each(|root| validate_root(root, gobby, home, env, operator_bootstrap))
 }
 
 fn validate_root(
@@ -22,6 +23,7 @@ fn validate_root(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
 ) -> Result<(), String> {
     if !Path::new(root).is_absolute() {
         return Err(format!("External write root must be absolute: {root}"));
@@ -41,8 +43,15 @@ fn validate_root(
     }
     // The same contract the policy compiler enforces at prepare, applied before acceptance.
     let allowed = [paths::text(&canonical)];
-    paths::assert_sensitive_path_contract(&[allowed.as_slice()], gobby, home, env, &[])
-        .map_err(|error| format!("External write root overlaps a protected root: {root} ({error})"))
+    paths::assert_sensitive_path_contract(
+        &[allowed.as_slice()],
+        gobby,
+        home,
+        env,
+        &[],
+        operator_bootstrap,
+    )
+    .map_err(|error| format!("External write root overlaps a protected root: {root} ({error})"))
 }
 
 #[cfg(test)]

@@ -93,6 +93,9 @@ async fn cycle_at(
     Ok(report)
 }
 
+/// Archives and deletes one batch of expired events. Usage is archived per (session, message
+/// key), with unkeyed events under the `''` key, so the audit can tell which expired events
+/// are already counted.
 async fn prune_batch(session: &DedicatedSession, cutoff: &str) -> Result<u64> {
     let rows = session
         .query(PRUNE_SQL, &[&cutoff])

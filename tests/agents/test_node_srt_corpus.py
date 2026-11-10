@@ -34,6 +34,7 @@ from gobby.agents.cargo_target import (
     sandbox_checkout_cargo_target_dir,
 )
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.sandbox_credentials import credential_roots
 from gobby.agents.sandbox_policy import (
     gcode_runtime_write_exceptions,
     prepare_sandbox_run_paths,
@@ -151,14 +152,8 @@ def _case(
             "epic_seq": epic_seq,
             "read_all_agent_workspaces": read_all_agent_workspaces,
             "predecessor_workspace_folders": list(predecessor_workspace_folders),
-            "credential_authority_roots": [
-                "{bound_bootstrap}",
-                "{bound_home}/break_glass",
-                "{bound_home}/.break_glass-staging",
-                "{home}/.gobby/bootstrap.yaml",
-                "{home}/.gobby/break_glass",
-                "{home}/.gobby/.break_glass-staging",
-            ],
+            # Recorded from the oracle under the pinned layout; see `_hub_authorities`.
+            "credential_authority_roots": [],
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -293,6 +288,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
         "tmp": root / "tmp",
         "darwin_temp": root / "darwin-temp",
         "darwin_cache": root / "darwin-cache",
+        # The passwd account home. Distinct from HOME, so a root taken from HOME fails parity.
+        "operator_home": root / "operator-home",
     }
     named = {name: str(path) for name, path in layout.items()}
     named["run_root"] = str(root / "gobby-home" / "run" / "sandbox" / _RUN_ID)
@@ -366,6 +363,12 @@ def _pin_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> No
             monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
+
+
+def _pin_account_home(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -> None:
+    """Pin the passwd account home, so the operator bootstrap is a placeholder, not the host's."""
+    operator_home = Path(layout["operator_home"])
+    monkeypatch.setattr(local_token, "account_home", lambda: operator_home)
 
 
 def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
@@ -466,7 +469,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
 
 
 def _pin_credential_authorities(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -> None:
-    monkeypatch.setattr(local_token, "account_home", lambda: Path(layout["home"]))
+    # The operator account comes from `_pin_account_home`; only the bound daemon is pinned here.
     monkeypatch.setattr(local_token, "_daemon_bootstrap", Path(layout["bound_bootstrap"]))
 
 
@@ -483,6 +486,7 @@ def _evaluate(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
+    _pin_account_home(monkeypatch, layout)
     settings, env = _run_chain(inputs)
     return settings, env, layout
 
@@ -500,6 +504,7 @@ def _refusal(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
+    _pin_account_home(monkeypatch, layout)
     try:
         _run_chain(inputs)
     except ValueError as exc:
@@ -551,6 +556,16 @@ def _decode_settings(document: dict[str, Any], table: list[str]) -> str:
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
+def _hub_authorities(inputs: dict[str, Any], layout: dict[str, str]) -> dict[str, Any]:
+    """Return the case inputs carrying the hub's credential list, as spawn_payload sends it.
+
+    The hub sends the oracle's whole `credential_roots()`, so the Rust replay receives the
+    same list a production spawn does. Call it while the layout's pins are still in force.
+    """
+    roots = [_placeholderize(str(path.resolve()), layout) for path in credential_roots()]
+    return {**inputs, "credential_authority_roots": roots}
+
+
 def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cases: list[dict[str, Any]] = []
     table: list[str] = []
@@ -562,7 +577,7 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             {
                 "name": template["name"],
                 "platform": template["platform"],
-                "inputs": template["inputs"],
+                "inputs": _hub_authorities(template["inputs"], layout),
                 "expected": {
                     "settings": _encode_settings(
                         _placeholderize(_portable_settings(settings, layout), layout), table
@@ -576,7 +591,11 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         message, layout = _refusal(template, tmp_path / "record" / name, monkeypatch)
         assert message.startswith(prefix), message
         refusals.append(
-            {"name": name, "inputs": template["inputs"], "error": _placeholderize(message, layout)}
+            {
+                "name": name,
+                "inputs": _hub_authorities(template["inputs"], layout),
+                "error": _placeholderize(message, layout),
+            }
         )
     corpus = {
         "version": 1,
@@ -618,17 +637,20 @@ def test_corpus_credential_authorities_are_isolated(
         tmp_path / "case",
         monkeypatch,
     )
+    # The operator's canonical bootstrap comes from the passwd account (`operator_home` in the
+    # fixture), never from HOME or GOBBY_HOME (#25883).
+    operator_gobby = Path(layout["operator_home"]) / ".gobby"
     authorities = {
         str(Path(layout["gobby_home"]) / "bootstrap.yaml"),
-        str(Path(layout["home"]) / ".gobby" / "bootstrap.yaml"),
+        str(operator_gobby / "bootstrap.yaml"),
         layout["bound_bootstrap"],
     }
     assert len(authorities) == 3, "the credential authorities must remain distinct"
     expected = authorities | {
         str(Path(layout["bound_home"]) / "break_glass"),
         str(Path(layout["bound_home"]) / ".break_glass-staging"),
-        str(Path(layout["home"]) / ".gobby" / "break_glass"),
-        str(Path(layout["home"]) / ".gobby" / ".break_glass-staging"),
+        str(operator_gobby / "break_glass"),
+        str(operator_gobby / ".break_glass-staging"),
     }
     document: dict[str, Any] = json.loads(settings)
     # The renderer omits write denies for already-unwritable paths. Check the

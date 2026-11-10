@@ -170,6 +170,18 @@ def acknowledge_receipt(
     return _row_to_receipt(row)
 
 
+def get_receipt(db: HubDatabase, *, receipt_id: str) -> HookReceipt | None:
+    """Read one receipt row without changing it."""
+
+    row = db.fetchone(
+        "SELECT " + _RECEIPT_COLUMNS + " FROM hook_receipt_effects WHERE receipt_id = %s",
+        (receipt_id,),
+    )
+    if row is None:
+        return None
+    return _row_to_receipt(row)
+
+
 def release_receipt(
     db: HubDatabase, *, receipt_id: str, delivery_generation: int
 ) -> HookReceipt | None:
