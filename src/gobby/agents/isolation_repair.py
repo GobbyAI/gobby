@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import stat
 import tempfile
 from collections.abc import MutableMapping
 from copy import deepcopy
@@ -175,7 +176,7 @@ async def _copy_droid_hooks_for_isolation(target_path: str) -> None:
     """
     hooks_path = Path(target_path) / ".factory" / "hooks" / "hooks.json"
     try:
-        await asyncio.to_thread(_write_droid_isolation_hooks, hooks_path)
+        await asyncio.to_thread(_write_droid_isolation_hooks, Path(target_path), hooks_path)
         logger.info("Wrote Droid isolation hooks to %s", hooks_path)
     except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
         logger.warning(
@@ -185,12 +186,13 @@ async def _copy_droid_hooks_for_isolation(target_path: str) -> None:
         )
 
 
-def _write_droid_isolation_hooks(hooks_path: Path) -> None:
-    existing_settings = _load_json_object(hooks_path)
+def _write_droid_isolation_hooks(root: Path, hooks_path: Path) -> None:
+    existing_settings = _load_tree_json_object(root, hooks_path)
     gobby_settings = _load_droid_isolation_hooks_template()
     updated_settings = _merge_droid_isolation_hooks(existing_settings, gobby_settings)
     hooks_path.parent.mkdir(parents=True, exist_ok=True)
-    hooks_path.write_text(json.dumps(updated_settings, indent=2) + "\n")
+    _refuse_linked_parents(root, hooks_path)
+    _replace_json_file(hooks_path, updated_settings)
 
 
 def _load_droid_isolation_hooks_template() -> dict[str, Any]:
@@ -249,7 +251,41 @@ def _merge_droid_isolation_hooks(
     return updated
 
 
-def _replace_mcp_config(path: Path, config: dict[str, Any]) -> None:
+def _refuse_linked_parents(root: Path, path: Path) -> None:
+    """Refuse a tree path whose directories below ``root`` include a link."""
+    current = root
+    for part in path.relative_to(root).parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"{current} is a symbolic link; refusing to use it")
+
+
+def _load_tree_json_object(root: Path, path: Path) -> dict[str, Any]:
+    """Read a tree JSON file without following a link out of the tree.
+
+    The unsandboxed daemon reads this file and writes it back into the tree,
+    so a link or special file is refused before any byte is read.
+    """
+    _refuse_linked_parents(root, path)
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return {}
+    except OSError as error:
+        if path.is_symlink():
+            raise ValueError(f"{path} is a symbolic link; refusing to read it") from error
+        raise
+    with os.fdopen(descriptor, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise ValueError(f"{path} is not a regular file; refusing to read it")
+        data = json.loads(f.read())
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
+
+
+def _replace_json_file(path: Path, config: dict[str, Any]) -> None:
     """Replace the directory entry so a selected symlink's target stays untouched."""
     descriptor, name = tempfile.mkstemp(dir=path.parent)
     temporary = Path(name)
@@ -288,12 +324,14 @@ async def _patch_mcp_config_for_isolation(
 
     mcp_json_path = Path(isolated_path) / ".mcp.json"
     try:
-        selected_config = await asyncio.to_thread(_load_json_object, mcp_json_path)
+        selected_config = await asyncio.to_thread(
+            _load_tree_json_object, Path(isolated_path), mcp_json_path
+        )
         servers = selected_config.setdefault("mcpServers", {})
         if not isinstance(servers, dict):
             raise ValueError("MCP servers configuration must be an object")
         servers["gobby"] = mcp_config["mcpServers"]["gobby"]
-        await asyncio.to_thread(_replace_mcp_config, mcp_json_path, selected_config)
+        await asyncio.to_thread(_replace_json_file, mcp_json_path, selected_config)
         logger.info("Wrote MCP config to %s", mcp_json_path)
     except OSError as e:
         logger.warning("Failed to write .mcp.json to %s: %s", isolated_path, e)
