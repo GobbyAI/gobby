@@ -20,7 +20,7 @@ valid_columns() {
         case $item in *=*) header=${item#*=} ;; esac
         case $header in *[!A-Za-z0-9_]*) return 1 ;; esac
         case $name in
-            pid|ppid|pgid|uid|user|gid|group|etime|etimes|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm) ;;
+            pid|ppid|pgid|uid|user|gid|group|etime|etimes|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|ucomm) ;;
             *) return 1 ;;
         esac
         case $list in

@@ -1,0 +1,25 @@
+version: "1.0.0"
+tags: [task-enforcement, enforcement, tasks, background, default, guardrail]
+
+# Session transcripts (#25793). The CLI appends its own notice rows to the owner's transcript,
+# and a background call settles only on such a row. A file-tool write into any session's
+# transcript, the writer's own included, could forge that row, so every session is refused.
+# Residual, accepted: only the writer can forge a completion row for its own call, by
+# deliberately writing its own transcript through a channel this gate does not see, such as
+# an interpreter run from Bash (`python3 -c "open(...,'a')"`). The srt or native sandbox layer
+# that denies other sessions' transcripts closes it; that follow-up is not built here.
+rules:
+  block-session-transcript-writes:
+    description: "No agent writes a session transcript, its own included"
+    event: before_tool
+    enabled: true
+    priority: 17
+    when: >
+      session_transcript_write(event.data, tool_input)
+    effects:
+      - type: block
+        reason: >-
+          Session transcripts are written only by the CLI that owns them. Edit and Write
+          cannot change one, not even your own: a notice row you forge would settle a
+          background call that has not finished. Read the transcript instead, and record
+          the outcome in your task evidence.

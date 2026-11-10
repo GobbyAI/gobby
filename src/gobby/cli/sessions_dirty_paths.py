@@ -36,15 +36,24 @@ def _refusal_detail(response: httpx.Response) -> str:
     type=click.Path(exists=True, file_okay=False),
     help="Checkout root the paths belong to.",
 )
+@click.option(
+    "--reason",
+    required=True,
+    help="Why these paths are released. Recorded with the approval.",
+)
 @click.argument("paths", nargs=-1, required=True)
-def approve_dirty_paths(session_ref: str, checkout_root: str, paths: tuple[str, ...]) -> None:
+def approve_dirty_paths(
+    session_ref: str, checkout_root: str, reason: str, paths: tuple[str, ...]
+) -> None:
     """Let SESSION_REF write exactly PATHS, dirty with no live owner, in one checkout.
 
-    Operator only; configured rules refuse this command to every agent
-    session. The daemon accepts the approval only from the bootstrap operator API
+    Agent sessions are refused unless their installed definition exempts them from the
+    configured refusal rules. The daemon accepts the approval only from the bootstrap operator API
     key, so run `gobby auth login` first. SESSION_REF is a session UUID or
     <project>#N. Each path stays approved only while its content matches what it is
-    now. A new approval replaces the session's earlier one for the checkout.
+    now. A new approval replaces the session's earlier one for the checkout. The
+    approval also clears the session's overlap records for PATHS and retires in-flight
+    calls that ended sessions left in the checkout; the reason is recorded with it.
     """
     token = read_local_api_token()
     if token is None:
@@ -53,7 +62,7 @@ def approve_dirty_paths(session_ref: str, checkout_root: str, paths: tuple[str, 
     try:
         response = httpx.post(
             f"{daemon_url()}/api/sessions/{quote(session_ref, safe='')}/dirty-path-approvals",
-            json={"checkout_root": checkout, "paths": list(paths)},
+            json={"checkout_root": checkout, "paths": list(paths), "reason": reason},
             headers={"Authorization": f"Bearer {token}"},
             trust_env=False,
             timeout=30.0,
@@ -70,3 +79,7 @@ def approve_dirty_paths(session_ref: str, checkout_root: str, paths: tuple[str, 
     click.echo(f"Approved for session {body['session_id']} in {checkout}:")
     for path, fingerprint in sorted(body["approvals"].items()):
         click.echo(f"  {path} ({fingerprint or 'absent'})")
+    for path in body["cleared_overlaps"]:
+        click.echo(f"  cleared overlap record: {path}")
+    for owner, call_ids in sorted(body["released_calls"].items()):
+        click.echo(f"  released in-flight calls of ended session {owner}: {', '.join(call_ids)}")

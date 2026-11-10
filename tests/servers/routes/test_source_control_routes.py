@@ -1567,6 +1567,7 @@ class TestDeleteWorktree:
         mock_git_result = MagicMock()
         mock_git_result.success = False
         mock_git_result.message = "worktree locked"
+        mock_git_result.error = None
         mock_git_manager = MagicMock()
         mock_server.services.git_manager = mock_git_manager
 
@@ -2218,6 +2219,7 @@ def test_delete_client_worktree_refuses_live_terminals(
         base_branch="main",
         task_id=None,
         workspace_role="client",
+        status="active",
     )
     terminal = SimpleNamespace(
         id="terminal-1",

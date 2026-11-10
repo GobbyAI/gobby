@@ -15,6 +15,8 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from time import monotonic, sleep
 
+from gobby import shutdown_budget
+
 logger = logging.getLogger(__name__)
 
 _pool: ProcessPoolExecutor | None = None
@@ -22,6 +24,7 @@ _pool_lock = threading.Lock()
 _fallback_warning_logged = False
 _POOL_WORKERS = 4
 _POOL_PREWARM_TIMEOUT_SECONDS = 60.0
+_POOL_PREWARM_WAIT_SECONDS = _POOL_PREWARM_TIMEOUT_SECONDS + 5
 _PARENT_POLL_SECONDS = 1.0
 
 
@@ -65,7 +68,12 @@ def _get_pool() -> ProcessPoolExecutor:
 
 
 async def prewarm_transcript_evidence_pool() -> None:
-    """Warm worker imports during background daemon initialization."""
+    """Warm worker imports during background daemon initialization.
+
+    A loaded host can miss the barrier while its workers are still starting. Those workers
+    finish importing and serve derivations, so a miss keeps the pool in service. Only a
+    pool that fails outright is discarded.
+    """
     with tempfile.TemporaryDirectory(prefix="gobby-transcript-pool-") as marker_directory:
 
         def submit_probes() -> list[Future[None]]:
@@ -77,8 +85,15 @@ async def prewarm_transcript_evidence_pool() -> None:
             probes = await asyncio.to_thread(submit_probes)
             await asyncio.wait_for(
                 asyncio.gather(*(asyncio.wrap_future(probe) for probe in probes)),
-                timeout=_POOL_PREWARM_TIMEOUT_SECONDS + 5,
+                timeout=_POOL_PREWARM_WAIT_SECONDS,
             )
+        except TimeoutError:
+            logger.warning(
+                "Transcript evidence pool prewarm did not finish within %.0fs; "
+                "workers keep starting and the pool stays in service",
+                _POOL_PREWARM_WAIT_SECONDS,
+            )
+            return
         except BaseException:
             shutdown_transcript_evidence_pool()
             raise
@@ -135,7 +150,9 @@ async def run_in_transcript_evidence_pool[T](
         return await asyncio.to_thread(function, *args)
 
 
-POOL_EXIT_TIMEOUT_SECONDS = 2.0
+POOL_EXIT_TIMEOUT_SECONDS = shutdown_budget.TRANSCRIPT_POOL_EXIT_SECONDS
+# SIGKILL ends a worker within milliseconds; this bounds the reap that follows it.
+_POOL_KILL_REAP_SECONDS = shutdown_budget.TRANSCRIPT_POOL_KILL_REAP_SECONDS
 
 
 def _stop_resource_tracker() -> None:
@@ -172,14 +189,18 @@ def _drain_pool_and_stop_tracker(pool: ProcessPoolExecutor, done: threading.Even
 def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECONDS) -> None:
     """Stop accepting derivations, wait for the worker to exit, then stop the tracker.
 
-    The wait is bounded by ``timeout``; when the worker does not exit in time the
-    survivors are left to the shutdown reaper.
+    The wait is bounded by ``timeout``. A worker still alive after it is killed and
+    reaped within ``_POOL_KILL_REAP_SECONDS``: it is never an agent process, and
+    interpreter finalization joins it without bound, so it cannot wait for the shutdown
+    reaper, which may not run on every path.
     """
     global _pool
     with _pool_lock:
         pool, _pool = _pool, None
     if pool is None:
         return
+    # Snapshot first: shutdown clears the executor's worker map.
+    workers = list((getattr(pool, "_processes", None) or {}).values())
     done = threading.Event()
     threading.Thread(
         target=_drain_pool_and_stop_tracker,
@@ -187,12 +208,28 @@ def shutdown_transcript_evidence_pool(*, timeout: float = POOL_EXIT_TIMEOUT_SECO
         name="transcript-evidence-pool-exit",
         daemon=True,
     ).start()
-    if not done.wait(timeout):
-        logger.info(
-            "Transcript evidence pool worker did not exit within %.1fs; "
-            "leaving it to the shutdown reaper",
-            timeout,
-        )
+    if done.wait(timeout):
+        return
+    logger.info(
+        "Transcript evidence pool worker did not exit within %.1fs; killing %d worker(s)",
+        timeout,
+        len(workers),
+    )
+    killed: list[multiprocessing.Process] = []
+    for worker in workers:
+        try:
+            if worker.is_alive():
+                worker.kill()
+                killed.append(worker)
+        except (OSError, ValueError):
+            logger.debug("Transcript evidence pool worker kill failed", exc_info=True)
+    # A killed worker stays listed until reaped; join them before returning.
+    reap_deadline = monotonic() + _POOL_KILL_REAP_SECONDS
+    for worker in killed:
+        try:
+            worker.join(max(0.0, reap_deadline - monotonic()))
+        except (OSError, ValueError):
+            logger.debug("Transcript evidence pool worker reap failed", exc_info=True)
 
 
 __all__ = [

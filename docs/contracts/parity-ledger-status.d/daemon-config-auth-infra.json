@@ -487,6 +487,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/runtime_handshake.py::create_runtime_handshake_router.<locals>.challenge (line 113)`; blocked on Rust config/runtime family handler for `HTTP POST /api/runtime/handshake/challenge` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing. Rust `crates/gdaemon/src/front_door/challenge.rs::answer` answers interactive proof natively but forwards managed challenges to this Python endpoint."
   },
+  "HTTP POST /api/runtime/signed-request/nonce": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/signed_request.py:40` (`create_signed_request_router.<locals>.issue_nonce`); blocked on Rust config/runtime family handler for `HTTP POST /api/runtime/signed-request/nonce` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+  },
   "HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate": {
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/configuration_generation_endpoints.py::register_generation_endpoint_routes.<locals>.activate_generation_endpoint (line 43)`; blocked on Rust config/runtime family handler for `HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."

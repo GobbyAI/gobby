@@ -25,6 +25,7 @@ from gobby.runner_lifecycle_agents import (
 from gobby.runner_lifecycle_callbacks import reconcile_agent_lifecycle_state
 from gobby.runner_lifecycle_reconcile import _reconcile_agent_runs_after_restart
 from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
+from gobby.runner_maintenance.isolation import deleting_worktree_recovery
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
@@ -766,6 +767,30 @@ def _observe_restart_recovery(task: asyncio.Task[None]) -> None:
         logger.exception("Restart recovery failed; lifecycle admission remains closed")
 
 
+WORKTREE_DELETE_RECOVERY_DELAY_SECONDS = 5.0
+
+
+async def _recover_deleting_worktrees_after_start(runner: GobbyRunner) -> None:
+    """Finish worktree deletes a shutdown interrupted, off the readiness path (#25838)."""
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+
+    def stopping() -> bool:
+        return services is not None and bool(services.shutdown_in_progress)
+
+    await asyncio.sleep(WORKTREE_DELETE_RECOVERY_DELAY_SECONDS)
+    if stopping():
+        return
+    recover = deleting_worktree_recovery(runner.database, runner.worktree_delete_executor, stopping)
+    try:
+        # Each refused record logs its own id, path and reason as it is refused.
+        await recover()
+    except Exception:
+        # Admission closes at shutdown start; a pass cut short there is the next start's to finish.
+        if not stopping():
+            logger.exception("Worktree delete recovery failed")
+        return
+
+
 async def init_subsystems(
     runner: GobbyRunner,
     rebuild_vector_store: Any,
@@ -799,6 +824,15 @@ async def init_subsystems(
     # terminals, so the surviving gterm host must be adopted (or a fresh one
     # spawned) before the slow recovery steps below (#22002).
     await timed_startup_phase("terminal_host", _start_terminal_host(runner, tracker))
+    # Native admit waits on this bind. BM25 repair can run for the maintenance
+    # index timeout, so schedule the bind once the terminal host is adopted.
+    bridge_services = getattr(getattr(runner, "http_server", None), "services", None)
+    if bridge_services is None or not bool(getattr(bridge_services, "shutdown_in_progress", False)):
+        _run_tracked_start(
+            lambda: _start_websocket_server(runner, tracker),
+            "WebSocket server",
+            tracker,
+        )
     await timed_startup_phase("mcp_connections", _connect_mcp_servers(runner, tracker))
     code_index_bm25_ready = await hub_only_phase(
         "code_index_bm25", lambda: _repair_code_index_bm25(runner, tracker)
@@ -822,11 +856,6 @@ async def init_subsystems(
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
 
-    _run_tracked_start(
-        lambda: _start_websocket_server(runner, tracker),
-        "WebSocket server",
-        tracker,
-    )
     await timed_startup_phase(
         "ui_development_server",
         _run_tracked_start_async(
@@ -855,6 +884,10 @@ async def init_subsystems(
         name="restart-recovery",
     )
     runner._startup_recovery_task.add_done_callback(_observe_restart_recovery)
+    runner._worktree_recovery_task = asyncio.create_task(
+        _recover_deleting_worktrees_after_start(runner),
+        name="worktree-delete-recovery",
+    )
     _schedule_workflow_skill_prewarm(runner)
     if tracker:
         tracker.finish()

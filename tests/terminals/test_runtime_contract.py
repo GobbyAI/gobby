@@ -580,8 +580,18 @@ def _start_isolated_daemon(
         env = prepare_daemon_env(base_env, home_dir=home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(home)
+        # Launch the runner through the readiness bootstrap, as spawn_daemon_instance does, so
+        # the startup-progress records the health wait reads exist for this daemon too.
+        readiness_bootstrap = Path(__file__).resolve().parents[1] / "e2e" / "readiness_bootstrap.py"
         command = native_daemon_command(
-            env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+            env,
+            [
+                sys.executable,
+                str(readiness_bootstrap),
+                "gobby.runner",
+                "--config",
+                str(config_path),
+            ],
         )
         log_file = log_dir / "daemon.log"
         error_log_file = log_dir / "daemon_error.log"

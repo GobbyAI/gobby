@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
 
@@ -25,4 +26,9 @@ def shutdown_background_services() -> None:
     """Stop workers within the caller's existing shutdown ordering and error boundary."""
     from gobby.tasks.transcript_evidence_pool import shutdown_transcript_evidence_pool
 
+    # A partially initialized runner has no serving leases. Importing the initialization
+    # facade here can spend the child-reap budget loading services that never started.
+    embedding_lease = sys.modules.get("gobby.runner_init.embedding_lease")
+    if embedding_lease is not None:
+        embedding_lease.dispose_active_embedding_leases()
     shutdown_transcript_evidence_pool()
