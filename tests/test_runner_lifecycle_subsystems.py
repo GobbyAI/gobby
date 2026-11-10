@@ -352,20 +352,27 @@ NODE_ONLY_STEP = "_start_machine_local_lifecycle"
 
 
 async def _run_init_recording_steps(
-    monkeypatch: pytest.MonkeyPatch, bootstrap_config: BootstrapConfig
+    monkeypatch: pytest.MonkeyPatch,
+    bootstrap_config: BootstrapConfig,
+    order: list[str] | None = None,
 ) -> set[str]:
     _patch_init_dependencies(monkeypatch)
     called: set[str] = set()
+    sequence = order if order is not None else []
+
+    def remember(name: str) -> None:
+        called.add(name)
+        sequence.append(name)
 
     def record_async(name: str, result: object = None) -> AsyncMock:
         async def step(*_args: object, **_kwargs: object) -> object:
-            called.add(name)
+            remember(name)
             return result
 
         return AsyncMock(side_effect=step)
 
     def record_sync(name: str) -> Mock:
-        return Mock(side_effect=lambda *_args, **_kwargs: called.add(name))
+        return Mock(side_effect=lambda *_args, **_kwargs: remember(name))
 
     for name in (*HUB_ONLY_PHASES.values(), *EVERY_MODE_STEPS):
         if name == "_start_websocket_server":
@@ -452,3 +459,41 @@ async def test_standalone_and_hub_run_every_phase(
         "_start_code_index_tasks",
     }
     assert _phase_skips(caplog) == []
+
+
+# Phases that can outlast the reconnect admit deadline. The native bridge bind
+# has to be scheduled before them, after the terminal host is adopted.
+_SLOW_STARTUP_PHASES = (
+    "_connect_mcp_servers",
+    "_repair_code_index_bm25",
+    "_check_embedding_service",
+    "_cleanup_metrics_on_startup",
+    "_cleanup_stale_expansion_runs_on_startup",
+    "_initialize_vector_store",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bootstrap_config",
+    [
+        BootstrapConfig(hub=False),
+        BootstrapConfig(hub=True),
+        BootstrapConfig(datastore_mode="remote"),
+    ],
+    ids=["standalone", "hub", "node"],
+)
+async def test_websocket_bind_is_scheduled_before_slow_startup_phases(
+    bootstrap_config: BootstrapConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    await _run_init_recording_steps(monkeypatch, bootstrap_config, order)
+
+    assert order.count("_start_websocket_server") == 1
+    host = order.index("_start_terminal_host")
+    bridge = order.index("_start_websocket_server")
+    assert host < bridge
+    for name in _SLOW_STARTUP_PHASES:
+        if name in order:
+            assert bridge < order.index(name), name
