@@ -378,10 +378,9 @@ class PipelineExecutor(
                 _pipeline_stack = _pipeline_stack | {pipeline.name}
 
                 # 0b. A fresh run is refused before any record is written, so a refused launch
-                # leaves nothing behind. A nested run checks health only; its seats are paced at
-                # their own spawn.
+                # leaves nothing behind.
                 if execution_id is None:
-                    fleet_refusal = await asyncio.to_thread(launch_refusal, ramp=_depth == 0)
+                    fleet_refusal = await asyncio.to_thread(launch_refusal)
                     if fleet_refusal is not None:
                         raise PipelineStepRefusal(fleet_refusal.message, refusal=fleet_refusal)
 
@@ -423,7 +422,7 @@ class PipelineExecutor(
                         self.execution_manager.get_steps_for_execution, execution_id
                     )
                 if never_started:
-                    fleet_refusal = await asyncio.to_thread(launch_refusal, ramp=_depth == 0)
+                    fleet_refusal = await asyncio.to_thread(launch_refusal)
                     if fleet_refusal is not None:
                         raise PipelineStepRefusal(fleet_refusal.message, refusal=fleet_refusal)
 

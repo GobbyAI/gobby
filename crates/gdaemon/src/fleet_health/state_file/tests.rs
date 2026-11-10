@@ -7,10 +7,6 @@ fn sample_state(state: State, sampled_at_unix: i64) -> StateFile {
         sampled_at_unix,
         last_non_healthy_at_unix: None,
         reasons: vec!["probe_slow:1500ms".into()],
-        ramp: Ramp {
-            max_new_seats: 3,
-            ramp_window_seconds: 900,
-        },
         thresholds_source: ThresholdsSource::ProjectPolicy,
         watcher_pid: 4242,
     }
@@ -42,7 +38,6 @@ fn json_keys_match_the_documented_contract() {
         keys,
         [
             "last_non_healthy_at_unix",
-            "ramp",
             "reasons",
             "sampled_at_unix",
             "schema_version",

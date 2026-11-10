@@ -39,13 +39,13 @@ fn installed_writer_overrides_only_the_keys_it_sets() {
     let rows = vec![policy_row(
         "installed",
         true,
-        json!({"fleet_health": {"max_new_seats": 2}, "other": true}),
+        json!({"fleet_health": {"warning_lines_degraded": 2}, "other": true}),
     )];
     let thresholds = thresholds_from_rule_rows(&rows)
         .expect("resolves")
         .expect("a fleet_health block");
-    assert_eq!(thresholds.max_new_seats, 2);
-    assert_eq!(thresholds.ramp_window_seconds, 900);
+    assert_eq!(thresholds.warning_lines_degraded, 2);
+    assert_eq!(thresholds.window_seconds, 300);
 }
 
 #[test]
@@ -87,12 +87,12 @@ fn enabled_writers_that_disagree_are_refused() {
         policy_row(
             "installed",
             true,
-            json!({"fleet_health": {"max_new_seats": 2}}),
+            json!({"fleet_health": {"warning_lines_degraded": 2}}),
         ),
         policy_row(
             "installed",
             true,
-            json!({"fleet_health": {"max_new_seats": 4}}),
+            json!({"fleet_health": {"warning_lines_degraded": 4}}),
         ),
     ];
     assert!(thresholds_from_rule_rows(&rows).is_err());
@@ -116,7 +116,7 @@ fn a_non_writer_project_row_sharing_an_installed_writers_name_is_refused() {
         policy_row(
             "installed",
             true,
-            json!({"fleet_health": {"max_new_seats": 2}}),
+            json!({"fleet_health": {"warning_lines_degraded": 2}}),
         ),
         shadow,
     ];
@@ -130,19 +130,19 @@ fn a_disabled_writer_value_is_not_used_for_resolution() {
         policy_row(
             "installed",
             true,
-            json!({"fleet_health": {"max_new_seats": 2}}),
+            json!({"fleet_health": {"warning_lines_degraded": 2}}),
         ),
         policy_row(
             "installed",
             false,
-            json!({"fleet_health": {"max_new_seats": 9}}),
+            json!({"fleet_health": {"warning_lines_degraded": 9}}),
         ),
     ];
     assert_eq!(
         thresholds_from_rule_rows(&rows)
             .expect("resolves")
             .expect("a fleet_health block")
-            .max_new_seats,
+            .warning_lines_degraded,
         2
     );
 }

@@ -26,20 +26,11 @@ def fleet_state_path() -> Path:
 
 @dataclass(frozen=True)
 class FleetState:
-    """The fleet verdict admission acts on, with the ramp the watcher resolved."""
+    """The fleet verdict admission acts on."""
 
     state: str
     reasons: tuple[str, ...]
     last_non_healthy_at_unix: float | None = None
-    max_new_seats: int = 0
-    ramp_window_seconds: int = 0
-
-
-class _Ramp(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    max_new_seats: int = Field(ge=0)
-    ramp_window_seconds: int = Field(gt=0)
 
 
 class _StateDocument(BaseModel):
@@ -50,7 +41,6 @@ class _StateDocument(BaseModel):
     sampled_at_unix: float
     last_non_healthy_at_unix: float | None = None
     reasons: list[str] = Field(default_factory=list)
-    ramp: _Ramp
 
 
 def read_fleet_state(path: Path, now: float) -> FleetState:
@@ -74,8 +64,6 @@ def read_fleet_state(path: Path, now: float) -> FleetState:
         state=document.state,
         reasons=tuple(document.reasons),
         last_non_healthy_at_unix=document.last_non_healthy_at_unix,
-        max_new_seats=document.ramp.max_new_seats,
-        ramp_window_seconds=document.ramp.ramp_window_seconds,
     )
 
 

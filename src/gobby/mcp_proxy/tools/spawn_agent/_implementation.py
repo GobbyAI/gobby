@@ -624,8 +624,8 @@ async def spawn_agent_impl(
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
     enhanced_prompt += standing_seat_suffix(run_lifetime)
 
-    # The seat is admitted here: every refusal above leaves the ramp untouched, and nothing
-    # below creates a session, run or task lease until admission succeeds.
+    # The seat is admitted here, after every other refusal: nothing below creates a session,
+    # run or task lease until the fleet health gate admits it.
     seat_refusal = await asyncio.to_thread(spawn_refusal)
     if seat_refusal is not None:
         await cleanup_created_isolation(
