@@ -89,7 +89,7 @@ by internal automation.
 
 ## Labels, Reasoning Effort, And Reading Direction
 
-Sessions store no title and no manual name. Migration 494 dropped `title` and
+Sessions store no title and no manual name. Migration 496 dropped `title` and
 `title_source`, and `/api/sessions` returns neither field. Every display label is
 derived when read, from four inputs: the session ref, the agent definition, the
 claimed task, and the status line. A seat's label is its definition's display name,
