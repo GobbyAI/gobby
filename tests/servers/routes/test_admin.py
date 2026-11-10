@@ -1528,8 +1528,8 @@ class TestTestEndpoints:
             "/api/admin/test/register-project",
             json={"project_id": "proj-1", "name": "Test"},
         )
-        # HTTPException(503) caught by generic except → re-raised as 500
-        assert response.status_code == 500
+        # The 503 raised for a missing session manager passes through unchanged.
+        assert response.status_code == 503
 
     # --- register-agent ---
 
@@ -1782,5 +1782,5 @@ class TestTestEndpoints:
             "/api/admin/test/set-session-usage",
             json={"session_id": "sess-1"},
         )
-        # HTTPException(503) caught by generic except → re-raised as 500
-        assert response.status_code == 500
+        # The 503 raised for a missing session manager passes through unchanged.
+        assert response.status_code == 503

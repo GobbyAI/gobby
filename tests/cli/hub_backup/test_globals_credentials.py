@@ -150,8 +150,18 @@ def test_restore_keeps_rotated_destination_credential(
     destination_password = secrets.token_urlsafe(24)
     destination_dsn = scratch_hub.dsn(destination_password)
     with psycopg.connect(source_dsn, autocommit=True) as conn:
-        # The hub's drain entry point; a scratch hub has no managed principals.
+        # Minimal empty source ownership registry: backup queries ended bindings
+        # before dumping, while cold restore invokes the drain entry point.
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(AUTH_SCHEMA)))
+        conn.execute("CREATE TABLE public.agent_runs (id text PRIMARY KEY, status text NOT NULL)")
+        conn.execute(
+            sql.SQL(
+                "CREATE TABLE {}.principal_bindings ("
+                "managed_execution_id text, credential_generation integer, "
+                "agent_run_id text REFERENCES public.agent_runs(id), owner_kind text, "
+                "revoked_at timestamptz, role_name text)"
+            ).format(sql.Identifier(AUTH_SCHEMA))
+        )
         conn.execute(
             sql.SQL(
                 "CREATE FUNCTION {}.drain_ephemeral_principals() RETURNS integer "

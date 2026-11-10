@@ -479,6 +479,14 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::running_agent_stats`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
+  "MCP gobby-agents:get_attachment": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/agent_messaging.py::get_attachment (line 522)`; Rust blocker: implement native durable inter-session message attachment storage and MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-agents:send_attachment": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/agent_messaging.py::send_attachment (line 472)`; Rust blocker: implement native durable inter-session message attachment storage and MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
   "MCP gobby-agents:send_message": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agent_messaging.py::send_message`; Rust blocker: implement native durable inter-session message storage, targeting and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
@@ -578,6 +586,10 @@
   "MCP gobby-sessions:search_session_messages": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/sessions/_messages.py::search_session_messages`; Rust blocker: implement native message query/search and transcript-reader MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-sessions:send_wake": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py::send_wake (line 314)`; Rust blocker: implement native terminal input routing with wake admission and delivery verification MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries."
   },
   "MCP gobby-sessions:send_keys": {
     "status": "proxied",

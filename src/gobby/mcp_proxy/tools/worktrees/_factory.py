@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._create import create_create_registry
 from gobby.mcp_proxy.tools.worktrees._crud import create_crud_registry
 from gobby.mcp_proxy.tools.worktrees._lifecycle import create_lifecycle_registry
+from gobby.mcp_proxy.tools.worktrees._notes import create_notes_registry
 from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
 if TYPE_CHECKING:
@@ -64,6 +65,7 @@ def create_worktrees_registry(
         create_create_registry,
         create_crud_registry,
         create_lifecycle_registry,
+        create_notes_registry,
         create_sync_registry,
         create_cleanup_registry,
     ):
