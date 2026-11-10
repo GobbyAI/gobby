@@ -24,32 +24,26 @@ def project_folder(home: Path) -> Path:
     return home / ".gobby" / "e2e" / "handoff-continuation-project"
 
 
-def _self_and_ancestors(folder: Path) -> list[str]:
-    return [str(path) for path in (folder, *folder.parents)]
+def _folder_entry(config: Mapping[str, object], folder: Path) -> Mapping[str, object]:
+    # The folder is its own git repository root. Claude bounds its trust walk at the repo
+    # root, so a trusted ancestor such as ~/.gobby does not cover it (observed with Claude
+    # 2.1.322: the seat sat at the trust prompt and never registered). Only the folder's own
+    # entry counts, for every provider, so the preflight never passes a seat that will block.
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        return {}
+    entry = projects.get(str(folder))
+    return entry if isinstance(entry, dict) else {}
 
 
 def claude_trusts(config: Mapping[str, object], folder: Path) -> bool:
-    """True when the folder or an ancestor has an accepted Claude trust dialog."""
-    projects = config.get("projects")
-    if not isinstance(projects, dict):
-        return False
-    for key in _self_and_ancestors(folder):
-        entry = projects.get(key)
-        if isinstance(entry, dict) and entry.get("hasTrustDialogAccepted") is True:
-            return True
-    return False
+    """True when the folder itself has an accepted Claude trust dialog."""
+    return _folder_entry(config, folder).get("hasTrustDialogAccepted") is True
 
 
 def codex_trusts(config: Mapping[str, object], folder: Path) -> bool:
-    """True when the folder or an ancestor is a trusted Codex project."""
-    projects = config.get("projects")
-    if not isinstance(projects, dict):
-        return False
-    for key in _self_and_ancestors(folder):
-        entry = projects.get(key)
-        if isinstance(entry, dict) and entry.get("trust_level") == "trusted":
-            return True
-    return False
+    """True when the folder itself is a trusted Codex project."""
+    return _folder_entry(config, folder).get("trust_level") == "trusted"
 
 
 def _read_claude(home: Path) -> Mapping[str, object]:

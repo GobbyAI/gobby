@@ -53,32 +53,28 @@ def test_the_project_folder_is_fixed_under_the_gobby_home() -> None:
     assert project_folder(home) == home / ".gobby" / "e2e" / "handoff-continuation-project"
 
 
-def test_claude_trust_is_read_from_the_folder_or_an_ancestor() -> None:
+def test_claude_trust_is_read_from_the_folder_itself_only() -> None:
     from tests.e2e.handoff_continuation_trust import claude_trusts
 
     folder = Path("/home/op/.gobby/e2e/handoff-continuation-project")
+    own = {"projects": {str(folder): {"hasTrustDialogAccepted": True}}}
+    assert claude_trusts(own, folder)
+    # The folder is a git repo root; Claude stops its trust walk there, so ~/.gobby's
+    # trust does not reach it and the preflight must not pretend it does.
     gobby_trusted = {"projects": {"/home/op/.gobby": {"hasTrustDialogAccepted": True}}}
-    assert claude_trusts(gobby_trusted, folder)
-    # An entry the CLI records for the folder itself does not revoke an ancestor's trust.
-    recorded = {
-        "projects": {
-            "/home/op/.gobby": {"hasTrustDialogAccepted": True},
-            str(folder): {"hasTrustDialogAccepted": False},
-        }
-    }
-    assert claude_trusts(recorded, folder)
-    assert not claude_trusts({"projects": {"/home/op": {"hasTrustDialogAccepted": False}}}, folder)
+    assert not claude_trusts(gobby_trusted, folder)
+    assert not claude_trusts({"projects": {str(folder): {"hasTrustDialogAccepted": False}}}, folder)
     assert not claude_trusts({}, folder)
     assert not claude_trusts({"projects": []}, folder)
 
 
-def test_codex_trust_is_read_from_the_folder_or_an_ancestor() -> None:
+def test_codex_trust_is_read_from_the_folder_itself_only() -> None:
     from tests.e2e.handoff_continuation_trust import codex_trusts
 
     folder = Path("/home/op/.gobby/e2e/handoff-continuation-project")
-    assert codex_trusts({"projects": {"/home/op/.gobby": {"trust_level": "trusted"}}}, folder)
     assert codex_trusts({"projects": {str(folder): {"trust_level": "trusted"}}}, folder)
-    assert not codex_trusts({"projects": {"/home/op/.gobby": {"trust_level": "untrusted"}}}, folder)
+    assert not codex_trusts({"projects": {"/home/op/.gobby": {"trust_level": "trusted"}}}, folder)
+    assert not codex_trusts({"projects": {str(folder): {"trust_level": "untrusted"}}}, folder)
     assert not codex_trusts({}, folder)
 
 
@@ -105,9 +101,9 @@ def test_a_trusted_folder_passes_and_the_config_is_untouched(tmp_path: Path) -> 
     home = tmp_path / "home"
     (home / ".codex").mkdir(parents=True)
     config = home / ".codex" / "config.toml"
-    text = f'[projects."{home / ".gobby"}"]\ntrust_level = "trusted"\n'
-    config.write_text(text)
     folder = home / ".gobby" / "e2e" / "handoff-continuation-project"
+    text = f'[projects."{folder}"]\ntrust_level = "trusted"\n'
+    config.write_text(text)
 
     require_provider_trust("codex", folder, home=home)
 
