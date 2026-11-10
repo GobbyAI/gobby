@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
 import json
 import logging
 import os
+import secrets
 import stat
-import tempfile
 from collections.abc import MutableMapping
 from copy import deepcopy
 from pathlib import Path
@@ -19,6 +21,7 @@ from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.claude_config import claude_config_path, update_claude_config
 from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.nofollow_dirs import open_nofollow_dir
 
 logger = logging.getLogger("gobby.agents.isolation")
 
@@ -190,9 +193,7 @@ def _write_droid_isolation_hooks(root: Path, hooks_path: Path) -> None:
     existing_settings = _load_tree_json_object(root, hooks_path)
     gobby_settings = _load_droid_isolation_hooks_template()
     updated_settings = _merge_droid_isolation_hooks(existing_settings, gobby_settings)
-    hooks_path.parent.mkdir(parents=True, exist_ok=True)
-    _refuse_linked_parents(root, hooks_path)
-    _replace_json_file(hooks_path, updated_settings)
+    _replace_tree_json_file(root, hooks_path, updated_settings)
 
 
 def _load_droid_isolation_hooks_template() -> dict[str, Any]:
@@ -251,13 +252,26 @@ def _merge_droid_isolation_hooks(
     return updated
 
 
-def _refuse_linked_parents(root: Path, path: Path) -> None:
-    """Refuse a tree path whose directories below ``root`` include a link."""
-    current = root
-    for part in path.relative_to(root).parts[:-1]:
-        current = current / part
-        if current.is_symlink():
-            raise ValueError(f"{current} is a symbolic link; refusing to use it")
+_NO_FOLLOW_READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+_NO_FOLLOW_CREATE = (
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+)
+
+
+def _open_tree_parent(root: Path, path: Path, *, create: bool = False) -> tuple[int, str]:
+    """Hold ``path``'s parent through no-follow descriptors from the tree root.
+
+    Every later read, create and replace happens relative to the returned
+    descriptor, so a parent swapped for a link after it was opened cannot
+    redirect them outside the tree.
+    """
+    parts = path.relative_to(root).parts
+    try:
+        return open_nofollow_dir(root, parts[:-1], create=create), parts[-1]
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ValueError(f"{path} has a linked parent; refusing to use it") from error
+        raise
 
 
 def _load_tree_json_object(root: Path, path: Path) -> dict[str, Any]:
@@ -266,16 +280,20 @@ def _load_tree_json_object(root: Path, path: Path) -> dict[str, Any]:
     The unsandboxed daemon reads this file and writes it back into the tree,
     so a link or special file is refused before any byte is read.
     """
-    _refuse_linked_parents(root, path)
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
     try:
-        descriptor = os.open(path, flags)
+        parent_fd, name = _open_tree_parent(root, path)
+    except FileNotFoundError:
+        return {}
+    try:
+        descriptor = os.open(name, _NO_FOLLOW_READ, dir_fd=parent_fd)
     except FileNotFoundError:
         return {}
     except OSError as error:
-        if path.is_symlink():
+        if error.errno == errno.ELOOP:
             raise ValueError(f"{path} is a symbolic link; refusing to read it") from error
         raise
+    finally:
+        os.close(parent_fd)
     with os.fdopen(descriptor, "rb") as f:
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             raise ValueError(f"{path} is not a regular file; refusing to read it")
@@ -285,18 +303,24 @@ def _load_tree_json_object(root: Path, path: Path) -> dict[str, Any]:
     return data
 
 
-def _replace_json_file(path: Path, config: dict[str, Any]) -> None:
-    """Replace the directory entry so a selected symlink's target stays untouched."""
-    descriptor, name = tempfile.mkstemp(dir=path.parent)
-    temporary = Path(name)
+def _replace_tree_json_file(root: Path, path: Path, config: dict[str, Any]) -> None:
+    """Replace the directory entry under the held parent; a linked target stays untouched."""
+    parent_fd, name = _open_tree_parent(root, path, create=True)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
-            f.write(json.dumps(config, indent=2) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temporary, path)
+        temporary = f".{name}.{secrets.token_hex(8)}.tmp"
+        descriptor = os.open(temporary, _NO_FOLLOW_CREATE, 0o600, dir_fd=parent_fd)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+                f.write(json.dumps(config, indent=2) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=parent_fd)
+            raise
     finally:
-        temporary.unlink(missing_ok=True)
+        os.close(parent_fd)
 
 
 async def _patch_mcp_config_for_isolation(
@@ -331,7 +355,9 @@ async def _patch_mcp_config_for_isolation(
         if not isinstance(servers, dict):
             raise ValueError("MCP servers configuration must be an object")
         servers["gobby"] = mcp_config["mcpServers"]["gobby"]
-        await asyncio.to_thread(_replace_json_file, mcp_json_path, selected_config)
+        await asyncio.to_thread(
+            _replace_tree_json_file, Path(isolated_path), mcp_json_path, selected_config
+        )
         logger.info("Wrote MCP config to %s", mcp_json_path)
     except OSError as e:
         logger.warning("Failed to write .mcp.json to %s: %s", isolated_path, e)
