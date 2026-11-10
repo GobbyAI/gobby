@@ -282,6 +282,7 @@ async def handoff_fixture(
                     "created_terminal_ids": [] if proof is None else proof.created_terminal_ids,
                     "evidence": [] if proof is None else proof.evidence,
                     "writes_and_attempts": trace.events,
+                    "trace_refusals": trace.refusals,
                     "retained_logs": str(retained_logs),
                     "isolated_state_retained": None
                     if clean
