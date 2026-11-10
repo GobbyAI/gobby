@@ -92,6 +92,18 @@ def _stale_lock(project_id: str) -> Path:
     return lock
 
 
+def _lsof_reports_no_holder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the holder probe to "no holder": real lsof wall time under host load must not decide."""
+    real_run = subprocess.run
+
+    def no_holder(args: Sequence[str], **kwargs: Any) -> Any:
+        if args[0] == "lsof":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", no_holder)
+
+
 def _configure_filter(project_id: str, name: str, clean: str) -> None:
     """Route ``*.<name>`` files through a clean filter that runs while ``git add`` holds its lock."""
     _ws_git(project_id, "config", f"filter.{name}.clean", clean)
@@ -161,11 +173,12 @@ def git_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 async def test_stale_index_lock_is_recovered_with_a_warning(
-    project_id: str, caplog: pytest.LogCaptureFixture
+    project_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     anchor = ensure_workspace(project_id)
     _write(anchor, NOTES, "one finding\n")
     lock = _stale_lock(project_id)
+    _lsof_reports_no_holder(monkeypatch)
     caplog.set_level(logging.WARNING)
 
     sha = await commit_workspace(project_id, "set_handoff")
@@ -290,6 +303,7 @@ async def test_git_timeout_leaves_no_index_lock(
         return await real_run(args, **kwargs)
 
     monkeypatch.setattr(daemon_git, "run", short_add_timeout)
+    _lsof_reports_no_holder(monkeypatch)
 
     await _trigger(project_id, "set_handoff")
 
@@ -316,6 +330,7 @@ async def test_commit_timeout_leaves_no_index_lock(
         return await real_run(args, **kwargs)
 
     monkeypatch.setattr(daemon_git, "run", short_commit_timeout)
+    _lsof_reports_no_holder(monkeypatch)
 
     await _trigger(project_id, "set_handoff")
 
@@ -323,8 +338,16 @@ async def test_commit_timeout_leaves_no_index_lock(
     assert not (workspace_git_dir(project_id) / "index.lock").exists()
 
 
+@pytest.mark.parametrize(
+    "probe_failure",
+    [FileNotFoundError("lsof"), subprocess.TimeoutExpired(["lsof"], 5)],
+    ids=["missing", "timeout"],
+)
 async def test_git_timeout_keeps_original_failure_when_lock_inspection_fails(
-    project_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    project_id: str,
+    probe_failure: BaseException,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     anchor = ensure_workspace(project_id)
     _configure_filter(project_id, "slow", "sleep 30; cat")
@@ -337,13 +360,13 @@ async def test_git_timeout_keeps_original_failure_when_lock_inspection_fails(
             kwargs["timeout"] = ADD_TIMEOUT_SECONDS
         return await real_git(args, **kwargs)
 
-    def missing_lsof(args: Sequence[str], **kwargs: Any) -> Any:
+    def failing_lsof(args: Sequence[str], **kwargs: Any) -> Any:
         if args[0] == "lsof":
-            raise FileNotFoundError("lsof")
+            raise probe_failure
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(daemon_git, "run", short_add_timeout)
-    monkeypatch.setattr(subprocess, "run", missing_lsof)
+    monkeypatch.setattr(subprocess, "run", failing_lsof)
     await _trigger(project_id, "set_handoff")
 
     assert (workspace_git_dir(project_id) / "index.lock").exists()

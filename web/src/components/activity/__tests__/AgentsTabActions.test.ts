@@ -50,6 +50,7 @@ function agentDefinition(): AgentDefInfo {
       prewarm_pre_commit_store: false,
       network: "trusted",
       spawnable_agents: ["developer"],
+      spawner_capabilities: ["fixture-authority"],
       send_message_targets: ["parent", "session"],
       operator_messaging: true,
       communications_admin: true,
@@ -164,6 +165,7 @@ describe("AgentsTabActions", () => {
     // Sync-owned network and spawn/message authority never ride a UI copy.
     expect(body).not.toHaveProperty("network");
     expect(body).not.toHaveProperty("spawnable_agents");
+    expect(body).not.toHaveProperty("spawner_capabilities");
     expect(body).not.toHaveProperty("send_message_targets");
     expect(body).not.toHaveProperty("operator_messaging");
     expect(body).not.toHaveProperty("communications_admin");

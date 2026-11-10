@@ -30,8 +30,16 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.replay_decision import acknowledge_and_apply_receipt, decide_replay
 from gobby.hooks.replay_fence import defer_live_hook
+from gobby.storage.hook_receipts import HookReceipt, get_receipt
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import daemon_url as daemon_address
-from gobby.utils.local_token import daemon_bootstrap_path, read_local_api_token
+from gobby.utils.local_token import (
+    daemon_bootstrap_path,
+    issue_session_api_token,
+    read_local_api_token,
+)
+from gobby.utils.machine_id import get_machine_id
+from gobby.utils.session_context import SESSION_ID_HEADER, SESSION_SELECTOR_HEADERS
 
 logger = logging.getLogger(__name__)
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
@@ -55,6 +63,17 @@ def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
         for path in inbox_dir.iterdir()
         if path.is_file() and path.suffix == ".json" and not path.name.endswith(".tmp")
     )
+
+
+def _hub_database(app: Any) -> Any | None:
+    """Return the hub database the daemon app exposes, or None when it exposes none."""
+    state = getattr(app, "state", None)
+    db = getattr(state, "database", None)
+    if db is None:
+        # The daemon app exposes the hub database as state.server.services.database.
+        server = getattr(state, "server", None)
+        db = getattr(getattr(server, "services", None), "database", None)
+    return db
 
 
 def _consume_inbox_delivery_receipt(
@@ -91,11 +110,7 @@ def _consume_inbox_delivery_receipt(
     generation = envelope.get("delivery_generation")
     state = getattr(app, "state", None)
     hook_manager = getattr(state, "hook_manager", None)
-    db = getattr(state, "database", None)
-    if db is None:
-        # The daemon app exposes the hub database as state.server.services.database.
-        server = getattr(state, "server", None)
-        db = getattr(getattr(server, "services", None), "database", None)
+    db = _hub_database(app)
     if db is None:
         logger.warning(
             "No hub database resolvable from the app; dropping delivery receipt %s "
@@ -103,8 +118,8 @@ def _consume_inbox_delivery_receipt(
             receipt_id,
             generation,
         )
-    if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
-        try:
+    try:
+        if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
             from gobby.workflows.state_manager import SessionVariableManager
 
             committed = acknowledge_and_apply_receipt(
@@ -115,12 +130,14 @@ def _consume_inbox_delivery_receipt(
                 variable_manager=SessionVariableManager(db),
             )
             if committed is None:
+                committed = _acknowledged_at_generation(db, receipt_id, generation)
+            if committed is None:
                 logger.debug(
                     "Delivery receipt %s generation %s was stale or unknown at consumption",
                     receipt_id,
                     generation,
                 )
-            if committed is not None:
+            else:
                 # The acknowledged delivery terminalizes every envelope that
                 # carried it; a retained original must never replay its hook.
                 _mark_carrying_envelopes_processed(
@@ -128,15 +145,20 @@ def _consume_inbox_delivery_receipt(
                     ack_envelope_id=envelope_id,
                     processed_dir=processed_dir,
                 )
-        except Exception as exc:
-            logger.warning(
-                "Failed to consume delivery receipt %s generation %s: %s",
-                receipt_id,
-                generation,
-                exc,
-            )
-    if envelope_id:
-        mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+        if envelope_id:
+            mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    except Exception:
+        # A failed acknowledgment rolled back, so the receipt stays prepared. Restore the
+        # claim so the next sweep acknowledges it again. A failure after the commit leaves
+        # the receipt acknowledged at this generation; the next sweep finds it there, repeats
+        # the carrier marks, and then terminalizes the ack envelope.
+        logger.exception(
+            "Failed to consume delivery receipt %s generation %s; restoring its claim",
+            receipt_id,
+            generation,
+        )
+        inbox_envelopes.restore_inbox_claim(claimed, path)
+        return False
     claimed.unlink(missing_ok=True)
     return True
 
@@ -234,7 +256,11 @@ def _mark_carrying_envelopes_processed(
     ack_envelope_id: str | None,
     processed_dir: Path,
 ) -> None:
-    """Mark the receipt's original and current carrying envelopes processed."""
+    """Mark the receipt's original and current carrying envelopes processed.
+
+    A failed mark raises, so the caller keeps the acknowledgment claimable until every
+    carrier is terminal.
+    """
     carrying: list[str] = []
     for attribute in ("original_envelope_id", "current_envelope_id"):
         candidate = getattr(receipt, attribute, None)
@@ -246,33 +272,102 @@ def _mark_carrying_envelopes_processed(
         ):
             carrying.append(candidate)
     for carried_id in carrying:
-        try:
-            mark_envelope_processed(carried_id, processed_dir=processed_dir)
-        except Exception as exc:
+        mark_envelope_processed(carried_id, processed_dir=processed_dir)
+
+
+def _acknowledged_at_generation(
+    db: HubDatabase, receipt_id: str, generation: int
+) -> HookReceipt | None:
+    """The receipt when this generation is already acknowledged, else None.
+
+    A sweep that committed the acknowledgment and then failed its carrier marks leaves the
+    claim restored. The next sweep finds the generation acknowledged here and finishes them.
+    """
+    receipt = get_receipt(db, receipt_id=receipt_id)
+    if receipt is None or receipt.state != "acknowledged":
+        return None
+    if receipt.delivery_generation != generation:
+        return None
+    return receipt
+
+
+def _replay_session_token(app: Any, envelope: dict[str, Any]) -> str | None:
+    """Mint the envelope's own session credential so its replay keeps the session binding.
+
+    The envelope's session header is what binds a replayed hook to its session, and the
+    machine bearer may not select one. The daemon holds the hub database and the managed
+    signing key, so it presents a credential that names only that session. A session it
+    cannot find returns None, and the replay stays unbound.
+    """
+    session_id = _envelope_session_id(envelope)
+    machine_id = get_machine_id()
+    if session_id is None or not machine_id:
+        return None
+    try:
+        db = _hub_database(app)
+        if db is None:
             logger.warning(
-                "Failed to terminalize carrying envelope %s for receipt %s: %s",
-                carried_id,
-                getattr(receipt, "receipt_id", None),
-                exc,
+                "No hub database resolvable; replaying envelope for session %s unbound",
+                session_id,
             )
+            return None
+        # Only this machine's sessions: the hub may hold other machines' sessions too.
+        row = db.fetchone(
+            "SELECT id, project_id FROM sessions WHERE id = %s AND machine_id = %s",
+            (session_id, machine_id),
+        )
+    except Exception as exc:
+        logger.warning("Session lookup failed for replayed envelope %s: %s", session_id, exc)
+        return None
+    if row is None:
+        return None
+    auth = getattr(getattr(getattr(app, "state", None), "server", None), "auth_service", None)
+    signing_key = auth.managed_signing_key() if auth is not None else None
+    if signing_key is None:
+        return None
+    return issue_session_api_token(
+        signing_key,
+        session_id=str(row["id"]),
+        project_id=str(row["project_id"]),
+        machine_id=machine_id,
+    )
+
+
+def _replay_headers(
+    envelope: dict[str, Any],
+    *,
+    envelope_id: str | None,
+    bearer: str,
+    bind_session: bool,
+) -> dict[str, str]:
+    """Build the envelope's headers for a replay that presents ``bearer``.
+
+    A session-bound bearer keeps the session selector, since it names exactly that
+    session and no run. Every other replay drops the selectors: the machine bearer may
+    not select a session, and the envelope body names its session.
+    """
+    headers = envelope.get("headers")
+    dropped = {"authorization", *(name.lower() for name in SESSION_SELECTOR_HEADERS)}
+    if bind_session:
+        dropped.discard(SESSION_ID_HEADER.lower())
+    request_headers = (
+        {str(key): str(value) for key, value in headers.items() if str(key).lower() not in dropped}
+        if isinstance(headers, dict)
+        else {}
+    )
+    request_headers["Authorization"] = f"Bearer {bearer}"
+    if envelope_id:
+        request_headers[ENVELOPE_ID_HEADER] = envelope_id
+    return request_headers
 
 
 async def _post_envelope(
     envelope: dict[str, Any],
     *,
     envelope_id: str | None = None,
+    app: Any | None = None,
 ) -> httpx.Response:
     """Replay an inbox envelope through the real hook ingress route."""
-    headers = envelope.get("headers")
-    request_headers = (
-        {
-            str(key): str(value)
-            for key, value in headers.items()
-            if str(key).lower() != "authorization"
-        }
-        if isinstance(headers, dict)
-        else {}
-    )
     # Inbox replay runs inside the daemon and drains envelopes for every
     # session, so it must authenticate as the operator. An inherited
     # GOBBY_AGENT_API_TOKEN (daemon_auth_headers prefers it) would scope the
@@ -280,9 +375,15 @@ async def _post_envelope(
     operator_token = read_local_api_token()
     if not operator_token:
         return httpx.Response(503)
-    request_headers["Authorization"] = f"Bearer {operator_token}"
-    if envelope_id:
-        request_headers[ENVELOPE_ID_HEADER] = envelope_id
+    session_token = (
+        await asyncio.to_thread(_replay_session_token, app, envelope) if app is not None else None
+    )
+    request_headers = _replay_headers(
+        envelope,
+        envelope_id=envelope_id,
+        bearer=session_token or operator_token,
+        bind_session=session_token is not None,
+    )
 
     # Shared operator keys are verified by gdaemon, not the Python backend.
     # Use this daemon's bound bootstrap, never an inherited client URL override.
@@ -308,7 +409,12 @@ async def _post_envelope(
                 response = await client.post(
                     "/api/hooks/execute",
                     json=envelope,
-                    headers={**request_headers, "Authorization": f"Bearer {refreshed_token}"},
+                    headers=_replay_headers(
+                        envelope,
+                        envelope_id=envelope_id,
+                        bearer=refreshed_token,
+                        bind_session=False,
+                    ),
                 )
         return response
 
@@ -485,7 +591,7 @@ async def _drain_hook_inbox_once_locked(
             logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
 
         try:
-            response = await _post_envelope(envelope, envelope_id=envelope_id)
+            response = await _post_envelope(envelope, envelope_id=envelope_id, app=app)
         except Exception as exc:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue

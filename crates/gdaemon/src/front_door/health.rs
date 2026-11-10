@@ -36,10 +36,21 @@ impl BackendState {
 
 /// The typed 503 returned while the backend at `target` refuses connections.
 pub fn unavailable(target: impl std::fmt::Display, state: BackendState) -> Response<Body> {
-    let body = json!({
-        "status": "unavailable",
-        "backend": {"state": state.as_str(), "target": target.to_string()},
-    });
+    unavailable_waiting(target, state, None)
+}
+
+/// The typed 503 for a backend in `state`, naming the supervisor's current wait reason when it
+/// has one.
+pub fn unavailable_waiting(
+    target: impl std::fmt::Display,
+    state: BackendState,
+    wait: Option<&str>,
+) -> Response<Body> {
+    let mut backend = json!({"state": state.as_str(), "target": target.to_string()});
+    if let Some(wait) = wait {
+        backend["wait"] = json!(wait);
+    }
+    let body = json!({"status": "unavailable", "backend": backend});
     json_response(StatusCode::SERVICE_UNAVAILABLE, body, true)
 }
 
@@ -124,6 +135,29 @@ mod tests {
         fn source(&self) -> Option<&(dyn Error + 'static)> {
             Some(&self.0)
         }
+    }
+
+    #[tokio::test]
+    async fn unavailable_names_the_supervisor_wait_reason() {
+        let target = SocketAddr::from(([127, 0, 0, 1], 60987));
+        let wait = "backend supervisor waiting on the lease lock held by admin lease request";
+        let response = unavailable_waiting(target, BackendState::Starting, Some(wait));
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(
+            body,
+            json!({
+                "status": "unavailable",
+                "backend": {"state": "starting", "target": "127.0.0.1:60987", "wait": wait},
+            })
+        );
     }
 
     #[tokio::test]

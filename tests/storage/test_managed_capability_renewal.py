@@ -51,7 +51,8 @@ def test_renewal_is_gated_by_live_owner(
     now = int(datetime.now(UTC).timestamp())
     clock = now - 23 * 3600
     api_key = "isolated-test-renewal-api-key"
-    key = local_token.derive_managed_signing_key(api_key)
+    key = local_token.read_managed_signing_key(tmp_path / "bootstrap.yaml")
+    assert key is not None
     monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: clock)
     monkeypatch.setattr(local_token, "read_managed_signing_key", lambda: key)
     bootstrap = tmp_path / "bootstrap.yaml"

@@ -43,8 +43,8 @@ from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
-    derive_managed_signing_key,
     issue_agent_api_token,
+    issue_session_api_token,
 )
 from gobby.utils.session_context import (
     reset_request_principal,
@@ -55,6 +55,7 @@ from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.handlers import execute_mcp_step
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
+from tests.fixtures.capability_tokens import daemon_signing_key
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
@@ -783,7 +784,7 @@ async def test_actor_is_derived_from_session_context_and_principal(
     )
     stack.sessions.update_terminal_pickup_metadata(agent_session.id, agent_run_id=run.id)
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        daemon_signing_key(tmp_path / "bootstrap.yaml"),
         agent_run_id=run.id,
         session_id=agent_session.id,
         project_id=stack.project_id,
@@ -795,7 +796,16 @@ async def test_actor_is_derived_from_session_context_and_principal(
         "X-Gobby-Key-Id": "workspaces-key",
         "X-Gobby-Project-Id": stack.project_id,
     }
-    wrapper = operator | {
+    # A selector names its session, so the wrapper presents that session's own credential.
+    session_token = issue_session_api_token(
+        daemon_signing_key(tmp_path / "bootstrap.yaml"),
+        session_id=session.id,
+        project_id=stack.project_id,
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    wrapper = {
+        "Authorization": f"Bearer {session_token}",
+        "X-Gobby-Project-Id": stack.project_id,
         MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         "X-Gobby-Session-Id": session.id,
     }
@@ -855,18 +865,29 @@ async def test_actor_is_derived_from_session_context_and_principal(
         assert internal is not None
         registry = internal.get_registry("gobby-workspaces")
         assert registry is not None
-        claims = classify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
+        claims = classify_agent_api_token(
+            agent_token, daemon_signing_key(tmp_path / "bootstrap.yaml")
+        )
         assert isinstance(claims, AgentApiTokenClaims)
         with _principal(claims):
             assert await _code(registry, "create_workspace", name="claims") == "forbidden"
             with session_context_for_test(session.id):
                 assert await _code(registry, "create_workspace", name="claims") == "forbidden"
+        # A session's own credential acts as that session, and no other.
+        own_session = classify_agent_api_token(
+            session_token, daemon_signing_key(tmp_path / "bootstrap.yaml")
+        )
+        assert isinstance(own_session, AgentApiTokenClaims)
+        with _principal(own_session), session_context_for_test(agent_session.id):
+            assert await _code(registry, "create_workspace", name="foreign") == "forbidden"
+        with _principal(own_session), session_context_for_test(session.id):
+            await _ok(registry, "create_workspace", name="own-session")
         with _principal(None), session_context_for_test(session.id):
             await _ok(registry, "create_workspace", name="wrapper")
         assert create.await_args_list[-1].args[0] == f"session:{session.id}"
         assert await _code(registry, "create_workspace", name="unseeded") == "forbidden"
         assert await _code(registry, "list_nodes") == "forbidden"
-        assert create.await_count == 3
+        assert create.await_count == 4
 
 
 async def test_agent_token_reads_inventory_but_cannot_write_or_read_pane_io(stack: _Stack) -> None:

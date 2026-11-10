@@ -715,6 +715,11 @@ pub async fn run_live_loop<B: Backend>(
 /// Asks for control of the focused pane, unless another client holds it.
 fn request_focused_control(workspace: &mut Workspace<LiveDaemon>, chrome: &Chrome) {
     if let Some(pane_id) = chrome.focused_pane() {
+        // A roster refresh may land after recovery left this same pane
+        // observing. Reading the roster must not take its control back.
+        if workspace.focus == Some(pane_id) && workspace.pane(pane_id).is_live() {
+            return;
+        }
         workspace.focus = Some(pane_id);
         if !workspace.pane(pane_id).is_held() && !workspace.pane(pane_id).take_back {
             // The loop sends this once the pane's new attachment becomes live.

@@ -10,6 +10,20 @@ from pydantic import BaseModel, Field, field_validator
 HOOK_TRANSPORT_WINDOW_SECONDS = 30.0
 
 
+def _require_context_limit_floor(value: int) -> int:
+    """Reject a limit below the minimum derived from the context label bound. Nothing is clamped."""
+    # Imported here: the llm package imports this config module, so a top-level import cycles.
+    from gobby.llm.sdk_utils import MAX_CONTEXT_LABEL_CHARS, minimum_additional_context_limit
+
+    minimum = minimum_additional_context_limit()
+    if value < minimum:
+        raise ValueError(
+            f"additional context limit {value} is below the minimum {minimum}, derived from "
+            f"the {MAX_CONTEXT_LABEL_CHARS}-character context label bound"
+        )
+    return value
+
+
 class HookTimeoutConfig(BaseModel):
     """Timeouts and additionalContext budgets for hook execution."""
 
@@ -29,7 +43,6 @@ class HookTimeoutConfig(BaseModel):
     )
     additional_context_limit: int = Field(
         default=9_950,
-        ge=256,
         description=(
             "Default additionalContext character limit for hook injection. "
             "Claude Code / Agent SDK hard-truncates at 10K; keep the default "
@@ -45,6 +58,11 @@ class HookTimeoutConfig(BaseModel):
         ),
     )
 
+    @field_validator("additional_context_limit")
+    @classmethod
+    def require_context_limit_floor(cls, value: int) -> int:
+        return _require_context_limit_floor(value)
+
     @field_validator("additional_context_limits")
     @classmethod
     def normalize_additional_context_limits(cls, value: dict[str, int]) -> dict[str, int]:
@@ -53,8 +71,7 @@ class HookTimeoutConfig(BaseModel):
             key = raw_key.strip().casefold()
             if not key:
                 raise ValueError("provider key must be non-empty")
-            if raw_limit < 256:
-                raise ValueError("additional context limit must be >= 256")
+            _require_context_limit_floor(raw_limit)
             if key in normalized:
                 raise ValueError(f"duplicate provider key after normalization: {key}")
             normalized[key] = raw_limit

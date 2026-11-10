@@ -1293,10 +1293,14 @@ async fn unread_acceptance_times_out_and_cancels_the_run() -> Result<()> {
     use tokio_tungstenite::tungstenite::Message;
 
     let fixture = CommandsFixture::new(true).await?;
+    // Transfer the request before the idle clock can expire under scheduler load.
+    // Only the duplex is active here; resume real time before waiting on state I/O.
+    tokio::time::pause();
     let mut socket = serve_duplex_for(&fixture, 16, Duration::from_secs(1)).await;
     socket
         .send(Message::Text(fixture.spawn("spawn").to_string().into()))
         .await?;
+    tokio::time::resume();
     // The peer stays connected but never reads, so the send outlives the idle bound.
     assert_unprepared_cancel(&fixture).await?;
     drop(socket);

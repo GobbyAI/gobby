@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,28 @@ def _detached_worktree() -> Worktree:
         created_at=_VALID_TIMESTAMP,
         updated_at=_VALID_TIMESTAMP,
     )
+
+
+@contextmanager
+def _tree_removed_by_git_delete(git_manager: MagicMock) -> Iterator[None]:
+    """Model Git's real effect: the tree exists until the mocked delete removes it.
+
+    The registration check reads a worktree list that omits the tree, so a successful
+    delete is verified against both the filesystem and Git registrations.
+    """
+    removed = False
+
+    async def delete_tree(*_args: object, **_kwargs: object) -> MagicMock:
+        nonlocal removed
+        removed = True
+        return MagicMock(success=True)
+
+    git_manager.delete_worktree.side_effect = delete_tree
+    git_manager._run_git.return_value = MagicMock(
+        returncode=0, stdout="worktree /tmp/main\0HEAD abc\0\0", stderr=""
+    )
+    with patch("pathlib.Path.exists", side_effect=lambda: not removed):
+        yield
 
 
 @pytest.fixture
@@ -830,7 +853,7 @@ async def test_delete_worktree_success(
     mock_git_manager.delete_worktree.return_value.success = True
     mock_worktree_storage.delete.return_value = True
     with (
-        patch("pathlib.Path.exists", return_value=True),
+        _tree_removed_by_git_delete(mock_git_manager),
         patch(
             "gobby.worktrees.deletion.emit_worktree_event",
             return_value={
@@ -894,7 +917,10 @@ async def test_delete_worktree_retries_cargo_target_before_record_delete(
         return MagicMock(success=True)
 
     mock_git_manager.delete_worktree.side_effect = delete_once
+    # Call 1 verifies the removal with one worktree list. Call 2 finds the tree missing:
+    # its branch lookup (show-ref 1) and its registration list both confirm Git is clean.
     mock_git_manager.run_git_command.side_effect = [
+        MagicMock(returncode=0, stdout="worktree /tmp/repo\0HEAD abc\0\0", stderr=""),
         MagicMock(returncode=1, stdout="", stderr=""),
         MagicMock(returncode=0, stdout="worktree /tmp/repo\0HEAD abc\0\0", stderr=""),
     ]
@@ -914,7 +940,7 @@ async def test_delete_worktree_retries_cargo_target_before_record_delete(
     assert retried["success"] is True
     assert cleanup_target.call_count == 2
     mock_git_manager.delete_worktree.assert_awaited_once()
-    assert mock_git_manager.run_git_command.await_count == 2
+    assert mock_git_manager.run_git_command.await_count == 3
     mock_git_manager.run_git_command.assert_any_await(
         ["show-ref", "--verify", "--quiet", "refs/heads/b1"],
         timeout=5,
@@ -945,7 +971,7 @@ async def test_delete_worktree_uncommitted_changes(
     )
     mock_worktree_storage.get.return_value = wt
     mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = True
-    with patch("pathlib.Path.exists", return_value=True):
+    with _tree_removed_by_git_delete(mock_git_manager):
         result = await registry.call(
             "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
         )
@@ -1005,7 +1031,7 @@ async def test_delete_worktree_path_not_exists(
     mock_git_manager.run_git_command.side_effect = None
     mock_git_manager.run_git_command.return_value = MagicMock(
         returncode=0,
-        stdout="",
+        stdout="worktree /tmp/repo\0HEAD abc\0\0",
         stderr="",
     )
     with patch("pathlib.Path.exists", return_value=False):
@@ -1127,7 +1153,7 @@ async def test_delete_worktree_existing_path_without_git_manager_preserves_recor
 
 
 @pytest.mark.asyncio
-async def test_delete_worktree_missing_path_without_git_manager_removes_stale_record(
+async def test_delete_worktree_missing_path_without_git_manager_preserves_stale_record(
     mock_worktree_storage: MagicMock,
 ) -> None:
     wt = Worktree(
@@ -1154,8 +1180,11 @@ async def test_delete_worktree_missing_path_without_git_manager_removes_stale_re
     with patch("pathlib.Path.exists", return_value=False):
         result = await registry.call("delete_worktree", {"worktree_id": wt.id})
 
-    assert result["success"] is True
-    mock_worktree_storage.delete.assert_called_once_with(wt.id)
+    # Without Git, a missing tree proves nothing about its registration or branch, so the
+    # stale record stays until a Git manager can verify the removal.
+    assert result["success"] is False
+    assert result["error_code"] == "worktree_git_unavailable"
+    mock_worktree_storage.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1266,7 +1295,7 @@ async def test_delete_worktree_clears_task_artifact_references(
     mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
     mock_git_manager.delete_worktree.return_value.success = True
 
-    with patch("pathlib.Path.exists", return_value=True):
+    with _tree_removed_by_git_delete(mock_git_manager):
         result = await registry.call(
             "delete_worktree",
             {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "force": True},
@@ -1316,7 +1345,7 @@ async def test_delete_worktree_artifact_cleanup_failure_is_best_effort(
     mock_git_manager.delete_worktree.return_value.success = True
 
     with (
-        patch("pathlib.Path.exists", return_value=True),
+        _tree_removed_by_git_delete(mock_git_manager),
         caplog.at_level(logging.WARNING),
     ):
         result = await registry.call(
@@ -2253,7 +2282,7 @@ async def test_delete_worktree_adopts_path_before_deletion(
     mock_worktree_storage.delete.return_value = True
 
     with (
-        patch("pathlib.Path.exists", return_value=True),
+        _tree_removed_by_git_delete(mock_git_manager),
         patch("gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event") as emit_adoption,
     ):
         result = await registry.call("delete_worktree", {"worktree_path": "/tmp/../tmp/adopted"})
@@ -2305,7 +2334,7 @@ async def test_delete_worktree_reuses_registered_path_without_adoption_event(
     mock_worktree_storage.delete.return_value = True
 
     with (
-        patch("pathlib.Path.exists", return_value=True),
+        _tree_removed_by_git_delete(mock_git_manager),
         patch("gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event") as emit_adoption,
     ):
         result = await registry.call("delete_worktree", {"worktree_path": "/tmp/adopted"})
