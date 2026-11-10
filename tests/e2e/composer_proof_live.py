@@ -19,7 +19,7 @@ from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import IdleDetector, plain_text
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameClient
-from gobby.terminals.host_protocol import control_socket_path, frames_socket_path
+from gobby.terminals.host_protocol import frames_socket_path
 from tests.e2e.composer_proof import (
     ProofRefused,
     ProofScope,
@@ -283,7 +283,10 @@ class LiveProof:
         locator = _attach_locator(row)
         if (
             locator.backend != "native"
-            or locator.host_socket != str(control_socket_path(self.scope.root / "h"))
+            or locator.host_socket is None
+            # Attach locators name the host's frames socket (storage/terminals.py).
+            or Path(locator.host_socket).resolve()
+            != frames_socket_path(self.scope.root / "h").resolve()
             or not locator.host_terminal_id
         ):
             raise ProofRefused("native host binding outside private proof root")
