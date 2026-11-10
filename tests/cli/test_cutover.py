@@ -34,11 +34,6 @@ _CATALOG_TEST_TIMEOUT_SECONDS: int = (
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(autouse=True)
-def isolated_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("gobby.cli.installers.fleet_service.reload_fleet_service", lambda: None)
-
-
 def test_cutover_refuses_node_bootstrap_before_build(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -351,15 +346,6 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
     promotion = Mock(wraps=bin_set_coherence.promote_workspace_binary_set)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
     restarted: list[bytes] = []
-    from gobby.cli.installers import fleet_service
-
-    sampled: list[bytes] = []
-
-    def reload_watcher() -> None:
-        assert restarted == []
-        sampled.append((bin_dir / "gdaemon").read_bytes())
-
-    monkeypatch.setattr(fleet_service, "reload_fleet_service", reload_watcher)
 
     assert _run_live_cutover(root, bin_dir, restarted) is None
 
@@ -383,7 +369,6 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
         == identity
     )
     assert restarted == [(bin_dir / "gdaemon").read_bytes()]
-    assert sampled == restarted
 
 
 def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(

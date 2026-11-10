@@ -6,10 +6,10 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track shipped helper versions.
     "ghook": "0.9.76",
     "gcode": "1.9.113",
-    "gdaemon": "0.4.153",
+    "gdaemon": "0.4.155",
     "gterm": "0.1.30",
     "gclient": "0.1.124",
-    "gmcp": "0.1.41",
+    "gmcp": "0.1.42",
 }
 
 UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient", "gmcp"})

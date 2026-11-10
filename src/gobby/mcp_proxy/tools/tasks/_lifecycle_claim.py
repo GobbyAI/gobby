@@ -23,10 +23,14 @@ from gobby.storage.tasks import (
 )
 from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.workflows.agent_resolver import session_has_capability_or_operator
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.task_claim_state import active_task_id_for_edit
 
 logger = logging.getLogger(__name__)
+
+# Declared in a definition's ``capabilities`` list to claim tasks under another epic team.
+CLAIM_TEAM_TASKS = "claim_team_tasks"
 
 
 def record_claimant_state(ctx: RegistryContext, session_id: str, task: Task) -> None:
@@ -141,7 +145,8 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         # A descendant of an active epic team is claimed by that team's seats only. A planning
-        # child is exempt, so a planning workflow's child can claim it.
+        # child is exempt, so a planning workflow's child can claim it, and so is a session
+        # holding CLAIM_TEAM_TASKS (granted by "*") or the operator's own terminal.
         # The current holder keeps re-claiming its leaf even after its spawn chain left the team.
         current_owner = get_claimed_session_id(task)
         epic_team = epic_team_above(ctx.task_manager.db, resolved_id)
@@ -149,6 +154,9 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             epic_team is not None
             and task.category != "planning"
             and current_owner != resolved_session_id
+            and not session_has_capability_or_operator(
+                ctx.task_manager.db, resolved_session_id, CLAIM_TEAM_TASKS
+            )
         ):
             owning_team = task_team(ctx.task_manager.db, resolved_id)
             if seat is None or owning_team is None or seat.team_id != owning_team.team_id:
