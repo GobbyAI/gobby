@@ -18,6 +18,9 @@ from decimal import Decimal
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.tasks._id import resolve_task_reference
+from gobby.storage.tasks._models import TaskNotFoundError
 
 _LIMIT_MIN = 1
 _LIMIT_MAX = 1000
@@ -253,6 +256,35 @@ class UsageLedgerStore:
         seconds = 0.0 if summary is None else float(summary["seconds"])
         in_scope = [*attributed, *unattributed]
         return in_scope, attributed, unattributed, since, int(seconds * 1000)
+
+
+class LedgerScopeError(ValueError):
+    """A ledger session or task does not belong to the caller's project."""
+
+
+def resolve_ledger_subject(
+    db: HubDatabase, session_ref: str | None, task_ref: str | None, project_id: str
+) -> tuple[str | None, str | None]:
+    """Resolve ledger session and task refs inside `project_id`, refusing any other project.
+
+    Session refs resolve by primary key across projects, so ownership is checked explicitly.
+    """
+    session_uuid: str | None = None
+    if session_ref is not None:
+        try:
+            session_uuid = resolve_session_reference(db, session_ref, project_id)
+        except ValueError as exc:
+            raise LedgerScopeError(f"Session {session_ref} is not in the calling project") from exc
+        row = db.fetchone("SELECT project_id FROM sessions WHERE id = %s", (session_uuid,))
+        if row is None or str(row["project_id"]) != project_id:
+            raise LedgerScopeError(f"Session {session_ref} is not in the calling project")
+    task_uuid: str | None = None
+    if task_ref is not None:
+        try:
+            task_uuid = resolve_task_reference(db, task_ref, project_id)
+        except TaskNotFoundError as exc:
+            raise LedgerScopeError(f"Task {task_ref} is not in the calling project") from exc
+    return session_uuid, task_uuid
 
 
 def _scope_ids(session_id: str | None, task_id: str | None) -> tuple[str | None, str | None]:

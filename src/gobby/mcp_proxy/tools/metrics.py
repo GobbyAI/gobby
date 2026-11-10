@@ -19,8 +19,7 @@ from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.token_tracker import SessionTokenTracker
-from gobby.storage.tasks._id import resolve_task_reference
-from gobby.storage.usage_ledger import UsageLedgerStore
+from gobby.storage.usage_ledger import UsageLedgerStore, resolve_ledger_subject
 
 if TYPE_CHECKING:
     from gobby.providers.capacity_service import ProviderCapacityService
@@ -385,14 +384,8 @@ def create_metrics_registry(
         try:
             project_id = require_calling_project_id("read the usage ledger")
             db = session_storage.db
-            resolved_session: str | None = None
-            if session_id is not None:
-                resolved_session = session_storage.resolve_session_reference(session_id, project_id)
-                session = session_storage.get(resolved_session)
-                if session is None or session.project_id != project_id:
-                    raise ValueError(f"Session {session_id} is not in the calling project")
-            resolved_task = (
-                None if task_id is None else resolve_task_reference(db, task_id, project_id)
+            resolved_session, resolved_task = resolve_ledger_subject(
+                db, session_id, task_id, project_id
             )
             page = UsageLedgerStore(db).page(
                 session_id=resolved_session, task_id=resolved_task, cursor=cursor, limit=limit
