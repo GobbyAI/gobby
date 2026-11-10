@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.communications.telegram_access import allowed_senders, is_telegram_dm
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
-from gobby.workflows.agent_resolver import session_has_capability
+from gobby.workflows.agent_resolver import session_declares_capability, session_has_capability
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -60,7 +60,7 @@ def is_operator_seat(db: HubDatabase, session: Session) -> bool:
 def can_auto_attach(manager: CommunicationsManager, session: Session) -> bool:
     """Automatic attachment also needs the definition's grant, spawned or not."""
     db = manager.store.db
-    return is_operator_seat(db, session) and session_has_capability(
+    return is_operator_seat(db, session) and session_declares_capability(
         db, session.id, OPERATOR_ATTACH_CAPABILITY
     )
 

@@ -1,4 +1,4 @@
-version: "3.0.0"
+version: "4.0.0"
 tags: [task-closure-general]
 
 rules:
@@ -60,6 +60,7 @@ rules:
     event: task_close
     priority: 25
     when: &epic_descendants >-
+      not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
       (facts.get('descendants_closed') != True or
        any(not any(record.get('kind') == 'implementation' and record.get('result') == 'approved'
@@ -84,6 +85,7 @@ rules:
     event: task_close
     priority: 26
     when: &epic_evidence >-
+      not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
       (not facts.get('candidate_commit_sha') or not facts.get('subtree_revision') or
        any(latest_attestation(kind).get('result') != 'approved' or
@@ -112,6 +114,7 @@ rules:
     event: task_close
     priority: 27
     when: &epic_independence >-
+      not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
       (any(latest_attestation('independent-review').get('session_id') == record.get('session_id')
            for descendant in facts.get('descendants', [])
