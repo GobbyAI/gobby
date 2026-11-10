@@ -25,6 +25,7 @@ from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.workflows.checkout_fingerprint import file_fingerprint, path_fingerprints
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
     normalize_task_checkout_root,
     task_checkout_edit_hashes,
     task_checkout_edit_times,
@@ -144,30 +145,48 @@ def checkout_path_owners(
 def content_recorded_paths(
     variables: Mapping[str, Any], checkout_root: str, paths: Iterable[str]
 ) -> set[str]:
-    """Return the paths, among ``paths``, whose current content matches a record in ``variables``.
+    """Return the paths, among ``paths``, whose current content matches a task-attributed record.
 
-    A record is a task's attributed edit, or a pre-claim write this session holds in
-    ``session_unclaimed_edits`` until a claim adopts it. Both are this session's own content.
+    Pre-claim writes held in ``session_unclaimed_edits`` count only through
+    ``unclaimed_content_paths``, which requires an active claim, and only where no live
+    foreign session holds the path.
     """
     root = normalize_task_checkout_root(checkout_root)
-    if root is None:
+    hashes = variables.get("task_edited_checkout_hashes")
+    if root is None or not isinstance(hashes, dict):
         return set()
     records: dict[str, set[str | None]] = {}
-    hashes = variables.get("task_edited_checkout_hashes")
-    if isinstance(hashes, dict):
-        for task_id in hashes:
-            for entry, digest in task_checkout_edit_hashes(
-                {"task_edited_checkout_hashes": hashes}, task_id, root
-            ).items():
-                records.setdefault(entry, set()).add(digest)
-    unclaimed = variables.get("session_unclaimed_edits")
-    root_unclaimed = unclaimed.get(root) if isinstance(unclaimed, dict) else None
-    if isinstance(root_unclaimed, dict):
-        for entry, record in root_unclaimed.items():
-            if isinstance(record, dict):
-                records.setdefault(entry, set()).add(record.get("digest"))
+    for task_id in hashes:
+        for entry, digest in task_checkout_edit_hashes(
+            {"task_edited_checkout_hashes": hashes}, task_id, root
+        ).items():
+            records.setdefault(entry, set()).add(digest)
     return {
         path for path in paths if path in records and _current_digest(root, path) in records[path]
+    }
+
+
+def unclaimed_content_paths(
+    variables: dict[str, Any], checkout_root: str, paths: Iterable[str]
+) -> set[str]:
+    """Return the paths, among ``paths``, this session recorded unclaimed and still holds.
+
+    An edit whose tool-start binding was lost is recorded in the session's unclaimed ledger
+    with the content it left. While the session holds an active claim, that content is still
+    its own: the claim adopts it, and no other session owns it in the meantime.
+    """
+    root = normalize_task_checkout_root(checkout_root)
+    records = variables.get("session_unclaimed_edits")
+    if root is None or not isinstance(records, dict) or active_task_id_for_edit(variables) is None:
+        return set()
+    root_records = records.get(root)
+    if not isinstance(root_records, dict):
+        return set()
+    return {
+        path
+        for path in paths
+        if isinstance(root_records.get(path), dict)
+        and _current_digest(root, path) == root_records[path].get("digest")
     }
 
 

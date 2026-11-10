@@ -90,55 +90,6 @@ def _wake_result_for(
     return None
 
 
-async def _send_remote_wake(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
-    """Send each node terminal's wake as one submitted terminal.write through its node."""
-    from gobby.events.live_wake import wake_failure
-    from gobby.events.wake import CONTINUE_WAKE_MESSAGE
-    from gobby.terminals.write_coordinator import WriteRequest
-
-    manager, coordinator = wake_write_services()
-    submit_marks: dict[str, datetime] = {}
-
-    def record_submit(result_id: str) -> None:
-        submit_marks[result_id] = utc_now()
-
-    wake_results: list[dict[str, Any]] = []
-    for target in targets:
-        request = WriteRequest(
-            terminal_id=target.terminal_id,
-            action_key=f"wake:{target.terminal_id}",
-            origin="automatic",
-            kind="text",
-            payload=CONTINUE_WAKE_MESSAGE,
-            submit=True,
-        )
-        try:
-            terminal = manager.get(target.terminal_id)
-            if terminal is not None and not target.drain:
-                # The gate passed this wake on an empty composer, so an earlier
-                # wake's latch is settled first. Left latched, it suppresses this one.
-                await _settle_earlier_wake(coordinator, terminal, request.action_key)
-            outcome = await coordinator.write(
-                request, on_dispatch=partial(record_submit, target.session_id)
-            )
-        except Exception as exc:
-            # One target's failure must not fail the targets whose writes already reached the node.
-            logger.warning("remote wake failed for session %s", target.session_id, exc_info=True)
-            wake_results.append(
-                wake_failure(
-                    target.session_id,
-                    method="terminal",
-                    error_code=getattr(exc, "code", "remote_wake_failed"),
-                    error_message=str(exc) or type(exc).__name__,
-                )
-            )
-            continue
-        wake = _wake_result_for(target.session_id, outcome, submit_marks)
-        if wake is not None:
-            wake_results.append(wake)
-    return wake_results
-
-
 async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
     """Send complete composer-clear/wake sequences in one native-host request."""
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
@@ -524,7 +475,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         ism_manager=ism_manager,
         tmux_sender=_send_tmux_session_wake,
         native_batch_sender=_send_native_wake_batch,
-        remote_wake_sender=_send_remote_wake,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,

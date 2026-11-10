@@ -43,8 +43,7 @@ pub fn agent_counts<W: WorkspaceView>(ws: &W) -> AgentCounts {
     let model = ws.sidebar();
     let mut counts = AgentCounts::default();
     for agent in model
-        .agents
-        .iter()
+        .rollup_agents()
         .filter(|agent| model.local_machine.is_empty() || agent.machine_id == model.local_machine)
     {
         match agent.state {

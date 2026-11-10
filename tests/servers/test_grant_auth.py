@@ -117,7 +117,9 @@ def test_removed_savings_route_has_no_grant_entry() -> None:
     assert match_grant_route("POST", "/api/admin/savings/record") is None
 
 
-def test_interactive_grant_matches_forwarded_machine(temp_db: HubDatabase, tmp_path: Path) -> None:
+def test_interactive_grant_through_forwarded_machine_is_refused(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     from gobby.runtime_grants import encode_grant_header
     from tests.servers.test_auth_service import (
         _GRANT_NOW,
@@ -142,13 +144,13 @@ def test_interactive_grant_matches_forwarded_machine(temp_db: HubDatabase, tmp_p
             "X-Gobby-Runtime-Grant": encode_grant_header(grant),
         }
     )
-    admitted = service.authenticate(_request(headers, path="/api/llm/status"))
-    assert admitted.allowed is True
-    assert admitted.principal is not None
-    assert admitted.principal.machine_id == "node-machine"
-    assert admitted.machine_id == "node-machine"
+    refused = service.authenticate(_request(headers, path="/api/llm/status"))
+    assert refused.allowed is False
+    assert refused.code == "session_requires_bound_credential"
+    assert refused.status_code == 403
     forged = service.authenticate(
         _request(headers | {"X-Gobby-Machine-Id": "hub-machine"}, path="/api/llm/status")
     )
     assert forged.allowed is False
-    assert forged.code == "forged_identity"
+    assert forged.code == "session_requires_bound_credential"
+    assert forged.status_code == 403

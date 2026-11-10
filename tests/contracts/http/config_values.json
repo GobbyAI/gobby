@@ -219,10 +219,6 @@
           "default_mode": "plan",
           "profile": "feature_high"
         },
-        "chat_history": {
-          "max_message_chars": 2000,
-          "max_total_chars": 30000
-        },
         "code_index": {
           "content_retention_days": 1,
           "embedding_enabled": true,
@@ -1375,10 +1371,6 @@
           ],
           "default_mode": "plan",
           "profile": "feature_high"
-        },
-        "chat_history": {
-          "max_message_chars": 2000,
-          "max_total_chars": 30000
         },
         "code_index": {
           "content_retention_days": 1,

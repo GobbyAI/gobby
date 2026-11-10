@@ -44,11 +44,6 @@ const SESSION_LIFECYCLE_PATHS = [
   "session_lifecycle.transcript_archive_dir",
 ];
 
-const CHAT_HISTORY_PATHS = [
-  "chat_history.max_message_chars",
-  "chat_history.max_total_chars",
-];
-
 const MESSAGE_TRACKING_PATHS = [
   "message_tracking.enabled",
   "message_tracking.poll_interval",
@@ -79,7 +74,6 @@ const VALIDATION_DETECTION_PATH = "validation_detection";
 const OWNED_PATHS: readonly string[] = [
   ...SESSION_LIFECYCLE_PATHS,
   ...SESSION_SUMMARY_PATHS,
-  ...CHAT_HISTORY_PATHS,
   ...MESSAGE_TRACKING_PATHS,
   ...VERIFICATION_DEFAULTS_PATHS,
   VALIDATION_DETECTION_PATH,
@@ -224,28 +218,6 @@ function SessionSummaryGroup({ fields }: { fields: SettingsSectionFields }) {
   );
 }
 
-function ChatHistoryGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Chat history"
-      hint="Limits on the history context injected into chats."
-    >
-      <NumberConfigField
-        fields={fields}
-        path="chat_history.max_message_chars"
-        label="Max characters per message"
-        ariaLabel="Max characters per message"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="chat_history.max_total_chars"
-        label="Max total characters"
-        ariaLabel="Max total characters"
-      />
-    </Subsection>
-  );
-}
-
 function MessageTrackingGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
@@ -357,7 +329,6 @@ export function ProjectsSessionsSection() {
           <ProjectSelectionGroup projectSelection={projectSelection} />
           <SessionLifecycleGroup fields={fields} />
           <SessionSummaryGroup fields={fields} />
-          <ChatHistoryGroup fields={fields} />
           <MessageTrackingGroup fields={fields} />
           <VerificationDefaultsGroup fields={fields} />
           <ValidationDetectionGroup

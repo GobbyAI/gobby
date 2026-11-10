@@ -7,7 +7,7 @@ use super::{PolicyInputs, tables};
 use crate::node_commands::Sandbox;
 use anyhow::{Result, anyhow, bail};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     iter::once,
     os::unix::fs::PermissionsExt,
@@ -109,23 +109,42 @@ pub(super) fn lexical_normal(path: &Path) -> PathBuf {
 /// `Path.resolve(strict=False)`: canonicalize the longest existing prefix and
 /// re-append the rest, so a path that does not exist yet still resolves.
 pub(super) fn resolve_nonstrict(path: &Path) -> PathBuf {
-    let normal = lexical_normal(path);
-    let mut existing = normal.clone();
-    let mut rest: Vec<std::ffi::OsString> = Vec::new();
-    loop {
-        if let Ok(canonical) = existing.canonicalize() {
-            let mut out = canonical;
-            for part in rest.iter().rev() {
-                out.push(part);
-            }
-            return out;
+    Resolver::default().resolve(&lexical_normal(path))
+}
+
+/// Memoizes `resolve_nonstrict` across one list of paths, so the filesystem is probed
+/// once per directory rather than once per entry. Filesystem changes between calls are
+/// not seen, so a resolver lives for one list only.
+#[derive(Default)]
+pub(super) struct Resolver {
+    memo: HashMap<PathBuf, PathBuf>,
+}
+
+impl Resolver {
+    /// Resolves a lexically normal path. A path that does not exist resolves as its
+    /// parent does, plus its name, so each missing entry costs one `lstat`.
+    pub(super) fn resolve(&mut self, path: &Path) -> PathBuf {
+        if let Some(resolved) = self.memo.get(path) {
+            return resolved.clone();
         }
-        match (existing.file_name(), existing.parent()) {
-            (Some(name), Some(parent)) => {
-                rest.push(name.to_os_string());
-                existing = parent.to_path_buf();
-            }
-            _ => return normal,
+        let resolved = self.resolve_uncached(path);
+        self.memo.insert(path.to_path_buf(), resolved.clone());
+        resolved
+    }
+
+    fn resolve_uncached(&mut self, path: &Path) -> PathBuf {
+        let parent_and_name = path.parent().zip(path.file_name());
+        if fs::symlink_metadata(path).is_err()
+            && let Some((parent, name)) = parent_and_name
+        {
+            return self.resolve(parent).join(name);
+        }
+        match path.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(_) => match parent_and_name {
+                Some((parent, name)) => self.resolve(parent).join(name),
+                None => path.to_path_buf(),
+            },
         }
     }
 }
@@ -152,9 +171,10 @@ pub(super) fn canonical_paths<S: AsRef<str>>(
     base: Option<&Path>,
     home: &Path,
 ) -> Vec<String> {
+    let mut resolver = Resolver::default();
     dedupe(
         raws.into_iter()
-            .map(|raw| text(&canonical_pathbuf(raw.as_ref(), base, home))),
+            .map(|raw| text(&resolver.resolve(&absolute_path(raw.as_ref(), base, home)))),
     )
 }
 
@@ -164,12 +184,10 @@ pub(super) fn deny_paths<S: AsRef<str>>(
     base: Option<&Path>,
     home: &Path,
 ) -> Vec<String> {
+    let mut resolver = Resolver::default();
     dedupe(raws.into_iter().flat_map(|raw| {
-        let raw = raw.as_ref();
-        [
-            text(&absolute_path(raw, base, home)),
-            text(&canonical_pathbuf(raw, base, home)),
-        ]
+        let absolute = absolute_path(raw.as_ref(), base, home);
+        [text(&absolute), text(&resolver.resolve(&absolute))]
     }))
 }
 
@@ -198,18 +216,26 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
     )
 }
 
-/// `credential_roots`: install credentials and the daemon's startup files. The oracle
-/// denies the bootstrap the daemon bound at startup. `PolicyInputs` carries no bound
-/// path, so the default `gobby_home/bootstrap.yaml` stands in for it.
-fn credential_roots(gobby: &Path) -> Vec<PathBuf> {
-    vec![
+/// `credential_roots`: install credentials, the daemon's startup files, and the operator's
+/// canonical bootstrap, which the oracle appends last. The oracle denies the bootstrap the daemon
+/// bound at startup. `PolicyInputs` carries no bound path, so the default
+/// `gobby_home/bootstrap.yaml` stands in for it. The capability signing key (and the directory
+/// its bytes are staged in) can forge any session token, and the session-credentials store holds
+/// live session tokens; a sandboxed seat presents its own run token and needs neither.
+fn credential_roots(gobby: &Path, operator_bootstrap: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
         gobby.join("grants"),
         gobby.join("tools").join("srt"),
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
-    ]
+        gobby.join("session-credentials"),
+        gobby.join("capability_signing_key"),
+        gobby.join(".capability_signing_key-staging"),
+    ];
+    roots.extend(operator_bootstrap.map(Path::to_path_buf));
+    roots
 }
 
 /// `private_srt_socket_roots`: the private SRT socket roots, including this UID's `/tmp` root.
@@ -232,8 +258,13 @@ pub(super) fn managed_execution_root(gobby: &Path) -> PathBuf {
 }
 
 /// `sensitive_roots`: Gobby roots excluded from every managed allow surface.
-fn sensitive_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
-    let mut roots = credential_roots(gobby);
+fn sensitive_roots(
+    gobby: &Path,
+    home: &Path,
+    env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
+) -> Vec<String> {
+    let mut roots = credential_roots(gobby, operator_bootstrap);
     roots.push(gobby.join("gcode-runtime"));
     roots.push(managed_execution_root(gobby));
     roots.extend(private_srt_socket_roots(gobby, env));
@@ -241,7 +272,12 @@ fn sensitive_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) ->
 }
 
 /// `sensitive_write_roots`: credential and daemon-state roots no write grant may override.
-fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
+fn sensitive_write_roots(
+    gobby: &Path,
+    home: &Path,
+    env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
+) -> Vec<String> {
     let mut roots = vec![
         home.join(".ssh"),
         home.join(".aws"),
@@ -249,7 +285,7 @@ fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, Strin
         home.join(".kube"),
         home.join(".config").join("gcloud"),
     ];
-    roots.extend(credential_roots(gobby));
+    roots.extend(credential_roots(gobby, operator_bootstrap));
     roots.extend(private_srt_socket_roots(gobby, env));
     deny_paths(roots.iter().map(|root| text(root)), None, home)
 }
@@ -685,8 +721,9 @@ pub(super) fn assert_sensitive_path_contract(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
 ) -> Result<()> {
-    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env)
+    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env, operator_bootstrap)
         .into_iter()
         .map(PathBuf::from)
         .collect();
@@ -826,6 +863,7 @@ pub(super) fn compute(
 ) -> Result<ResolvedPaths> {
     let home = inputs.home.as_path();
     let gobby = inputs.gobby_home.as_path();
+    let operator_bootstrap = inputs.operator_bootstrap.as_deref();
     let provider = inputs.provider.as_str();
     let workspace = canonical_pathbuf(&text(&inputs.workspace), None, home);
 
@@ -858,7 +896,7 @@ pub(super) fn compute(
         home,
     );
     let mut deny_read_paths = deny_paths(
-        sensitive_roots(gobby, home, env)
+        sensitive_roots(gobby, home, env, operator_bootstrap)
             .into_iter()
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
@@ -872,7 +910,7 @@ pub(super) fn compute(
         .map(|path| canonical_pathbuf(path, Some(&workspace), home))
         .collect();
     let deny_write_paths = deny_paths(
-        sensitive_write_roots(gobby, home, env)
+        sensitive_write_roots(gobby, home, env, operator_bootstrap)
             .into_iter()
             .chain(provider_control_write_paths(
                 &workspace,
@@ -899,6 +937,7 @@ pub(super) fn compute(
         gobby,
         home,
         env,
+        operator_bootstrap,
     )?;
     assert_credential_read_contract(
         &read_paths,
@@ -931,3 +970,7 @@ pub(super) fn compute(
         provider: provider.to_string(),
     })
 }
+
+#[cfg(test)]
+#[path = "paths/tests.rs"]
+mod tests;

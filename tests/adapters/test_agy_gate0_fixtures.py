@@ -162,7 +162,12 @@ def _pane_cites(section: str) -> set[str]:
 
 
 def _fixture_files() -> list[Path]:
-    return sorted(path for path in AGY_ROOT.rglob("*") if path.is_file())
+    # Python bytecode a helper leaves in probe/__pycache__ is a build artifact, not a fixture.
+    return sorted(
+        path
+        for path in AGY_ROOT.rglob("*")
+        if path.is_file() and "__pycache__" not in path.relative_to(AGY_ROOT).parts
+    )
 
 
 def _pane_body(path: Path) -> list[str]:

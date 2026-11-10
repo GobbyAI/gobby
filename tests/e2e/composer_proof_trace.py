@@ -162,6 +162,7 @@ class ProofTrace:
         self.authorize_clear: Callable[[Surface, Surface, str], Awaitable[None]] | None = None
         self.bindings = asyncio.Lock()
         self.events: list[dict[str, object]] = []
+        self.refusals: list[str] = []
         self.changed = asyncio.Condition()
         self.staged = asyncio.Event()
         self.release = asyncio.Event()
@@ -347,6 +348,8 @@ class ProofTrace:
                     "/clear",
                     "/clear\n",
                     "enter",
+                    # The interrupt key a handoff /clear or /compact sends to a running turn.
+                    "escape",
                     continuation,
                     continuation + "\n",
                 )
@@ -400,7 +403,9 @@ class ProofTrace:
             await self.accept(cast(dict[str, object], value))
             writer.write(b'{"accepted":true}\n')
             await writer.drain()
-        except (ProofRefused, ValueError, TimeoutError):
+        except (ProofRefused, ValueError, TimeoutError) as exc:
+            # Kept for the retained proof artifact; the daemon only sees the refusal.
+            self.refusals.append(f"{type(exc).__name__}: {exc}")
             writer.write(b'{"accepted":false}\n')
             await writer.drain()
         finally:

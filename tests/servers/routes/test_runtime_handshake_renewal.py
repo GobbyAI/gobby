@@ -31,6 +31,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.utils import local_token
 from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from tests.fixtures.capability_tokens import daemon_signing_key
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
     FENCING_EPOCH,
@@ -165,7 +166,7 @@ def test_expired_seat_capability_renews_its_grant(
             agent_run_id=fixture.agent_run_id,
             expires_at=datetime.now(UTC) + timedelta(minutes=59),
         )
-        signing_key = derive_managed_signing_key(OPERATOR_TOKEN)
+        signing_key = daemon_signing_key(tmp_path / "bootstrap.yaml")
         monkeypatch.setattr(local_token, "read_managed_signing_key", lambda: signing_key)
         golden = Path(__file__).parents[2] / "runtime_grants/golden/direct_datastores.json"
         grant = GrantBundle.model_validate_json(golden.read_bytes()).model_copy(
@@ -254,8 +255,10 @@ def test_expired_capability_renews_only_for_live_matching_seat(
             agent_run_id=fixture.agent_run_id,
             expires_at=datetime.now(UTC) + timedelta(minutes=59),
         )
-        signing_key = derive_managed_signing_key(
-            "attacker-operator-token" if refusal == "forged_signature" else OPERATOR_TOKEN
+        signing_key = (
+            derive_managed_signing_key("attacker-operator-token")
+            if refusal == "forged_signature"
+            else daemon_signing_key(tmp_path / "bootstrap.yaml")
         )
         token = _expired_token(fixture, signing_key=signing_key, monkeypatch=monkeypatch)
         headers = _headers(fixture, token)
@@ -304,7 +307,7 @@ def test_persistent_renewal_failure_reports_capability_expiry_to_parent(
         )
         token = _expired_token(
             fixture,
-            signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
+            signing_key=daemon_signing_key(tmp_path / "bootstrap.yaml"),
             monkeypatch=monkeypatch,
         )
         client = _client(fixture, manager=manager, store=store, tmp_path=tmp_path)

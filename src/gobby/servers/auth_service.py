@@ -40,17 +40,20 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.storage.users import LocalUserManager, User
 from gobby.utils.break_glass import BREAK_GLASS_HEADER, break_glass_matches, break_glass_path
 from gobby.utils.local_token import (
+    SESSION_TOKEN_KIND,
     AgentApiTokenClaims,
     AgentApiTokenRejection,
     classify_agent_api_token,
-    daemon_bootstrap_path,
+    read_local_api_token,
     read_managed_signing_key,
     verify_expired_agent_api_token,
     verify_managed_payload,
 )
+from gobby.utils.session_context import SESSION_SELECTOR_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,17 @@ _AGENT_RUN_HEADER = "X-Gobby-Agent-Run-Id"
 _MANAGED_EXECUTION_HEADER = "X-Gobby-Managed-Execution-Id"
 _HOOKS_EXECUTE_PATH = "/api/hooks/execute"
 _RUNTIME_HANDSHAKE_PATH = "/api/runtime/handshake"
+
+SESSION_REQUIRES_BOUND_CREDENTIAL = "session_requires_bound_credential"
+_SESSION_REQUIRES_BOUND_CREDENTIAL_MESSAGE = (
+    "Session selection requires a credential bound to that session"
+)
+
+
+def presents_session_selector(request: HTTPConnection) -> bool:
+    """Return whether the request selects a session, run or execution by header."""
+    return any(request.headers.get(name) is not None for name in SESSION_SELECTOR_HEADERS)
+
 
 # Why a managed capability bearer was refused; rendered as the 401 body code.
 _CapabilityRejection = (
@@ -195,6 +209,9 @@ def _agent_identity_matches(
         return False
     if managed_execution_id is not None and claims.managed_execution_id is None:
         return False
+    if claims.kind == SESSION_TOKEN_KIND:
+        # A session token has no agent owner; owner headers were refused above.
+        return True
     if supplied_owner is not None:
         return supplied_owner == expected_owner
     return not bind_identity
@@ -246,25 +263,12 @@ class AuthService:
         self._clock = clock
         self._break_glass_file = break_glass_file
         self._bootstrap_file = bootstrap_file
-        self._managed_key_stamp: tuple[Path, int, int, int] | None = None
-        self._managed_key: bytes | None = None
         self.browser_sessions = BrowserSessions()
 
     def managed_signing_key(self) -> bytes | None:
-        """Observe bootstrap replacement on the next request, without a refresh interval."""
-        path = self._bootstrap_file or daemon_bootstrap_path()
+        """Read the daemon key, validating the credential inode on every request."""
         with self._lock:
-            try:
-                stat = path.stat()
-            except OSError:
-                self._managed_key_stamp = None
-                self._managed_key = None
-                return None
-            stamp = (path, stat.st_ino, stat.st_mtime_ns, stat.st_size)
-            if stamp != self._managed_key_stamp:
-                self._managed_key = read_managed_signing_key(path)
-                self._managed_key_stamp = stamp
-            return self._managed_key
+            return read_managed_signing_key(self._bootstrap_file)
 
     def bind_runtime(
         self,
@@ -315,6 +319,15 @@ class AuthService:
                 user_id=browser.user_id,
                 machine_id=browser.claims.machine_id,
                 browser_session=browser,
+            )
+        if self._machine_bearer_selects_session(request):
+            # The machine-wide key names no session. A caller-chosen session, run, execution
+            # or terminal selector would make it act as that session, behind a front door too.
+            return AuthDecision(
+                allowed=False,
+                code=SESSION_REQUIRES_BOUND_CREDENTIAL,
+                message=_SESSION_REQUIRES_BOUND_CREDENTIAL_MESSAGE,
+                status_code=403,
             )
         grant_route = match_grant_route(
             str(request.scope.get("method", "GET")),
@@ -523,6 +536,41 @@ class AuthService:
             bearer_claims=claims,
         )
 
+    def _machine_bearer_selects_session(self, request: HTTPConnection) -> bool:
+        """Return whether a session selector rides a bearer that may not name a session.
+
+        The machine-wide key names no session, with or without a verified front door: gdaemon
+        injects front-door identity for every live api_keys row, so a verified front door
+        proves a key, not the operator. Break-glass is not an exemption either. Agent and
+        session bearers are verified where they are checked, so they never reach this
+        predicate as machine keys.
+        """
+        if not presents_session_selector(request):
+            return False
+        if self.break_glass_admits(request):
+            return True
+        if self.verified_front_door_identity(request) is not None:
+            return True
+        return self._presents_machine_bearer(request)
+
+    def _presents_machine_bearer(self, request: HTTPConnection) -> bool:
+        """Return whether the request's bearer is the machine-wide key itself.
+
+        Any other bearer, invalid ones included, is left to the normal rejection so it keeps
+        its existing answer. The machine key is not a managed capability, so classification
+        cannot tell it from an invalid bearer; the comparison is exact.
+        """
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return False
+        parts = authorization.split(maxsplit=1)
+        if not parts or parts[0].casefold() != "bearer" or len(parts) != 2:
+            return False
+        machine_key = read_local_api_token(self._bootstrap_file)
+        return machine_key is not None and hmac.compare_digest(
+            parts[1].encode(), machine_key.encode()
+        )
+
     def _accepted_bearer(
         self, request: HTTPConnection
     ) -> AgentApiTokenClaims | None | Literal[False]:
@@ -626,6 +674,8 @@ class AuthService:
         return claims
 
     def _managed_capability_is_live(self, claims: AgentApiTokenClaims) -> bool:
+        if claims.kind == SESSION_TOKEN_KIND:
+            return self._session_is_live(claims.session_id)
         if claims.agent_run_id is not None:
             return self._agent_run_is_live(claims.agent_run_id)
         if claims.managed_execution_id is None:
@@ -642,6 +692,18 @@ class AuthService:
         except Exception:
             return False
         return row is not None and row["login_capable"] is True
+
+    def _session_is_live(self, session_id: str) -> bool:
+        """A session-bound capability dies with its session row leaving live status."""
+        try:
+            row = self._database_getter().fetchone(
+                "SELECT status FROM sessions WHERE id = %s",
+                (session_id,),
+            )
+        except Exception:
+            # Malformed ids and storage failures fail closed at the auth boundary.
+            return False
+        return row is not None and row["status"] in LIVE_SESSION_STATUSES
 
     def _agent_run_is_live(self, run_id: str) -> bool:
         """A capability dies with its run: only pending/running runs pass.

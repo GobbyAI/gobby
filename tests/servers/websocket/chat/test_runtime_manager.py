@@ -620,7 +620,7 @@ class TestGrokBackend:
             }
         )
         session._on_post_tool.assert_not_awaited()
-        assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
+        assert session._deferred_context() == TASKS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_managed_session_declines_acp_request_permission_when_pre_tool_blocks(
@@ -717,7 +717,7 @@ class TestGrokBackend:
         session = GrokManagedChatSession(conversation_id="conv-grok", _backend=MagicMock())
         session.chat_mode = "plan"
 
-        context = session._pop_plan_mode_context()
+        context = session._plan_mode_context()
 
         assert context is not None
         assert "gcode outline/search/symbol" in context
@@ -2403,7 +2403,7 @@ class TestCodexBackend:
                 "tool_input": {"server_name": "gobby-tasks", "tool_name": "close_task"},
             }
         )
-        assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
+        assert session._deferred_context() == TASKS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_handle_approval_request_allows_gcode_in_plan_mode(self) -> None:
@@ -2643,7 +2643,7 @@ class TestCodexBackend:
                 "mcp_tool": "close_task",
             }
         )
-        assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
+        assert session._deferred_context() == TASKS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_send_message_normalizes_realistic_completed_mcp_items(self) -> None:
