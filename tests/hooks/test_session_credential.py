@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import socket
+import subprocess
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -36,7 +40,8 @@ from gobby.utils.local_token import (
     derive_managed_signing_key,
     verify_agent_api_token,
 )
-from gobby.utils.session_credential_record import stable_cli_pid
+from gobby.utils.session_credential_record import cli_pid_key, load_record, stable_cli_pid
+from tests.fixtures.gdaemon_binary import checkout_debug_dir
 from tests.servers.conftest import authenticate_test_server
 
 pytestmark = pytest.mark.unit
@@ -773,6 +778,261 @@ def test_codex_no_daemon_resume_revives_the_expired_seat_with_a_credential(
     context = parse_terminal_context_value(row["terminal_context"]) or {}
     assert context["parent_pid"] == CODEX_TUI_PID
     assert _gmcp_lookup_pid(tree) == CODEX_TUI_PID
+
+
+def _checkout_binary(name: str) -> Path:
+    """The checkout's debug build of a Rust binary (`cargo build -p ... --bins`)."""
+    repo_root = Path(__file__).resolve().parents[2]
+    binary = checkout_debug_dir(repo_root, os.environ) / name
+    if not binary.is_file():
+        pytest.skip(f"{binary} is not built: cargo build -p gobby-hooks -p gobby-mcp --bins")
+    return binary
+
+
+def _client_environment(gobby_home: Path, home: Path, daemon_url: str) -> dict[str, str]:
+    """An unspawned CLI's environment: no Gobby launch, run or managed-execution markers."""
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("GOBBY_", "TMUX", "CLAUDE"))
+    }
+    environment.update(
+        {"HOME": str(home), "GOBBY_HOME": str(gobby_home), "GOBBY_DAEMON_URL": daemon_url}
+    )
+    return environment
+
+
+class _FrontDoor:
+    """Stands in for gdaemon's front door on a real loopback socket.
+
+    A hook POST goes to the real daemon hook route with the peer port gdaemon would add.
+    Any other request, as gmcp makes, is recorded with its credential headers.
+    """
+
+    def __init__(self, route: HookRoute) -> None:
+        self.route = route
+        self.requests: list[tuple[str, str, dict[str, str]]] = []
+        front_door = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: Any) -> None:
+                return None
+
+            def _reply(self, status: int, body: bytes) -> None:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _handle(self) -> None:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = self.rfile.read(length) if length else b""
+                headers = {key.lower(): value for key, value in self.headers.items()}
+                front_door.requests.append((self.command, self.path, headers))
+                if self.path == "/api/hooks/execute":
+                    forwarded = {
+                        "Content-Type": "application/json",
+                        "X-Gobby-Peer-Port": "53412",
+                    }
+                    if "x-gobby-envelope-id" in headers:
+                        forwarded["X-Gobby-Envelope-Id"] = headers["x-gobby-envelope-id"]
+                    response = front_door.route.client.post(
+                        self.path, content=payload, headers=forwarded
+                    )
+                    self._reply(response.status_code, response.content)
+                elif self.path == "/api/health":
+                    self._reply(200, b'{"status":"healthy"}')
+                elif self.path == "/api/mcp/bridge/tool-timeouts":
+                    self._reply(200, b'{"success":true,"tool_timeouts":{}}')
+                else:
+                    self._reply(200, b'{"success":true,"result":{"reached":true}}')
+
+            do_GET = _handle
+            do_POST = _handle
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> _FrontDoor:
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _gmcp_call(gmcp: Path, environment: dict[str, str], cwd: Path) -> dict[str, Any]:
+    """Make one MCP tool call through the real gmcp binary and return its JSON-RPC reply."""
+    process = subprocess.Popen(
+        [str(gmcp)],
+        cwd=cwd,
+        env=environment,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    replies: queue.Queue[dict[str, Any]] = queue.Queue()
+
+    def read() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            try:
+                replies.put(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    threading.Thread(target=read, daemon=True).start()
+
+    def send(message: dict[str, Any]) -> None:
+        assert process.stdin is not None
+        process.stdin.write(json.dumps(message) + "\n")
+        process.stdin.flush()
+
+    def reply(request_id: int) -> dict[str, Any]:
+        while True:
+            message = replies.get(timeout=20)
+            if message.get("id") == request_id:
+                return message
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0"},
+                },
+            }
+        )
+        reply(1)
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "call_tool",
+                    "arguments": {
+                        "server_name": "example",
+                        "tool_name": "echo",
+                        "arguments": {"value": "bound"},
+                        "preflight_enabled": False,
+                    },
+                },
+            }
+        )
+        return reply(2)
+    finally:
+        process.kill()
+        process.wait(timeout=10)
+
+
+@pytest.mark.integration
+def test_codex_no_daemon_resume_credential_reaches_ghook_store_and_gmcp_lookup(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    expired_codex_session: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """End to end on real binaries: the daemon mints, ghook stores, gmcp finds and sends.
+
+    This test process plays the `codex resume --no-daemon` TUI: it is the parent of the
+    real ghook and the real gmcp, as a no-daemon TUI is of both. The synthetic tree only
+    describes these real pids to the daemon's claimant check.
+    """
+    ghook = _checkout_binary("ghook")
+    gmcp = _checkout_binary("gmcp")
+    _machine_caller(hook_route)
+    tui_pid = os.getpid()
+    gobby_home = tmp_path / "gobby-home"
+    gobby_home.mkdir()
+    (gobby_home / "machine_id").write_text(TEST_MACHINE_ID + "\n")
+    (gobby_home / "bootstrap.yaml").write_text("api_key: isolated-front-door-key\n")
+    # The seat runs in its project's checkout, as an unspawned seat does.
+    workspace = tmp_path / "workspace"
+    (workspace / ".gobby").mkdir(parents=True)
+    (workspace / ".gobby" / "project.json").write_text(json.dumps({"id": sample_project["id"]}))
+    hook_started = threading.Event()
+    hook_pid: dict[str, int] = {}
+
+    def socket_owner(**_: Any) -> int:
+        assert hook_started.wait(timeout=20)
+        return hook_pid["pid"]
+
+    with _FrontDoor(hook_route) as front_door:
+        environment = _client_environment(gobby_home, tmp_path, front_door.url)
+        hook = subprocess.Popen(
+            [str(ghook), "--gobby-owned", "--cli=codex", "--type=SessionStart"],
+            cwd=workspace,
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        tree = _process_tree(
+            (tui_pid, "codex", ["codex", "resume", "--no-daemon", CODEX_PROVIDER_SESSION], None),
+            (hook.pid, "ghook", ["ghook", "--cli=codex"], tui_pid),
+        )
+        with (
+            patch("gobby.hooks.session_claimant._socket_owner", side_effect=socket_owner),
+            patch("gobby.hooks.session_claimant.psutil", tree),
+            patch("gobby.hooks.terminal_context.psutil", tree),
+        ):
+            hook_pid["pid"] = hook.pid
+            hook_started.set()
+            stdout, stderr = hook.communicate(
+                json.dumps(
+                    {
+                        "session_id": CODEX_PROVIDER_SESSION,
+                        "hook_event_name": "SessionStart",
+                        "source": "resume",
+                        "cwd": str(workspace),
+                    }
+                ).encode(),
+                timeout=60,
+            )
+
+        assert hook.returncode == 0, (stdout, stderr)
+        # The credential never reaches the CLI: ghook strips it from what it prints.
+        assert SESSION_CREDENTIAL_FIELD.encode() not in stdout
+        row = temp_db.fetchone(
+            "SELECT status, terminal_context FROM sessions WHERE id = %s",
+            (expired_codex_session.id,),
+        )
+        assert row is not None
+        assert row["status"] == "active", (stdout, stderr, front_door.requests)
+        context = parse_terminal_context_value(row["terminal_context"]) or {}
+        assert context["parent_pid"] == tui_pid
+
+        # ghook's real store kept it under this TUI's pid, the key gmcp reads.
+        stored = load_record(gobby_home, cli_pid_key(tui_pid))
+        assert stored is not None
+        assert stored.session_id == expired_codex_session.id
+        claims = verify_agent_api_token(stored.token, SIGNING_KEY)
+        assert claims is not None
+        assert claims.session_id == expired_codex_session.id
+
+        # gmcp's real lookup finds it and presents it, not the machine key.
+        reply = _gmcp_call(gmcp, environment, workspace)
+        assert reply.get("error") is None, reply
+        tool_calls = [
+            headers
+            for _, path, headers in front_door.requests
+            if path.startswith("/api/mcp/") and path != "/api/mcp/bridge/tool-timeouts"
+        ]
+        assert tool_calls, front_door.requests
+        assert tool_calls[-1]["authorization"] == f"Bearer {stored.token}"
+        assert tool_calls[-1]["x-gobby-session-id"] == expired_codex_session.id
 
 
 @pytest.mark.parametrize(
