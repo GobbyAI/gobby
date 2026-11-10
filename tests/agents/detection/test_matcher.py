@@ -181,6 +181,15 @@ def test_composer_region_is_empty_without_a_complete_frame() -> None:
     assert matcher.composer_region("") == ""
 
 
+def test_composer_frame_top_points_at_the_bottom_frame_opening() -> None:
+    assert matcher.composer_frame_top(_CLAUDE_FRAME) == 2
+    box = "transcript\n╭──────╮\n│ >    │\n╰──────╯\n[⏱ 7m] MCP ✓"
+    assert matcher.composer_frame_top(box) == 1
+    footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ? for shortcuts"
+    assert matcher.composer_frame_top(f"done\n› \n\n{footer}") == 1
+    assert matcher.composer_frame_top("❯ \n────────────────────\n status") is None
+
+
 def test_codex_bare_composer_requires_current_footer() -> None:
     footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
     assert matcher.composer_region(f"done\n› \n\n{footer}") == "› "

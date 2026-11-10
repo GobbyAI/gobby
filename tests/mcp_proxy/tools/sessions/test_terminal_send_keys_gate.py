@@ -245,6 +245,80 @@ async def test_admits_a_target_showing_an_idle_agent_composer(
     assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
 
 
+# Transcripts a seat left above its idle composer when wakes were declined (#25901):
+# finished prose naming tests that run elsewhere, and an Edit diff whose context line
+# mentions a trust folder. Neither is live state.
+STATUS_PROSE = (
+    "⏺ Still in flight:\n"
+    "  - #25855, #25850, #25790: still resolving conflicts and running tests. 1 to 2 h.\n"
+    "  - 24820: schema tests running. About 1 h.\n"
+)
+TRUST_FOLDER_DIFF = (
+    "⏺ Update(notes.md)\n"
+    "  ⎿  Updated notes.md with 1 addition\n"
+    '      12   e2e-trust ANSWERED "I\'m in bed, use a ~/.gobby/ folder" (relayed)\n'
+    "\n"
+    "⏺ I sent the coordinator your approval of the security paths.\n"
+)
+STATUS_LINE = "  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+TRANSCRIPTS = [
+    pytest.param(STATUS_PROSE, id="running-tests-prose"),
+    pytest.param(TRUST_FOLDER_DIFF, id="trust-folder-diff"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transcript", TRANSCRIPTS)
+async def test_transcript_prose_above_an_idle_composer_is_admitted(
+    monkeypatch: pytest.MonkeyPatch, transcript: str
+) -> None:
+    manager = _scene(monkeypatch, snapshot=f"{transcript}\n{IDLE_COMPOSER}\n{STATUS_LINE}")
+
+    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transcript", TRANSCRIPTS)
+@pytest.mark.parametrize(
+    ("frame", "rule_id"),
+    [
+        pytest.param(f"{LIVE_SPINNER}\n{IDLE_COMPOSER}", "turn_in_flight", id="spinner-above"),
+        pytest.param(f"{IDLE_COMPOSER}\nRunning tests...", "active_work", id="work-below"),
+        pytest.param(
+            f"{IDLE_COMPOSER}\nDo you trust the files in this folder?",
+            "trust_prompt",
+            id="trust-below",
+        ),
+    ],
+)
+async def test_live_state_beside_transcript_prose_still_refuses(
+    monkeypatch: pytest.MonkeyPatch, transcript: str, frame: str, rule_id: str
+) -> None:
+    manager = _scene(monkeypatch, snapshot=f"{transcript}\n{frame}")
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_composer_not_idle"
+    assert f"({rule_id} matched)" in refusal.message
+
+
+@pytest.mark.asyncio
+async def test_a_frameless_cli_is_judged_on_its_whole_pane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a frame reader there is no frame to anchor on, so prose still refuses."""
+    manager = _scene(monkeypatch, snapshot=f"{STATUS_PROSE}\n{IDLE_COMPOSER}")
+    monkeypatch.setattr(gate, "composer_reader", lambda _registry, _cli: None)
+
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), ledger_vouches=True
+    )
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert "(active_work matched)" in refusal.message
+
+
 @pytest.mark.asyncio
 async def test_a_password_line_above_an_idle_prompt_is_not_a_credential_prompt(
     monkeypatch: pytest.MonkeyPatch,

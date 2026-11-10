@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.detection.matcher import MatchEvaluation, composer_frame_top
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.agents.srt_runtime import srt_install_root
@@ -45,6 +46,8 @@ _CREDENTIAL_PROMPT = re.compile(
 # Live-turn rules. A first-match verdict ranks an idle hook-denial line above them, so
 # each one is checked by name and vetoes on its own, whatever its priority.
 _BUSY_RULE_IDS = ("turn_in_flight", "active_work")
+# The provider's live-turn spinner, the one busy signal that may sit above the frame.
+_SPINNER_RULE_ID = "turn_in_flight"
 
 
 _HELD_RECOVERY = (
@@ -72,6 +75,26 @@ class ComposerCleared:
 
 def _refuse(code: str, reason: str, recovery: str | None = None) -> SendKeysRefusal:
     return SendKeysRefusal(code, f"send_keys refused: {reason}. {SEND_MESSAGE_HINT}", recovery)
+
+
+def _pane_veto(
+    activity: MatchEvaluation, busy_checks: dict[str, MatchEvaluation], frame_state: str
+) -> str | None:
+    """Name the pane condition that keeps the composer from reading idle, if any."""
+    for rule_id, check in busy_checks.items():
+        if check.match is not None:
+            return f"{rule_id} matched"
+        if check.issues:
+            return f"{rule_id} could not be evaluated"
+    if activity.issues:
+        return "the detection manifest could not be evaluated"
+    if activity.match is None:
+        return "no detection rule matched"
+    if activity.match.state != "idle" and activity.match.rule_id != "status_bar":
+        return f"{activity.match.rule_id} matched"
+    if frame_state != "empty":
+        return f"the composer frame reads {frame_state}"
+    return None
 
 
 def _last_nonblank_line(text: str) -> str:
@@ -259,25 +282,31 @@ async def send_keys_target_refusal(
             )
         if _CREDENTIAL_PROMPT.search(_last_nonblank_line(text)):
             return _refuse("send_keys_credential_prompt", "the target shows a credential prompt")
-        # Composer frames can remain visible during a turn. Inspect the entire
-        # pane too, so provider activity or blocking prompts override that frame.
-        # Status bars include the frame rules and do not establish activity.
-        activity = manifest.match(text)
+        # Composer frames can remain visible during a turn, so activity or a blocking
+        # prompt drawn in or below the bottom-most frame overrides it. Above that
+        # frame sits the finished transcript, whose prose ("running tests", a diff
+        # mentioning a trust folder) is no live state; only the provider's turn
+        # spinner there counts. A CLI without a frame reader has no frame to anchor
+        # on, so its whole pane is judged. Status bars include the frame rules and
+        # do not establish activity.
+        frame_top = composer_frame_top(text) if read_frame is not None else None
+        live = text if frame_top is None else "\n".join(text.splitlines()[frame_top:])
+        activity = manifest.match(live)
         # A busy rule whose pattern times out reports an issue, not a match, and that
         # uncertainty must refuse as well.
-        busy_checks = [manifest.match_rule(rule_id, text) for rule_id in _BUSY_RULE_IDS]
-        busy = any(check.match is not None or check.issues for check in busy_checks)
-        if (
-            activity.issues
-            or activity.match is None
-            or busy
-            or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
-            # A draft visible in the frame is touched by the drain alone.
-            or (not draining and read_frame is not None and read_frame(snapshot).state != "empty")
-        ):
+        busy_checks = {
+            rule_id: manifest.match_rule(rule_id, text if rule_id == _SPINNER_RULE_ID else live)
+            for rule_id in _BUSY_RULE_IDS
+        }
+        # A draft visible in the frame is touched by the drain alone.
+        frame_state = (
+            read_frame(snapshot).state if not draining and read_frame is not None else "empty"
+        )
+        veto = _pane_veto(activity, busy_checks, frame_state)
+        if veto is not None:
             return _refuse(
                 "send_keys_composer_not_idle",
-                "the target pane does not show an idle agent composer",
+                f"the target pane does not show an idle agent composer ({veto})",
             )
         if draining:
             if pane is None:
