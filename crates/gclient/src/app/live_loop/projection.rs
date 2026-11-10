@@ -55,7 +55,12 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
         // put it, as is one awaiting its terminal in this tab.
         let spawning = workspace
             .workspace_model()
-            .and_then(|model| viewer.panes.daemon_id(focus).and_then(|pane| model.pane(pane)))
+            .and_then(|model| {
+                viewer
+                    .panes
+                    .daemon_id(focus)
+                    .and_then(|pane| model.pane(pane))
+            })
             .and_then(|pane| pane.terminal_id.as_deref())
             .is_some_and(|terminal_id| workspace.pending_spawns.contains(terminal_id));
         let pending = !reaped_slots.contains(&focus)

@@ -13,9 +13,9 @@ use tokio::time::timeout;
 use super::sync_live_chrome;
 use crate::app::live_loop::jobs::{JobKey, JobOutcome, JobResult, JobTag, LoopJobs};
 use crate::app::live_loop::jobs_apply::apply_job_outcome;
-use crate::mock_daemon;
 use crate::app::Workspace;
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
+use crate::mock_daemon;
 use crate::ui::Chrome;
 use mock_daemon::MockDaemon;
 

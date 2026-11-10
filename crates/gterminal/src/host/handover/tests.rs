@@ -225,7 +225,8 @@ async fn concurrent_restore_matches_the_serial_restore() {
         .collect();
 
     let serial = stage_panes(serial_panes, 1, TEST_SCROLLBACK, false).expect("serial restore");
-    let concurrent = stage_panes(concurrent_panes, 4, TEST_SCROLLBACK, false).expect("concurrent restore");
+    let concurrent =
+        stage_panes(concurrent_panes, 4, TEST_SCROLLBACK, false).expect("concurrent restore");
 
     assert_eq!(concurrent.len(), PANES);
     for ((serial_slot, _, _), (slot, _, _)) in serial.iter().zip(&concurrent) {

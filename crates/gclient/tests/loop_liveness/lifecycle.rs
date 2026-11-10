@@ -32,18 +32,6 @@ async fn chord(probe: &LivenessProbe<'_>, key: char) {
     probe.key(KeyCode::Char(key), KeyModifiers::NONE).await;
 }
 
-/// Wait until the host receives this keypress. `expect_input` also counts the
-/// attach's bind, which arrives before any key, so it can pass while the key
-/// still waits on the host grant.
-async fn wait_for_typed_at_host(host: &DirectHost, data: &[u8]) {
-    wait_until("typed key at the host", || {
-        host.drain()
-            .iter()
-            .any(|message| matches!(message, ClientMessage::Input { data: sent } if sent == data))
-    })
-    .await;
-}
-
 /// Take a bounded observation while the mutation is held, then release it.
 /// Fail on the missing rendered content/input, rather than on a timeout.
 async fn assert_progress_while_held(probe: &LivenessProbe<'_>, terminal: &str, release: &Notify) {
