@@ -90,6 +90,7 @@ def git_in(cwd: str | Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
         env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
     )
     return result.stdout.strip()
