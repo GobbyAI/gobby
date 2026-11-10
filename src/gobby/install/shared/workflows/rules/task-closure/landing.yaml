@@ -1,4 +1,4 @@
-version: "2.1.0"
+version: "3.0.0"
 tags: [task-closure-general]
 
 rules:
@@ -28,6 +28,7 @@ rules:
     event: task_land
     priority: 30
     when: >-
+      not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       not facts.get('integration_path_grant', False) and
       not any(record.get('kind') == 'independent-review' and record.get('result') == 'approved' and
         record.get('id') == latest_attestation('independent-review').get('id') and

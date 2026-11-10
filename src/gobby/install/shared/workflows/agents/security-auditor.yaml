@@ -1,5 +1,5 @@
 name: security-auditor
-version: "3.2.0"
+version: "3.3.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -55,8 +55,12 @@ prompts:
     commands and results. Reference the exact candidate with
     reference={scheme: git, value: <full SHA>}. Include truthful test limitations.
     Record rejections as well as approvals; correct a verdict with supersedes_id.
-    Each changed candidate needs its own approval. Never approve work you authored
-    or claimed. Selected YAML verifies independent provenance and exact-candidate
+    Each changed candidate needs its own approval. When you or another independent
+    auditor approved an earlier SHA of this task, review only the files changed between
+    that approved SHA and the new candidate (`git diff --name-only <approved>..<candidate>`);
+    unchanged files need no re-review. Cite the prior approval's attestation ID and the
+    delta file list, then record approval on the new exact SHA. Never approve work you
+    authored or claimed. Selected YAML verifies independent provenance and exact-candidate
     approval; your message alone grants no authority.
 
     Send the attestation ID and findings to the author and launch session through
@@ -89,8 +93,12 @@ prompts:
     commands and results. Reference the exact candidate with
     reference={scheme: git, value: <full SHA>}. Include truthful test limitations.
     Record rejections as well as approvals; correct a verdict with supersedes_id.
-    Each changed candidate needs its own approval. Never approve work you authored
-    or claimed. Selected YAML verifies independent provenance and exact-candidate
+    Each changed candidate needs its own approval. When you or another independent
+    auditor approved an earlier SHA of this task, review only the files changed between
+    that approved SHA and the new candidate (`git diff --name-only <approved>..<candidate>`);
+    unchanged files need no re-review. Cite the prior approval's attestation ID and the
+    delta file list, then record approval on the new exact SHA. Never approve work you
+    authored or claimed. Selected YAML verifies independent provenance and exact-candidate
     approval; your message alone grants no authority.
 
     Send the attestation ID and findings to the author and launch session through

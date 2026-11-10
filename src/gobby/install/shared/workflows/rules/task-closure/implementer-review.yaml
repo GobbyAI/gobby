@@ -1,8 +1,8 @@
-version: "2.0.0"
+version: "3.0.0"
 tags: [task-closure-implementer-review]
 
-# No implementer of a task may attest review of that task's work. The default definition
-# does not select these rules, so it stays exempt. Each rule's `attestation_authorship`
+# No implementer of a task may attest review of that task's work. A definition holding
+# waive_review_gates (the "*" wildcard holds it) is exempt at gate and record time. Each rule's `attestation_authorship`
 # is enforced at record time; its `when` is the closure and landing gate. The gate reads
 # the latest record of each review kind, so a later independent review supersedes an
 # earlier implementer review. The gate does not read self-review: record time still refuses
@@ -13,6 +13,7 @@ rules:
     event: task_close
     priority: 30
     when: &implementer_review_refused >-
+      not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       reason == 'done' and facts.get('closure_intent', 'explicit') != 'ancestor' and
       any(latest_attestation(a.get('kind')).get('session_id') in
           [i.get('session_id') for i in all_attestations if i.get('kind') == 'implementation']
