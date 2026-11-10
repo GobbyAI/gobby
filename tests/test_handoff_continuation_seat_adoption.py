@@ -25,8 +25,8 @@ async def test_handoff_adoption_validates_registration_and_never_waits_for_idle(
     proof.detection_registry = MagicMock()
     proof.terminal = AsyncMock(
         return_value={
+            "id": "terminal-1",
             "session_id": "seat-1",
-            "project_id": "isolated-project",
         }
     )
     proof.call = AsyncMock(
@@ -42,6 +42,8 @@ async def test_handoff_adoption_validates_registration_and_never_waits_for_idle(
             host_socket=str(Path("/fixture/host/control.sock")),
         )
     )
+    # Terminal rows carry no project; the real row_surface reads it from the session record.
+    proof.row_surface = lambda provider, row: LiveProof.row_surface(proof, provider, row)
     proof.empty = AsyncMock()
     ws = MagicMock()
     ws.connect = AsyncMock()
