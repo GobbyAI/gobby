@@ -34,13 +34,15 @@ _PROCESS_ERRORS = (psutil.Error, OSError)
 class Claimant:
     """The process that opened a request's TCP socket, with its proven CLI pid.
 
-    ``cli_pid`` is None when the parent is a shared host that serves several sessions,
-    so no single session can be attested through it.
+    ``cli_pid`` is None when no single session can be attested through the parent: it is a
+    shared host that serves several sessions (``shared_host``), or it has no parent or
+    cannot be inspected.
     """
 
     pid: int
     parent_pid: int | None
     cli_pid: int | None
+    shared_host: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,7 @@ def resolve_claimant(*, client_port: int, server_port: int) -> Claimant | None:
         if parent is None:
             return Claimant(pid=pid, parent_pid=None, cli_pid=None)
         if _is_codex_shared_host(parent):
-            return Claimant(pid=pid, parent_pid=parent.pid, cli_pid=None)
+            return Claimant(pid=pid, parent_pid=parent.pid, cli_pid=None, shared_host=True)
         cli = _stable_cli_process(parent)
     except _PROCESS_ERRORS:
         return Claimant(pid=pid, parent_pid=None, cli_pid=None)
@@ -161,14 +163,19 @@ def claim_session_start(
         return SessionStartClaim()
     live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
     if claimant.cli_pid is None:
-        # A shared host cannot attest one session: never mint, and never touch a live row.
+        # No single CLI attests this start: never mint, and never touch a live row.
         if live:
             return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
+        reason = (
+            "its hook runs under a shared host that cannot attest one session"
+            if claimant.shared_host
+            else "its hook's parent process is missing or could not be inspected"
+        )
         logger.warning(
-            "SessionStart for %s session %s mints no session credential: its hook runs under "
-            "a shared host (pid %s) that cannot attest one session",
+            "SessionStart for %s session %s mints no session credential: %s (parent pid %s)",
             source,
             external_id,
+            reason,
             claimant.parent_pid,
         )
         return SessionStartClaim()
