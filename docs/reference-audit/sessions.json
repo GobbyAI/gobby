@@ -19,7 +19,7 @@
         "reading-session-data",
         "creating-and-reading-handoffs",
         "hookless-registration",
-        "titles-reasoning-effort-and-reading-direction",
+        "labels-reasoning-effort-and-reading-direction",
         "terminal-tools",
         "handoff-flow",
         "compaction-is-in-place",
@@ -323,6 +323,21 @@
       "audience": "agent",
       "server": "gobby-sessions",
       "tool": "set_handoff"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_status_line.py",
+        "symbol": "register_status_line_tools.set_status_line"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "set_status_line"
     },
     {
       "surface": "mcp",
