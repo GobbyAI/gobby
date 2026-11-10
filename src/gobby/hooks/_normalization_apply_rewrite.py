@@ -9,16 +9,22 @@ unknown-scope write.
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
+import stat
 from contextvars import ContextVar
 from pathlib import Path
 
 from gobby.hooks.events import SessionSource
 
-MAX_PATCH_BYTES = 16 * 1024 * 1024
+# The hook reads the patch outside the seat sandbox and embeds it in the command, so the
+# read is bounded: a larger patch stays an unknown-scope write.
+MAX_PATCH_BYTES = 1024 * 1024
 # Internal channel from the git classifier to the Bash normalizer. Never event data.
 VALIDATED_APPLY_TEXT = "_validated_apply_text"
+# The patch file the hook read, published so read rules see the read.
+APPLY_READ_PATHS_KEY = "canonical_read_file_paths"
 # The rewritten command rule evaluation reads. Underscored like `_raw_tool_input`.
 APPLY_REWRITE_KEY = "_validated_apply_command"
 # Set only while normalizing a command that is exactly one literal `git apply`.
@@ -50,14 +56,22 @@ def simple_apply_words(command: str) -> list[str] | None:
     return words
 
 
-def read_validated_patch(patch: Path) -> str | None:
-    """The patch text when its bytes form one complete, strict UTF-8 patch, else None."""
+def read_validated_patch(root: Path, patch: Path) -> str | None:
+    """The patch text when its bytes form one complete, strict UTF-8 patch, else None.
+
+    The hook runs outside the seat sandbox and returns the bytes to the CLI, so it reads
+    only a regular file inside the checkout root: no `..` component, and no symlink at
+    any level below the root. Anything else is refused unread.
+    """
     try:
-        if not patch.is_file():
-            return None
-        with patch.open("rb") as stream:
-            raw = stream.read(MAX_PATCH_BYTES + 1)
-    except OSError:
+        relative = patch.relative_to(root)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        return None
+    raw = _read_without_following(root, parts)
+    if raw is None:
         return None
     if len(raw) > MAX_PATCH_BYTES or b"\x00" in raw or not raw.endswith(b"\n"):
         return None
@@ -65,6 +79,35 @@ def read_validated_patch(patch: Path) -> str | None:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return None
+
+
+def _read_without_following(root: Path, parts: tuple[str, ...]) -> bytes | None:
+    """Read root/parts through directory descriptors that never follow a symlink."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        return None
+    descriptors: list[int] = []
+    try:
+        descriptors.append(os.open(root, os.O_RDONLY | os.O_DIRECTORY))
+        for part in parts[:-1]:
+            descriptors.append(
+                os.open(part, os.O_RDONLY | os.O_DIRECTORY | nofollow, dir_fd=descriptors[-1])
+            )
+        # Non-blocking so a FIFO cannot stall the hook; only a regular file is read. A
+        # second hard link could name a file outside the root, so only a sole link is read.
+        descriptors.append(
+            os.open(parts[-1], os.O_RDONLY | nofollow | os.O_NONBLOCK, dir_fd=descriptors[-1])
+        )
+        status = os.fstat(descriptors[-1])
+        if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
+            return None
+        with os.fdopen(descriptors.pop(), "rb") as stream:
+            return stream.read(MAX_PATCH_BYTES + 1)
+    except OSError:
+        return None
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
 
 
 def new_delimiter() -> str:

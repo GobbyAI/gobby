@@ -312,7 +312,8 @@ class TestValidatedApplyRewrite:
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        patch = tmp_path / "set-aside.patch"
+        # The rewrite reads only a patch inside the checkout.
+        patch = repo / "set-aside.patch"
         patch.write_text(
             "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n",
             encoding="utf-8",

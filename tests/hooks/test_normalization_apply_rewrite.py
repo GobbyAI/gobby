@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from gobby.hooks._normalization_apply_rewrite import MAX_PATCH_BYTES
 from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
 
 pytestmark = pytest.mark.unit
@@ -16,6 +18,8 @@ pytestmark = pytest.mark.unit
 _PATCH = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n"
 _SWAPPED = _PATCH.replace("+two", "+evil")
 _REWRITE = "_validated_apply_command"
+_READS = "canonical_read_file_paths"
+_SECRET = "SECRET-BYTES-OUTSIDE-THE-TREE"
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -53,7 +57,7 @@ def test_swapping_the_patch_after_validation_applies_the_validated_bytes(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "workspace" / "set-aside.patch"
+    patch = repo / "workspace" / "set-aside.patch"
     patch.parent.mkdir()
     patch.write_text(_PATCH, encoding="utf-8")
 
@@ -69,7 +73,7 @@ def test_validated_bytes_reach_only_the_rewrite(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_text(_PATCH, encoding="utf-8")
 
     with caplog.at_level(logging.DEBUG):
@@ -86,7 +90,7 @@ def test_a_patch_line_equal_to_the_delimiter_refuses_the_rewrite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     # Text before the first diff header is ignored by git apply, and this line would
     # close the quoted heredoc the rewrite opens with the same delimiter.
     patch.write_text("ABCDEF\n" + _PATCH, encoding="utf-8")
@@ -111,7 +115,7 @@ def test_a_patch_line_equal_to_the_delimiter_refuses_the_rewrite(
 )
 def test_refused_shapes_never_read_the_patch_or_rewrite(tmp_path: Path, shape: str) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_text(_PATCH, encoding="utf-8")
     command = {
         "stdin": "git apply -",
@@ -130,7 +134,7 @@ def test_refused_shapes_never_read_the_patch_or_rewrite(tmp_path: Path, shape: s
 
 def test_literal_cached_apply_with_a_validated_patch_stays_rewritten(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_text(_PATCH, encoding="utf-8")
 
     data = _bash(repo, f"git apply --cached {patch}")
@@ -150,7 +154,7 @@ def test_literal_cached_apply_with_a_validated_patch_stays_rewritten(tmp_path: P
 )
 def test_refused_cached_shapes_report_unknown_scope(tmp_path: Path, shape: str) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_text(_PATCH, encoding="utf-8")
     command = {
         "two-operands": f"git apply --cached {patch} {patch}",
@@ -167,8 +171,8 @@ def test_refused_cached_shapes_report_unknown_scope(tmp_path: Path, shape: str) 
 
 def test_cached_apply_over_the_cap_reports_unknown_scope(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
-    patch.write_bytes(b"x" * (16 * 1024 * 1024 + 1))
+    patch = repo / "set-aside.patch"
+    patch.write_bytes(b"x" * (MAX_PATCH_BYTES + 1))
 
     data = _bash(repo, f"git apply --cached {patch}")
 
@@ -180,7 +184,7 @@ def test_cached_apply_for_a_provider_that_cannot_rewrite_reports_unknown_scope(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_text(_PATCH, encoding="utf-8")
 
     data = _bash(repo, f"git apply --cached {patch}", can_rewrite_input=False)
@@ -195,14 +199,14 @@ def test_cached_apply_for_a_provider_that_cannot_rewrite_reports_unknown_scope(
         pytest.param(_PATCH.encode("utf-8") + b"\xff\n", "non-utf8", id="non-utf8"),
         pytest.param(_PATCH.encode("utf-8") + b"\x00\n", "nul", id="nul"),
         pytest.param(_PATCH.rstrip("\n").encode("utf-8"), "no-newline", id="no-newline"),
-        pytest.param(b"x" * (16 * 1024 * 1024 + 1), "over-cap", id="over-cap"),
+        pytest.param(b"x" * (MAX_PATCH_BYTES + 1), "over-cap", id="over-cap"),
     ],
 )
 def test_invalid_patch_bytes_are_refused_without_a_rewrite(
     tmp_path: Path, content: bytes, id_: str
 ) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_bytes(content)
 
     data = _bash(repo, f"git apply {patch}")
@@ -211,9 +215,75 @@ def test_invalid_patch_bytes_are_refused_without_a_rewrite(
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+@pytest.mark.parametrize("cached", [True, False], ids=["cached", "worktree"])
+@pytest.mark.parametrize(
+    "shape", ["outside", "symlink-file", "symlink-dir", "dotdot", "hardlink", "fifo"]
+)
+def test_a_patch_outside_the_checkout_is_refused_unread(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, shape: str, cached: bool
+) -> None:
+    # The hook reads outside the seat sandbox and returns the bytes to the CLI, so a
+    # patch that does not resolve inside the checkout must never be read or embedded.
+    repo = _repo(tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_text(_SECRET + "\n" + _PATCH, encoding="utf-8")
+    if shape == "symlink-file":
+        (repo / "link.patch").symlink_to(secret)
+    elif shape == "symlink-dir":
+        (repo / "linked").symlink_to(tmp_path)
+    elif shape == "hardlink":
+        (repo / "hard.patch").hardlink_to(secret)
+    elif shape == "fifo":
+        os.mkfifo(repo / "pipe.patch")
+    operand = {
+        "outside": str(secret),
+        "symlink-file": str(repo / "link.patch"),
+        "symlink-dir": str(repo / "linked" / "secret.txt"),
+        "dotdot": "../secret.txt",
+        "hardlink": str(repo / "hard.patch"),
+        "fifo": str(repo / "pipe.patch"),
+    }[shape]
+    flags = "--cached " if cached else ""
+
+    with caplog.at_level(logging.DEBUG):
+        data = _bash(repo, f"git apply {flags}{operand}")
+
+    assert _REWRITE not in data
+    assert _READS not in data
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert _SECRET not in repr(data)
+    assert _SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("cached", [True, False], ids=["cached", "worktree"])
+def test_an_in_tree_patch_reports_its_read_path(tmp_path: Path, cached: bool) -> None:
+    repo = _repo(tmp_path)
+    (repo / "patches").mkdir()
+    patch = repo / "patches" / "set-aside.patch"
+    patch.write_text(_PATCH, encoding="utf-8")
+    flags = "--cached " if cached else ""
+
+    data = _bash(repo, f"git apply {flags}patches/set-aside.patch")
+
+    assert "+two" in data[_REWRITE]
+    assert data[_READS] == [str(patch)]
+    subprocess.run(["bash", "-c", _command_that_runs(data)], cwd=repo, check=True)
+    if cached:
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert staged == "a.txt\n"
+    else:
+        assert (repo / "a.txt").read_text(encoding="utf-8") == "two\n"
+
+
 def test_provider_that_cannot_rewrite_input_is_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    patch = tmp_path / "set-aside.patch"
+    patch = repo / "set-aside.patch"
     patch.write_text(_PATCH, encoding="utf-8")
 
     data = _bash(repo, f"git apply {patch}", can_rewrite_input=False)

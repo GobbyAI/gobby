@@ -167,7 +167,8 @@ def _saved_patch(tmp_path: Path, text: str) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    patch = tmp_path / "workspace" / "set-aside.patch"
+    # The hook reads only a patch inside the checkout; one outside stays unknown scope.
+    patch = repo / "workspace" / "set-aside.patch"
     patch.parent.mkdir()
     patch.write_text(text, encoding="utf-8")
     return repo.resolve(), patch.resolve()

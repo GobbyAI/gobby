@@ -4251,7 +4251,7 @@ def test_dirty_edit_refusal_names_only_remedies_that_exist() -> None:
 
 @pytest.mark.asyncio
 async def test_session_sets_aside_and_restores_only_its_own_edits(
-    guard_harness: GuardHarness, tmp_path: Path
+    guard_harness: GuardHarness,
 ) -> None:
     h = guard_harness
     (h.repo / "owned.txt").write_text("own change\n", encoding="utf-8")
@@ -4259,7 +4259,8 @@ async def test_session_sets_aside_and_restores_only_its_own_edits(
     SessionVariableManager(h.db).merge_variables(
         h.current_session.id, _content_ledger(h, h.current_task, ["owned.txt"])
     )
-    workspace = tmp_path / "workspace"
+    # The hook reads a set-aside patch only inside the checkout it applies to.
+    workspace = h.repo / ".set-aside"
     workspace.mkdir()
     own_patch = workspace / "own.patch"
     own_patch.write_text(_git(h.repo, "diff", "--", "owned.txt") + "\n", encoding="utf-8")
