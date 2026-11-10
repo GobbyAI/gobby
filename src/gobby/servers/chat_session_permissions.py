@@ -94,7 +94,7 @@ class ChatSessionPermissionsMixin:
     interrupt: Callable[[], Awaitable[None]]
     _plan_broadcast_sent: bool
     _on_mode_persist: Callable[[str], None] | None
-    _on_prompt_delivered: Callable[[], None] | None
+    _on_prompt_delivered: Callable[..., None] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
     project_path: str | None
     _pending_approvals: dict[str, PendingApproval]
@@ -604,7 +604,7 @@ class ChatSessionPermissionsMixin:
 
         return None
 
-    def _consume_plan_mode_context(self) -> str | None:
+    def _plan_mode_context(self) -> str | None:
         """Return mode context for additionalContext injection.
 
         Returns context for ALL modes so the agent always knows its current
@@ -612,9 +612,9 @@ class ChatSessionPermissionsMixin:
         counter-context, the agent retains stale plan mode instructions
         from earlier in the conversation.
 
-        NOTE: This method has a side effect — it clears ``_plan_feedback``
-        after injecting it so the feedback is only sent once.  The name
-        ``_consume_`` signals this mutation to callers.
+        Pending plan feedback is included but stays pending. The caller runs
+        ``_clear_plan_feedback`` once the prompt carrying it has been delivered
+        and acknowledged, so a delivery that fails keeps the feedback for the retry.
         """
         if self.chat_mode != "plan":
             if self.chat_mode == "bypass":
@@ -659,10 +659,17 @@ class ChatSessionPermissionsMixin:
         if self._plan_feedback:
             parts.append("")
             parts.append(f"USER FEEDBACK on previous plan:\n{self._plan_feedback}")
-            self._plan_feedback = None  # Clear after injection
 
         parts.append("</plan-mode>")
         return "\n".join(parts)
+
+    def _clear_plan_feedback(self) -> None:
+        """Drop plan feedback after the prompt that carried it has been acknowledged.
+
+        Only the active-plan context carries feedback, so the same condition gates the clear.
+        """
+        if self.chat_mode == "plan" and not self._plan_approved:
+            self._plan_feedback = None
 
     async def _wait_for_tool_approval(
         self, tool_use_id: str, tool_name: str, input_data: dict[str, Any]

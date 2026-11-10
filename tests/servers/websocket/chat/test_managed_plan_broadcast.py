@@ -589,7 +589,7 @@ async def test_managed_approve_flips_mode_broadcasts_and_clears_plan_gate(
     assert mode_changes == [("normal", "plan_approved")]
     assert session.has_pending_plan is False
     # The next prompt build no longer injects the plan-mode gate.
-    assert session._pop_plan_mode_context() is None
+    assert session._plan_mode_context() is None
 
 
 @pytest.mark.parametrize("make_session", _MANAGED_PLAN_FACTORIES)

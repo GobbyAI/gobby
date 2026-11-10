@@ -106,6 +106,19 @@ def test_invalid_stored_rule_cannot_bypass_activation_validation(
     assert manager.get_by_name("synthetic-copy") is None
 
 
+def test_a_rule_name_at_the_context_label_bound_is_accepted_and_one_past_it_refused() -> None:
+    from gobby.llm.sdk_utils import MAX_CONTEXT_LABEL_CHARS
+    from gobby.workflows.rule_validation import validate_rule
+
+    room = MAX_CONTEXT_LABEL_CHARS - len("rule:")
+    assert validate_rule(_definition("True"), name="n" * room).valid
+
+    too_long = "n" * (room + 1)
+    report = validate_rule(_definition("True"), name=too_long)
+    assert not report.valid
+    assert any(item.code == "label" and too_long in item.message for item in report.errors)
+
+
 @pytest.mark.parametrize(
     "condition",
     ["False and (lambda: True)()", "True or invented_helper()", "2 ** 3", "{}.pop('x')"],

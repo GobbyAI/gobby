@@ -733,13 +733,13 @@ class TestWaitForToolApproval:
 class TestConsumePlanModeContext:
     def test_consume_mode_context_act(self, session: ChatSession) -> None:
         session.chat_mode = "normal"
-        context = session._consume_plan_mode_context()
+        context = session._plan_mode_context()
         assert context is not None
         assert 'status="act"' in context
 
     def test_consume_mode_context_yolo(self, session: ChatSession) -> None:
         session.chat_mode = "bypass"
-        context = session._consume_plan_mode_context()
+        context = session._plan_mode_context()
         assert context is not None
         assert 'status="yolo"' in context
         assert "YOLO MODE" in context
@@ -747,22 +747,24 @@ class TestConsumePlanModeContext:
     def test_consume_plan_mode_approved(self, session: ChatSession) -> None:
         session.chat_mode = "plan"
         session._plan_approved = True
-        context = session._consume_plan_mode_context()
+        context = session._plan_mode_context()
         assert context is not None
         assert 'status="approved"' in context
 
-    def test_consume_plan_mode_feedback(self, session: ChatSession) -> None:
+    def test_plan_mode_feedback_stays_pending_until_cleared(self, session: ChatSession) -> None:
         session.chat_mode = "plan"
         session._plan_feedback = "Do it better"
-        context = session._consume_plan_mode_context()
+        context = session._plan_mode_context()
 
         assert context is not None
         assert "Do it better" in context
-        assert session._plan_feedback is None  # Should be cleared
+        assert session._plan_feedback == "Do it better"  # Owed until the prompt is delivered
+        session._clear_plan_feedback()
+        assert session._plan_feedback is None
 
     def test_consume_plan_mode_context_mentions_gcode(self, session: ChatSession) -> None:
         session.chat_mode = "plan"
-        context = session._consume_plan_mode_context()
+        context = session._plan_mode_context()
 
         assert context is not None
         assert "gcode outline/search/symbol" in context
