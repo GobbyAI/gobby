@@ -1,4 +1,4 @@
-version: "1.4.0"
+version: "1.4.1"
 tags: [gobby, default, tool-hygiene]
 
 # Operator ruling, 2026-11-10: direct database writes are allowed for the seats whose
@@ -43,14 +43,14 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        # A docker or podman command in command position that execs or runs anything
-        # (any global options, object subcommands such as `container`, compose flags)
-        # is refused when the rest of its segment names a client as a word, an
+        # A docker or podman command in command position whose subcommand is exec or
+        # run (after global options, a `container` or `compose` object and its
+        # options) is refused when the rest of that pipeline stage names a client as a word, an
         # option value (--entrypoint=psql), a path, or quoted inner shell
         # (sh -c 'psql ...'). Quoted text stays visible here because the client runs
         # inside the container; other commands that merely mention docker are not
         # in command position.
-        command_pattern: '(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?(?:docker|podman)(?:-compose)?\s[^\n]*?\b(?:exec|run)\b[^\n]*?(?:^|[\s=''"/])(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=[\s''";&|)]|$)'
+        command_pattern: '(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?(?:docker|podman)(?:-compose)?(?:\s+--?[\w-]+(?:=\S+|\s+(?!(?:exec|run|container|compose)\b)[^\s|;&-]\S*)?)*\s+(?:(?:container|compose)(?:\s+--?[\w-]+(?:=\S+|\s+(?!(?:exec|run)\b)[^\s|;&-]\S*)?)*\s+)?(?:exec|run)\b[^|\n]*?(?:[\s=''"/])(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=[\s''";&|)]|$)'
         reason: *db_reason
 
   inline-database-driver-authority:
