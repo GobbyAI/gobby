@@ -26,6 +26,7 @@ from typing import Any, Literal
 import httpx
 import pytest
 
+from gobby.agents.trust import pre_approve_directory
 from tests.e2e import handoff_continuation_fixture as _handoff
 from tests.e2e.composer_proof import ProofRefused
 from tests.e2e.composer_proof_live import LiveProof, Seat
@@ -216,11 +217,15 @@ async def test_seat_continues_after_its_own_handoff(
     handoff_admission: Admission,
     provider_environment: dict[str, str],
     postgres_db: Any,
+    e2e_project_dir: Path,
 ) -> None:
     composer_fixture, barrier = handoff_fixture
     verify_binary_set(handoff_admission)
     binary = handoff_admission.providers[provider].path
     clear = scenario == "clear"
+    # A spawned seat starts in a pre-trusted folder; without it the interactive CLI
+    # waits at its folder-trust dialog and never fires SessionStart.
+    pre_approve_directory(provider, e2e_project_dir)
     command = provider_launch(
         _seat_command(provider, binary, scenario), provider_environment, provider=provider
     )
