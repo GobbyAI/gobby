@@ -43,7 +43,7 @@ def register_usage_routes(router: APIRouter, server: HTTPServer) -> None:
         A project-scoped caller (browser cookie or agent capability) reads only its own project.
         """
         database = server.services.database
-        project_id = caller_project_id(request)
+        project_id = await asyncio.to_thread(caller_project_id, request)
         if project_id is not None:
             try:
                 session_id, task_id = await asyncio.to_thread(
