@@ -14,7 +14,7 @@ the tools below.
 ## Step 1: What Is Hot
 
 ```bash
-ps -Aceo pid,pcpu,pmem,comm -r | head -20
+ps -Ao pid,pcpu,pmem,ucomm -r | head -20
 uptime
 sysctl -n hw.ncpu hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu
 vm_stat | head -10
@@ -90,5 +90,5 @@ Name the hot processes with CPU, power or GPU numbers, the attributed cause, the
 tier that produced the verdict, and the recommended fix. Separate a genuine workload
 floor (an active build) from a fixable runaway (an orphaned VM, a stuck loop).
 
-_Version: 1.0.0_
-_Last verified: 2026-11-06_
+_Version: 1.0.1_
+_Last verified: 2026-11-08_
