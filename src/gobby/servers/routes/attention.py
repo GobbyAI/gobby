@@ -7,9 +7,9 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gobby.agents.attention_metadata import validate_metadata_text, validate_metadata_ttl_ms
@@ -20,6 +20,7 @@ from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.hub.remote_terminal import NodeTerminalWriteError
+from gobby.servers.browser_sessions import PREFIX as BROWSER_COOKIE_PREFIX
 from gobby.servers.routes.attention_roster import (
     _load_roster_entries,
     _model_display_names,
@@ -172,6 +173,33 @@ PaneResolver = Callable[[AttentionState], Awaitable[AttentionPane | None]]
 AttentionInjector = Callable[[AttentionPane, AttentionAnswer], Awaitable[None]]
 
 
+def _browser_project(server: HTTPServer, request: Request) -> str | None:
+    """The project a managed browser cookie is confined to; None for any other caller.
+
+    The cookie is resolved the way the auth middleware and the terminal socket resolve
+    it, so a browser session sees only its own project's rows (operator and
+    machine-wide callers keep the whole roster).
+    """
+    cookie = request.cookies.get("gobby_session", "")
+    if not cookie.startswith(BROWSER_COOKIE_PREFIX):
+        return None
+    browser = server.auth_service.browser_sessions.get(cookie)
+    if browser is None:
+        raise HTTPException(status_code=401, detail={"code": "session_invalid"})
+    return browser.claims.project_id
+
+
+def _project_roster(payload: dict[str, object], project_id: str | None) -> dict[str, object]:
+    """The roster narrowed to one project's entries, or unchanged with no project."""
+    if project_id is None:
+        return payload
+    entries = cast(list[dict[str, object]], payload["entries"])
+    return {
+        **payload,
+        "entries": [entry for entry in entries if entry.get("project_id") == project_id],
+    }
+
+
 def create_attention_router(
     server: HTTPServer,
     *,
@@ -264,9 +292,13 @@ def create_attention_router(
         return {"status": "accepted", "entry_id": entry_id}
 
     @router.get("/roster")
-    async def roster() -> dict[str, object]:
+    async def roster(request: Request) -> dict[str, object]:
         if manager is None:
             raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+        browser_project = _browser_project(server, request)
+        return _project_roster(await machine_roster(manager), browser_project)
+
+    async def machine_roster(manager: AttentionStateManager) -> dict[str, object]:
         started_at = perf_counter()
         profile = _RosterProfile()
         async with roster_cache.lock:
