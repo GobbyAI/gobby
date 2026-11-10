@@ -16,11 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gobby.agents.detection.matcher import MatchEvaluation, composer_frame_top
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.agents.srt_runtime import srt_install_root
-from gobby.terminals.composer_ledger import CURSOR_DRAFT_REASON, read_composer
+from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.foreground import (
     command_name,
     foreground_child_executables,
@@ -39,6 +38,7 @@ _SHELLS = frozenset({"ash", "bash", "csh", "dash", "fish", "ksh", "sh", "tcsh", 
 # process, a shell or an editor or interpreter alike, is not a composer to type into.
 _AGENT_CLIS = frozenset({"agy", "claude", "codex", "droid", "grok"})
 _CLAUDE_VERSION = re.compile(r"\d+(?:\.\d+)+")
+_GROK_BUILD = re.compile(r"grok-\d+(?:\.\d+)+-[a-z0-9_]+-[a-z0-9_]+")
 _CREDENTIAL_PROMPT = re.compile(
     r"\b(password|passphrase|passcode|pin|api[ _-]?key|token|secret|otp)\b[^\n]*:\s*$",
     re.IGNORECASE,
@@ -46,8 +46,6 @@ _CREDENTIAL_PROMPT = re.compile(
 # Live-turn rules. A first-match verdict ranks an idle hook-denial line above them, so
 # each one is checked by name and vetoes on its own, whatever its priority.
 _BUSY_RULE_IDS = ("turn_in_flight", "active_work")
-# The provider's live-turn spinner, the one busy signal that may sit above the frame.
-_SPINNER_RULE_ID = "turn_in_flight"
 
 
 _HELD_RECOVERY = (
@@ -77,26 +75,6 @@ def _refuse(code: str, reason: str, recovery: str | None = None) -> SendKeysRefu
     return SendKeysRefusal(code, f"send_keys refused: {reason}. {SEND_MESSAGE_HINT}", recovery)
 
 
-def _pane_veto(
-    activity: MatchEvaluation, busy_checks: dict[str, MatchEvaluation], frame_state: str
-) -> str | None:
-    """Name the pane condition that keeps the composer from reading idle, if any."""
-    for rule_id, check in busy_checks.items():
-        if check.match is not None:
-            return f"{rule_id} matched"
-        if check.issues:
-            return f"{rule_id} could not be evaluated"
-    if activity.issues:
-        return "the detection manifest could not be evaluated"
-    if activity.match is None:
-        return "no detection rule matched"
-    if activity.match.state != "idle" and activity.match.rule_id != "status_bar":
-        return f"{activity.match.rule_id} matched"
-    if frame_state != "empty":
-        return f"the composer frame reads {frame_state}"
-    return None
-
-
 def _last_nonblank_line(text: str) -> str:
     for line in reversed(text.splitlines()):
         if line.strip():
@@ -113,7 +91,30 @@ def _agent_cli(command: str, executable: str) -> str | None:
     """
     if command in _AGENT_CLIS:
         return command
-    return "claude" if _is_versioned_claude(executable) else None
+    if _is_versioned_claude(executable):
+        return "claude"
+    return "grok" if _is_versioned_grok(executable) else None
+
+
+def _is_versioned_grok(executable: str) -> bool:
+    """Whether ``executable`` resolves to a Grok build its installer downloaded.
+
+    The installer links ``~/.grok/bin/grok`` to ``~/.grok/downloads/grok-<version>-<os>-<arch>``,
+    so a running Grok reports that versioned name. Like a versioned Claude build, the path
+    counts only when it resolves on disk inside such a downloads directory.
+    """
+    path = Path(executable)
+    if not path.is_absolute():
+        return False
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return (
+        resolved.parent.name == "downloads"
+        and resolved.parent.parent.name == ".grok"
+        and _GROK_BUILD.fullmatch(resolved.name) is not None
+    )
 
 
 def _is_versioned_claude(executable: str) -> bool:
@@ -189,15 +190,57 @@ def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
     return DetectionManifestRegistry(terminal_manager.db)
 
 
+async def _foreground_agent_cli(terminal: Any) -> SendKeysRefusal | str:
+    """The agent CLI in the terminal's foreground, or why the process is no agent CLI.
+
+    Process inspection only: nothing here reads what the CLI drew on screen.
+    """
+    pid = shell_pid(terminal)
+    executables = {terminal.id: pid} if pid else {}
+    foreground = await asyncio.to_thread(foreground_executables, executables)
+    executable = foreground.get(terminal.id)
+    if executable is None:
+        return _refuse(
+            "send_keys_target_unconfirmed",
+            "the target's foreground process cannot be read",
+        )
+    command = command_name(executable)
+    if command in _SHELLS:
+        return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
+    cli = _agent_cli(command, executable)
+    if cli is None and command == "node" and pid is not None:
+        cli = await asyncio.to_thread(_node_agent_cli, pid)
+    if cli is None:
+        return _refuse(
+            "send_keys_target_unconfirmed",
+            f"the foreground process {command} is not an agent CLI",
+        )
+    return cli
+
+
+async def wake_target_refusal(session_id: str, terminal: Any) -> SendKeysRefusal | None:
+    """Return why a live wake must not type into ``terminal``, or ``None``.
+
+    A wake reads no pane text: whether the seat may be typed into is decided by its
+    session row, pane focus and the keystroke composer ledger before this check. Here
+    only the foreground process is confirmed to be an agent CLI, so a wake never types
+    into a bare shell, an editor or a ``sudo`` prompt.
+    """
+    try:
+        found = await _foreground_agent_cli(terminal)
+    except Exception:
+        # Fail closed: an unreadable target never receives keys.
+        logger.warning("wake target check failed for %s", session_id, exc_info=True)
+        return _refuse("send_keys_target_unconfirmed", "the target state could not be confirmed")
+    return found if isinstance(found, SendKeysRefusal) else None
+
+
 async def send_keys_target_refusal(
     session_id: str,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
     *,
     clear_held: bool = False,
-    resolved_terminal: Any | None = None,
-    ledger_vouches: bool = False,
-    cursor_draft: bool = False,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
 
@@ -205,57 +248,22 @@ async def send_keys_target_refusal(
     text, the composer is drained through the pane (recording the drain, so no held
     command is replayed later) and ``ComposerCleared`` is returned; every other
     check still applies.
-
-    ``ledger_vouches`` is set by a live wake. A CLI whose manifest has no composer rules
-    (Grok) has no frame to read, so the ledger's empty verdict confirms its composer; the
-    identity, credential, busy and idle-pane checks still apply. Without it, such a CLI is
-    refused, as send_keys has always refused it.
-
-    ``cursor_draft`` is set by a live wake that found a cursor-only draft. The ledger's draft
-    is not refused then: the frame alone must read as an empty idle composer, and a CLI
-    with no frame reader is refused.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
     try:
-        # A wake passes the terminal it resolved, which may be bound by context id
-        # rather than by session id; the session lookup is the send_keys fallback.
-        terminal = (
-            resolved_terminal
-            if resolved_terminal is not None
-            else terminal_manager.get_live_for_session(session_id)
-        )
+        terminal = terminal_manager.get_live_for_session(session_id)
         if terminal is None:
             return _refuse("send_keys_no_live_terminal", "the target has no live terminal")
 
-        pid = shell_pid(terminal)
-        executables = {terminal.id: pid} if pid else {}
-        foreground = await asyncio.to_thread(foreground_executables, executables)
-        executable = foreground.get(terminal.id)
-        if executable is None:
-            return _refuse(
-                "send_keys_target_unconfirmed",
-                "the target's foreground process cannot be read",
-            )
-        command = command_name(executable)
-        if command in _SHELLS:
-            return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
-        cli = _agent_cli(command, executable)
-        if cli is None and command == "node" and pid is not None:
-            cli = await asyncio.to_thread(_node_agent_cli, pid)
-        if cli is None:
-            return _refuse(
-                "send_keys_target_unconfirmed",
-                f"the foreground process {command} is not an agent CLI",
-            )
+        found = await _foreground_agent_cli(terminal)
+        if isinstance(found, SendKeysRefusal):
+            return found
+        cli = found
 
         composer = read_composer(terminal.id)
         draining = clear_held and composer.state == "held"
-        # A cursor-only draft is confirmed by the frame alone: the frame must read empty below.
-        probing = (
-            cursor_draft and composer.state == "draft" and composer.reason == CURSOR_DRAFT_REASON
-        )
-        if composer.state != "empty" and not draining and not probing:
+        if composer.state != "empty" and not draining:
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
@@ -265,7 +273,7 @@ async def send_keys_target_refusal(
         registry = _detection_registry(terminal_manager)
         read_frame = composer_reader(registry, cli)
         manifest = registry.for_provider(cli)
-        if manifest is None or (read_frame is None and (probing or not ledger_vouches)):
+        if manifest is None or read_frame is None:
             return _refuse(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",
@@ -282,31 +290,25 @@ async def send_keys_target_refusal(
             )
         if _CREDENTIAL_PROMPT.search(_last_nonblank_line(text)):
             return _refuse("send_keys_credential_prompt", "the target shows a credential prompt")
-        # Composer frames can remain visible during a turn, so activity or a blocking
-        # prompt drawn in or below the bottom-most frame overrides it. Above that
-        # frame sits the finished transcript, whose prose ("running tests", a diff
-        # mentioning a trust folder) is no live state; only the provider's turn
-        # spinner there counts. A CLI without a frame reader has no frame to anchor
-        # on, so its whole pane is judged. Status bars include the frame rules and
-        # do not establish activity.
-        frame_top = composer_frame_top(text) if read_frame is not None else None
-        live = text if frame_top is None else "\n".join(text.splitlines()[frame_top:])
-        activity = manifest.match(live)
+        # Composer frames can remain visible during a turn. Inspect the entire
+        # pane too, so provider activity or blocking prompts override that frame.
+        # Status bars include the frame rules and do not establish activity.
+        activity = manifest.match(text)
         # A busy rule whose pattern times out reports an issue, not a match, and that
         # uncertainty must refuse as well.
-        busy_checks = {
-            rule_id: manifest.match_rule(rule_id, text if rule_id == _SPINNER_RULE_ID else live)
-            for rule_id in _BUSY_RULE_IDS
-        }
-        # A draft visible in the frame is touched by the drain alone.
-        frame_state = (
-            read_frame(snapshot).state if not draining and read_frame is not None else "empty"
-        )
-        veto = _pane_veto(activity, busy_checks, frame_state)
-        if veto is not None:
+        busy_checks = [manifest.match_rule(rule_id, text) for rule_id in _BUSY_RULE_IDS]
+        busy = any(check.match is not None or check.issues for check in busy_checks)
+        if (
+            activity.issues
+            or activity.match is None
+            or busy
+            or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
+            # A draft visible in the frame is touched by the drain alone.
+            or (not draining and read_frame is not None and read_frame(snapshot).state != "empty")
+        ):
             return _refuse(
                 "send_keys_composer_not_idle",
-                f"the target pane does not show an idle agent composer ({veto})",
+                "the target pane does not show an idle agent composer",
             )
         if draining:
             if pane is None:

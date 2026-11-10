@@ -196,61 +196,33 @@ def composer_region(pane_snapshot: str) -> str:
     An empty string means no complete frame is visible.
     """
     lines = pane_snapshot.splitlines()
-    codex_prompt = _bare_codex_prompt_index(lines)
-    if codex_prompt is not None:
-        return "\n".join(lines[codex_prompt:-2]).rstrip("\n")
-    span = _composer_span(lines)
-    if span is None:
-        return ""
-    _top, start, stop = span
-    return "\n".join(lines[start:stop])
-
-
-def composer_frame_top(pane_snapshot: str) -> int | None:
-    """Return the line index where the bottom-most composer frame begins.
-
-    The index counts ``pane_snapshot.splitlines()`` and points at the frame's top
-    rule, box corner or Codex prompt row. ``None`` means no composer frame is visible.
-    """
-    span = _composer_span(pane_snapshot.splitlines())
-    return None if span is None else span[0]
-
-
-def _composer_span(lines: list[str]) -> tuple[int, int, int] | None:
-    """Locate the bottom-most composer as ``(frame_top, region_start, region_stop)``."""
-    codex_prompt = _bare_codex_prompt_index(lines)
-    if codex_prompt is not None:
-        return codex_prompt, codex_prompt, len(lines) - 2
+    codex_composer = _bare_codex_composer(lines)
+    if codex_composer:
+        return codex_composer
     rule_indexes = [index for index, line in enumerate(lines) if _COMPOSER_RULE_RE.match(line)]
     if len(rule_indexes) >= 2:
-        return rule_indexes[-2], rule_indexes[-2] + 1, rule_indexes[-1]
-    box = _last_prompt_box_span(lines)
-    return None if box is None else (box[0], box[0], box[1])
+        return "\n".join(lines[rule_indexes[-2] + 1 : rule_indexes[-1]])
+    return _last_prompt_box(pane_snapshot)
 
 
-def _bare_codex_prompt_index(lines: list[str]) -> int | None:
+def _bare_codex_composer(lines: list[str]) -> str:
     if len(lines) < 3 or _CODEX_FOOTER_RE.match(lines[-1]) is None:
-        return None
+        return ""
     if _CODEX_MODEL_RE.match(lines[-2]) is None:
-        return None
+        return ""
     for prompt_index in range(len(lines) - 3, -1, -1):
         line = lines[prompt_index]
         if _CODEX_PROMPT_RE.match(line) is not None:
-            return prompt_index
+            return "\n".join(lines[prompt_index:-2]).rstrip("\n")
         # Wrapped composer rows retain the prompt's two-column indentation.
         # A turn/output marker between an old prompt and the footer is no composer.
         if line.strip() and not line.startswith("  "):
-            return None
-    return None
+            return ""
+    return ""
 
 
 def _last_prompt_box(pane_snapshot: str) -> str:
     lines = pane_snapshot.splitlines()
-    span = _last_prompt_box_span(lines)
-    return "" if span is None else "\n".join(lines[span[0] : span[1]])
-
-
-def _last_prompt_box_span(lines: list[str]) -> tuple[int, int] | None:
     start_index: int | None = None
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].lstrip().startswith(("╭", "┌")):
@@ -263,12 +235,12 @@ def _last_prompt_box_span(lines: list[str]) -> tuple[int, int] | None:
             end_index = index
             break
     if end_index is None or (start_index is not None and start_index > end_index):
-        return None
+        return ""
 
     for index in range(end_index - 1, -1, -1):
         if lines[index].lstrip().startswith(("╭", "┌")):
-            return index, end_index + 1
-    return None
+            return "\n".join(lines[index : end_index + 1])
+    return ""
 
 
 def _compile_clause(

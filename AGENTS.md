@@ -93,19 +93,21 @@ how the system behaves so you can work with it instead of being surprised by it.
     for direct `session`, `parent`, and `agent` targets, and fanout (`global`, and
     `project` with `wake=true`) applies the same rule to each recipient, with no
     claimed-task filter. A wake types `[Gobby] Check messages` only into a seat that is
-    idle, paused, or waiting, with no open turn and a composer the terminal ledger
-    confirms empty; that seat then processes its queue without operator input. The target
-    must also pass the send_keys target checks: a bare shell, a credential prompt, or a pane
-    that does not show an idle agent composer is never typed into. An
-    active turn takes no typed input at any priority; its message arrives through the
-    hook mailbox on its next tool call. No wake clears or replaces composer text, operator
-    comms included. A draft, held, or unconfirmed composer, and an
-    interrupted, input-, approval-, or handoff-waiting seat, also take no typed input,
-    so the message stays queued until the seat is safe to wake. A composer whose only
-    change is a cursor or control key, with no typed text, is probed: the wake types
-    only into an idle, empty pane frame, and that frame releases the hold. When the probe
-    does not release it, the seat gets an attention item that names the seat and the
-    reason. A typed text draft keeps its hold with no attention item. The one handoff
+    idle, paused, or waiting with no open turn; that seat then processes its queue
+    without operator input. No pane text decides a wake, because CLI screens change
+    with every release. Pane focus does: while a gclient or web viewer holding the
+    seat's terminal reports focus, every wake is held, and it is sent once the viewer
+    reports focus lost after its idle window (`focus_hold_seconds`, default 300). An
+    unfocused pane takes the wake. The foreground process must be an agent CLI, so a
+    bare shell or another program is never typed into. An active turn takes no typed
+    input at any priority; its message arrives through the hook mailbox on its next
+    tool call. No wake replaces typed composer text, operator comms included: a typed
+    draft, held daemon text, or a blocked composer (a gap or an interrupt), and an
+    interrupted, input-, approval-, or handoff-waiting seat, take no typed input, so
+    the message stays queued until the seat is safe to wake. A blocked composer raises
+    an attention item that names the seat and the reason. A composer whose only change
+    is a cursor or control key, with no typed text, is cleared by the wake's drain keys
+    before it types. The one handoff
     exception is the `get_handoff` continuation of an awaiting-handoff terminal with a
     confirmed compact boundary and an empty composer. Otherwise `project` fanout stays
     queued without live wakes, and `wake=false` queues any target without a live wake.
