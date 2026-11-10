@@ -187,7 +187,6 @@ class LiveProof:
                 "external_id": str(uuid4()),
                 "source": "codex",
                 "project_id": self.scope.project_id,
-                "title": "22915-proof-controller",
             },
         )
         self.mcp.session_id = str(controller["session_id"])
