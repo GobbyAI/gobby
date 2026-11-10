@@ -13,9 +13,6 @@ filter = '''package(gobby-client) & binary(suite) & (
 )'''
 setup = 'gclient-test-gterm'
 
-[store]
-dir = ".nextest"
-
 [profile.default]
 fail-fast = false
 # Leaks still fail. On macOS a test child can inherit another test's capture
@@ -25,8 +22,10 @@ fail-fast = false
 # co-spawned; a genuinely leaked child holds the pipe forever and still fails.
 leak-timeout = { period = "10s", result = "fail" }
 
-# Every run leaves .nextest/<profile>/junit.xml, which keeps each
-# failure's name and captured output after a terminal has truncated them.
+# Every run leaves <cargo target dir>/nextest/<profile>/junit.xml, which keeps each
+# failure's name and captured output after a terminal has truncated them. The store
+# keeps nextest's default under the target dir, which follows CARGO_TARGET_DIR, so a
+# read-only checkout can still run nextest.
 [profile.default.junit]
 path = "junit.xml"
 
