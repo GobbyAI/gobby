@@ -56,6 +56,9 @@ async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
             or details.get("project_id") != proof.scope.project_id
         ):
             raise ProofRefused("real provider registration mismatch")
+        # Own the surface before the slower attach steps: the real seat runs its launch turn
+        # at once, and the daemon's handoff writes are refused for an unregistered terminal.
+        proof.trace.register(own)
         await ws.attach(terminal_id, delivery="direct", request_id=f"proof-{provider}")
         control = await ws.take(terminal_id, takeover=False)
         if control.get("granted") is not True:
@@ -75,7 +78,6 @@ async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
             IdleDetector(proof.detection_registry, provider),
             locator,
         )
-        proof.trace.register(own)
         proof.seats.append(seat)
         adopted = True
         return seat
