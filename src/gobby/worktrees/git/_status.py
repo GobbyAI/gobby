@@ -56,7 +56,7 @@ async def get_worktree_status(
         branch_result = await runner._run_git(
             ["branch", "--show-current"],
             cwd=worktree_path,
-            timeout=5,
+            timeout=30,
         )
         branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
 
@@ -64,7 +64,7 @@ async def get_worktree_status(
         commit_result = await runner._run_git(
             ["rev-parse", "--short", "HEAD"],
             cwd=worktree_path,
-            timeout=5,
+            timeout=30,
         )
         commit = commit_result.stdout.strip() if commit_result.returncode == 0 else None
 
@@ -72,7 +72,7 @@ async def get_worktree_status(
         status_result = await runner._run_git(
             ["status", "--porcelain"],
             cwd=worktree_path,
-            timeout=10,
+            timeout=30,
         )
 
         if status_result.returncode != 0:
@@ -106,7 +106,7 @@ async def get_worktree_status(
             upstream_result = await runner._run_git(
                 ["rev-list", "--count", "--left-right", f"{reference}...HEAD"],
                 cwd=worktree_path,
-                timeout=10,
+                timeout=30,
             )
             if upstream_result.returncode == 0:
                 parts = upstream_result.stdout.strip().split("\t")

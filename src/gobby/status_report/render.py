@@ -164,6 +164,16 @@ def _worktree_section(data: StatusData) -> list[str]:
     return ["## Worktrees", header, rule, *rows, ""]
 
 
+def _owner_cell(row: WorktreeRow) -> str:
+    note = row.current_note
+    if note is None:
+        return _UNRECONCILED
+    blocker = note.blocker or "none"
+    # A pipe in recorded text would split the table row, so escape it like any table cell.
+    text = f"{note.owner} / {note.next_action} / blocker: {blocker}"
+    return text.replace("|", "\\|")
+
+
 def _worktree_row(row: WorktreeRow, now: datetime) -> str:
     task = "none" if row.task_seq is None else f"#{row.task_seq}"
     state = row.task_state or "none"
@@ -180,5 +190,5 @@ def _worktree_row(row: WorktreeRow, now: datetime) -> str:
     live = "yes" if row.live_seat else "no"
     return (
         f"| {row.branch} | {task} | {state} | {ahead_behind} | {dirty} | {live} "
-        f"| {last_commit} | {_UNRECONCILED} |"
+        f"| {last_commit} | {_owner_cell(row)} |"
     )
