@@ -9,7 +9,7 @@ capabilities:
 - write_own_step_phase
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "7.1.0"
+version: "7.2.0"
 tags:
 - gobby
 - seat
@@ -79,6 +79,11 @@ prompts:
     for trust-boundary work; security_paths independently forces security approval at land.
     Only the operator or an authorized policy owner removes security-review. Request
     an independent security-auditor's approval for the exact candidate when required.
+    When the candidate changes a file on project_policy.security_paths, security review
+    comes first: send that SHA to the reviewer only after the auditor approves it. On a
+    security rejection return the claim to the developer with hand_off_task_claim and send
+    it the findings; the corrected SHA is re-audited before any code review. Otherwise the
+    review order is unchanged.
     Land the linked reviewed candidate with land_commit under the declared authority;
     an epic's leaves land into the epic branch.
     When the base moves ahead of a task tree, ask that task's developer to merge it in
@@ -123,6 +128,11 @@ prompts:
     for trust-boundary work; security_paths independently forces security approval at land.
     Only the operator or an authorized policy owner removes security-review. Request
     an independent security-auditor's approval for the exact candidate when required.
+    When the candidate changes a file on project_policy.security_paths, security review
+    comes first: send that SHA to the reviewer only after the auditor approves it. On a
+    security rejection return the claim to the developer with hand_off_task_claim and send
+    it the findings; the corrected SHA is re-audited before any code review. Otherwise the
+    review order is unchanged.
     Land the linked reviewed candidate with land_commit under the declared authority;
     an epic's leaves land into the epic branch.
     When the base moves ahead of a task tree, ask that task's developer to merge it in

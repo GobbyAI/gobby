@@ -1,17 +1,8 @@
-version: "2.0.0"
+version: "2.1.0"
 name: default
-capabilities:
-  - accept_resume_retype
-  - override_spawn_network
-  - write_session_variables
-  - direct_integration_commit
-  - land_tasks
-  - manage_task_claims
-  - coordinate_tasks
-  - message_restricted_seats
-  - manage_mcp_servers
-  - manage_workflow_definitions
-  - activate_agent_definitions
+# Every permission capability: default carries no runbook limitations. Review paths stay
+# preferred, never required. Behavior capabilities stay off unless named.
+capabilities: ["*"]
 direct_integration_commit_paths: ["**"]
 task_attestation_writes: ["*"]
 respect_task_protections: true

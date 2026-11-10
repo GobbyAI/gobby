@@ -390,7 +390,7 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     except CrossProjectTaskForbidden:
         return False
     definition = session_agent_definition(db, caller)
-    if definition is None or "land_tasks" not in definition[0].capabilities:
+    if definition is None or not definition[0].holds("land_tasks"):
         return False
     return task_scope_refusal(task, caller.id, definition[0].task_land_scope, db=db) is None
 
@@ -637,7 +637,7 @@ async def land_candidate(
                     )
                     current_task = prepared.task
                     if (
-                        "land_tasks" not in prepared.agent.capabilities
+                        not prepared.agent.holds("land_tasks")
                         or prepared.snapshot.caller.get("machine_id") != require_machine_id()
                         or task_scope_refusal(
                             current_task, caller_session_id, prepared.agent.task_land_scope, db=db
