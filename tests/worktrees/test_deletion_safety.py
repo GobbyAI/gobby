@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,6 +57,14 @@ class _Storage:
         if self.delete_error is not None:
             raise self.delete_error
         return self.rows.pop(worktree_id, None) is not None
+
+    def update(self, worktree_id: str, *, status: str) -> Worktree | None:
+        # The deleting marker (#25838) is written before the first destructive step.
+        row = self.rows.get(worktree_id)
+        if row is None:
+            return None
+        self.rows[worktree_id] = dataclasses.replace(row, status=status)
+        return self.rows[worktree_id]
 
     @contextlib.contextmanager
     def lock_for_cleanup(
