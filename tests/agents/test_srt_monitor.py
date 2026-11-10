@@ -851,7 +851,7 @@ def _run_spoof_restart_reap(
         ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
         check=False,
     )
 

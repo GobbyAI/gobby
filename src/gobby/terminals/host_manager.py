@@ -711,17 +711,22 @@ class TerminalHostManager(HostShutdown):
         if self._stop_requested or self.host_drained:
             raise HostManagerStopped("gterm host manager stopped")
         self._check_socket_paths()
-        # Only reached when nothing answered the control socket, so a fresh
-        # token cannot lock out a live host.
-        self.rotate_control_token() if control_token_path(self.socket_dir).exists() else (
-            self.ensure_control_token()
-        )
+        # A host spawned earlier that is still running may be starting. It reads
+        # the token file once at startup and binds with that token, so rotating
+        # now would lock the daemon out of it: wait on its socket instead.
+        if not (self._process is not None and self._process.poll() is None):
+            # Nothing spawned earlier is running, so a fresh token cannot lock
+            # out a live host.
+            if control_token_path(self.socket_dir).exists():
+                self.rotate_control_token()
+            else:
+                self.ensure_control_token()
+            process = self._spawn_host_process()
+            self._process = process
+            pid = int(getattr(process, "pid", 0) or 0)
+            if pid:
+                write_pidfile(self.socket_dir, pid)
         token = self.ensure_control_token()
-        process = self._spawn_host_process()
-        self._process = process
-        pid = int(getattr(process, "pid", 0) or 0)
-        if pid:
-            write_pidfile(self.socket_dir, pid)
         client = await self._wait_for_client()
         hello = await client.hello(CONTROL_PROTOCOL_VERSION, token)
         ping = await client.ping()

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Version: 1.0.0 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.gobby.fleet-watch</string>
+  <key>ProgramArguments</key><array>
+    <string>{{ gdaemon_executable }}</string><string>fleet-watch</string>
+{% if fleet_project_id %}
+    <string>--project-id</string><string>{{ fleet_project_id }}</string>
+{% endif %}
+    <string>--logs-dir</string><string>{{ fleet_logs_dir }}</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>{{ home_dir }}</string>
+    <key>PATH</key><string>{{ path_env }}</string>
+    <key>GOBBY_HOME</key><string>{{ gobby_home if gobby_home else home_dir + '/.gobby' }}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>{{ fleet_log_file }}</string>
+  <key>StandardErrorPath</key><string>{{ fleet_log_file }}</string>
+</dict></plist>
