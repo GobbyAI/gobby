@@ -1,5 +1,5 @@
 name: developer
-version: "4.1.0"
+version: "4.2.0"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -65,7 +65,9 @@ prompts:
 
     The pipeline's claim_flow moves the claim transactionally to the reviewer when
     implement evidence is complete. Send the reviewer the exact SHA, evidence and
-    worktree; wait durably. A rejected independent-review returns the claim to you.
+    worktree. When the candidate changes a file on project_policy.security_paths, send
+    them to the lead instead: security review runs first, and the lead forwards the SHA
+    to the reviewer after the security-auditor approves it. Wait durably. A rejected independent-review returns the claim to you.
     After rejection, record fresh stage evidence for the corrected candidate. Preserve
     old evidence; use supersedes_id for corrections. Never switch identities to approve work.
 
@@ -110,7 +112,9 @@ prompts:
 
     The pipeline's claim_flow moves the claim transactionally to the reviewer when
     implement evidence is complete. Send the reviewer the exact SHA, evidence and
-    worktree; wait durably. A rejected independent-review returns the claim to you.
+    worktree. When the candidate changes a file on project_policy.security_paths, send
+    them to the lead instead: security review runs first, and the lead forwards the SHA
+    to the reviewer after the security-auditor approves it. Wait durably. A rejected independent-review returns the claim to you.
     After rejection, record fresh stage evidence for the corrected candidate. Preserve
     old evidence; use supersedes_id for corrections. Never switch identities to approve work.
 

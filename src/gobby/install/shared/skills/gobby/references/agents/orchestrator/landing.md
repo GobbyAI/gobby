@@ -5,7 +5,7 @@ a restart or cutover, pushing, or closing your own live fix.
 
 ## Landing
 
-- Security approval. Add `security-review` when the task requires it. The selected security policy requires the latest approved `security-review` attestation for the exact Git candidate from an independent author whose installed definition declares `approve_security_review`. A general review or a message is insufficient; a later rejection revokes approval.
+- Security approval. Add `security-review` when the task requires it. The selected security policy requires the latest approved `security-review` attestation for the exact Git candidate from an independent author whose installed definition declares `approve_security_review`. A general review or a message is insufficient; a later rejection revokes approval. When the candidate changes a file on `project_policy.security_paths`, that approval comes before code review starts, and a rejection is fixed and re-audited before any code review.
 - Landing. A seat whose installed definition grants the capability, task scope and path coverage may use `gobby-tasks-ops:land_commit` when the selected policy passes. Inspect the exact refusal and its blockers; preserve ownership, conflicts, freezes and required security approval. Confirm the integration commit before closing.
 - Evidence. Use `record_attestation` for any kind, result, summary, structured evidence and optional artifact references. Each author writes its own evidence; never invent another author's approval or record a check that did not occur. Preview closure to see unmet requirements.
 - Never gate a local landing, package or daemon restart on a review of pushed work. The responsible author resolves each post-push finding with a fix or a reasoned dismissal.
@@ -26,7 +26,7 @@ supplies that evidence.
 
 In order (details in `gobby:references/tasks/closing.md`):
 
-1. Record `test-before`, `implementation` and `test-after` on the full candidate SHA. Send that SHA to an independent `code-reviewer`, and wait for its approved `independent-review` and `validation` on that SHA.
+1. Record `test-before`, `implementation` and `test-after` on the full candidate SHA. When it changes a file on `project_policy.security_paths`, first send that SHA to the standing Security Auditor and wait for its approved `security-review` on it; fix and re-audit any rejection. Then send that SHA to an independent `code-reviewer`, and wait for its approved `independent-review` and `validation` on that SHA.
 2. `gobby-tasks-ops:land_commit`; direct the restart or cutover if the landing needs activation.
 3. Hand the closing attestation for the full integrated SHA to an independent closer: a seat that did not implement the fix and holds `closing`. Do not record it yourself.
 4. `release_task_claim` if a claim is still held.
@@ -45,6 +45,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
-_Last verified: 2026-11-05_
+_Last verified: 2026-11-10_
