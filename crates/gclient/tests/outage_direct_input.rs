@@ -1,16 +1,14 @@
 //! A direct pane keeps scrolling, focus and typing while the daemon is away
-//! (#24815). The host's frame socket and its control socket stay up across the
-//! outage, so gclient scrolls through the frame socket and asks the control
-//! socket for the grant a newly focused pane needs. A key it cannot deliver
-//! says so instead of being dropped.
+//! (#24815). The host's frame socket stays up across the outage, so gclient
+//! scrolls and types through it. Every attached native pane is writable: no
+//! grant, take, or reply from the daemon or the host's control socket gates a
+//! key (#25653). A key it cannot deliver says so instead of being dropped.
 
 use super::mock_daemon;
 
-use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::draw::DrawRecorder;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use gobby_client::app::run_live_loop;
 use gobby_client::daemon::LiveDaemon;
@@ -35,11 +33,6 @@ const TOKEN: &str = "local-token";
 const CONTROL_TOKEN: &str = "control-token";
 const PANE_A: &str = "terminal-outage-a";
 const PANE_B: &str = "terminal-outage-b";
-/// The status a key shows when the host's control socket could not be asked.
-const CONTROL_UNREACHABLE: &str =
-    "terminal control unavailable while the daemon is down; input not sent";
-/// The status a key shows when the host refused the grant it asked for.
-const HOST_GRANT_UNAVAILABLE: &str = "terminal did not grant input; take control again";
 /// The status a key shows when a pane has no host to type into during an outage.
 const DAEMON_DOWN_INPUT: &str = "daemon is down; input not sent";
 const DAEMON_DOWN_SCROLL: &str = "daemon is down; scroll not sent";
@@ -53,17 +46,29 @@ fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
         .collect()
 }
 
-async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: usize) {
-    timeout(WAIT, async {
-        loop {
-            if websocket_requests(mock, kind).len() >= expected {
-                return;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("mock daemon never saw {expected} {kind} requests"));
+/// The attachment the last `terminal_focus` report for `terminal_id` names,
+/// while that report says the pane is focused.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .rev()
+        .find(|request| request["terminal_id"] == terminal_id)
+        .filter(|request| request["focused"] == true)
+        .and_then(|request| request["attachment_id"].as_str().map(str::to_string))
+}
+
+/// The terminal the loop's startup focus reported focused, once it has.
+fn startup_focus(mock: &MockDaemon) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .find(|request| request["focused"] == true)
+        .and_then(|request| request["terminal_id"].as_str().map(str::to_string))
+}
+
+/// Wait for the loop's startup focus report: the loop runs with a live,
+/// focused pane.
+async fn wait_for_startup_focus(mock: &MockDaemon) {
+    wait_until("the startup focus report", || startup_focus(mock).is_some()).await;
 }
 
 /// Wait for `predicate`, yielding the loop, then fail with `what`.
@@ -179,21 +184,11 @@ async fn daemon_outage(mock: &MockDaemon) -> Arc<Notify> {
     reconnect
 }
 
-/// The terminal the loop's startup focus took control of, and the other one.
+/// The terminal the loop's startup focus reported, and the other one.
 fn focused_and_other(mock: &MockDaemon) -> (String, String) {
-    let focused = websocket_requests(mock, "terminal_take_control")
-        .first()
-        .and_then(|request| request["terminal_id"].as_str())
-        .expect("startup focus takes control")
-        .to_string();
+    let focused = startup_focus(mock).expect("startup focus reported");
     let other = if focused == PANE_A { PANE_B } else { PANE_A }.to_string();
     (focused, other)
-}
-
-fn grant_for(host: &DirectHost, terminal_id: &str) -> Option<Value> {
-    host.control_requests().into_iter().find(|request| {
-        request["method"] == "grant_input" && request["host_terminal_id"] == terminal_id
-    })
 }
 
 fn typed(seen: &[ClientMessage], key: &[u8]) -> bool {
@@ -201,13 +196,70 @@ fn typed(seen: &[ClientMessage], key: &[u8]) -> bool {
         .any(|message| matches!(message, ClientMessage::Input { data } if data == key))
 }
 
-/// Two direct panes on one host, the daemon up and the startup focus taken.
-/// Each pane's attachment is read before the loop starts, while it is stable.
+/// Two direct panes on one host with the daemon up.
 async fn two_direct_panes(
     mock: &MockDaemon,
     host: &DirectHost,
 ) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     live_workspace_on_direct_host_terminals(mock, host, &[PANE_A, PANE_B]).await
+}
+
+/// Every attached native pane is writable: a key goes straight to its host
+/// stream with no reply asked of the daemon or of the host's control socket.
+/// No take, grant, or read-only state gates it (#25653).
+#[tokio::test]
+async fn attached_native_pane_types_without_waiting_on_a_control_reply() {
+    let mock = MockDaemon::start(TOKEN).await;
+    mock.use_unique_attachment_ids();
+    let mut host = DirectHost::start("epoch-1").await;
+    // The host serves a control socket, so a grant could be asked of it.
+    host.serve_gterm_control(CONTROL_TOKEN);
+    let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
+    let cells = content_cells(&workspace);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_startup_focus(&mock).await;
+        let (_, other) = focused_and_other(&mock);
+        send_click(&input_tx, cell_of(&cells, &other)).await;
+        settle().await;
+        send_key(&input_tx, KeyCode::Char('y')).await;
+        host.wait_for("the key on the host stream", |seen| typed(seen, b"y"))
+            .await;
+        // Focus is reported to the daemon, but nothing waited on it.
+        wait_until("the focus report for the clicked pane", || {
+            focused_attachment(&mock, &other).is_some()
+        })
+        .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop");
+    assert_eq!(
+        host.control_hellos(),
+        0,
+        "typing never asks the host's control socket for anything"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "a native pane's key never goes through the daemon"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
 }
 
 #[tokio::test]
@@ -227,7 +279,7 @@ async fn outage_wheel_scrolls_a_direct_pane_without_the_daemon() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_startup_focus(&mock).await;
         let reconnect = daemon_outage(&mock).await;
         send_wheel(&input_tx, cell).await;
         host.wait_for("the scroll offset on the frame socket", |seen| {
@@ -271,124 +323,33 @@ async fn outage_wheel_scrolls_a_direct_pane_without_the_daemon() {
     mock.shutdown().await;
 }
 
+/// While the daemon is away, a key typed into a newly focused native pane goes
+/// straight onto its host stream. Nothing asks the host's control socket for a
+/// grant, so no reply can hold the key (#25653).
 #[tokio::test]
-async fn outage_click_moves_focus_and_types_through_a_grant_from_the_host() {
+async fn outage_typing_reaches_the_host_without_a_grant_reply() {
     let mock = MockDaemon::start(TOKEN).await;
     mock.use_unique_attachment_ids();
     let mut host = DirectHost::start("epoch-1").await;
     host.serve_gterm_control(CONTROL_TOKEN);
     let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
     let cells = content_cells(&workspace);
-    let attachment = |terminal_id: &str| {
-        let pane = workspace.pane_for_terminal(terminal_id).expect("pane");
-        workspace.pane(pane).attachment_id().to_string()
-    };
-    let attachments = [(PANE_A, attachment(PANE_A)), (PANE_B, attachment(PANE_B))];
-    let attachment_of = |terminal_id: &str| {
-        attachments
-            .iter()
-            .find(|(id, _)| *id == terminal_id)
-            .map(|(_, attachment)| attachment.clone())
-            .expect("attachment")
-    };
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let (focused, other) = focused_and_other(&mock);
+        wait_for_startup_focus(&mock).await;
+        let (_, other) = focused_and_other(&mock);
         let reconnect = daemon_outage(&mock).await;
         send_click(&input_tx, cell_of(&cells, &other)).await;
         settle().await;
         send_key(&input_tx, KeyCode::Char('y')).await;
-        wait_until("the grant for the newly focused pane", || {
-            grant_for(&host, &other).is_some()
-        })
-        .await;
-        host.wait_for("the key typed into the granted pane", |seen| {
+        host.wait_for("the key on the host stream during the outage", |seen| {
             typed(seen, b"y")
         })
         .await;
-        drop(input_tx);
-        (focused, other, reconnect)
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, (focused, other, reconnect)) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    reconnect.notify_one();
-    result.expect("daemon-down focus loop");
-
-    let grant = grant_for(&host, &other).expect("the host was asked for the grant");
-    assert_eq!(
-        grant["attachment_id"],
-        attachment_of(&other),
-        "the grant names the newly focused pane's attachment"
-    );
-    assert!(
-        host.control_requests().iter().any(|request| {
-            request["method"] == "revoke_input"
-                && request["host_terminal_id"] == focused.as_str()
-                && request["attachment_id"] == attachment_of(&focused)
-        }),
-        "leaving a pane revokes its host grant, as a daemon release would"
-    );
-    assert_eq!(host.control_hellos(), 2, "one authenticated hello per verb");
-    assert!(workspace.pane(pane_of(&workspace, &other)).direct_input());
-    assert!(!workspace.pane(pane_of(&workspace, &focused)).direct_input());
-    assert!(
-        websocket_requests(&mock, "terminal_release_control").is_empty(),
-        "focus moves during the outage without a daemon release"
-    );
-    assert!(websocket_requests(&mock, "terminal_input").is_empty());
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn outage_typing_waits_for_the_grant_reply_before_any_input() {
-    // test-quality: allow SLEEP_IN_TEST -- absence window: no key may reach the PTY while the host holds the grant reply (100 ms observation)
-    let mock = MockDaemon::start(TOKEN).await;
-    mock.use_unique_attachment_ids();
-    let mut host = DirectHost::start("epoch-1").await;
-    host.serve_gterm_control(CONTROL_TOKEN);
-    let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
-    let cells = content_cells(&workspace);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let (_, other) = focused_and_other(&mock);
-        let reconnect = daemon_outage(&mock).await;
-        let gate = host.hold_control_replies();
-        send_click(&input_tx, cell_of(&cells, &other)).await;
-        settle().await;
-        send_key(&input_tx, KeyCode::Char('y')).await;
-        wait_until("the grant request to reach the host", || {
-            grant_for(&host, &other).is_some()
-        })
-        .await;
-        sleep(Duration::from_millis(100)).await;
-        assert!(
-            !typed(&host.drain(), b"y"),
-            "no key reaches the frame socket before the host answers the grant"
-        );
-        host.release_control_replies(&gate);
-        host.wait_for("the held key, once granted", |seen| typed(seen, b"y"))
-            .await;
         drop(input_tx);
         reconnect
     };
@@ -405,181 +366,16 @@ async fn outage_typing_waits_for_the_grant_reply_before_any_input() {
         driver
     );
     reconnect.notify_one();
-    result.expect("held grant loop");
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn refused_outage_grant_shows_the_grant_status_and_sends_no_input() {
-    let mock = MockDaemon::start(TOKEN).await;
-    mock.use_unique_attachment_ids();
-    let mut host = DirectHost::start("epoch-1").await;
-    host.serve_gterm_control(CONTROL_TOKEN);
-    let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
-    let cells = content_cells(&workspace);
-    let (backend, _draws, frames) = DrawRecorder::new(120, 40);
-    let mut terminal = Terminal::new(backend).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let (_, other) = focused_and_other(&mock);
-        let reconnect = daemon_outage(&mock).await;
-        host.refuse_grants();
-        send_click(&input_tx, cell_of(&cells, &other)).await;
-        settle().await;
-        send_key(&input_tx, KeyCode::Char('y')).await;
-        wait_until("the refused grant request", || {
-            grant_for(&host, &other).is_some()
-        })
-        .await;
-        // The refusal offers take-back, so the focused title turns from
-        // `· Focused` to `· Read-only`; no earlier frame draws Read-only.
-        wait_until("the refused pane to draw as Read-only", || {
-            frames
-                .lock()
-                .expect("recorded frames")
-                .last()
-                .is_some_and(|frame| frame.contains("· Read-only"))
-        })
-        .await;
-        drop(input_tx);
-        (other, reconnect)
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, (other, reconnect)) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    reconnect.notify_one();
-    result.expect("refused grant loop");
-    let pane = workspace.pane(pane_of(&workspace, &other));
-    assert_eq!(
-        pane.status_message(),
-        Some(HOST_GRANT_UNAVAILABLE),
-        "a refused grant says so on the pane"
-    );
-    assert!(!pane.direct_input(), "a refused grant cannot type");
-    assert!(
-        !typed(&host.drain(), b"y"),
-        "the refused key never reaches the frame socket"
-    );
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn outage_grant_without_a_control_socket_shows_status_and_sends_no_input() {
-    let mock = MockDaemon::start(TOKEN).await;
-    mock.use_unique_attachment_ids();
-    // No control socket: the host never served one, so nothing can connect.
-    let host = DirectHost::start("epoch-1").await;
-    let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
-    let cells = content_cells(&workspace);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let (_, other) = focused_and_other(&mock);
-        let reconnect = daemon_outage(&mock).await;
-        send_click(&input_tx, cell_of(&cells, &other)).await;
-        settle().await;
-        send_key(&input_tx, KeyCode::Char('y')).await;
-        settle().await;
-        drop(input_tx);
-        (other, reconnect)
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, (other, reconnect)) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    reconnect.notify_one();
-    result.expect("no control socket loop");
-    let pane = workspace.pane(pane_of(&workspace, &other));
-    assert_eq!(pane.status_message(), Some(CONTROL_UNREACHABLE));
-    assert!(!pane.direct_input());
-    assert!(
-        !typed(&host.drain(), b"y"),
-        "the key is not sent without a grant"
-    );
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn outage_grant_refuses_a_control_token_that_is_not_owner_only() {
-    let mock = MockDaemon::start(TOKEN).await;
-    mock.use_unique_attachment_ids();
-    let mut host = DirectHost::start("epoch-1").await;
-    host.serve_gterm_control(CONTROL_TOKEN);
-    let token_path = host
-        .socket_path()
-        .parent()
-        .expect("socket dir")
-        .join("gterm-control.token");
-    std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o644))
-        .expect("loosen the token");
-    let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
-    let cells = content_cells(&workspace);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let (_, other) = focused_and_other(&mock);
-        let reconnect = daemon_outage(&mock).await;
-        send_click(&input_tx, cell_of(&cells, &other)).await;
-        settle().await;
-        send_key(&input_tx, KeyCode::Char('y')).await;
-        settle().await;
-        drop(input_tx);
-        (other, reconnect)
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, (other, reconnect)) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    reconnect.notify_one();
-    result.expect("loose token loop");
+    result.expect("outage typing loop");
     assert_eq!(
         host.control_hellos(),
         0,
-        "gclient never speaks to a control socket whose token is readable by others"
+        "outage typing never asks the host's control socket for a grant"
     );
-    let pane = workspace.pane(pane_of(&workspace, &other));
-    assert_eq!(pane.status_message(), Some(CONTROL_UNREACHABLE));
-    assert!(!typed(&host.drain(), b"y"));
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "no key goes through a daemon that is away"
+    );
     host.shutdown().await;
     mock.shutdown().await;
 }
@@ -617,7 +413,7 @@ async fn outage_key_into_a_proxied_pane_shows_status_instead_of_dropping() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_startup_focus(&mock).await;
         let reconnect = daemon_outage(&mock).await;
         send_key(&input_tx, KeyCode::Char('y')).await;
         settle().await;
@@ -684,7 +480,7 @@ async fn outage_wheel_into_a_proxied_pane_shows_status_instead_of_dropping() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_startup_focus(&mock).await;
         let reconnect = daemon_outage(&mock).await;
         send_wheel(&input_tx, cell_of(&cells, terminal_id)).await;
         settle().await;
@@ -720,67 +516,4 @@ async fn outage_wheel_into_a_proxied_pane_shows_status_instead_of_dropping() {
         "no scroll goes through a daemon that is away"
     );
     mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn outage_grant_is_adopted_when_the_daemon_returns() {
-    let mock = MockDaemon::start(TOKEN).await;
-    mock.use_unique_attachment_ids();
-    let mut host = DirectHost::start("epoch-1").await;
-    host.serve_gterm_control(CONTROL_TOKEN);
-    let (mut workspace, _home) = two_direct_panes(&mock, &host).await;
-    let cells = content_cells(&workspace);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let (_, other) = focused_and_other(&mock);
-        let reconnect = daemon_outage(&mock).await;
-        send_click(&input_tx, cell_of(&cells, &other)).await;
-        settle().await;
-        send_key(&input_tx, KeyCode::Char('y')).await;
-        wait_until("the outage grant for the newly focused pane", || {
-            grant_for(&host, &other).is_some()
-        })
-        .await;
-        reconnect.notify_one();
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        send_key(&input_tx, KeyCode::Char('z')).await;
-        host.wait_for("the key typed after the daemon returned", |seen| {
-            typed(seen, b"z")
-        })
-        .await;
-        drop(input_tx);
-        other
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, other) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("daemon-return adoption loop");
-    assert!(
-        workspace.pane(pane_of(&workspace, &other)).direct_input(),
-        "the returned daemon leaves the pane typing through its adopted grant"
-    );
-    assert!(
-        websocket_requests(&mock, "terminal_input").is_empty(),
-        "no key went through the daemon before or after it returned"
-    );
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
-fn pane_of(workspace: &Workspace<LiveDaemon>, terminal_id: &str) -> gobby_client::app::PaneId {
-    workspace.pane_for_terminal(terminal_id).expect("pane")
 }

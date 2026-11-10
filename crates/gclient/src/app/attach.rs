@@ -1,6 +1,6 @@
 //! Attachment lifecycle transitions and request guards.
 
-use super::{ControlState, Pane, PaneId, Workspace};
+use super::{Backend, Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, DaemonError, Generation};
 use crate::frame_source::{FrameError, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_terminal::protocol::ClientMessage;
@@ -33,6 +33,9 @@ pub enum AttachState {
         generation: Generation,
         deadline: Instant,
         supervisor_requested: bool,
+        /// A closing detach rides the writer, so keys typed behind it still go
+        /// out on the old attachment. A recovery detach holds them instead.
+        closing: bool,
     },
 }
 
@@ -51,7 +54,6 @@ impl Pane {
         self.attach_retry_at = None;
         self.reattach_after_indeterminate = false;
         self.live = false;
-        self.control = ControlState::Observe;
         // Keys typed while a recovery detached the pane belong to the
         // attachment it asks for now (#23559).
         if !self.fallback_in_flight {
@@ -80,6 +82,7 @@ impl Pane {
         if let Some(writer) = self.writer.take() {
             writer.retire();
         }
+        self.writer_ready = None;
         self.attach = AttachState::Attached {
             attachment_id,
             transport,
@@ -87,13 +90,8 @@ impl Pane {
             lease_generation,
         };
         self.live = true;
-        self.control = ControlState::Observe;
-        self.take_back = false;
-        // A host grant names the attachment it was given to; this one waits
-        // for its own grant before it types on the host.
-        self.host_input_granted = false;
-        // Input typed after begin_attaching belongs to the grant this new
-        // attachment is waiting for. A refusal or focus loss still clears it.
+        // Input typed after begin_attaching waits for this attachment. A
+        // refusal or focus loss still clears it.
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;
@@ -117,9 +115,6 @@ impl Pane {
             lease_generation,
         };
         self.live = true;
-        self.control = ControlState::Observe;
-        self.take_back = false;
-        self.host_input_granted = false;
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;
@@ -145,16 +140,37 @@ impl Pane {
             generation,
             deadline: now + DETACH_DEADLINE,
             supervisor_requested: false,
+            closing: false,
         };
         self.live = false;
-        self.control = ControlState::Observe;
-        // A grant still out was asked for this attachment: moot once it goes,
-        // and never to be applied to the one that replaces it (#22747).
-        self.control_request = None;
-        self.take_back = false;
         self.clear_pending_input();
         let _ = self.take_frame_source();
         Some((old_attachment_id, generation))
+    }
+
+    /// Closing an external pane: the detach request rides the writer, so keys
+    /// typed behind it still go out on the old attachment. The supervisor is
+    /// marked requested so the detach deadline cannot reconnect a closing pane.
+    pub(super) fn begin_closing_detach(&mut self) -> Option<String> {
+        let (old_attachment_id, generation) = match &self.attach {
+            AttachState::Attached {
+                attachment_id,
+                generation,
+                ..
+            } => (attachment_id.clone(), *generation),
+            AttachState::Detaching { .. }
+            | AttachState::Detached
+            | AttachState::Attaching { .. } => return None,
+        };
+        self.attach = AttachState::Detaching {
+            old_attachment_id: old_attachment_id.clone(),
+            generation,
+            deadline: Instant::now(),
+            supervisor_requested: true,
+            closing: true,
+        };
+        self.live = false;
+        Some(old_attachment_id)
     }
 
     pub(super) fn retire_attachment(
@@ -186,8 +202,6 @@ impl Pane {
             self.fallback_in_flight && matches!(self.attach, AttachState::Detaching { .. });
         self.attach = AttachState::Detached;
         self.live = false;
-        self.control = ControlState::Observe;
-        self.take_back = false;
         if !recovering {
             self.clear_pending_input();
         }
@@ -201,8 +215,6 @@ impl Pane {
     pub(super) fn refuse_attach(&mut self, code: &str, reason: &str) {
         self.attach = AttachState::Detached;
         self.live = false;
-        self.control = ControlState::Observe;
-        self.take_back = false;
         self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = Some(format!("{code}: {reason}"));
@@ -230,21 +242,10 @@ impl Pane {
         self.attach_retry_at.is_some_and(|at| at > now)
     }
 
-    pub(super) fn clear_control(&mut self, reason: impl Into<String>) {
-        self.control = ControlState::Observe;
-        self.take_back = false;
+    pub(super) fn clear_input(&mut self, reason: impl Into<String>) {
         self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = Some(reason.into());
-    }
-
-    pub(super) fn set_lease_generation(&mut self, generation: u64) {
-        if let AttachState::Attached {
-            lease_generation, ..
-        } = &mut self.attach
-        {
-            *lease_generation = generation;
-        }
     }
 
     pub(super) fn detaching_deadline(&self) -> Option<Instant> {
@@ -333,7 +334,6 @@ impl Workspace {
             "terminal_id": terminal_id,
             "frame_delivery": "proxy",
             "encoding": "semantic_frame",
-            "viewer": "gclient"
         }))
     }
 
@@ -395,6 +395,16 @@ impl Workspace {
                     "daemon reused a tombstoned attachment id",
                 );
             return Ok(());
+        }
+        if matches!(transport, Transport::Proxy) || self.panes[&pane_id].backend == Backend::Tmux {
+            // Daemon-written panes claim independently of frame delivery, as live attaches do.
+            let terminal_id = self.panes[&pane_id].terminal_id.clone();
+            self.daemon.send_ws(json!({
+                "type": "terminal_take_control",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+                "takeover": false,
+            }))?;
         }
         let locator = self.locator_for(pane_id);
         let (rows, cols) = self.panes[&pane_id].viewport();
@@ -467,5 +477,61 @@ mod tests {
         assert_eq!(pane.scroll_offset(), 7);
         assert_eq!(pane.max_scroll, 10);
         assert!(pane.frame_source().is_none());
+    }
+
+    #[test]
+    fn a_scripted_proxy_attach_claims_the_writer_lease_without_takeover() {
+        let mut ws = Workspace::scripted();
+        let generation = Daemon::subscribe(&ws.daemon).0.generation;
+        let mut pane = Pane::new(PaneId(1), "term-proxy", Backend::Native, "epoch-1");
+        pane.begin_attaching("req-1".into(), Transport::Proxy, generation);
+        ws.panes.insert(pane.id, pane);
+        ws.order.push(PaneId(1));
+
+        ws.apply_scripted_attach_result(&json!({
+            "request_id": "req-1",
+            "success": true,
+            "attachment_id": "att-1",
+            "lease_generation": 1,
+        }))
+        .expect("attach result applies");
+
+        let claims: Vec<Value> = ws
+            .daemon()
+            .ws_sent()
+            .into_iter()
+            .filter(|message| message["type"] == "terminal_take_control")
+            .collect();
+        assert_eq!(
+            claims,
+            [json!({
+                "type": "terminal_take_control",
+                "terminal_id": "term-proxy",
+                "attachment_id": "att-1",
+                "takeover": false,
+            })]
+        );
+    }
+
+    #[test]
+    fn a_scripted_direct_tmux_attach_claims_the_writer_lease_without_takeover() {
+        let mut ws = Workspace::scripted();
+        let generation = Daemon::subscribe(&ws.daemon).0.generation;
+        let mut pane = Pane::new(PaneId(1), "term-tmux", Backend::Tmux, "epoch-1");
+        pane.begin_attaching("req-1".into(), Transport::Direct, generation);
+        ws.panes.insert(pane.id, pane);
+        ws.order.push(PaneId(1));
+        ws.apply_scripted_attach_result(&json!({
+            "request_id": "req-1", "success": true, "attachment_id": "att-1",
+        }))
+        .expect("attach applies");
+        assert!(
+            ws.daemon().ws_sent().iter().any(|message| {
+                message["type"] == "terminal_take_control"
+                    && message["attachment_id"] == "att-1"
+                    && message["takeover"] == false
+            }),
+            "a daemon-written tmux pane claims even with direct frames"
+        );
     }
 }

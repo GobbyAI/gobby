@@ -91,89 +91,6 @@ impl HostState {
         }
     }
 
-    /// Grants one daemon attachment id the right to type on `host_terminal_id`
-    /// over the frame stream. Replaces any previous holder, unless `takeover`
-    /// is false and a peer holds the grant; unledgered.
-    pub async fn grant_input(&self, extra: &Map<String, Value>) -> Value {
-        let Ok(_gate) = self.mutation_gate.try_read() else {
-            return err("host_upgrading");
-        };
-        let attachment_id = s(extra, "attachment_id");
-        if attachment_id.is_empty() {
-            return err("invalid_request");
-        }
-        let Some(host_attachment_id) = extra.get("host_attachment_id").and_then(Value::as_u64)
-        else {
-            return err("invalid_request");
-        };
-        let host_terminal_id = s(extra, "host_terminal_id");
-        // A grant with `takeover: false` is a keypress asking for input. It never
-        // displaces a peer holding the grant on a stream that is still attached,
-        // and the host refuses it before anything changes (#25653).
-        let takeover = !matches!(extra.get("takeover"), Some(Value::Bool(false)));
-        let mut inner = self.inner.lock().await;
-        let peer_holds = match native_slot_mut(&mut inner, &host_terminal_id) {
-            Ok(slot) => {
-                slot.input_grant_attachment.is_some()
-                    && slot
-                        .input_grant
-                        .as_deref()
-                        .is_some_and(|holder| holder != attachment_id.as_str())
-            }
-            Err(code) => return err(code),
-        };
-        if !inner
-            .attachments
-            .get(&host_attachment_id)
-            .is_some_and(|attachment| attachment.host_terminal_id == host_terminal_id)
-        {
-            return err("attachment_mismatch");
-        }
-        if !takeover && peer_holds {
-            return err("input_held_by_peer");
-        }
-        // The trusted grant wins even if another stream preclaimed the daemon
-        // name. Reserve that name on the selected physical stream for themes.
-        for (id, attachment) in &mut inner.attachments {
-            if attachment.host_terminal_id != host_terminal_id {
-                continue;
-            }
-            if *id == host_attachment_id {
-                attachment.client_attachment_id = Some(attachment_id.clone());
-            } else if attachment.client_attachment_id.as_deref() == Some(&attachment_id) {
-                attachment.client_attachment_id = None;
-            }
-        }
-        let slot =
-            native_slot_mut(&mut inner, &host_terminal_id).expect("native slot checked above");
-        let previous = slot.input_grant.replace(attachment_id);
-        slot.input_grant_attachment = Some(host_attachment_id);
-        super::theme::apply_holder_theme(&inner, &host_terminal_id);
-        json!({"ok": true, "granted": true, "previous": previous})
-    }
-
-    /// Clears the input grant on `host_terminal_id` when `attachment_id`
-    /// matches the holder, or unconditionally when it is omitted. Unledgered.
-    pub async fn revoke_input(&self, extra: &Map<String, Value>) -> Value {
-        let Ok(_gate) = self.mutation_gate.try_read() else {
-            return err("host_upgrading");
-        };
-        let attachment_id = extra.get("attachment_id").and_then(Value::as_str);
-        let mut inner = self.inner.lock().await;
-        let slot = match native_slot_mut(&mut inner, &s(extra, "host_terminal_id")) {
-            Ok(slot) => slot,
-            Err(code) => return err(code),
-        };
-        let revoked = match attachment_id {
-            Some(holder) if slot.input_grant.as_deref() != Some(holder) => false,
-            _ => slot.input_grant.take().is_some(),
-        };
-        if revoked {
-            slot.input_grant_attachment = None;
-        }
-        json!({"ok": true, "revoked": revoked})
-    }
-
     /// Delivers `Input`/`Paste` from a frame stream whose attachment is
     /// `attachment_id`. The error is the `InputRefused` code for the stream.
     pub(crate) async fn frame_input(
@@ -204,16 +121,12 @@ impl HostState {
             if slot.locator.is_some() {
                 return Err("not_native");
             }
-            let holder = slot.input_grant.as_deref().ok_or("input_not_granted")?;
-            if slot.input_grant_attachment != Some(attachment_id) {
-                return Err("input_not_granted");
-            }
             let (effect, submit) = input.classify(slot);
             deliver_native(slot, input)?;
             InputActivity {
                 terminal_id: slot.identity.terminal_id.clone(),
                 host_terminal_id: slot.host_terminal_id.clone(),
-                attachment_id: holder.to_owned(),
+                attachment_id: attachment.client_attachment_id.clone().unwrap_or_default(),
                 kind,
                 bytes,
                 interrupt,
@@ -383,7 +296,7 @@ impl HostState {
 }
 
 /// Bytes or paste text bound for a native PTY, shared by the control `write`
-/// verb and the granted frame stream.
+/// verb and the attached frame streams.
 pub(crate) enum NativeInput {
     Bytes(Vec<u8>),
     Paste(String),
@@ -876,19 +789,6 @@ mod tests {
         });
         tokio::task::yield_now().await;
 
-        let grant = json!({
-            "host_terminal_id": "interactive",
-            "attachment_id": "client",
-            "host_attachment_id": attachment_id,
-        });
-        let granted = timeout(
-            Duration::from_millis(250),
-            state.grant_input(grant.as_object().expect("grant object")),
-        )
-        .await
-        .expect("grant_input blocked behind batch delay");
-        assert_eq!(granted["ok"], true);
-
         let framed = timeout(
             Duration::from_millis(250),
             state.frame_input(Some(attachment_id), NativeInput::Bytes(b"x".to_vec())),
@@ -896,18 +796,6 @@ mod tests {
         .await
         .expect("frame_input blocked behind batch delay");
         assert_eq!(framed, Err("terminal_gone"));
-
-        let revoke = json!({
-            "host_terminal_id": "interactive",
-            "attachment_id": "client",
-        });
-        let revoked = timeout(
-            Duration::from_millis(250),
-            state.revoke_input(revoke.as_object().expect("revoke object")),
-        )
-        .await
-        .expect("revoke_input blocked behind batch delay");
-        assert_eq!(revoked["ok"], true);
 
         batch_task.abort();
         assert!(batch_task

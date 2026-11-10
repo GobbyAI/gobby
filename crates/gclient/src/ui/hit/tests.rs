@@ -95,9 +95,7 @@ fn at(view: &ViewState, x: u16, y: u16) -> Hit {
 
 #[test]
 fn hit_test_covers_split_live_layout() {
-    let (mut ws, mut chrome) = split_live();
-    let focused = chrome.focused_pane().expect("focused pane");
-    ws.pane_mut(focused).take_back = true;
+    let (ws, mut chrome) = split_live();
     rendered(&ws, &mut chrome);
     let view = &chrome.view;
 
@@ -198,12 +196,8 @@ fn hit_test_covers_split_live_layout() {
     };
     assert_eq!(at(view, lane.x, lane.y), scrollbar);
 
-    // Only a genuine exceptional pane state is a control, on the pane's
-    // top-left title; the global status row stays plain status.
+    // The global status row is plain status.
     let status = view.status_rect;
-    let indicator = view.control_indicator_hit_area.expect("indicator drawn");
-    assert_ne!(indicator.y, status.y);
-    assert_eq!(at(view, indicator.x, indicator.y), Hit::ControlIndicator);
     assert_eq!(at(view, status.x, status.y), Hit::Status);
     let mut count_view = view.clone();
     count_view.status_count_hit_area = Some(Rect::new(status.x + 2, status.y, 6, 1));

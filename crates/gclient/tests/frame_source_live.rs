@@ -522,36 +522,16 @@ async fn direct_frames_verify_epoch_and_render() {
     }));
 }
 
-/// One control RPC on its own blocking connection, so the async frame source
-/// keeps running while the host answers.
-async fn control_rpc(host_dir: &Path, request: Value) -> Value {
-    let host_dir = host_dir.to_path_buf();
-    let id = request["id"].as_str().expect("control rpc id").to_string();
-    timeout(
-        HOST_TIMEOUT,
-        tokio::task::spawn_blocking(move || {
-            let mut control = control_connection_at(&host_dir);
-            send_control(&mut control, &request);
-            recv_response_with_id(&mut control, &id)
-        }),
-    )
-    .await
-    .expect("control rpc deadline")
-    .expect("control rpc task")
-}
-
-/// A real gterm host proves the whole direct write path (#22573): the daemon
-/// grants input to one attachment id, gclient binds that id and types on the
-/// frame stream, the PTY echoes the bytes back as frames, and a revoke turns
-/// the next key into a typed `InputRefused` without closing the stream.
+/// A real gterm host proves the whole direct write path (#22573): gclient types
+/// on the frame stream and the PTY echoes the bytes back as frames. No grant
+/// gates a key, before or after gclient binds its attachment id (#25653).
 #[tokio::test]
-async fn granted_direct_input_echoes_and_revoke_refuses() {
+async fn direct_input_echoes_without_a_grant() {
     let host = TestHost::spawn(&[]).await;
     let host_dir = host.socket_dir().to_path_buf();
-    let spawn_dir = host_dir.clone();
     let (epoch, host_terminal_id) = timeout(
         HOST_TIMEOUT * 2,
-        tokio::task::spawn_blocking(move || spawn_native_terminal_at(&spawn_dir)),
+        tokio::task::spawn_blocking(move || spawn_native_terminal_at(&host_dir)),
     )
     .await
     .expect("spawn native control deadline")
@@ -571,33 +551,23 @@ async fn granted_direct_input_echoes_and_revoke_refuses() {
     })
     .await;
 
-    // Ungranted input is refused, and the stream survives to be granted.
+    // A key typed straight after the attach handshake reaches the PTY.
     source
         .send_input(&ClientMessage::Input {
-            data: b"ungranted\n".to_vec(),
+            data: b"unbound\n".to_vec(),
         })
-        .expect("queue ungranted input");
-    let refusals = collect_direct_until(&mut source, |message| {
+        .expect("queue input before any bind");
+    let before_bind = collect_direct_until(&mut source, |message| {
         matches!(message, ServerMessage::InputRefused { .. })
+            || frame_text(message).is_some_and(|text| text.contains("unbound"))
     })
     .await;
-    assert!(matches!(
-        refusals.last(),
-        Some(ServerMessage::InputRefused { code }) if code == "input_not_granted"
-    ));
-
-    let granted = control_rpc(
-        &host_dir,
-        json!({
-            "method": "grant_input",
-            "id": "grant-1",
-            "host_terminal_id": host_terminal_id,
-            "attachment_id": "att-live",
-            "host_attachment_id": source.host_attachment_id().expect("host stream id")
-        }),
-    )
-    .await;
-    assert_eq!(granted["granted"], true, "grant input: {granted}");
+    assert!(
+        before_bind
+            .iter()
+            .all(|message| !matches!(message, ServerMessage::InputRefused { .. })),
+        "the host refuses no key for want of a grant: {before_bind:?}"
+    );
 
     source
         .send_input(&ClientMessage::BindAttachment {
@@ -608,53 +578,23 @@ async fn granted_direct_input_echoes_and_revoke_refuses() {
         .send_input(&ClientMessage::Input {
             data: b"hello\n".to_vec(),
         })
-        .expect("queue granted input");
+        .expect("queue bound input");
     let echoed = collect_direct_until(&mut source, |message| {
-        frame_text(message).is_some_and(|text| text.contains("hello"))
+        matches!(message, ServerMessage::InputRefused { .. })
+            || frame_text(message).is_some_and(|text| text.contains("hello"))
     })
     .await;
     assert!(
         echoed
             .iter()
             .any(|message| frame_text(message).is_some_and(|text| text.contains("hello"))),
-        "the PTY echoed the directly typed bytes"
+        "the PTY echoed the directly typed bytes: {echoed:?}"
     );
-
-    let revoked = control_rpc(
-        &host_dir,
-        json!({
-            "method": "revoke_input",
-            "id": "revoke-1",
-            "host_terminal_id": host_terminal_id,
-            "attachment_id": "att-live"
-        }),
-    )
-    .await;
-    assert_eq!(revoked["revoked"], true, "revoke input: {revoked}");
-
-    source
-        .send_input(&ClientMessage::Input {
-            data: b"revoked\n".to_vec(),
-        })
-        .expect("queue input after revoke");
-    let after_revoke = collect_direct_until(&mut source, |message| {
-        matches!(message, ServerMessage::InputRefused { .. })
-    })
-    .await;
-    assert!(matches!(
-        after_revoke.last(),
-        Some(ServerMessage::InputRefused { code }) if code == "input_not_granted"
-    ));
     assert_eq!(
         source.transport(),
         Transport::Direct,
-        "a refusal never retires the source"
+        "typing never retires the source"
     );
-    source
-        .send_input(&ClientMessage::Paste {
-            text: "pasted".into(),
-        })
-        .expect("a refused stream still accepts writes");
 }
 
 #[tokio::test]
@@ -1029,6 +969,136 @@ async fn direct_frame_overflow_fails_typed_without_dropping() {
 }
 
 #[tokio::test]
+async fn proxy_attach_claims_the_writer_lease_without_a_takeover() {
+    // The daemon treats every WebSocket attach as a web viewer, so a proxied
+    // pane (tmux or proxied native) must claim the lease itself or it is read-only.
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let source = ProxyFrameSource::attach(daemon.clone(), "terminal-1")
+        .await
+        .expect("proxy attach");
+    // The socket is read in order, so the reply to a request sent after the
+    // attach proves the claim reached the daemon first.
+    timeout(
+        IO_TIMEOUT,
+        daemon.send(json!({"type": "subscribe", "events": [], "request_id": "claim-barrier"})),
+    )
+    .await
+    .expect("ordering barrier answered")
+    .expect("ordering barrier");
+    let claims: Vec<Value> = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("type").and_then(Value::as_str) == Some("terminal_take_control"))
+        .collect();
+    assert_eq!(claims.len(), 1, "one claim per proxied attach: {claims:?}");
+    assert_eq!(claims[0]["terminal_id"], json!("terminal-1"));
+    assert_eq!(claims[0]["attachment_id"], json!(source.attachment_id()));
+    assert_eq!(claims[0]["takeover"], json!(false));
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn initial_proxy_lag_detaches_before_retry_claim_and_write() {
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let release = mock.hold_ws("terminal_attach", |_| true);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let pending = tokio::spawn(ProxyFrameSource::attach(
+        daemon.clone(),
+        "terminal-initial-lag",
+    ));
+    timeout(
+        IO_TIMEOUT,
+        mock.wait_for_request(|request| {
+            request.body.as_ref().and_then(|body| body.get("type"))
+                == Some(&json!("terminal_attach"))
+        }),
+    )
+    .await
+    .expect("first attach waiting for its reply");
+
+    // The receiver exists before the attach request. Keep its reply held while
+    // overflowing the 256-event bus, then prove the reader consumed every event.
+    let mut framed = Vec::new();
+    write_message(&mut framed, &semantic_frame("initial")).expect("encode buffered frame");
+    let payload = STANDARD.encode(&framed[4..]);
+    for _ in 0..257 {
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-initial-lag",
+            "attachment_id": "attachment-1",
+            "encoding": "bincode-b64",
+            "payload": payload,
+        }))
+        .await;
+    }
+    timeout(
+        IO_TIMEOUT,
+        daemon.send(json!({
+            "type": "subscribe", "events": [], "request_id": "initial-lag-barrier"
+        })),
+    )
+    .await
+    .expect("reader barrier answered")
+    .expect("reader barrier");
+    release.notify_one();
+    let failed = timeout(IO_TIMEOUT, pending)
+        .await
+        .expect("failed attach completed")
+        .expect("attach task joined");
+    assert!(matches!(failed, Err(FrameError::Lag)));
+
+    let retry = ProxyFrameSource::attach(daemon.clone(), "terminal-initial-lag")
+        .await
+        .expect("retry attachment");
+    assert_eq!(retry.attachment_id(), "attachment-2");
+    daemon
+        .notify(json!({
+            "type": "terminal_input",
+            "terminal_id": "terminal-initial-lag",
+            "attachment_id": retry.attachment_id(),
+            "client_write_seq": 1,
+            "data": "retry-b",
+        }))
+        .await
+        .expect("retry write queued");
+    timeout(
+        IO_TIMEOUT,
+        daemon.send(json!({
+            "type": "subscribe", "events": [], "request_id": "retry-write-barrier"
+        })),
+    )
+    .await
+    .expect("wire barrier answered")
+    .expect("wire barrier");
+    let requests: Vec<Value> = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .collect();
+    let detached: Vec<_> = requests
+        .iter()
+        .filter(|body| body.get("type") == Some(&json!("terminal_detach")))
+        .collect();
+    assert_eq!(
+        detached.len(),
+        1,
+        "failed initial attach must release its lease"
+    );
+    assert_eq!(detached[0]["attachment_id"], json!("attachment-1"));
+    // Replay the real wire order through production lease admission: B's
+    // takeover:false claim must succeed, and its input must be admitted.
+    mock_daemon::lease_admission::assert_tmux_write_admission(&requests, "terminal-initial-lag");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn proxy_source_decodes_cell_frames() {
     let mock = mock_daemon::MockDaemon::start("local-token").await;
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
@@ -1073,7 +1143,7 @@ async fn proxy_source_decodes_cell_frames() {
         })
         .await
         .expect("proxy scroll");
-    assert_eq!(source.daemon().pending_counts(), (0, 0, 0));
+    assert_eq!(source.daemon().pending_counts(), (0, 0));
     mock.send_event_and_wait(json!({
         "type": "terminal_scroll_offset_applied",
         "terminal_id": "terminal-1",
@@ -1183,13 +1253,24 @@ async fn proxy_lag_recovers_from_a_fresh_keyframe() {
     }
     workspace
         .daemon()
-        .send(json!({
-            "type": "terminal_take_control",
+        .notify(json!({
+            "type": "terminal_focus",
             "terminal_id": "terminal-lag",
             "attachment_id": old_attachment,
+            "focused": true,
         }))
         .await
         .expect("ordered delivery barrier");
+    timeout(Duration::from_secs(5), async {
+        while !mock.requests().iter().any(|request| {
+            request.body.as_ref().and_then(|body| body.get("type"))
+                == Some(&json!("terminal_focus"))
+        }) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("ordered delivery barrier recorded");
     let attach_count_before = terminal_attach_requests(&mock).len();
 
     assert!(matches!(
@@ -1340,12 +1421,7 @@ async fn proxy_finalization_tombstones_without_followup_requests() {
         .filter(|body| {
             matches!(
                 body.get("type").and_then(serde_json::Value::as_str),
-                Some(
-                    "terminal_detach"
-                        | "terminal_set_viewport"
-                        | "terminal_take_control"
-                        | "terminal_release_control"
-                )
+                Some("terminal_detach" | "terminal_set_viewport")
             )
         })
         .collect();

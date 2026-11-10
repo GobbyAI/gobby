@@ -28,6 +28,10 @@ def credential_roots() -> list[Path]:
         home / ".secret_kek",
         home / "grants",
         home / "tools" / "srt",
+        # The runtime home's pair is the no-hub stand-in for the bound pair. It stays denied
+        # when the daemon is bound elsewhere.
+        home / "break_glass",
+        home / ".break_glass-staging",
         bound,
         break_glass_path(),
         break_glass_staging_path(),
@@ -42,7 +46,13 @@ def credential_roots() -> list[Path]:
                 roots.append(path)
     canonical = operator_bootstrap_path()
     if canonical is not None:
-        roots.append(canonical)
+        roots.extend(
+            [
+                canonical,
+                break_glass_path(canonical.parent),
+                break_glass_staging_path(canonical.parent),
+            ]
+        )
     return roots
 
 

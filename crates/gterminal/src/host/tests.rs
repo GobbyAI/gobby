@@ -91,94 +91,46 @@ async fn frame_grant_fixture() -> (
 
 #[cfg(all(unix, feature = "vt-engine"))]
 #[tokio::test]
-async fn host_grant_rejects_holder_name_theft_and_revokes_the_old_stream() {
-    use serde_json::json;
+async fn native_input_reaches_the_pty_from_every_attached_stream_without_a_grant() {
     use write::NativeInput;
     let (state, mut received, a, b) = frame_grant_fixture().await;
-    let granted = state
-        .grant_input(
-            json!({"host_terminal_id": "native", "attachment_id": "holder-a",
-            "host_attachment_id": a})
-            .as_object()
-            .unwrap(),
-        )
-        .await;
-    assert_eq!(granted["granted"], true);
-    // B races the legitimate client's first bind, after the trusted grant to A.
-    let stolen = state.bind_attachment(b, "holder-a".into()).await;
-    assert_eq!(stolen, Err("attachment_already_bound"));
     let cursor = state.events.cursor().await;
-    for input in [
-        NativeInput::Bytes(b"attack".to_vec()),
-        NativeInput::Paste("attack".into()),
-    ] {
-        assert_eq!(
-            state.frame_input(Some(b), input).await,
-            Err("input_not_granted")
-        );
-    }
-    assert!(received.try_recv().is_err());
-    assert_eq!(state.events.cursor().await, cursor);
     state
-        .frame_input(Some(a), NativeInput::Bytes(b"owner".to_vec()))
+        .frame_input(Some(b), NativeInput::Bytes(b"from-b".to_vec()))
         .await
-        .unwrap();
-    assert_eq!(received.try_recv().unwrap().as_ref(), b"owner");
-    state.bind_attachment(a, "holder-a".into()).await.unwrap();
+        .expect("an attached stream types with no grant");
+    state
+        .frame_input(Some(a), NativeInput::Paste("from-a".into()))
+        .await
+        .expect("a second attached stream types with no grant");
+    assert_eq!(received.try_recv().unwrap().as_ref(), b"from-b");
+    assert_eq!(received.try_recv().unwrap().as_ref(), b"from-a");
+    assert_ne!(state.events.cursor().await, cursor, "input emits activity");
     assert_eq!(
-        state.bind_attachment(b, "holder-a".into()).await,
-        Err("attachment_already_bound")
+        state
+            .frame_input(None, NativeInput::Bytes(b"x".to_vec()))
+            .await,
+        Err("attach_required")
     );
-    let moved = state
-        .grant_input(
-            json!({"host_terminal_id": "native", "attachment_id": "holder-b",
-            "host_attachment_id": b})
-            .as_object()
-            .unwrap(),
-        )
-        .await;
-    assert_eq!(moved["previous"], "holder-a");
-    let cursor = state.events.cursor().await;
-    for input in [
-        NativeInput::Bytes(b"stale".to_vec()),
-        NativeInput::Paste("stale".into()),
-    ] {
-        assert_eq!(
-            state.frame_input(Some(a), input).await,
-            Err("input_not_granted")
-        );
-    }
-    assert!(received.try_recv().is_err());
-    assert_eq!(state.events.cursor().await, cursor);
-    state
-        .frame_input(Some(b), NativeInput::Paste("new owner".into()))
-        .await
-        .unwrap();
-    assert_eq!(received.try_recv().unwrap().as_ref(), b"new owner");
 }
 
 #[cfg(all(unix, feature = "vt-engine"))]
 #[tokio::test]
-async fn holder_theme_name_stays_reserved_when_its_stream_changes_labels() {
+async fn bind_name_is_unique_per_slot_and_freed_when_its_stream_renames() {
     let (state, _received, a, b) = frame_grant_fixture().await;
-    let grant = state
-        .grant_input(
-            serde_json::json!({
-                "host_terminal_id": "native", "attachment_id": "holder", "host_attachment_id": a,
-            })
-            .as_object()
-            .unwrap(),
-        )
-        .await;
-    assert_eq!(grant["granted"], true);
-    state
-        .bind_attachment(a, "another-label".into())
-        .await
-        .unwrap();
+    state.bind_attachment(a, "holder".into()).await.unwrap();
     assert_eq!(
         state.bind_attachment(b, "holder".into()).await,
         Err("attachment_already_bound")
     );
+    state
+        .bind_attachment(a, "another-label".into())
+        .await
+        .unwrap();
+    state
+        .bind_attachment(b, "holder".into())
+        .await
+        .expect("renaming frees the old name");
 }
 
 #[cfg(all(unix, feature = "vt-engine"))]

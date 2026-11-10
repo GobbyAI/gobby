@@ -263,24 +263,7 @@ struct Shared {
     gates: Mutex<HashMap<Uuid, ActionGate<Pending>>>,
     holds: Mutex<HashMap<Uuid, HeldAction>>,
     active: AtomicUsize,
-    acquiring: AtomicUsize,
-}
-
-/// Counts one acquire in `Shared::acquiring` while it is parked; dropping it,
-/// on cancellation too, takes the count back.
-struct Parked<'a>(&'a AtomicUsize);
-
-impl<'a> Parked<'a> {
-    fn new(count: &'a AtomicUsize) -> Self {
-        count.fetch_add(1, Ordering::SeqCst);
-        Self(count)
-    }
-}
-
-impl Drop for Parked<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
+    busy_waits: AtomicUsize,
 }
 
 struct Pending {
@@ -317,7 +300,7 @@ impl Route {
                 gates: Mutex::new(HashMap::new()),
                 holds: Mutex::new(HashMap::new()),
                 active: AtomicUsize::new(0),
-                acquiring: AtomicUsize::new(0),
+                busy_waits: AtomicUsize::new(0),
             }),
         }
     }
@@ -327,16 +310,16 @@ impl Route {
         self.shared.active.load(Ordering::SeqCst)
     }
 
-    /// Diagnostic count: writes queued behind `terminal`'s gate.
+    /// Writes queued behind the terminal's action gate.
     pub fn queued(&self, terminal: Uuid) -> usize {
         lock(&self.shared.gates)
             .get(&terminal)
-            .map_or(0, |gate| gate.queued())
+            .map_or(0, ActionGate::queued)
     }
 
-    /// Diagnostic count: acquires parked until their terminal's gate frees.
-    pub fn acquiring(&self) -> usize {
-        self.shared.acquiring.load(Ordering::SeqCst)
+    /// Acquire attempts that found the gate busy and went to wait for it.
+    pub fn busy_waits(&self) -> usize {
+        self.shared.busy_waits.load(Ordering::SeqCst)
     }
 
     pub async fn handle(&self, token: &Arc<str>, call: Value) -> Value {
@@ -542,7 +525,6 @@ impl Route {
         // for them to drain or lapse. An uncertain effect that only proof can
         // settle refuses at once.
         let deadline = Instant::now() + QUEUE_MAX_AGE;
-        let mut parked = None;
         let hold = loop {
             // Every attempt revalidates the token, so a waiter whose token
             // retired during the wait takes no hold.
@@ -558,14 +540,13 @@ impl Route {
             match taken {
                 Ok(hold) => break hold,
                 Err((HoldError::Busy, true)) if Instant::now() < deadline => {
-                    parked.get_or_insert_with(|| Parked::new(&self.shared.acquiring));
+                    self.shared.busy_waits.fetch_add(1, Ordering::SeqCst);
                     tokio::time::sleep(ADMIT_POLL).await;
                     pump(&self.shared, terminal);
                 }
                 Err((error, _)) => return hold_refusal(error),
             }
         };
-        drop(parked);
         // The token may have retired around the grant. A hold it no longer
         // owns is released at once, so it never blocks the replacement's writes.
         if !self.token_is(token) {

@@ -4,19 +4,82 @@
 //! `terminal_input` reply never sits between two frames. `client_write_seq`
 //! is still assigned on the loop; the writer only carries the body.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 use crate::copy_mode::PASTE_MAX_BYTES;
-use crate::daemon::{Daemon, Generation, LiveDaemon};
+use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, WriteReceipt};
 
 use super::super::PaneId;
 use super::jobs::{JobKey, JobOutcome, JobResult, JobTag};
+
+/// A write sent to the daemon whose reply has not settled yet. Writes settle
+/// in the order they were sent.
+struct InFlight {
+    client_write_seq: u64,
+    generation: Generation,
+    attachment: String,
+    bytes: usize,
+    reply: JoinHandle<Result<Value, DaemonError>>,
+}
+
+/// The outcome and byte count of the oldest in-flight write.
+struct Settled {
+    outcome: JobOutcome,
+    bytes: usize,
+}
+
+/// Waits for the oldest in-flight write's reply. A reply that never arrives (a
+/// deadline, a lost connection, a failed task) leaves that write unconfirmed.
+async fn settle_front(inflight: &mut VecDeque<InFlight>, pane: PaneId) -> Settled {
+    let front = inflight
+        .front_mut()
+        .expect("settled only while a write is in flight");
+    let joined = (&mut front.reply).await;
+    let front = inflight
+        .pop_front()
+        .expect("the front write stays queued until it settles");
+    let result = match joined {
+        Ok(Ok(reply)) => JobResult::Write {
+            pane,
+            bytes: front.bytes,
+            reply,
+        },
+        Ok(Err(_)) | Err(_) => JobResult::WriteUnconfirmed {
+            pane,
+            attachment: front.attachment,
+        },
+    };
+    Settled {
+        outcome: JobOutcome {
+            tag: JobTag {
+                id: front.client_write_seq,
+                generation: front.generation,
+                key: JobKey::Write(pane),
+            },
+            result,
+        },
+        bytes: front.bytes,
+    }
+}
+
+/// Frees a settled write's backlog slot, stops the writer on an unconfirmed
+/// write, and sends its outcome. False once the outcomes channel has closed.
+fn deliver(settled: Settled, backlog: &Backlog, outcomes: &UnboundedSender<JobOutcome>) -> bool {
+    backlog.messages.fetch_sub(1, Ordering::AcqRel);
+    backlog.bytes.fetch_sub(settled.bytes, Ordering::AcqRel);
+    // Typing invariant: a lost reply for an already-written frame must not
+    // retire this writer or discard keys queued behind it. Socket write failure,
+    // explicit retirement and connection generations fence unsafe writes.
+    outcomes.send(settled.outcome).is_ok()
+}
 
 /// Writes a pane may have queued behind the one being sent. The cap counts
 /// writes only: the channel itself is unbounded so a barrier always fits
@@ -43,6 +106,118 @@ enum QueuedWrite {
         attachment: String,
         done: watch::Sender<bool>,
     },
+}
+
+/// A barrier the writer has taken but not yet fired. It fires once the writes
+/// sent before it have settled, and its waits then run off the writer task.
+struct Fence {
+    /// Writes sent before the barrier, counted when it was taken.
+    ahead: u64,
+    message: Option<Value>,
+    after: Option<watch::Receiver<bool>>,
+    flushed: Option<WriteReceipt>,
+    attachment: String,
+    done: watch::Sender<bool>,
+}
+
+/// The writer's barriers, fired in the order they were taken.
+#[derive(Default)]
+struct Fences {
+    queue: VecDeque<Fence>,
+    /// Writes that have entered `inflight`.
+    pushed: u64,
+    /// Writes whose replies have settled, in the order sent.
+    settled: u64,
+    /// The last fired barrier's `done`: the next one waits behind it so detaches
+    /// reach the daemon in order.
+    chain: Option<watch::Receiver<bool>>,
+}
+
+impl Fences {
+    /// Fires every barrier whose earlier writes have settled. `false` means the
+    /// pane is finished and the writer must stop.
+    fn fire_ready(
+        &mut self,
+        abandoned: &mut Abandoned,
+        outcomes: &UnboundedSender<JobOutcome>,
+        daemon: &LiveDaemon,
+        pane: PaneId,
+        generation: Generation,
+    ) -> bool {
+        while self
+            .queue
+            .front()
+            .is_some_and(|fence| fence.ahead <= self.settled)
+        {
+            if !abandoned.report(outcomes, pane) {
+                return false;
+            }
+            let Some(fence) = self.queue.pop_front() else {
+                break;
+            };
+            let prev = self.chain.replace(fence.done.subscribe());
+            tokio::spawn(run_fence(
+                fence,
+                prev,
+                daemon.clone(),
+                outcomes.clone(),
+                generation,
+                pane,
+            ));
+        }
+        true
+    }
+}
+
+/// Runs one fired barrier off the writer task: the barrier before it, the take
+/// it undoes and the frame flush come first, then the daemon request.
+async fn run_fence(
+    fence: Fence,
+    prev: Option<watch::Receiver<bool>>,
+    daemon: LiveDaemon,
+    outcomes: UnboundedSender<JobOutcome>,
+    generation: Generation,
+    pane: PaneId,
+) {
+    let Fence {
+        message,
+        after,
+        flushed,
+        attachment,
+        done,
+        ..
+    } = fence;
+    if let Some(mut prev) = prev {
+        let _ = prev.wait_for(|fired| *fired).await;
+    }
+    if let Some(mut taken) = after {
+        let _ = taken.wait_for(|taken| *taken).await;
+    }
+    // A direct pane's input is flushed to its frame socket first. The frame
+    // writer bounds each write and retires a socket the host stopped reading,
+    // which fails the receipt: what was typed there is unconfirmed, and the
+    // barrier goes on rather than holding the next take.
+    if let Some(flushed) = flushed {
+        if !matches!(flushed.await, Ok(Ok(()))) {
+            let outcome = JobOutcome {
+                tag: JobTag {
+                    id: 0,
+                    generation,
+                    key: JobKey::Write(pane),
+                },
+                result: JobResult::WriteUnconfirmed { pane, attachment },
+            };
+            if outcomes.send(outcome).is_err() {
+                return;
+            }
+        }
+    }
+    // A detach that cannot reach the daemon lost the connection, which drops
+    // the attachment with it.
+    if let Some(message) = message {
+        let _ = daemon.notify(message).await;
+    }
+    let _ = done.send(true);
 }
 
 /// What is queued and not yet picked up by the writer task.
@@ -113,6 +288,7 @@ impl PaneWriter {
         daemon: &LiveDaemon,
         outcomes: &UnboundedSender<JobOutcome>,
         pane: PaneId,
+        ready: Option<JoinHandle<Result<(), FrameError>>>,
     ) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let generation = daemon.generation();
@@ -122,8 +298,35 @@ impl PaneWriter {
         let backlog = Arc::new(Backlog::default());
         let drained = Arc::clone(&backlog);
         tokio::spawn(async move {
+            if let Some(ready) = ready {
+                if !matches!(ready.await, Ok(Ok(()))) {
+                    // A failed transfer cannot send input under an unclaimed attachment.
+                    drained.stopped.store(true, Ordering::Release);
+                }
+            }
             let mut abandoned = Abandoned::default();
-            while let Some(queued) = rx.recv().await {
+            let mut inflight = VecDeque::new();
+            let mut fences = Fences::default();
+            loop {
+                // A settled reply goes out before the next queued write, so the
+                // outcomes come back in the order the writes were sent.
+                let queued = tokio::select! {
+                    biased;
+                    settled = settle_front(&mut inflight, pane), if !inflight.is_empty() => {
+                        if !deliver(settled, &drained, &outcomes) {
+                            return;
+                        }
+                        fences.settled += 1;
+                        if !fences.fire_ready(&mut abandoned, &outcomes, &daemon, pane, writer_generation) {
+                            return;
+                        }
+                        continue;
+                    }
+                    queued = rx.recv() => queued,
+                };
+                let Some(queued) = queued else {
+                    break;
+                };
                 match queued {
                     QueuedWrite::Write {
                         generation,
@@ -131,45 +334,46 @@ impl PaneWriter {
                         body,
                         bytes,
                     } => {
-                        drained.messages.fetch_sub(1, Ordering::AcqRel);
-                        drained.bytes.fetch_sub(bytes, Ordering::AcqRel);
                         // The body names the attachment the write was typed
                         // for; its outcome speaks only for that attachment.
                         let attachment = body["attachment_id"]
                             .as_str()
                             .unwrap_or_default()
                             .to_owned();
-                        // An unconfirmed write leaves the pane read-only, so
-                        // nothing queued behind it may go out under that
-                        // uncertainty; nor may a write typed for a connection
-                        // that has since been replaced.
+                        // Retired writers and failed socket writes cannot send
+                        // queued keys, nor can a replaced connection generation.
                         if drained.stopped.load(Ordering::Acquire)
                             || generation != daemon.generation()
                         {
+                            // An abandoned write never settles, so its slot frees here.
+                            drained.messages.fetch_sub(1, Ordering::AcqRel);
+                            drained.bytes.fetch_sub(bytes, Ordering::AcqRel);
                             abandoned.add(generation, client_write_seq, attachment, bytes);
                             if rx.is_empty() && !abandoned.report(&outcomes, pane) {
                                 return;
                             }
                             continue;
                         }
-                        let result = match daemon.send(body).await {
-                            Ok(reply) => JobResult::Write { pane, bytes, reply },
-                            Err(_) => {
-                                drained.stopped.store(true, Ordering::Release);
-                                JobResult::WriteUnconfirmed { pane, attachment }
-                            }
-                        };
-                        let outcome = JobOutcome {
-                            tag: JobTag {
-                                id: client_write_seq,
-                                generation,
-                                key: JobKey::Write(pane),
-                            },
-                            result,
-                        };
-                        if outcomes.send(outcome).is_err() {
-                            return;
+                        // The next write waits only for this one's frame to reach
+                        // the socket, never for the daemon's reply.
+                        let (written_tx, mut written_rx) = watch::channel(false);
+                        let reply = tokio::spawn({
+                            let daemon = daemon.clone();
+                            async move { daemon.send_marking_written(body, written_tx).await }
+                        });
+                        if written_rx.wait_for(|written| *written).await.is_err() {
+                            // The frame never reached the socket, so nothing
+                            // queued behind it may go out under that.
+                            drained.stopped.store(true, Ordering::Release);
                         }
+                        inflight.push_back(InFlight {
+                            client_write_seq,
+                            generation,
+                            attachment,
+                            bytes,
+                            reply,
+                        });
+                        fences.pushed += 1;
                     }
                     QueuedWrite::Barrier {
                         message,
@@ -178,40 +382,40 @@ impl PaneWriter {
                         attachment,
                         done,
                     } => {
-                        if !abandoned.report(&outcomes, pane) {
+                        // A detach fences the attachment's waiters: it fires once
+                        // every write sent before it has settled. Writes typed
+                        // after it keep flowing, so a held reply holds no key.
+                        fences.queue.push_back(Fence {
+                            ahead: fences.pushed,
+                            message,
+                            after,
+                            flushed,
+                            attachment,
+                            done,
+                        });
+                        if !fences.fire_ready(
+                            &mut abandoned,
+                            &outcomes,
+                            &daemon,
+                            pane,
+                            writer_generation,
+                        ) {
                             return;
                         }
-                        if let Some(mut taken) = after {
-                            let _ = taken.wait_for(|taken| *taken).await;
-                        }
-                        // A direct pane's input is flushed to its frame socket
-                        // first. The frame writer bounds each write and retires
-                        // a socket the host stopped reading, which fails the
-                        // receipt: what was typed there is unconfirmed, and the
-                        // barrier goes on rather than holding the next take.
-                        if let Some(flushed) = flushed {
-                            if !matches!(flushed.await, Ok(Ok(()))) {
-                                let outcome = JobOutcome {
-                                    tag: JobTag {
-                                        id: 0,
-                                        generation: writer_generation,
-                                        key: JobKey::Write(pane),
-                                    },
-                                    result: JobResult::WriteUnconfirmed { pane, attachment },
-                                };
-                                if outcomes.send(outcome).is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                        // A release that cannot reach the daemon lost the
-                        // connection, which drops the lease with it.
-                        if let Some(message) = message {
-                            let _ = daemon.notify(message).await;
-                        }
-                        let _ = done.send(true);
                     }
                 }
+            }
+            while !inflight.is_empty() {
+                let settled = settle_front(&mut inflight, pane).await;
+                if !deliver(settled, &drained, &outcomes) {
+                    return;
+                }
+                fences.settled += 1;
+            }
+            // Barriers left behind writes that have all settled now fire, so a
+            // close the loop asked for still reaches the daemon.
+            if !fences.fire_ready(&mut abandoned, &outcomes, &daemon, pane, writer_generation) {
+                return;
             }
             abandoned.report(&outcomes, pane);
         });
@@ -294,3 +498,7 @@ impl PaneWriter {
         Ok(false)
     }
 }
+
+#[cfg(test)]
+#[path = "writer/tests.rs"]
+mod tests;

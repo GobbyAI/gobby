@@ -119,7 +119,7 @@ pub struct AgentEntry {
     pub terminal_id: String,
     pub backend: Backend,
     pub name: String,
-    /// The run's agent definition (`backend-developer`); no rung of `name`.
+    /// The run's agent definition; no rung of `name`.
     pub agent_definition_name: Option<String>,
     /// The seat's definition identity, the one the needs-you log names; a missing
     /// identity is the default definition.

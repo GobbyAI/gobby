@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,7 +34,12 @@ from gobby.agents.cargo_target import (
     sandbox_checkout_cargo_target_dir,
 )
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
-from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions, prepare_sandbox_run_paths
+from gobby.agents.sandbox_credentials import credential_roots
+from gobby.agents.sandbox_policy import (
+    gcode_runtime_write_exceptions,
+    prepare_sandbox_run_paths,
+    sensitive_write_roots,
+)
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
 from gobby.agents.srt_runtime import retained_launch_write_paths
 from gobby.agents.srt_settings import render_srt_settings
@@ -57,6 +63,7 @@ _SESSION_ID = "node-srt-session"
 _DAEMON_PORT = 60887
 _WEBSOCKET_PORT = 60888
 _PROVIDERS = ("claude", "codex", "grok", "droid", "agy")
+_GIT = shutil.which("git")
 _DARWIN_WRITE_PATHS = (
     "{darwin_temp}/xcrun_db-*",
     "{darwin_cache}/com.apple.DeveloperTools",
@@ -146,6 +153,8 @@ def _case(
             "epic_seq": epic_seq,
             "read_all_agent_workspaces": read_all_agent_workspaces,
             "predecessor_workspace_folders": list(predecessor_workspace_folders),
+            # Recorded from the oracle under the pinned layout; see `_hub_authorities`.
+            "credential_authority_roots": [],
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -272,6 +281,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
     layout = {
         "home": root / "home",
         "gobby_home": root / "gobby-home",
+        "bound_home": root / "bound-daemon",
+        "bound_bootstrap": root / "bound-daemon" / "startup.yaml",
         "workspace": root / "workspace",
         "main": root / "main",
         "bin": root / "bin",
@@ -328,6 +339,7 @@ def _placeholderize(text: str, layout: dict[str, str]) -> str:
 
 
 def _materialize(inputs: dict[str, Any], layout: dict[str, str]) -> None:
+    assert _GIT is not None, "the corpus fixture requires git"
     for name in ("home", "gobby_home", "bin", "tmp", "workspace", "main"):
         Path(layout[name]).mkdir(parents=True, exist_ok=True)
     for relative in inputs["home_tree"]:
@@ -337,7 +349,7 @@ def _materialize(inputs: dict[str, Any], layout: dict[str, str]) -> None:
         executable.write_text("#!/bin/sh\n", encoding="utf-8")
         executable.chmod(0o755)
     for repo in (Path(layout["workspace"]), Path(layout["main"])):
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run([_GIT, "init", "-q", str(repo)], check=True)
     if inputs["project_json"] is not None:
         config_dir = Path(layout["main"]) / ".gobby"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -457,6 +469,11 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     return settings, additions
 
 
+def _pin_credential_authorities(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -> None:
+    # The operator account comes from `_pin_account_home`; only the bound daemon is pinned here.
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", Path(layout["bound_bootstrap"]))
+
+
 def _evaluate(
     template: dict[str, Any], case_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[str, dict[str, str], dict[str, str]]:
@@ -464,6 +481,7 @@ def _evaluate(
     inputs = _fill(template["inputs"], layout)
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
+    _pin_credential_authorities(monkeypatch, layout)
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
     monkeypatch.setattr(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
@@ -481,6 +499,7 @@ def _refusal(
     inputs = _fill(template["inputs"], layout)
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
+    _pin_credential_authorities(monkeypatch, layout)
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
     monkeypatch.setattr(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
@@ -538,6 +557,16 @@ def _decode_settings(document: dict[str, Any], table: list[str]) -> str:
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
+def _hub_authorities(inputs: dict[str, Any], layout: dict[str, str]) -> dict[str, Any]:
+    """Return the case inputs carrying the hub's credential list, as spawn_payload sends it.
+
+    The hub sends the oracle's whole `credential_roots()`, so the Rust replay receives the
+    same list a production spawn does. Call it while the layout's pins are still in force.
+    """
+    roots = [_placeholderize(str(path.resolve()), layout) for path in credential_roots()]
+    return {**inputs, "credential_authority_roots": roots}
+
+
 def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cases: list[dict[str, Any]] = []
     table: list[str] = []
@@ -549,7 +578,7 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             {
                 "name": template["name"],
                 "platform": template["platform"],
-                "inputs": template["inputs"],
+                "inputs": _hub_authorities(template["inputs"], layout),
                 "expected": {
                     "settings": _encode_settings(
                         _placeholderize(_portable_settings(settings, layout), layout), table
@@ -563,7 +592,11 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         message, layout = _refusal(template, tmp_path / "record" / name, monkeypatch)
         assert message.startswith(prefix), message
         refusals.append(
-            {"name": name, "inputs": template["inputs"], "error": _placeholderize(message, layout)}
+            {
+                "name": name,
+                "inputs": _hub_authorities(template["inputs"], layout),
+                "error": _placeholderize(message, layout),
+            }
         )
     corpus = {
         "version": 1,
@@ -588,6 +621,48 @@ def _load_corpus() -> dict[str, Any]:
     if not corpus.get("cases"):
         pytest.fail(f"node SRT corpus at {_CORPUS} has no cases; re-record it")
     return corpus
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_corpus_credential_authorities_are_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    host_account = Path("/outside-corpus-account")
+    host_bound = Path("/outside-corpus-bound/startup.yaml")
+    monkeypatch.setattr(local_token, "account_home", lambda: host_account)
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", host_bound)
+
+    settings, _, layout = _evaluate(
+        _case("credential-authorities", "claude"),
+        tmp_path / "case",
+        monkeypatch,
+    )
+    # The operator's canonical bootstrap comes from the passwd account (`operator_home` in the
+    # fixture), never from HOME or GOBBY_HOME (#25883).
+    operator_gobby = Path(layout["operator_home"]) / ".gobby"
+    authorities = {
+        str(Path(layout["gobby_home"]) / "bootstrap.yaml"),
+        str(operator_gobby / "bootstrap.yaml"),
+        layout["bound_bootstrap"],
+    }
+    assert len(authorities) == 3, "the credential authorities must remain distinct"
+    expected = authorities | {
+        str(Path(layout["bound_home"]) / "break_glass"),
+        str(Path(layout["bound_home"]) / ".break_glass-staging"),
+        str(operator_gobby / "break_glass"),
+        str(operator_gobby / ".break_glass-staging"),
+    }
+    document: dict[str, Any] = json.loads(settings)
+    # The renderer omits write denies for already-unwritable paths. Check the
+    # resolved write-denial contract as well as the emitted read denials.
+    for key, denied in (
+        ("denyRead", document["filesystem"]["denyRead"]),
+        ("denyWrite", sensitive_write_roots()),
+    ):
+        assert expected <= set(denied), (key, expected - set(denied))
+        assert not any(path.startswith(str(host_account)) for path in denied), (key, denied)
+        assert str(host_bound) not in denied, (key, denied)
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])

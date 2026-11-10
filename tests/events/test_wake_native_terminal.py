@@ -688,7 +688,7 @@ def _claude_composer_activity(prompt: str) -> TerminalActivity:
     snapshot = "\n".join(
         (
             "⏺ done",
-            "──────────── epic-22508-feedback-triage ─",
+            "──────────── epic-22508-feedback-review ─",
             prompt,
             "────────────────────",
             "   Fable 5.1  12%   ⎇ main",
@@ -978,8 +978,8 @@ async def test_batch_wake_holds_a_focused_recipient_and_sends_the_rest() -> None
     held_terminal = str(rows[0].id)
     registry = TerminalLeaseRegistry()
     dispatcher.set_lease_registry(registry)
+    # A focused gclient pane holds focus without any writer lease.
     record = await registry.attach(held_terminal)
-    await registry.take_control(held_terminal, record.attachment_id)
     await registry.set_focus(record.attachment_id, True)
     try:
         results = await dispatcher.dispatch_live_wakes(session_ids)

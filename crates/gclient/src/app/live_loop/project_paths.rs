@@ -114,6 +114,11 @@ async fn git_output(git: &OsStr, path: &Path, args: &[&str]) -> Result<String, S
     .await
     .map_err(|_| "git timed out".to_string())?
     .map_err(|e| e.to_string())?;
+    git_stdout(output)
+}
+
+/// Stdout of a finished git run, or its trimmed stderr when git exited nonzero.
+fn git_stdout(output: std::process::Output) -> Result<String, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }

@@ -274,6 +274,11 @@ fn policy_inputs(
         home: context.home.clone(),
         gobby_home: gobby_home.to_owned(),
         build_root: PathBuf::from(&payload.build_root),
+        credential_authority_roots: payload
+            .credential_authority_roots
+            .iter()
+            .map(PathBuf::from)
+            .collect(),
         env,
         provider_executable: find_on_path(&context.path_env, &payload.provider),
         // Native launches are spawns and resumes, which the Python spawn path grants.

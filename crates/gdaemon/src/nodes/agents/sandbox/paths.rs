@@ -216,13 +216,20 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
     )
 }
 
-/// `credential_roots`: install credentials, the daemon's startup files, and the operator's
-/// canonical bootstrap, which the oracle appends last. The oracle denies the bootstrap the daemon
-/// bound at startup. `PolicyInputs` carries no bound path, so the default
-/// `gobby_home/bootstrap.yaml` stands in for it. The capability signing key (and the directory
-/// its bytes are staged in) can forge any session token, and the session-credentials store holds
-/// live session tokens; a sandboxed seat presents its own run token and needs neither.
-fn credential_roots(gobby: &Path, operator_bootstrap: Option<&Path>) -> Vec<PathBuf> {
+/// `credential_roots`: install credentials, the daemon's startup files, the trusted hub's
+/// resolved credential authorities, and the operator's canonical bootstrap, which the oracle
+/// appends last. The runtime-home break-glass pair is the no-hub stand-in for the bound pair.
+/// `hub` is the Python oracle's own list, sent by the hub and never by the seat environment, so
+/// with `deny_paths` keeping first occurrences the result follows the oracle's order. Without a
+/// hub list, `gobby_home/bootstrap.yaml` stands in for the bound bootstrap. The capability
+/// signing key (and the directory its bytes are staged in) can forge any session token, and the
+/// session-credentials store holds live session tokens; a sandboxed seat presents its own run
+/// token and needs neither.
+fn credential_roots(
+    gobby: &Path,
+    hub: &[PathBuf],
+    operator_bootstrap: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
@@ -230,11 +237,22 @@ fn credential_roots(gobby: &Path, operator_bootstrap: Option<&Path>) -> Vec<Path
         gobby.join("tools").join("srt"),
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
+    ];
+    roots.extend_from_slice(hub);
+    roots.extend([
         gobby.join("session-credentials"),
         gobby.join("capability_signing_key"),
         gobby.join(".capability_signing_key-staging"),
-    ];
-    roots.extend(operator_bootstrap.map(Path::to_path_buf));
+    ]);
+    // The passwd account's canonical bootstrap and the break-glass pair beside it, as the
+    // oracle denies them; the hub list already carries them, so this matters without a hub.
+    if let Some(bootstrap) = operator_bootstrap {
+        roots.push(bootstrap.to_path_buf());
+        if let Some(account_gobby) = bootstrap.parent() {
+            roots.push(account_gobby.join("break_glass"));
+            roots.push(account_gobby.join(".break_glass-staging"));
+        }
+    }
     roots
 }
 
@@ -262,9 +280,10 @@ fn sensitive_roots(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    hub: &[PathBuf],
     operator_bootstrap: Option<&Path>,
 ) -> Vec<String> {
-    let mut roots = credential_roots(gobby, operator_bootstrap);
+    let mut roots = credential_roots(gobby, hub, operator_bootstrap);
     roots.push(gobby.join("gcode-runtime"));
     roots.push(managed_execution_root(gobby));
     roots.extend(private_srt_socket_roots(gobby, env));
@@ -276,6 +295,7 @@ fn sensitive_write_roots(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    hub: &[PathBuf],
     operator_bootstrap: Option<&Path>,
 ) -> Vec<String> {
     let mut roots = vec![
@@ -285,7 +305,7 @@ fn sensitive_write_roots(
         home.join(".kube"),
         home.join(".config").join("gcloud"),
     ];
-    roots.extend(credential_roots(gobby, operator_bootstrap));
+    roots.extend(credential_roots(gobby, hub, operator_bootstrap));
     roots.extend(private_srt_socket_roots(gobby, env));
     deny_paths(roots.iter().map(|root| text(root)), None, home)
 }
@@ -721,9 +741,10 @@ pub(super) fn assert_sensitive_path_contract(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    hub: &[PathBuf],
     operator_bootstrap: Option<&Path>,
 ) -> Result<()> {
-    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env, operator_bootstrap)
+    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env, hub, operator_bootstrap)
         .into_iter()
         .map(PathBuf::from)
         .collect();
@@ -863,6 +884,7 @@ pub(super) fn compute(
 ) -> Result<ResolvedPaths> {
     let home = inputs.home.as_path();
     let gobby = inputs.gobby_home.as_path();
+    let hub = inputs.credential_authority_roots.as_slice();
     let operator_bootstrap = inputs.operator_bootstrap.as_deref();
     let provider = inputs.provider.as_str();
     let workspace = canonical_pathbuf(&text(&inputs.workspace), None, home);
@@ -896,7 +918,7 @@ pub(super) fn compute(
         home,
     );
     let mut deny_read_paths = deny_paths(
-        sensitive_roots(gobby, home, env, operator_bootstrap)
+        sensitive_roots(gobby, home, env, hub, operator_bootstrap)
             .into_iter()
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
@@ -910,7 +932,7 @@ pub(super) fn compute(
         .map(|path| canonical_pathbuf(path, Some(&workspace), home))
         .collect();
     let deny_write_paths = deny_paths(
-        sensitive_write_roots(gobby, home, env, operator_bootstrap)
+        sensitive_write_roots(gobby, home, env, hub, operator_bootstrap)
             .into_iter()
             .chain(provider_control_write_paths(
                 &workspace,
@@ -937,6 +959,7 @@ pub(super) fn compute(
         gobby,
         home,
         env,
+        hub,
         operator_bootstrap,
     )?;
     assert_credential_read_contract(

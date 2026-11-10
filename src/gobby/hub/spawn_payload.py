@@ -1,20 +1,26 @@
 """Build the node's typed spawn command from resolved hub inputs."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.build_root import agent_build_root
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_credentials import credential_roots
 from gobby.agents.spawn_executor_providers import render_agent_prompt_prefix
 from gobby.config.tmux import TmuxConfig
 from gobby.hub.node_commands import Sandbox, SpawnMonitor, SpawnPayload, SpawnWorkspace
-from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import SpawnGenerationEndpointResolution
-from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import requested_base_branch
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
+
+if TYPE_CHECKING:
+    from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
+        SpawnGenerationEndpointResolution,
+    )
 
 # Active worktree and clone rows the run's session already owns on its machine.
 _RESUME_WORKSPACE_SQL = """
@@ -52,6 +58,8 @@ def _requested_workspace(
     request: Mapping[str, Any],
     body: AgentDefinitionBody | None,
 ) -> SpawnWorkspace:
+    from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import requested_base_branch
+
     mode = request.get("checkout_mode")
     if mode is None and body is not None:
         mode = body.checkout_mode
@@ -144,6 +152,7 @@ def build_spawn_payload(
         title=request.get("title"),
         source_root=request["project_path"],
         build_root=str(agent_build_root()),
+        credential_authority_roots=[str(path.resolve()) for path in credential_roots()],
         workspace=_workspace(db, run, request, body, resume_existing=resume_existing),
         agent_name=request.get("agent_lookup_name") or (body.name if body is not None else None),
         api_base=endpoint.api_base,

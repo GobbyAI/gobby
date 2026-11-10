@@ -238,16 +238,6 @@ fn native_verbs_refuse_tmux_terminals() {
             "reservation_id": "tmux-must-not-release",
             "reserve_key": "tmux-must-not-release",
         }),
-        json!({
-            "method": "grant_input",
-            "host_terminal_id": host_terminal_id,
-            "attachment_id": "tmux-must-not-type",
-            "host_attachment_id": 1,
-        }),
-        json!({
-            "method": "revoke_input",
-            "host_terminal_id": host_terminal_id,
-        }),
     ];
     for request in requests {
         embed_support::send_json(&mut control, &request);
@@ -772,32 +762,7 @@ fn control_surface_round_trip() {
     let written = recv_json(&mut stream);
     assert_eq!(written["ok"], true, "{written}");
 
-    let (_frames, host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
-    send_json(
-        &mut stream,
-        &json!({
-            "method": "grant_input",
-            "id": "g1",
-            "host_terminal_id": host_terminal_id,
-            "attachment_id": "att-surface",
-            "host_attachment_id": host_attachment_id,
-        }),
-    );
-    let granted = recv_json(&mut stream);
-    assert_eq!(granted["ok"], true, "{granted}");
-    assert_eq!(granted["granted"], true, "{granted}");
-    send_json(
-        &mut stream,
-        &json!({
-            "method": "revoke_input",
-            "id": "rv1",
-            "host_terminal_id": host_terminal_id,
-            "attachment_id": "att-surface",
-        }),
-    );
-    let revoked = recv_json(&mut stream);
-    assert_eq!(revoked["revoked"], true, "{revoked}");
-
+    let (_frames, _host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
     send_json(
         &mut stream,
         &json!({
@@ -942,107 +907,8 @@ fn attach_input_frames(
 }
 
 #[test]
-fn auto_grant_refuses_a_peer_held_pane_and_an_explicit_grant_displaces_it() {
-    let dir = temp_socket_dir();
-    let token = "control-token-takeover";
-    write_token(dir.path(), token);
-    std::fs::write(
-        dir.path().join("bootstrap.yaml"),
-        format!("api_key: {}\n", embed_support::LOCAL),
-    )
-    .unwrap();
-    let (mut child, mut requests) = authed(dir.path(), token);
-    let mut events = connect(&dir.path().join(CONTROL_SOCKET));
-    send_json(
-        &mut events,
-        &json!({
-            "method": "hello",
-            "id": "takeover-hello",
-            "protocol_version": 1,
-            "control_token": token,
-        }),
-    );
-    assert_eq!(recv_json(&mut events)["ok"], true);
-
-    send_json(
-        &mut requests,
-        &json!({
-            "method": "reserve_observer",
-            "id": "takeover-reserve",
-            "terminal_id": "takeover-terminal",
-            "reserve_key": "takeover-terminal",
-        }),
-    );
-    let reserved = recv_json(&mut requests);
-    let reservation_id = reserved["reservation_id"].as_str().unwrap();
-    let prepared = seq_spawn(
-        &mut requests,
-        1,
-        json!({
-            "terminal_id": "takeover-terminal",
-            "spawn_key": "takeover-spawn",
-            "reservation_id": reservation_id,
-            "reserve_key": "takeover-terminal",
-            "argv": ["/bin/cat"],
-            "cwd": dir.path().to_string_lossy(),
-            "rows": 24,
-            "cols": 80,
-            "commit_deadline_ms": 5000,
-        }),
-    );
-    assert_eq!(prepared["ok"], true, "{prepared}");
-    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
-    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
-    send_json(
-        &mut requests,
-        &json!({
-            "method": "spawn_commit",
-            "id": "takeover-commit",
-            "terminal_id": "takeover-terminal",
-            "spawn_key": "takeover-spawn",
-        }),
-    );
-    assert_eq!(recv_json(&mut requests)["ok"], true);
-
-    let (_old_frames, old_host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
-    let (_frames, host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
-
-    // A keypress grant takes a pane nobody holds...
-    let first = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a", "host_attachment_id": old_host_attachment_id, "takeover": false}),
-    );
-    assert_eq!(first["granted"], true, "{first}");
-    // ...but a second keypress grant from a peer is refused on the stream.
-    let refused = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id, "takeover": false}),
-    );
-    assert_eq!(refused["ok"], false, "{refused}");
-    assert_eq!(refused["error"], "input_held_by_peer", "{refused}");
-    assert!(refused.get("previous").is_none(), "{refused}");
-    // The holder asking again keeps the grant.
-    let again = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a", "host_attachment_id": old_host_attachment_id, "takeover": false}),
-    );
-    assert_eq!(again["granted"], true, "{again}");
-    // An explicit grant without `takeover` still displaces the holder.
-    let explicit = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
-    );
-    assert_eq!(explicit["granted"], true, "{explicit}");
-    assert_eq!(explicit["previous"], "att-a", "{explicit}");
-}
-
-#[test]
-fn grant_input_binds_one_holder_and_emits_input_activity() {
-    use gobby_terminal::protocol::{ClientMessage, ServerMessage};
+fn bound_input_emits_input_activity_without_a_grant() {
+    use gobby_terminal::protocol::ClientMessage;
 
     let dir = temp_socket_dir();
     let token = "control-token-input-grant";
@@ -1110,55 +976,9 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     );
     assert_eq!(recv_json(&mut requests)["ok"], true);
 
-    let (mut old_frames, old_host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
-    let (mut frames, host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
+    let (mut frames, _host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
 
-    let first = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a", "host_attachment_id": old_host_attachment_id}),
-    );
-    assert_eq!(first["granted"], true, "{first}");
-    assert!(first["previous"].is_null(), "{first}");
-    let second = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
-    );
-    assert_eq!(second["granted"], true, "{second}");
-    assert_eq!(second["previous"], "att-a", "{second}");
-    let missing = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": "missing-terminal", "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
-    );
-    assert_eq!(missing["error"], "not_found", "{missing}");
-    let unnamed = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id}),
-    );
-    assert_eq!(unnamed["error"], "invalid_request", "{unnamed}");
-
-    // The displaced holder cannot type.
-    embed_support::write_msg(
-        &mut old_frames,
-        &ClientMessage::BindAttachment {
-            attachment_id: "att-a".into(),
-        },
-    );
-    embed_support::write_msg(
-        &mut old_frames,
-        &ClientMessage::Input {
-            data: b"x".to_vec(),
-        },
-    );
-    match frame_reply(&mut old_frames) {
-        ServerMessage::InputRefused { code } => assert_eq!(code, "input_not_granted"),
-        other => panic!("expected refusal: {other:?}"),
-    }
-
-    // The holder types, and every accepted write is one payload-free event.
+    // The bound stream types with no grant, and every accepted write is one payload-free event.
     embed_support::write_msg(
         &mut frames,
         &ClientMessage::BindAttachment {
@@ -1255,51 +1075,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
         );
     }
 
-    // A mismatched revoke keeps the grant; an unqualified revoke clears it.
-    let kept = rpc(
-        &mut requests,
-        "revoke_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a"}),
-    );
-    assert_eq!(kept["revoked"], false, "{kept}");
-    embed_support::write_msg(
-        &mut frames,
-        &ClientMessage::Input {
-            data: b"y".to_vec(),
-        },
-    );
-    expect_activity(
-        &mut events,
-        "input",
-        1,
-        serde_json::Value::Null,
-        false,
-        "edit",
-    );
-    let cleared = rpc(
-        &mut requests,
-        "revoke_input",
-        json!({"host_terminal_id": host_terminal_id}),
-    );
-    assert_eq!(cleared["revoked"], true, "{cleared}");
-    let again = rpc(
-        &mut requests,
-        "revoke_input",
-        json!({"host_terminal_id": host_terminal_id}),
-    );
-    assert_eq!(again["revoked"], false, "{again}");
-    embed_support::write_msg(
-        &mut frames,
-        &ClientMessage::Input {
-            data: b"z".to_vec(),
-        },
-    );
-    match frame_reply(&mut frames) {
-        ServerMessage::InputRefused { code } => assert_eq!(code, "input_not_granted"),
-        other => panic!("expected refusal: {other:?}"),
-    }
-
-    // Neither verb touched the operation ledger: the next ledgered verb is seq 2.
+    // Input is not a ledgered operation: the next ledgered verb is seq 2.
     send_json(
         &mut requests,
         &json!({
@@ -1314,14 +1090,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     let resized = recv_response_with_id(&mut requests, "grant-resize");
     assert_eq!(resized["ok"], true, "{resized}");
 
-    // A fresh grant after the revoke starts with no previous holder. Ctrl-C
-    // classifies as an interrupt, and the PTY's SIGINT then ends cat.
-    let regranted = rpc(
-        &mut requests,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
-    );
-    assert!(regranted["previous"].is_null(), "{regranted}");
+    // Ctrl-C classifies as an interrupt, and the PTY's SIGINT then ends cat.
     embed_support::write_msg(
         &mut frames,
         &ClientMessage::Input {
@@ -1333,7 +1102,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     assert_eq!(exited["event"], "terminal_exited", "{exited}");
     assert_eq!(exited["host_terminal_id"], host_terminal_id, "{exited}");
 
-    // Refused input never becomes an event.
+    // No event follows the exit.
     events
         .set_read_timeout(Some(Duration::from_millis(200)))
         .unwrap();
@@ -2753,14 +2522,8 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
         pane_text(&mut stream, &id).contains("got:sixth")
     });
 
-    // A granted frame attachment types before the upgrade.
-    let (mut frames, host_attachment_id) = attach_input_frames(&child, &id);
-    let granted = rpc(
-        &mut stream,
-        "grant_input",
-        json!({"host_terminal_id": id, "attachment_id": "att-gate", "host_attachment_id": host_attachment_id}),
-    );
-    assert_eq!(granted["granted"], true, "{granted}");
+    // A bound frame attachment types before the upgrade.
+    let (mut frames, _host_attachment_id) = attach_input_frames(&child, &id);
     embed_support::write_msg(
         &mut frames,
         &ClientMessage::BindAttachment {

@@ -38,6 +38,25 @@ fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Attachment id of the terminal's latest `terminal_focus` report, when it reported focus.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    let reports = websocket_requests(mock, "terminal_focus");
+    let last = reports
+        .iter()
+        .rfind(|body| body.get("terminal_id") == Some(&json!(terminal_id)))?;
+    if last.get("focused") != Some(&json!(true)) {
+        return None;
+    }
+    last.get("attachment_id")?.as_str().map(str::to_owned)
+}
+
+/// Whether any of the loop's terminals currently holds a focused attachment.
+fn any_focused(mock: &MockDaemon) -> bool {
+    ["terminal-a", "terminal-b", "terminal-c"]
+        .iter()
+        .any(|id| focused_attachment(mock, id).is_some())
+}
+
 /// The `(tab, pane)` of each focus hint the running window persisted.
 fn window_hints(mock: &MockDaemon) -> Vec<(Value, Value)> {
     websocket_requests(mock, "workspace_op")
@@ -151,8 +170,8 @@ async fn select_from_a_second_client_switches_the_running_window() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_until("the window's first take", || {
-            !websocket_requests(&mock, "terminal_take_control").is_empty()
+        wait_until("the window's first focused attachment", || {
+            any_focused(&mock)
         })
         .await;
         // Pane form, onto the other tab: the window persists the focus it
@@ -224,8 +243,8 @@ async fn another_windows_focus_hint_leaves_the_running_window_alone() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_until("the window's first take", || {
-            !websocket_requests(&mock, "terminal_take_control").is_empty()
+        wait_until("the window's first focused attachment", || {
+            any_focused(&mock)
         })
         .await;
         // Another window persists its own focus on the second tab.

@@ -61,6 +61,22 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .expect("live loop input");
 }
 
+/// Attachment id of the terminal's latest `terminal_focus` report, when it reported focus.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    let last = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .rfind(|body| {
+            body.get("type") == Some(&json!("terminal_focus"))
+                && body.get("terminal_id") == Some(&json!(terminal_id))
+        })?;
+    if last.get("focused") != Some(&json!(true)) {
+        return None;
+    }
+    last.get("attachment_id")?.as_str().map(str::to_owned)
+}
+
 async fn wait_until(mut condition: impl FnMut() -> bool) {
     timeout(Duration::from_secs(2), async {
         while !condition() {
@@ -118,16 +134,8 @@ async fn focus_hints_seed_and_follow_the_last_actor() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        // The first control request proves the window drew the seeded tab.
-        wait_until(|| {
-            mock.requests().iter().any(|request| {
-                request.body.as_ref().is_some_and(|body| {
-                    body.get("type") == Some(&json!("terminal_take_control"))
-                        && body.get("terminal_id") == Some(&json!("terminal-c"))
-                })
-            })
-        })
-        .await;
+        // The first focused attachment proves the window drew the seeded tab.
+        wait_until(|| focused_attachment(&mock, "terminal-c").is_some()).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('n'), KeyModifiers::NONE).await;
         wait_until(|| {

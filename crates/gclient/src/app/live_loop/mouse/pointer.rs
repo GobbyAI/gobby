@@ -36,12 +36,11 @@ use super::{
 /// asks `links::resolve` for a URL under the pointer and opens that instead,
 /// whichever pane has focus. Then a pane whose app tracks the mouse gets the
 /// press (`forward::press`), after being focused when it was not, unless
-/// shift is held (herdr `shift_bypasses_mouse_reporting`) or alt asks for an
-/// observe-only focus of another pane, which never writes. Otherwise a left
-/// press focuses the pane (herdr `FocusPane`), alt making that observe-only,
-/// or starts a selection on the pane that already has focus
-/// (`select::down`). A slot whose pane has left the roster is stale until
-/// the next chrome sync, so it is ignored.
+/// shift is held (herdr `shift_bypasses_mouse_reporting`). Alt is an ordinary
+/// modifier there, reported with its bit. Otherwise a left press focuses the
+/// pane (herdr `FocusPane`) or starts a selection on the pane that already
+/// has focus (`select::down`). A slot whose pane has left the roster is stale
+/// until the next chrome sync, so it is ignored.
 ///
 /// On the tab bar it activates the tab and focuses its pane (herdr
 /// `FocusTab`), starting the drag that `up` may finish as a reorder; a
@@ -60,10 +59,7 @@ use super::{
 /// (herdr `SetSplitRatio`); a pane scrollbar thumb starts a thumb drag and
 /// the track beside it jumps the scrollback there.
 ///
-/// The focused pane's metadata is a button while it reads Read-only or
-/// Uncertain, on its edge or leading the status line: a press accepts a
-/// pending take-back, and otherwise takes control again. Focus alone is a
-/// condition, not a button. Every other region is ignored until its section
+/// Every other region is ignored until its section
 /// lands.
 pub(super) fn down<W: WorkspaceView>(
     ws: &W,
@@ -72,7 +68,6 @@ pub(super) fn down<W: WorkspaceView>(
     button: MouseButton,
     mouse: &MouseEvent,
 ) -> MouseOutcome {
-    let observe_only = mouse.modifiers.contains(KeyModifiers::ALT);
     let sidebar_area = chrome.view.sidebar_rect;
     match hit {
         Hit::Pane { slot, col, row } => {
@@ -91,7 +86,7 @@ pub(super) fn down<W: WorkspaceView>(
                 }
             }
             let focused = chrome.focused_pane() == Some(pane);
-            if !mouse.modifiers.contains(KeyModifiers::SHIFT) && (focused || !observe_only) {
+            if !mouse.modifiers.contains(KeyModifiers::SHIFT) {
                 let strip = KeyModifiers::empty();
                 if let Some(outcome) =
                     forward::press(ws, chrome, pane, slot, mouse, strip, (col, row))
@@ -102,22 +97,12 @@ pub(super) fn down<W: WorkspaceView>(
             if button != MouseButton::Left {
                 return MouseOutcome::Ignore;
             }
-            if observe_only && !focused {
-                return MouseOutcome::Focus {
-                    pane,
-                    observe_only: true,
-                };
-            }
             let selection = select::down(ws, chrome, pane, slot, col, row, mouse);
             if focused || !matches!(selection, MouseOutcome::Handled) {
                 return selection;
             }
-            // Focus on press so a drag selects in the clicked pane, but wait
-            // for release before taking its input lease.
-            MouseOutcome::Focus {
-                pane,
-                observe_only: true,
-            }
+            // Focus on press so a drag selects in the clicked pane.
+            MouseOutcome::Focus { pane }
         }
         Hit::Tab(index) if button == MouseButton::Right => {
             open_menu(
@@ -198,7 +183,7 @@ pub(super) fn down<W: WorkspaceView>(
                 origin_col: mouse.column,
                 moved: false,
             });
-            focus_active_tab(chrome, observe_only)
+            focus_active_tab(chrome)
         }
         // An edge count pages the strip one screen; the next draw clamps it.
         Hit::TabScrollLeft => {
@@ -307,18 +292,6 @@ pub(super) fn down<W: WorkspaceView>(
                     scrollbar_offset_from_row(metrics, track, row),
                 ),
             }
-        }
-        Hit::ControlIndicator => {
-            let Some(pane) = chrome.focused_pane().filter(|pane| on_roster(ws, *pane)) else {
-                return MouseOutcome::Ignore;
-            };
-            // The indicator is drawn only for Read-only and Uncertain, so a
-            // press always asks for control back.
-            MouseOutcome::Action(if ws.pane(pane).take_back {
-                Action::TakeBack
-            } else {
-                Action::TakeControl
-            })
         }
         Hit::StatusCount => {
             chrome.sidebar.overlay = true;
@@ -546,26 +519,7 @@ pub(super) fn up<W: WorkspaceView>(
             persist_prefs(ws.gobby_home(), chrome);
             MouseOutcome::Handled
         }
-        Some(MouseGesture::Select { slot }) => {
-            let selection = select::up(chrome);
-            if selection != MouseOutcome::Handled
-                || mouse
-                    .modifiers
-                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::CONTROL)
-                || !matches!(hit, Hit::Pane { slot: released_slot, .. } if released_slot == slot)
-            {
-                return selection;
-            }
-            let Some(pane) = chrome.pane_for_slot(slot) else {
-                return selection;
-            };
-            let state = ws.pane(pane);
-            if state.is_held() || state.take_back {
-                selection
-            } else {
-                MouseOutcome::TakeFreeControl { pane }
-            }
-        }
+        Some(MouseGesture::Select { .. }) => select::up(chrome),
         Some(MouseGesture::Forwarding { slot, strip }) => {
             forward::captured(ws, chrome, slot, strip, mouse)
         }

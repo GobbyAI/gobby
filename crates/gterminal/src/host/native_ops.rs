@@ -978,7 +978,7 @@ const EXIT_WATCHER_HOLD_CAP: Duration = Duration::from_secs(20);
 /// the restored one inherits the environment.
 #[cfg(all(unix, feature = "vt-engine"))]
 fn exit_watcher_holds(generation: u64, terminal_id: &str) -> bool {
-    let helper = std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1");
+    let helper = crate::test_seam::helper_enabled();
     helper
         && generation == 0
         && std::env::var("GTERM_TEST_EXIT_WATCHER_HOLD").is_ok_and(|pane| pane == terminal_id)

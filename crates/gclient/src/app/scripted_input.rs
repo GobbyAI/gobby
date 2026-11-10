@@ -1,13 +1,13 @@
 //! The scripted workspace's PTY write paths, split out of `mod.rs` for the
-//! 1,000-line ceiling. A held native pane on a direct source types straight
-//! into its host here, exactly as the live loop's `send_live_write` does, so
-//! the harness and the product obey one rule: keystrokes never wait on the
-//! daemon (#22573).
+//! 1,000-line ceiling. A native pane on a direct source types straight into
+//! its host here, exactly as the live loop's `send_live_write` does, so the
+//! harness and the product obey one rule: keystrokes never wait on the daemon
+//! (#22573).
 
 use serde_json::json;
 
 use super::attach::frame_daemon_error;
-use super::{ControlState, PaneId, Workspace};
+use super::{PaneId, Workspace};
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::DaemonError;
 
@@ -17,55 +17,23 @@ impl Workspace {
     }
 
     pub fn send_input(&mut self, id: PaneId, data: &[u8]) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
-        if !self.panes[&id].writable() {
-            let pane = self.panes.get_mut(&id).expect("pane");
-            if !pane.is_live() {
-                return Err(DaemonError::new(
-                    409,
-                    "stale_attachment",
-                    "attachment is not live",
-                ));
-            }
-            if matches!(
-                pane.control,
-                ControlState::LeaseLost | ControlState::UncertainReadOnly
-            ) {
-                return Err(DaemonError::new(
-                    403,
-                    "read_only",
-                    "pane requires explicit control recovery",
-                ));
-            }
-            if !pane.queue_input(data, false) {
-                return Err(DaemonError::new(
-                    429,
-                    "input_queue_full",
-                    "too much typed while acquiring control",
-                ));
-            }
-            // A second key while the first take-control is still out joins
-            // the queue rather than asking again (#22573).
-            let pending = pane.pending_input.len() > 1;
-            let attachment = pane.attachment_id().to_string();
-            let terminal_id = pane.terminal_id.clone();
-            if pending {
-                return Ok(());
-            }
-            return self.daemon.send_ws(json!({
-                "type": "terminal_take_control",
-                "terminal_id": terminal_id,
-                "attachment_id": attachment,
-                "host_attachment_id": pane.host_attachment_id(),
-                "takeover": true
-            }));
-        }
+        self.ensure_not_exiting()?;
+        let daemon = self.ensure_requests_allowed();
         let pane = self.panes.get_mut(&id).expect("pane");
-        if pane.direct_input() {
+        if !pane.writable() {
+            return Err(DaemonError::new(
+                409,
+                "stale_attachment",
+                "attachment is not live",
+            ));
+        }
+        // A native pane types on its host stream with or without the daemon.
+        if pane.direct_native() {
             return pane
                 .send_host_input(data, false)
                 .map_err(frame_daemon_error);
         }
+        daemon?;
         pane.client_write_seq += 1;
         let seq = pane.client_write_seq;
         pane.in_flight_write = Some(seq);
@@ -82,25 +50,31 @@ impl Workspace {
     }
 
     pub fn paste_to_pty(&mut self, id: PaneId, text: &str) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
+        self.ensure_not_exiting()?;
         if text.len() > PASTE_MAX_BYTES {
             return Err(DaemonError::new(400, "paste_too_large", "paste_too_large"));
         }
+        let daemon = self.ensure_requests_allowed();
         let pane = self.panes.get_mut(&id).expect("pane");
         if pane.copy_search {
             pane.search_buffer.push_str(text);
             return Ok(());
         }
         if !pane.writable() {
-            return Err(DaemonError::new(403, "held", "paste refused"));
+            return Err(DaemonError::new(
+                409,
+                "stale_attachment",
+                "attachment is not live",
+            ));
         }
-        // gterm brackets a granted `Paste` itself, so the host gets the raw
-        // text; the daemon path keeps wrapping it on the way to the PTY.
-        if pane.direct_input() {
+        // gterm brackets a `Paste` itself, so the host gets the raw text; the
+        // daemon path keeps wrapping it on the way to the PTY.
+        if pane.direct_native() {
             return pane
                 .send_host_input(text.as_bytes(), true)
                 .map_err(frame_daemon_error);
         }
+        daemon?;
         pane.client_write_seq += 1;
         let seq = pane.client_write_seq;
         pane.in_flight_write = Some(seq);

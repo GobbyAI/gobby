@@ -9,7 +9,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, Notify};
 use tokio::time::timeout;
 
-use crate::protocol::{encode_control_json, write_message, ServerMessage};
+use crate::protocol::{write_message, ServerMessage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlClose {
@@ -19,9 +19,20 @@ pub enum ControlClose {
     Disconnected,
 }
 
+/// Runs once a reply has been written in full; a failed write never runs it.
+pub struct OnWritten(pub Box<dyn FnOnce() + Send>);
+
+impl std::fmt::Debug for OnWritten {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OnWritten")
+    }
+}
+
 #[derive(Debug)]
 pub enum ControlOutbound {
     Reply(Value),
+    /// A reply whose hook runs only after its write succeeds.
+    Served(Value, OnWritten),
     Bounded(Value),
 }
 
@@ -35,18 +46,20 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
     deadline: Duration,
 ) -> ControlClose {
     while let Some(outbound) = rx.recv().await {
-        let (mut value, is_reply) = match outbound {
-            ControlOutbound::Reply(value) => (value, true),
-            ControlOutbound::Bounded(value) => (value, false),
+        let (value, is_reply, on_written) = match outbound {
+            ControlOutbound::Reply(value) => (value, true, None),
+            ControlOutbound::Served(value, on_written) => (value, true, Some(on_written)),
+            ControlOutbound::Bounded(value) => (value, false, None),
         };
-        let mut line = encode_control_json(&mut value);
-        if line.len() >= 2 * 1024 * 1024 {
+        let mut line = value.to_string();
+        let oversized = line.len() >= 2 * 1024 * 1024;
+        if oversized {
             let id = value.get("id").cloned();
             let mut too_large = serde_json::json!({"ok": false, "error": "response_too_large"});
             if let (Some(id), Some(object)) = (id, too_large.as_object_mut()) {
                 object.insert("id".into(), id);
             }
-            line = encode_control_json(&mut too_large);
+            line = too_large.to_string();
         }
         line.push('\n');
         let write = async {
@@ -60,7 +73,12 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
         };
         let result = timeout(write_deadline, write).await;
         match result {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                // A substituted error line is not the reply, so its hook never runs.
+                if let (Some(OnWritten(written)), false) = (on_written, oversized) {
+                    written();
+                }
+            }
             Ok(Err(_)) => return ControlClose::Io,
             Err(_) => {
                 let _ = timeout(
@@ -84,15 +102,6 @@ pub fn enqueue_control(
             mpsc::error::TrySendError::Full(_) => ControlClose::Overflow,
             mpsc::error::TrySendError::Closed(_) => ControlClose::Disconnected,
         })
-}
-
-pub async fn send_control(
-    tx: &mpsc::Sender<ControlOutbound>,
-    value: Value,
-) -> Result<(), ControlClose> {
-    tx.send(ControlOutbound::Reply(value))
-        .await
-        .map_err(|_| ControlClose::Disconnected)
 }
 
 pub async fn send_event(

@@ -56,27 +56,16 @@ async fn git_init_failure_keeps_existing_and_new_directories() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn git_init_nonzero_exit_reports_stderr_and_keeps_directory() {
-    use std::os::unix::fs::PermissionsExt;
-    let parent = tempfile::tempdir().expect("parent");
-    let failing_git = parent.path().join("failing-git");
-    fs::write(
-        &failing_git,
-        "#!/bin/sh\nprintf 'init refused' >&2\nexit 1\n",
-    )
-    .await
-    .expect("fake git");
-    fs::set_permissions(&failing_git, std::fs::Permissions::from_mode(0o700))
-        .await
-        .expect("executable");
-    let root = parent.path().join("new");
-    let error = new_checkout(&root, failing_git.as_os_str())
-        .await
-        .expect_err("git init failure");
-    assert!(error.contains("init refused"), "{error}");
-    assert!(root.is_dir());
-    assert!(!root.join(".git").exists());
+#[test]
+fn git_nonzero_exit_reports_stderr_without_spawning() {
+    use std::os::unix::process::ExitStatusExt;
+    // A wait status carries the exit code in its high byte: exit 1 is 1 << 8.
+    let output = std::process::Output {
+        status: std::process::ExitStatus::from_raw(1 << 8),
+        stdout: Vec::new(),
+        stderr: b"init refused\n".to_vec(),
+    };
+    assert_eq!(git_stdout(output), Err("init refused".to_owned()));
 }
 
 #[tokio::test]

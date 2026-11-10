@@ -354,7 +354,6 @@ fn error_class(error: &DaemonError) -> &'static str {
         DaemonError::Unavailable { .. } => "unavailable",
         DaemonError::GoingAway => "going_away",
         DaemonError::Protocol { .. } => "protocol",
-        DaemonError::ControlRequestInFlight => "control_request_in_flight",
         DaemonError::ControlScopeIndeterminate => "control_scope_indeterminate",
         DaemonError::Timeout { .. } => "timeout",
         DaemonError::Workspace(_) => "workspace",

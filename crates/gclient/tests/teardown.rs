@@ -27,7 +27,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration, Instant};
+use tokio::time::{timeout, timeout_at, Duration, Instant};
 use tracing::instrument::WithSubscriber;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::Context as LayerContext;
@@ -609,7 +609,8 @@ impl Daemon for TraceDaemon {
         if self.stall_detach && kind == "terminal_detach" {
             pending::<()>().await;
         }
-        if self.completed_cleanup.fetch_add(1, Ordering::SeqCst) == 1 {
+        // Detach is the only cleanup request, so its completion is the last.
+        if self.completed_cleanup.fetch_add(1, Ordering::SeqCst) == 0 {
             self.trace
                 .lock()
                 .unwrap()
@@ -687,10 +688,7 @@ impl ShutdownWorkspace for ShutdownFixture {
 }
 
 fn cleanup_requests() -> Vec<Value> {
-    vec![
-        json!({"type": "terminal_release_control"}),
-        json!({"type": "terminal_detach"}),
-    ]
+    vec![json!({"type": "terminal_detach"})]
 }
 
 struct TraceModeBackend(Arc<Mutex<Vec<String>>>);
@@ -775,24 +773,35 @@ impl LiveShutdownStall {
     }
 }
 
-async fn wait_for_ws_request(mock: &MockDaemon, kind: &str) {
-    timeout(Duration::from_secs(1), async {
-        loop {
-            if mock.requests().iter().any(|request| {
-                request
-                    .body
-                    .as_ref()
-                    .and_then(|body| body.get("type"))
-                    .and_then(Value::as_str)
-                    == Some(kind)
-            }) {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
+async fn wait_for_ws_request(mock: &MockDaemon, kind: &str, context: &str) {
+    timeout(
+        Duration::from_secs(1),
+        mock.wait_for_request(|request| {
+            request
+                .body
+                .as_ref()
+                .and_then(|body| body.get("type"))
+                .and_then(Value::as_str)
+                == Some(kind)
+        }),
+    )
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {kind}"));
+    .unwrap_or_else(|_| panic!("{context} timed out waiting for {kind}"));
+}
+
+async fn wait_for_live_readiness(mock: &MockDaemon, terminal_id: &str) {
+    // Startup is an event precondition, distinct from the timed input and
+    // shutdown assertions. The caller bounds the whole setup/exit operation.
+    for kind in ["terminal_set_viewport", "terminal_focus"] {
+        let matches_body = |body: &Value| {
+            body["type"] == kind
+                && body["terminal_id"] == terminal_id
+                && (kind != "terminal_focus"
+                    || (body["focused"] == true && body["attachment_id"].as_str().is_some()))
+        };
+        mock.wait_for_request(|request| request.body.as_ref().is_some_and(&matches_body))
+            .await;
+    }
 }
 
 async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
@@ -882,10 +891,22 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
     let (guard, restore_hits) = TerminalGuard::recording();
 
     let driver = async {
-        wait_for_ws_request(&mock, "terminal_set_viewport").await;
-        wait_for_ws_request(&mock, "terminal_take_control").await;
+        // Startup performs several daemon requests, each with its own 5 s
+        // production budget. Its readiness precondition must not consume the
+        // shutdown budget or fail at the old one-second viewport probe.
+        timeout(
+            Duration::from_secs(30),
+            wait_for_live_readiness(&mock, "terminal-shutdown"),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{trigger:?}/{stall:?} startup not ready: {:?}",
+                mock.activity()
+            )
+        });
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_ws_request(&mock, "terminal_input").await;
+        wait_for_ws_request(&mock, "terminal_input", &format!("{trigger:?}/{stall:?}")).await;
         let reconnect = if matches!(stall, LiveShutdownStall::ReconnectJoin) {
             let gate = mock.pause_next_websocket();
             let reconnect = {
@@ -916,23 +937,29 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         (exit_started, reconnect)
     };
 
-    let mut switch = TerminalGuard::recording().0;
-    let (loop_result, (exit_started, reconnect)) = tokio::join!(
-        timeout(
-            Duration::from_secs(10),
-            run_live_loop(
-                &mut workspace,
-                &mut terminal,
-                &mut chrome,
-                input_rx,
-                &mut switch
-            ),
-        ),
-        driver,
-    );
-    loop_result
-        .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} exceeded the outer shutdown bound"))
-        .unwrap_or_else(|error| panic!("{trigger:?}/{stall:?} shutdown failed: {error}"));
+    let (exit_started, reconnect) = {
+        let mut switch = TerminalGuard::recording().0;
+        let live_loop = run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch,
+        );
+        tokio::pin!(live_loop);
+        let (exit_started, reconnect) = tokio::select! {
+            result = &mut live_loop => panic!("{trigger:?}/{stall:?} exited before shutdown request: {result:?}"),
+            started = driver => started,
+        };
+        // Start the shutdown timer at the driver's exit request, never at loop
+        // startup. Keep the strict 8 s assertion below and the original input
+        // delivery check above: setup tolerance grants no typing/echo tolerance.
+        let loop_result = timeout_at(exit_started + Duration::from_secs(8), &mut live_loop).await;
+        loop_result
+            .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} exceeded the shutdown bound"))
+            .unwrap_or_else(|error| panic!("{trigger:?}/{stall:?} shutdown failed: {error}"));
+        (exit_started, reconnect)
+    };
     drop(guard);
     assert!(
         exit_started.elapsed() <= Duration::from_secs(8),
@@ -1046,10 +1073,9 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     guard.arm(false).expect("arm recording terminal");
 
     let driver = async {
-        wait_for_ws_request(&mock, "terminal_set_viewport").await;
-        wait_for_ws_request(&mock, "terminal_take_control").await;
+        wait_for_live_readiness(&mock, "terminal-exit").await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_ws_request(&mock, "terminal_input").await;
+        wait_for_ws_request(&mock, "terminal_input", &format!("{cause:?}")).await;
         match cause {
             LiveExitCause::Quit => {
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -1110,9 +1136,8 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     };
 
     let mut switch = TerminalGuard::recording().0;
-    let (loop_result, ()) = tokio::join!(
-        timeout(
-            Duration::from_secs(30),
+    let (loop_result, ()) = timeout(Duration::from_secs(30), async {
+        tokio::join!(
             run_live_loop(
                 &mut workspace,
                 &mut terminal,
@@ -1120,12 +1145,12 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
                 input_rx,
                 &mut switch
             ),
-        ),
-        driver,
-    );
-    loop_result
-        .unwrap_or_else(|_| panic!("{cause:?} exceeded the outer exit bound"))
-        .unwrap_or_else(|error| panic!("{cause:?} live-loop exit failed: {error}"));
+            driver,
+        )
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{cause:?} exceeded the outer exit bound"));
+    loop_result.unwrap_or_else(|error| panic!("{cause:?} live-loop exit failed: {error}"));
     drop(guard);
     assert_eq!(workspace.exit_reason(), Some(cause.reason()));
     mock.shutdown().await;
@@ -1159,7 +1184,6 @@ async fn graceful_exit_releases_and_detaches_within_deadline() {
         [
             "latch-exit",
             "exit-reason:quit",
-            "terminal_release_control",
             "terminal_detach",
             "cleanup-awaited",
             "close",
@@ -1205,13 +1229,7 @@ async fn shutdown_closes_the_daemon_through_the_trait() {
     assert_eq!(closed.load(Ordering::SeqCst), 1);
     assert_eq!(
         *trace.lock().unwrap(),
-        [
-            "latch-exit",
-            "exit-reason:quit",
-            "terminal_release_control",
-            "terminal_detach",
-            "close"
-        ]
+        ["latch-exit", "exit-reason:quit", "terminal_detach", "close"]
     );
 
     shutdown(&mut workspace, daemon, Instant::now())

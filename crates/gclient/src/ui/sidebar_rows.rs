@@ -15,7 +15,7 @@ use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::settings::TitleScrolling;
-use crate::ui::status::{control_indicator, state_dot};
+use crate::ui::status::state_dot;
 use crate::ui::text::{display_width, truncate_end};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -222,19 +222,15 @@ fn ordered_projects<'a>(projects: &'a [ProjectEntry], order: &[String]) -> Vec<&
     ordered
 }
 
-/// `<backend> <control glyph> <control label>` for an attached terminal,
-/// `detached` for a roster row without a pane.
-pub(crate) fn terminal_detail<W: WorkspaceView>(ws: &W, terminal_id: &str, p: &Palette) -> String {
+/// `<address> <backend>` for an attached terminal, `detached` for a roster row
+/// without a pane. The address leads, so it is what the navigator query matches
+/// and what keeps two panes sharing a name (`zsh`, `zsh`) apart.
+pub(crate) fn terminal_detail<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
     match ws.pane_for_terminal(terminal_id).map(|id| ws.pane(id)) {
-        Some(pane) => {
-            let (glyph, label, _) = control_indicator(pane.displayed_control(), pane.take_back, p);
-            // The address leads, so it is what the navigator query matches
-            // and what keeps two panes sharing a name (`zsh`, `zsh`) apart.
-            match terminal_address(ws, terminal_id) {
-                Some(address) => format!("{address} {} {glyph} {label}", pane.backend),
-                None => format!("{} {glyph} {label}", pane.backend),
-            }
-        }
+        Some(pane) => match terminal_address(ws, terminal_id) {
+            Some(address) => format!("{address} {}", pane.backend),
+            None => pane.backend.to_string(),
+        },
         None => "detached".to_string(),
     }
 }

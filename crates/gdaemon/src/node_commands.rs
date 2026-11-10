@@ -333,6 +333,9 @@ pub struct SpawnPayload {
     /// The daemon's configured build-output root (`agent_build.build_root`): an absolute,
     /// canonical directory. Cargo target folders for every launch live under it.
     pub build_root: String,
+    /// Credential authorities resolved by the hub outside the child environment.
+    #[serde(default)]
+    pub credential_authority_roots: Vec<String>,
     pub workspace: SpawnWorkspace,
     #[serde(deserialize_with = "Option::deserialize")]
     pub agent_name: Option<String>,

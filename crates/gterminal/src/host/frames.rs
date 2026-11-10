@@ -1,5 +1,5 @@
-//! Frame protocol on `gterm-frames.sock`: frames out, and PTY input in only
-//! for a stream whose bound attachment id holds the slot's input grant.
+//! Frame protocol on `gterm-frames.sock`: frames out, and PTY input in from
+//! every attached stream on a native slot.
 
 use std::io::{self, Cursor};
 use std::os::fd::AsRawFd;

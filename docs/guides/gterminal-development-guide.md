@@ -133,25 +133,19 @@ Host sockets are Unix domain, mode 0600, under `~/.gobby/`:
 
 | Socket | Protocol | Credential |
 | --- | --- | --- |
-| `gterm-control.sock` | JSON-lines control (`spawn`, `kill`, `resize`, `write`, `grant_input`, `list`, …) | `~/.gobby/gterm-control.token` (daemon only) |
+| `gterm-control.sock` | JSON-lines control (`spawn`, `kill`, `resize`, `write`, `list`, …) | `~/.gobby/gterm-control.token` (daemon only) |
 | `gterm-frames.sock` | bincode frames (`Hello`/`Welcome`, `AttachTerminal`, `Frame`, `Input`, …) | Hub-issued API key from `api_key` in the client's bootstrap or its explicit key file |
 
 Golden corpus: `crates/gterminal/tests/fixtures/wire_golden/`. `gclient` attaches
 frame streams from the host and talks to the daemon only through the public
 HTTP/WS API.
 
-A frame stream is read-only until the daemon grants it input. The daemon calls
-`grant_input { host_terminal_id, attachment_id }` on the control socket when a
-direct native attachment takes the terminal lease; the client claims that id with
-`BindAttachment` and then sends `Input { data }` or `Paste { text }` on the frame
-stream, which the host delivers to the PTY only while the bound id is still the
-slot's grant. A refusal is an `InputRefused { code }` on the same stream and
-never closes it. One holder per slot; `revoke_input`, a holder change, or
-removing the terminal clears the grant, and a grant outlives a control
-disconnect and a daemon restart. Automatic writes, PTY resize, and every tmux
-or proxied pane stay on the control socket behind the daemon's lease checks.
-Full shapes and refusal codes:
-[granted input](../contracts/gterm-protocols.md#granted-input).
+A frame stream types directly: the client sends `Input { data }` or
+`Paste { text }` on a frame stream bound to its attachment, and the host delivers
+it to the PTY. No grant or read-only state gates it. A refusal is an `InputRefused { code }`
+on the same stream and never closes it. Automatic writes, PTY resize, and every
+tmux or proxied pane stay on the control socket behind the daemon's lease checks.
+Full shapes and refusal codes: [input](../contracts/gterm-protocols.md#input).
 
 Editing this path, note that the trap lives in the build, not in the code. The
 `gterm` binary carries `required-features = ["vt-engine"]`, so a plain
@@ -326,15 +320,14 @@ never at collection.
 panes, manages tabs and splits, persists layouts, shows attention, and takes or
 releases control for input and resize. Roster, lifecycle, attention, and
 automatic writes use the daemon's public HTTP/WS API. Operator keystrokes do not:
-a direct native pane holding the lease types on its own frame socket under the
-daemon's grant, so no keystroke waits on a daemon round trip. Frame sockets are
-read-only for every other pane.
+a direct native pane types on its own frame socket, so no keystroke waits on a
+daemon round trip. A direct native pane is writable with no lease. A proxied pane (tmux, or a remote terminal) types through the daemon while its gclient attachment holds the writer lease, which the attach claims without a takeover.
 
 Three terminal paths are available:
 
 | Terminal path | Frame delivery | Keystrokes |
 | --- | --- | --- |
-| Local native terminal | Direct semantic frames from `gterm-frames.sock`. | Direct on the frame socket while the lease holder has the host's input grant. |
+| Local native terminal | Direct semantic frames from `gterm-frames.sock`. | Direct on the frame socket, with no lease or grant check. |
 | Local tmux terminal | Direct semantic frames from the gterm host's tmux observer, identified by socket, server PID/start time, and pane ID. | Through the daemon; the host refuses frame input for a tmux slot with `not_native`. |
 | Remote terminal | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. | Through the daemon. |
 

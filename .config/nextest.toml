@@ -83,7 +83,11 @@ filter = 'package(gobby-runtime) & binary(suite) & (test(/^config::/) | test(/^g
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | (binary(suite) & (test(/^frame_producer::/) | test(/^host_lifecycle::/) | test(/^host_handover::/) | test(/^control_protocol::/) | test(/^frame_protocol::/) | test(/^embed::/) | test(/^build_env::/) | test(/^link_artifacts::/))))'
+# Fresh Cargo/Zig builds must not starve host tests sharing this run's machine:
+# upgrade tests exercise the product's fixed 15s budget, including rollback.
+# Include every host-prefixed module: they reuse the built executable and must
+# not overlap nested Cargo builders that can replace that image.
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | (binary(suite) & (test(/^frame_producer::/) | test(/^host_/) | test(/^control_protocol::/) | test(/^frame_protocol::/) | test(/^embed::/) | test(/^batch_paste::/) | test(/^terminal_theme::/) | test(/^build_env::/) | test(/^link_artifacts::/))))'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
@@ -106,6 +110,11 @@ test-group = 'gterm-pty'
 filter = 'package(gobby-client) & binary(suite) & test(=loop_liveness::a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking)'
 # Request acknowledgements govern progress; this watchdog catches a stuck test.
 slow-timeout = { period = "60s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'package(gobby-client) & binary(suite) & test(/^loop_liveness::/) & test(keystroke_latency)'
+# These acceptance measurements require isolation from sibling test workloads.
+threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 filter = 'package(gobby-client) & binary(suite) & test(/^teardown::/)'

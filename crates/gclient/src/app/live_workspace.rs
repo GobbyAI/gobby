@@ -161,7 +161,46 @@ impl Workspace<LiveDaemon> {
     pub(super) async fn open_unresolved_terminals(&mut self) {
         for terminal_id in self.unresolved_terminal_ids() {
             // Best effort: an unavailable row leaves the slot empty.
-            let _ = self.open_live_terminal(&terminal_id).await;
+            let failure = self.open_live_terminal(&terminal_id).await.err();
+            self.record_open(&terminal_id, failure.map(|error| error.to_string()));
         }
+    }
+
+    /// Records the outcome of the latest open of `terminal_id`: `failure` is
+    /// the error text of a failed open, `None` for one that succeeded or is
+    /// in flight. A failed open is not retried until a later event, so its
+    /// split stops holding focus.
+    pub(super) fn record_open(&mut self, terminal_id: &str, failure: Option<String>) {
+        match failure {
+            Some(text) => {
+                self.open_failures.insert(terminal_id.to_string(), text);
+            }
+            None => {
+                self.open_failures.remove(terminal_id);
+            }
+        }
+    }
+
+    pub(super) fn open_failed(&self, terminal_id: &str) -> bool {
+        self.open_failure(terminal_id).is_some()
+    }
+
+    /// The error text the latest failed open of `terminal_id` returned.
+    pub(super) fn open_failure(&self, terminal_id: &str) -> Option<&str> {
+        self.open_failures.get(terminal_id).map(String::as_str)
+    }
+
+    /// Drops the failures of terminals that no pane names any more: a split
+    /// that left the workspace has nothing left to wait on.
+    pub(super) fn forget_vanished_open_failures(&mut self) {
+        let Some(model) = self.workspace_model() else {
+            return;
+        };
+        let named: HashSet<String> = model
+            .panes()
+            .filter_map(|pane| pane.terminal_id.clone())
+            .collect();
+        self.open_failures
+            .retain(|terminal_id, _| named.contains(terminal_id));
     }
 }

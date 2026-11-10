@@ -133,6 +133,7 @@ fn inputs_with_build_root(gobby_home: &Path, build_root: &Path, workspace: &Path
         gobby_home: gobby_home.to_owned(),
         build_root: build_root.to_owned(),
         operator_bootstrap: Some(gobby_home.join("home/.gobby/bootstrap.yaml")),
+        credential_authority_roots: Vec::new(),
         env: BTreeMap::new(),
         provider_executable: None,
         allow_run_unix_sockets: false,

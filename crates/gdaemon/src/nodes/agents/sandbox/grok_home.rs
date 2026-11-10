@@ -73,6 +73,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        &inputs.credential_authority_roots,
         operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
@@ -99,6 +100,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        &inputs.credential_authority_roots,
         operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
@@ -148,6 +150,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        &inputs.credential_authority_roots,
         operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(

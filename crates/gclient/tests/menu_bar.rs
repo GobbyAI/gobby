@@ -3,8 +3,8 @@ use super::mock_daemon;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::apply_live_menu_action;
 use gobby_client::app::{
-    build_menu, route_modal_key, route_mouse, ArrangeTarget, ContextMenuKind, ControlState,
-    MenuAction, ModalOutcome, MouseOutcome, Submenu,
+    build_menu, route_modal_key, route_mouse, ArrangeTarget, ContextMenuKind, MenuAction,
+    ModalOutcome, MouseOutcome, Submenu,
 };
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::key_input::KeyInput;
@@ -35,7 +35,7 @@ struct LiveMenuFixture {
     home: TempDir,
 }
 
-async fn live_menu_fixture(focused: bool, held: bool) -> LiveMenuFixture {
+async fn live_menu_fixture(focused: bool) -> LiveMenuFixture {
     let mock = MockDaemon::start("local-token").await;
     let terminals = if focused {
         vec!["menu-a", "menu-b"]
@@ -92,9 +92,6 @@ async fn live_menu_fixture(focused: bool, held: bool) -> LiveMenuFixture {
         chrome.open_pane(second, "second");
         chrome.focus_pane(first);
         workspace.pane_mut(first).label = Some("menu pane".to_string());
-        if held {
-            workspace.pane_mut(first).control = ControlState::Held;
-        }
         let mut toast = Toast::info("target");
         toast.target = Some("menu-b".to_string());
         chrome.notify(toast);
@@ -115,13 +112,7 @@ async fn live_menu_fixture(focused: bool, held: bool) -> LiveMenuFixture {
 fn observable_state(fixture: &LiveMenuFixture) -> String {
     let pane = fixture.pane.map(|id| {
         let state = fixture.workspace.pane(id);
-        format!(
-            "{:?}:{:?}:{}:{}",
-            state.control,
-            state.label,
-            state.right_click_passthrough,
-            fixture.workspace.awaiting_control(id),
-        )
+        format!("{:?}:{}", state.label, state.right_click_passthrough,)
     });
     format!(
         "{:?}:{:?}:{}:{:?}:{:?}:{}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{pane:?}",
@@ -150,7 +141,7 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
 }
 
 #[test]
-fn agent_menu_lists_the_nine_actions_in_order() {
+fn agent_menu_lists_its_attention_actions_in_order() {
     let workspace = Workspace::scripted();
     let chrome = Chrome::dark();
     let menu = build_menu(
@@ -166,10 +157,6 @@ fn agent_menu_lists_the_nine_actions_in_order() {
         [
             "Respond",
             "Mark seen",
-            "Take control",
-            "Release control",
-            "Take back",
-            "Detach",
             "Open alert target",
             "Next attention",
             "Previous attention",
@@ -202,7 +189,6 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
             "Sort tabs A–Z",
             "Close tab",
             "Destroy orphaned terminals…",
-            "Detach",
         ]
     );
     assert_eq!(
@@ -266,7 +252,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
 
     // Every menu-bar menu, every View submenu under it and Window › Arrange
     // for the fixture's tab.
-    let tab = live_menu_fixture(true, false)
+    let tab = live_menu_fixture(true)
         .await
         .chrome
         .active_tab()
@@ -285,12 +271,12 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             .map(ContextMenuKind::Submenu),
         )
         .collect();
-    for (focused, held) in [(false, false), (true, false), (true, true)] {
+    for focused in [false, true] {
         for kind in &kinds {
-            let fixture = live_menu_fixture(focused, held).await;
+            let fixture = live_menu_fixture(focused).await;
             let items = build_menu(&fixture.workspace, &fixture.chrome, kind.clone(), (0, 1)).items;
             for item in items.into_iter().filter(|item| item.enabled) {
-                let mut fixture = live_menu_fixture(focused, held).await;
+                let mut fixture = live_menu_fixture(focused).await;
                 let before = observable_state(&fixture);
                 let requests_before = fixture.mock.requests().len();
                 let workspace_before = fixture.mock.workspace_requests().len();
@@ -454,7 +440,7 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 // behind them, and a pick must save.
 #[tokio::test]
 async fn clicking_the_appearance_row_opens_its_choices_and_a_pick_saves_it() {
-    let mut fixture = live_menu_fixture(true, false).await;
+    let mut fixture = live_menu_fixture(true).await;
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
     let row = open_the_appearance_choices(&mut terminal, &mut fixture).await;
     let choices = fixture
@@ -519,7 +505,7 @@ async fn clicking_the_appearance_row_opens_its_choices_and_a_pick_saves_it() {
 // its rows acts on that row, and Esc closes both menus.
 #[tokio::test]
 async fn the_view_menu_behind_the_appearance_choices_stays_live() {
-    let mut fixture = live_menu_fixture(true, false).await;
+    let mut fixture = live_menu_fixture(true).await;
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
     open_the_appearance_choices(&mut terminal, &mut fixture).await;
     let parent = fixture
@@ -559,7 +545,7 @@ async fn the_view_menu_behind_the_appearance_choices_stays_live() {
 /// on its left rather than over it.
 #[tokio::test]
 async fn the_appearance_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
-    let mut fixture = live_menu_fixture(true, false).await;
+    let mut fixture = live_menu_fixture(true).await;
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).expect("test backend");
     fixture
         .chrome
@@ -588,7 +574,7 @@ async fn the_appearance_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
 /// that search and shows the legend.
 #[tokio::test]
 async fn help_reopened_from_the_legend_row_drops_the_old_search() {
-    let mut fixture = live_menu_fixture(true, false).await;
+    let mut fixture = live_menu_fixture(true).await;
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
     let legend = MenuAction::Act(Action::Help);
     pick_menu_row(
@@ -631,7 +617,7 @@ async fn help_reopened_from_the_legend_row_drops_the_old_search() {
 /// From the bottom of Help, the first key back scrolls the view.
 #[tokio::test]
 async fn the_first_key_back_from_the_bottom_of_help_scrolls() {
-    let mut fixture = live_menu_fixture(true, false).await;
+    let mut fixture = live_menu_fixture(true).await;
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test backend");
     fixture
         .chrome

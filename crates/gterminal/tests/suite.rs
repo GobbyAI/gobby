@@ -20,7 +20,7 @@ mod build_env;
 #[path = "carve_guard.rs"]
 mod carve_guard;
 
-#[cfg(feature = "vt-engine")]
+#[cfg(all(feature = "vt-engine", feature = "test-seams"))]
 #[path = "control_protocol.rs"]
 mod control_protocol;
 
@@ -44,7 +44,7 @@ mod handover_display;
 #[path = "host_cli_args.rs"]
 mod host_cli_args;
 
-#[cfg(feature = "vt-engine")]
+#[cfg(all(feature = "vt-engine", feature = "test-seams"))]
 #[path = "host_handover.rs"]
 mod host_handover;
 
@@ -52,9 +52,13 @@ mod host_handover;
 #[path = "host_image.rs"]
 mod host_image;
 
-#[cfg(feature = "vt-engine")]
+#[cfg(all(feature = "vt-engine", feature = "test-seams"))]
 #[path = "host_lifecycle.rs"]
 mod host_lifecycle;
+
+#[cfg(all(unix, feature = "vt-engine"))]
+#[path = "host_startup_wait.rs"]
+mod host_startup_wait;
 
 #[cfg(feature = "vt-engine")]
 #[path = "link_artifacts.rs"]

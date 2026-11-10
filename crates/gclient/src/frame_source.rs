@@ -2,6 +2,7 @@
 
 pub mod proxy;
 
+pub(crate) use proxy::claim_writer_lease;
 pub use proxy::ProxyFrameSource;
 
 use std::collections::VecDeque;
@@ -32,11 +33,6 @@ const DIRECT_FRAME_CAPACITY: usize = 256;
 /// even one burst (#22573).
 const DIRECT_WRITE_CAPACITY: usize = 256;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Dials the host control socket beside the frame socket.
-pub(crate) async fn connect_host_control(socket: &Path) -> std::io::Result<UnixStream> {
-    UnixStream::connect(socket).await
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachLocator {

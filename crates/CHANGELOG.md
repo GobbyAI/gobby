@@ -67,8 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `2` with empty JSON like any unknown CLI. The Qwen structured allow/block
   response path, which also carried `Stop` blocks, is gone. Version: `0.9.11`.
 
+#### gobby-terminal
+
+- **Input grant handshake** — the grant checks on native writes and the
+  `input_not_granted` refusal are gone. Every attached pane writes on its own
+  attachment, and the grant wire goldens are deleted. Version: `0.1.22`.
+
 #### gobby-client
 
+- **Read-only pane mode and take-control** — a pane is always writable. The
+  take-control key and menu item, the take-control UI, the read-only state and
+  the "Input delivery unconfirmed." toast are gone. Version: `0.1.109`.
 - **Qwen provider label** — the sidebar no longer maps the `qwen` source.
   Version: `0.1.27`.
 
@@ -119,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon lease against `gobby-core 0.9.1`. Version: `0.3.0`.
 - **Foundation alignment** — require `gobby-core 0.9.2`. Version: `0.3.1`.
 - **Minor version bump** — `0.4.0`; requires `gobby-core 0.10.0`. The managed `gdaemon` floor (`MANAGED_BIN_VERSION_PINS`) moves to `0.4.0` with it. Version: `0.4.0`.
+- **Input grant handshake removed** (#25653) — rebuilt against `gobby-terminals` without the grant checks and control routes that only existed for read-only mode. Version: `0.4.136`.
 
 #### gcode
 
@@ -183,6 +193,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panes, so Codex read a light OSC 11 answer once at startup and drew light
   composer bands for its lifetime. Holder-wins on a granted pane is
   unchanged.
+- **Host control requests stay small** (#25653) — the control reader boxes a
+  parsed request, which clears clippy's `large_enum_variant` gate. No behavior
+  change. Version: `0.1.24`.
 
 #### gobby-client
 
@@ -198,6 +211,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each query re-arms the input reader through
   `gobby_terminal::raw_input::HostColorQueryArm`, so a reply split at its ESC
   is stitched rather than sent to the focused pane as an Escape key.
+- **Typing no longer waits on the daemon** (#25653) — keys to a native pane go
+  straight to its gterm host. Daemon load no longer delays a keystroke, since no
+  take grant sits on the path. Closing an external or adopted pane detaches its
+  attachment. A failed open keeps its error text, and a split whose terminal
+  leaves the workspace stops waiting on it. Version: `0.1.111`.
+- **Keys held for promotion and closing panes** (#25653) — a native pane that
+  fell back to the proxy holds its keys for the direct connection rather than
+  sending them through the daemon. A failed promotion drops them with a toast.
+  A key typed into a native pane whose close is in flight is refused with a
+  toast, and keys typed behind a recovery detach reach the new attachment.
+  Version: `0.1.112`.
+- **Daemon WebSocket attaches are always web** (#25653) — the daemon ignores a
+  viewer label on a WebSocket attach, so every daemon attach takes the writer
+  lease and a claimed `viewer: "gclient"` is treated as web. A proxied gclient
+  attach claims the lease with a non-takeover take right after attaching, so a
+  tmux or proxied native pane keeps one writer. Direct native panes still type
+  over the frame socket with no lease. Version: `0.1.113`.
+- **Proxied attach claim cleanup** (#25653) — a scripted proxied attach claims
+  its writer lease as the live attach does. A claim refused after a successful
+  attach detaches that attachment, so none is left behind. Version: `0.1.114`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

@@ -533,7 +533,10 @@ class ProxyHub:
         set_scroll = getattr(record.frame, "set_scroll_offset", None)
         if lease.scroll_offset and record.backend == "native" and callable(set_scroll):
             await set_scroll(lease.scroll_offset)
-        if leases.holder(record.terminal_id) in (None, record.attachment_id):
+        # A gclient pane is always writable and always declares; a web viewer
+        # declares only while it holds the lease or nobody does.
+        gclient = lease.viewer != "web"
+        if gclient or leases.holder(record.terminal_id) in (None, record.attachment_id):
             await self._owner._declare_holder_theme(record.attachment_id)
 
 

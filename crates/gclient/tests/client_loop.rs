@@ -18,14 +18,13 @@ use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
     remove_worktree, route_modal_key, run_live_loop, sync_live_chrome, AttachState, Backend,
-    ModalOutcome, HOST_GRANT_UNAVAILABLE,
+    ModalOutcome,
 };
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LayoutAxis,
     LayoutNode, LiveDaemon, Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow,
     SourceStatus, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WorkspaceOp,
-    WorktreeRow, WsMessage, WsReply, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE,
-    REQUEST_DEADLINE,
+    WorktreeRow, WsMessage, WsReply, BROADCAST_CAPACITY, REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
     AttachLocator, FrameDelivery, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
@@ -39,7 +38,7 @@ use gobby_client::ui::chrome::{Mode, RowState};
 use gobby_client::ui::dialogs::orphans::row_summary;
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
-use gobby_client::ui::keymap::{default_prefix, Keymap, HERDR_PREFIX};
+use gobby_client::ui::keymap::{Keymap, HERDR_PREFIX};
 use gobby_client::ui::navigator::navigator_rows;
 use gobby_client::ui::pane_chrome::pane_address;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
@@ -86,8 +85,6 @@ fn terminal_side_effects(mock: &MockDaemon) -> Vec<Value> {
                 Some(
                     "terminal_attach"
                         | "terminal_detach"
-                        | "terminal_take_control"
-                        | "terminal_release_control"
                         | "terminal_set_viewport"
                         | "terminal_input"
                 )
@@ -105,7 +102,7 @@ fn workspace_ops(mock: &MockDaemon, op: &str) -> Vec<Value> {
 }
 
 /// How long a mock-visible signal may take to appear. Generous on purpose: the
-/// control grant is answered beside the loop now, so a step can cost several
+/// focus report is answered beside the loop now, so a step can cost several
 /// scheduler hops and round trips, and eighty of these tests share the machine.
 /// It bounds liveness only — every assertion is on content, not on this budget.
 const WAIT_BUDGET: Duration = Duration::from_secs(10);
@@ -712,12 +709,68 @@ impl Daemon for ReconnectDaemon {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_refused_write_outcome_is_reported_on_the_scripted_loop() {
+    let mut ws = Workspace::scripted();
+    ws.open_terminal("term-refused", "native", "epoch-refused")
+        .expect("open terminal");
+    let mut chrome = Chrome::dark();
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let daemon = ws.daemon().clone();
+    let (guard, _restore_hits) = TerminalGuard::recording();
+
+    let driver = async move {
+        tokio::task::yield_now().await;
+        daemon.publish_event(gobby_client::daemon::DaemonEvent::Message(json!({
+            "type": "terminal_write_outcome",
+            "outcome": "refused",
+            "reason": "write_seq_conflict",
+            "attachment_id": "attachment-refused",
+            "client_write_seq": 1
+        })));
+        tokio::time::advance(RENDER_TICK * 2).await;
+        tokio::task::yield_now().await;
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )))
+            .await
+            .expect("prefix");
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Char('Q'),
+                KeyModifiers::SHIFT,
+            )))
+            .await
+            .expect("quit");
+    };
+
+    let (result, ()) = tokio::join!(
+        run_scripted_loop(&mut ws, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("loop exits cleanly");
+    drop(guard);
+
+    let titles: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        ["Input refused: write_seq_conflict."],
+        "a refused write outcome is reported, not dropped"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn loop_routes_input_and_frames() {
     let mut ws = Workspace::scripted();
     let pane = ws
         .open_terminal("term-loop", "native", "epoch-loop")
         .expect("open terminal");
-    ws.force_held(pane);
     // A proxy source, so the pane's keystrokes are the daemon's to carry; a
     // direct pane types on its own frame socket instead (#22573).
     let mut source = ScriptedFrameSource::new(Transport::Proxy);
@@ -825,7 +878,6 @@ async fn scripted_host_input_messages(
             "epoch-keyboard-protocol",
         )
         .expect("open terminal");
-    workspace.force_held(pane);
     let mut source = ScriptedFrameSource::new(Transport::Direct);
     let ServerMessage::Frame(mut frame) = semantic_frame("READY") else {
         unreachable!("semantic_frame builds a frame")
@@ -937,7 +989,7 @@ async fn input_encoder_covers_named_keys() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         let live_cases = [
             (
                 TerminalKey::new(KeyCode::Up, KeyModifiers::CONTROL),
@@ -993,178 +1045,6 @@ async fn input_encoder_covers_named_keys() {
         driver
     );
     result.expect("live loop exits cleanly");
-    mock.shutdown().await;
-}
-
-/// Focus moves the lease in one gesture: the pane left behind releases without
-/// detaching, and the pane gained takes it over rather than asking and offering
-/// a second button. A peer that takes the lease back makes typing wait on the
-/// person again, and the key typed while their take-back is in flight is
-/// written exactly once (#22573).
-#[tokio::test]
-async fn focus_moves_control_and_settles_pending_input_once() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-a", "tmux");
-    mock.set_attach_backend("terminal-b", "tmux");
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": [
-                {"terminal_id": "terminal-a", "backend": "tmux", "state": "live"},
-                {"terminal_id": "terminal-b", "backend": "tmux", "state": "live"}
-            ],
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-        }),
-    );
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    let _home = pin_tabs(
-        &mock,
-        &mut workspace,
-        "project-1",
-        &["terminal-a", "terminal-b"],
-    );
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let initially_focused = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("terminal_id")
-            .and_then(Value::as_str)
-            .expect("initial focused terminal")
-            .to_string();
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-
-        let releases = websocket_requests(&mock, "terminal_release_control");
-        assert_eq!(
-            releases[0].get("terminal_id").and_then(Value::as_str),
-            Some(initially_focused.as_str())
-        );
-        assert!(
-            websocket_requests(&mock, "terminal_detach")
-                .iter()
-                .all(|request| {
-                    request.get("terminal_id").and_then(Value::as_str)
-                        != Some(initially_focused.as_str())
-                }),
-            "focus change must release control without detaching the old pane"
-        );
-        let focused_request = websocket_requests(&mock, "terminal_take_control")
-            .into_iter()
-            .find(|request| {
-                request.get("terminal_id").and_then(Value::as_str)
-                    != Some(initially_focused.as_str())
-            })
-            .expect("focused pane take-control request");
-        assert_eq!(
-            focused_request.get("takeover"),
-            Some(&json!(false)),
-            "focus claims a free pane without displacing a racing holder"
-        );
-        let focused_terminal_id = focused_request
-            .get("terminal_id")
-            .and_then(Value::as_str)
-            .expect("focused terminal")
-            .to_string();
-        let attachment_id = focused_request
-            .get("attachment_id")
-            .and_then(Value::as_str)
-            .expect("focused attachment")
-            .to_string();
-
-        // A write is the proof the grant landed: the request alone is not,
-        // because it is answered beside the loop now.
-        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-
-        mock.send_event_and_wait(json!({
-            "type": "terminal_lease_lost",
-            "terminal_id": focused_terminal_id,
-            "attachment_id": attachment_id,
-            "holder": "peer",
-            "lease_generation": 2,
-            "daemon_epoch": "epoch-1",
-            "seq": 2
-        }))
-        .await;
-        settle_live_event().await;
-
-        // A lost lease waits on the person: typing says so and starts nothing.
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            2,
-            "typing into a lost lease starts no request"
-        );
-        assert_eq!(
-            websocket_requests(&mock, "terminal_input").len(),
-            1,
-            "typing into a lost lease writes nothing"
-        );
-
-        // The take-back is granted, and the key typed while it was in flight
-        // is written once it lands.
-        mock.enqueue_take_control_reply(true, 2, None);
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-        settle_live_event().await;
-        let written: Vec<String> = websocket_requests(&mock, "terminal_input")
-            .iter()
-            .map(|request| {
-                request
-                    .get("data")
-                    .and_then(Value::as_str)
-                    .expect("write data")
-                    .to_string()
-            })
-            .collect();
-        assert_eq!(
-            written,
-            ["a", "z"],
-            "the key queued behind the take-back is written once"
-        );
-        drop(input_tx);
-        focused_terminal_id
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, focused_terminal_id) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    let pane_id = workspace
-        .pane_for_terminal(&focused_terminal_id)
-        .expect("focused terminal pane");
-    assert!(
-        workspace.pane(pane_id).writable(),
-        "the pane that won its take-back can type"
-    );
-    assert!(
-        !workspace.pane(pane_id).has_take_back(),
-        "a granted take-back leaves no second button behind"
-    );
     mock.shutdown().await;
 }
 
@@ -1255,7 +1135,7 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
@@ -1284,7 +1164,7 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
         Some(&json!("terminal-gobby")),
         "the kill names the gobby-owned terminal"
     );
-    let releases = websocket_requests(&mock, "terminal_release_control");
+    let releases = websocket_requests(&mock, "terminal_detach");
     assert_eq!(releases.len(), 1, "the external pane's lease is released");
     assert_eq!(
         releases[0].get("terminal_id"),
@@ -1383,7 +1263,7 @@ async fn closing_an_adopted_native_tab_releases_its_terminal() {
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(8);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_chord(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
         drop(input_tx);
@@ -1421,11 +1301,11 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
-        // The released external pane leaves the daemon's tab through pane.close.
+        // The detached external pane leaves the daemon's tab through pane.close.
         wait_until(|| workspace_ops(&mock, "pane.close").len() == 1).await;
         settle_live_event().await;
         drop(input_tx);
@@ -1444,9 +1324,12 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
     );
     result.expect("live loop exits cleanly");
     assert_eq!(
-        websocket_requests(&mock, "terminal_release_control").len(),
+        websocket_requests(&mock, "terminal_detach")
+            .iter()
+            .filter(|body| body.get("terminal_id") == Some(&json!("terminal-mine")))
+            .count(),
         1,
-        "the external pane's lease is released"
+        "the external pane's attachment is detached"
     );
     assert!(
         workspace_ops(&mock, "tab.close").is_empty(),
@@ -1472,15 +1355,14 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
         [json!("mock-pane-3")],
         "the external pane (the seed mints tab-1, pane-2, pane-3) left the tab through the daemon"
     );
-    let mine = workspace
+    workspace
         .pane_for_terminal("terminal-mine")
         .expect("the external session stays in the roster");
-    assert!(workspace.pane(mine).is_observe(), "its lease was released");
     mock.shutdown().await;
 }
 
-/// `close_pane` on an external tmux session releases its lease and drops the
-/// slot; the session is never killed and the tab keeps its other pane.
+/// `close_pane` on an external tmux session detaches its attachment and drops
+/// the slot; the session is never killed and the tab keeps its other pane.
 #[tokio::test]
 async fn closing_a_pane_spares_an_external_tmux_session() {
     let mock = MockDaemon::start("local-token").await;
@@ -1490,12 +1372,12 @@ async fn closing_a_pane_spares_an_external_tmux_session() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        assert!(websocket_requests(&mock, "terminal_release_control").is_empty());
+        assert!(workspace_ops(&mock, "pane.close").is_empty());
         send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        wait_until(|| workspace_ops(&mock, "pane.close").len() == 1).await;
         settle_live_event().await;
         drop(input_tx);
     };
@@ -1525,7 +1407,12 @@ async fn closing_a_pane_spares_an_external_tmux_session() {
         tab.slot_for(mine).is_none(),
         "the external pane left the tab"
     );
-    assert!(workspace.pane(mine).is_observe(), "its lease was released");
+    assert!(
+        websocket_requests(&mock, "terminal_detach")
+            .iter()
+            .any(|body| body.get("terminal_id") == Some(&json!("terminal-mine"))),
+        "closing the external pane detaches its attachment and leaves the session running"
+    );
     mock.shutdown().await;
 }
 
@@ -1645,81 +1532,11 @@ async fn single_terminal_loop(
     (workspace, home)
 }
 
-/// A pane whose lease another viewer took refuses typing: nothing reaches
-/// the daemon and the status line names take control (the scripted path's
-/// `read_only` refusal, on the live loop).
+/// Keys and a paste typed into a proxy pane are written in the order they were
+/// typed. Nothing is dropped, and nothing announces a control-acquiring mode:
+/// the pane is writable from the moment it is attached (#22573).
 #[tokio::test]
-async fn lost_lease_refuses_typing_and_names_take_control() {
-    let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let attachment_id = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("attachment_id")
-            .and_then(Value::as_str)
-            .expect("focused attachment")
-            .to_string();
-        mock.send_event_and_wait(json!({
-            "type": "terminal_lease_lost",
-            "terminal_id": "terminal-a",
-            "attachment_id": attachment_id,
-            "holder": "peer",
-            "lease_generation": 2,
-            "daemon_epoch": "epoch-1",
-            "seq": 2
-        }))
-        .await;
-        settle_live_event().await;
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        settle_live_event().await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    assert_eq!(
-        websocket_requests(&mock, "terminal_take_control").len(),
-        1,
-        "the key starts no take-control request"
-    );
-    assert!(
-        websocket_requests(&mock, "terminal_input").is_empty(),
-        "the key is not written"
-    );
-    let pane = workspace
-        .pane_for_terminal("terminal-a")
-        .expect("terminal pane");
-    assert!(workspace.pane(pane).is_lease_lost());
-    assert!(
-        chrome
-            .last_alert()
-            .is_some_and(|message| message.contains("take control")),
-        "the status names take control: {:?}",
-        chrome.last_alert()
-    );
-    mock.shutdown().await;
-}
-
-/// Keys and a paste typed while the grant a take asked for is still in flight
-/// are queued and written in the order they were typed. Nothing is dropped, and
-/// nothing announces an acquiring-control mode: queued input is the behavior,
-/// not a ceremony (#22573).
-#[tokio::test]
-async fn keys_and_a_paste_during_a_pending_grant_flush_in_typed_order() {
+async fn keys_and_a_paste_flush_in_typed_order() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = single_terminal_loop(&mock, "tmux").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
@@ -1727,37 +1544,13 @@ async fn keys_and_a_paste_during_a_pending_grant_flush_in_typed_order() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let attachment_id = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("attachment_id")
-            .and_then(Value::as_str)
-            .expect("focused attachment")
-            .to_string();
-        // A peer takes the lease, so the pane waits on the person again: this
-        // is the window where the first word used to be lost.
-        mock.send_event_and_wait(json!({
-            "type": "terminal_lease_lost",
-            "terminal_id": "terminal-a",
-            "attachment_id": attachment_id,
-            "holder": "peer",
-            "lease_generation": 2,
-            "daemon_epoch": "epoch-1",
-            "seq": 2
-        }))
-        .await;
-        settle_live_event().await;
-
-        mock.enqueue_take_control_reply(true, 2, None);
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        // Typed into the pane while the grant that take asked for is still out.
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('h'), KeyModifiers::NONE).await;
         input_tx
             .send(RawInputEvent::Paste("ello".to_string()))
             .await
             .expect("live loop input");
         send_key(&input_tx, KeyCode::Char('!'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
         wait_for_websocket_requests(&mock, "terminal_input", 2).await;
         wait_for_websocket_requests(&mock, "terminal_paste", 1).await;
         drop(input_tx);
@@ -1775,11 +1568,6 @@ async fn keys_and_a_paste_during_a_pending_grant_flush_in_typed_order() {
         driver
     );
     result.expect("live loop exits cleanly");
-    assert_eq!(
-        websocket_requests(&mock, "terminal_take_control").len(),
-        2,
-        "the keys behind one grant ask for no further ones"
-    );
     // Keys and pastes travel as different messages, so the write sequence is
     // what proves they reached the terminal in the order they were typed.
     let mut writes: Vec<(u64, String)> = websocket_requests(&mock, "terminal_input")
@@ -1847,16 +1635,11 @@ async fn write_outcomes_drive_pane_state() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
 
         send_key(&input_tx, KeyCode::Char('d'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 1).await;
         settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            1,
-            "a delivered write must leave the pane writable"
-        );
 
         send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 2).await;
@@ -1866,17 +1649,7 @@ async fn write_outcomes_drive_pane_state() {
             2,
             "an indeterminate write must not be resent"
         );
-        // An unknown write outcome refuses typing until control is taken.
-        send_key(&input_tx, KeyCode::Char('r'), KeyModifiers::NONE).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            1,
-            "typing into a read-only pane starts no request"
-        );
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        // An unknown write outcome never gates typing: the next key is sent.
         send_key(&input_tx, KeyCode::Char('r'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 3).await;
         settle_live_event().await;
@@ -1887,7 +1660,6 @@ async fn write_outcomes_drive_pane_state() {
         );
 
         send_key(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
         wait_for_websocket_requests(&mock, "terminal_input", 4).await;
         settle_live_event().await;
         assert_eq!(
@@ -2199,12 +1971,7 @@ async fn proxy_fallback_uses_fresh_attachment() {
             .filter(|body| {
                 matches!(
                     body.get("type").and_then(Value::as_str),
-                    Some(
-                        "terminal_detach"
-                            | "terminal_set_viewport"
-                            | "terminal_take_control"
-                            | "terminal_release_control"
-                    )
+                    Some("terminal_detach" | "terminal_set_viewport")
                 )
             })
             .collect();
@@ -2480,7 +2247,7 @@ async fn a_late_detach_reply_retries_direct_without_reconnecting() {
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         let reply_gate = mock.pause_websocket_reads().await;
         tokio::time::pause();
         // The host image changed under the dead stream: the host-local
@@ -2656,25 +2423,16 @@ async fn live_resize_propagates_geometry_by_policy() {
         show_roster(&workspace, &mut chrome);
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
-            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-            let mut take_count = 1;
-            while websocket_requests(&mock, "terminal_take_control")
-                .last()
-                .and_then(|request| request.get("terminal_id"))
-                != Some(&json!("term-controlled"))
-            {
+            wait_for_focus_reports(&mock, 1).await;
+            let mut focus_count = 1;
+            while focused_attachment(&mock, "term-controlled").is_none() {
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
                 send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
-                take_count += 1;
-                assert!(take_count <= 3, "controlled pane must be in the live grid");
-                wait_for_websocket_requests(&mock, "terminal_take_control", take_count).await;
+                focus_count += 1;
+                assert!(focus_count <= 3, "controlled pane must be in the live grid");
+                wait_for_focus_reports(&mock, focus_count).await;
             }
-            assert_eq!(
-                websocket_requests(&mock, "terminal_take_control")
-                    .last()
-                    .and_then(|request| request.get("terminal_id")),
-                Some(&json!("term-controlled"))
-            );
+            assert!(focused_attachment(&mock, "term-controlled").is_some());
             wait_for_websocket_requests(&mock, "terminal_resize", 3).await;
             let viewports_before = websocket_requests(&mock, "terminal_set_viewport").len();
             let resizes_before = websocket_requests(&mock, "terminal_resize").len();
@@ -2784,7 +2542,10 @@ async fn live_resize_propagates_geometry_by_policy() {
                 .rev()
                 .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
                 .unwrap_or_else(|| panic!("{terminal_id} claimed no size"));
-            assert_eq!(latest.get("viewer"), Some(&json!("gclient")));
+            assert!(
+                latest.get("viewer").is_none(),
+                "a size claim names no viewer label"
+            );
             assert_eq!(
                 latest.get("rows").and_then(Value::as_u64),
                 Some(u64::from(rows))
@@ -2821,7 +2582,7 @@ async fn live_resize_propagates_geometry_by_policy() {
         let mut chrome = Chrome::dark();
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
-            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            wait_for_focus_reports(&mock, 1).await;
             settle_live_event().await;
             let before = websocket_requests(&mock, "terminal_set_viewport");
             send_resize_burst(1);
@@ -2862,9 +2623,8 @@ async fn direct_pane_keys_reach_the_host_not_the_daemon() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        // Startup focus takes the lease, and the mock's grant carries the
-        // host's input grant with it.
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // Startup focus reports the pane focused before any key is typed.
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
         let typed = host
@@ -2933,185 +2693,12 @@ async fn direct_pane_keys_reach_the_host_not_the_daemon() {
     mock.shutdown().await;
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_granted_lease_without_a_host_grant_offers_take_back() {
-    assert_eq!(
-        ungranted_lease_offers_take_back(false).await,
-        HOST_GRANT_UNAVAILABLE
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn an_explicit_host_grant_refusal_offers_take_back() {
-    assert_eq!(
-        ungranted_lease_offers_take_back(true).await,
-        HOST_GRANT_UNAVAILABLE
-    );
-}
-
-async fn ungranted_lease_offers_take_back(serve_control: bool) -> String {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    let terminal_id = "terminal-ungranted";
-    let mut host = DirectHost::start("epoch-ungranted").await;
-    if serve_control {
-        host.serve_gterm_control("local-token");
-        host.refuse_grants();
-    }
-    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("ungranted pane");
-    // The daemon hands out the writer lease and the terminal host never got the
-    // matching input grant. Twice: once for the startup focus, once for the
-    // take-back the keystroke below asks for.
-    mock.enqueue_take_control_reply_without_host_grant(1);
-    mock.enqueue_take_control_reply_without_host_grant(1);
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        settle_live_event().await;
-        // Typing asks for the take-back the pane offered, and the host grant
-        // is still missing, so there is still nowhere to type.
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        settle_live_event().await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("ungranted loop");
-
-    let pane = workspace.pane(pane_id);
-    assert!(pane.is_observe(), "an ungranted pane cannot hold control");
-    assert!(pane.has_take_back(), "it offers take-back instead");
-    assert!(
-        websocket_requests(&mock, "terminal_input").is_empty(),
-        "gclient never falls back to daemon-mediated keys"
-    );
-    assert!(
-        host.drain()
-            .iter()
-            .all(|message| !matches!(message, ClientMessage::Input { .. })),
-        "and it types nothing at the host either"
-    );
-    assert!(
-        chrome
-            .alert_log
-            .iter()
-            .any(|toast| toast.title.contains(HOST_GRANT_UNAVAILABLE)),
-        "the refusal is visible: {:?}",
-        chrome.alert_log
-    );
-    if serve_control {
-        assert!(
-            host.control_requests().iter().any(|request| {
-                request.get("method").and_then(|method| method.as_str()) == Some("grant_input")
-            }),
-            "the host's authenticated control path refused the grant"
-        );
-    }
-    let status = pane
-        .status_message()
-        .expect("host refusal status")
-        .to_owned();
-    host.shutdown().await;
-    mock.shutdown().await;
-    status
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn an_input_refusal_returns_the_pane_to_observing_and_keeps_the_stream() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    let terminal_id = "terminal-refused-input";
-    let host = DirectHost::start("epoch-refused-input").await;
-    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("refused pane");
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        host.wait_for("the key", |seen| {
-            seen.iter()
-                .any(|message| matches!(message, ClientMessage::Input { .. }))
-        })
-        .await;
-        // The daemon moved the grant to a peer, so the host refuses the next
-        // write while the frame stream keeps running.
-        host.to_client
-            .send(ServerMessage::InputRefused {
-                code: "input_not_granted".into(),
-            })
-            .expect("send refusal");
-        host.to_client
-            .send(semantic_frame("still streaming"))
-            .expect("send frame");
-        settle_live_event().await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("input refusal loop");
-
-    let pane = workspace.pane(pane_id);
-    assert!(pane.is_observe(), "a refused pane stops holding control");
-    assert!(pane.has_take_back());
-    assert_eq!(
-        pane.status_message(),
-        Some("terminal refused input (input_not_granted); take control again")
-    );
-    assert_eq!(
-        pane.transport(),
-        Some(Transport::Direct),
-        "the refusal is not a transport failure"
-    );
-    assert!(
-        pane.frame_source().is_some(),
-        "and the frame stream survives it"
-    );
-    assert!(pane.frames_rendered() > 0, "frames still arrive");
-    host.shutdown().await;
-    mock.shutdown().await;
-}
-
 #[tokio::test]
 async fn resize_geometry_policy_reducer() {
     let mut ws = Workspace::scripted();
     let controlled_native = ws
         .open_terminal("term-controlled", "native", "epoch-resize")
         .expect("controlled native pane");
-    ws.force_held(controlled_native);
     let observed_proxy = ws
         .open_terminal("term-observed", "native", "epoch-resize")
         .expect("observed native pane");
@@ -3120,7 +2707,6 @@ async fn resize_geometry_policy_reducer() {
     let controlled_tmux = ws
         .open_terminal("term-tmux", "tmux", "epoch-resize")
         .expect("tmux pane");
-    ws.force_held(controlled_tmux);
 
     ws.propagate_geometry(&[
         (controlled_native, 0, 0),
@@ -3155,11 +2741,7 @@ async fn resize_geometry_policy_reducer() {
             message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_resize")
         })
         .collect();
-    assert_eq!(
-        resizes.len(),
-        3,
-        "every live pane claims its size for the gclient viewer"
-    );
+    assert_eq!(resizes.len(), 3, "every live pane claims its size");
     for (pane, terminal_id) in [
         (controlled_native, "term-controlled"),
         (observed_proxy, "term-observed"),
@@ -3170,7 +2752,10 @@ async fn resize_geometry_policy_reducer() {
             .iter()
             .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
             .unwrap_or_else(|| panic!("{terminal_id} claimed no size"));
-        assert_eq!(resize.get("viewer"), Some(&json!("gclient")));
+        assert!(
+            resize.get("viewer").is_none(),
+            "a size claim names no viewer label"
+        );
         assert_eq!(resize.get("rows"), Some(&json!(rows)));
         assert_eq!(resize.get("cols"), Some(&json!(cols)));
     }
@@ -3854,7 +3439,7 @@ async fn latched_exit_issues_no_further_requests() {
         let (input_tx, input_rx) = mpsc::channel(16);
 
         let driver = async {
-            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            wait_for_focus_reports(&mock, 1).await;
             mock.drop_websockets();
             timeout(Duration::from_secs(1), async {
                 while mock.websocket_handshakes() < 2 {
@@ -4129,7 +3714,7 @@ async fn detach_reply_errors_retry_panes_without_reconnecting() {
 }
 
 #[tokio::test]
-async fn daemon_loss_renders_read_only_until_recovery() {
+async fn daemon_loss_keeps_a_native_pane_writable_until_recovery() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     mock.enqueue(
@@ -4244,7 +3829,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         mock.drop_websockets();
         let disconnected_error = timeout(Duration::from_secs(1), async {
             loop {
@@ -4272,20 +3857,19 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         .await
         .expect("paused reconnect attempt");
 
-        let take_count = websocket_requests(&mock, "terminal_take_control").len();
+        let focus_count = focused_report_count(&mock);
         frame_tx
             .send(semantic_frame("direct-during-loss"))
             .await
             .expect("direct frame during reconnect");
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
         settle_live_event().await;
+        // A native pane never types through the daemon, down or up.
         assert!(websocket_requests(&mock, "terminal_input").is_empty());
         assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            take_count,
-            "control is suppressed while the daemon is unavailable"
+            focused_report_count(&mock),
+            focus_count,
+            "no focus report reaches the daemon while it is unavailable"
         );
 
         tokio::time::pause();
@@ -4314,18 +3898,23 @@ async fn daemon_loss_renders_read_only_until_recovery() {
 
         tokio::time::advance(Duration::from_millis(250)).await;
         tokio::time::resume();
-        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        // The request reaching the socket is not the grant landing: it is
-        // answered beside the loop now. The daemon client dropping its pending
-        // control request is the proof the reply came back (#22573).
-        for _ in 0..1_024 {
-            if observed_daemon.pending_counts().2 == 0 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(observed_daemon.pending_counts().2, 0);
+        // Re-registration keeps the existing host viewport. Observe the fresh
+        // daemon attachment's own resize and focus instead of a new stream.
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_focus")
+                .iter()
+                .any(|focus| {
+                    focus["focused"] == true
+                        && focus["attachment_id"]
+                            .as_str()
+                            .is_some_and(|id| id != old_attachment.as_str())
+                        && websocket_requests(&mock, "terminal_resize")
+                            .iter()
+                            .any(|resize| resize["attachment_id"] == focus["attachment_id"])
+                })
+        })
+        .await;
+        wait_for_focus_reports(&mock, 2).await;
         let mut initial_generation_disconnects = 1;
         while let Ok(event) = observed_events.try_recv() {
             if matches!(
@@ -4364,8 +3953,9 @@ async fn daemon_loss_renders_read_only_until_recovery() {
     assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
     assert!(workspace.pane(pane_id).writable());
     assert_eq!(mock.websocket_handshakes(), 3);
-    let take_attachments: Vec<_> = websocket_requests(&mock, "terminal_take_control")
+    let focus_attachments: Vec<_> = websocket_requests(&mock, "terminal_focus")
         .into_iter()
+        .filter(|request| request.get("focused") == Some(&json!(true)))
         .filter_map(|request| {
             request
                 .get("attachment_id")
@@ -4373,8 +3963,8 @@ async fn daemon_loss_renders_read_only_until_recovery() {
                 .map(str::to_string)
         })
         .collect();
-    assert_eq!(take_attachments.len(), 2);
-    assert_ne!(take_attachments[0], take_attachments[1]);
+    assert_eq!(focus_attachments.len(), 2);
+    assert_ne!(focus_attachments[0], focus_attachments[1]);
     let recovery_activity = mock.activity();
     let relist = recovery_activity
         .iter()
@@ -4384,13 +3974,13 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         .iter()
         .rposition(|entry| entry == "WS terminal_attach")
         .expect("fresh recovery attachment");
-    let fresh_take = recovery_activity
+    let fresh_focus = recovery_activity
         .iter()
-        .rposition(|entry| entry == "WS terminal_take_control")
-        .expect("fresh recovery control");
+        .rposition(|entry| entry == "WS terminal_focus")
+        .expect("fresh recovery focus");
     assert!(
-        relist < fresh_attach && fresh_attach < fresh_take,
-        "the loop must relist and replay before fresh attachment and control"
+        relist < fresh_attach && fresh_attach < fresh_focus,
+        "the loop must relist and replay before fresh attachment and focus"
     );
     mock.shutdown().await;
 
@@ -4446,7 +4036,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         mock.drop_websockets();
         let disconnected_error = timeout(Duration::from_secs(1), async {
             loop {
@@ -4530,7 +4120,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
             "the shared retry episode originates from exactly one disconnect"
         );
         tokio::time::resume();
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
         drop(input_tx);
     };
 
@@ -4573,9 +4163,9 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         "one initial and one post-reconnect attach: {outage_attaches:?}"
     );
     assert_eq!(
-        websocket_requests(&mock, "terminal_take_control").len(),
+        focused_report_count(&mock),
         2,
-        "the recovered handshake restores writable control"
+        "the recovered handshake restores focus on the fresh attachment"
     );
     let recovered = workspace
         .pane_for_terminal("terminal-outage")
@@ -4630,7 +4220,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     let expected_handshakes = 1 + failed_handshakes + 1;
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         for _ in 0..failed_handshakes {
             mock.fail_next_websocket();
         }
@@ -4657,7 +4247,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
         tokio::time::pause();
         for _ in 0..64 {
             if mock.websocket_handshakes() >= expected_handshakes
-                && websocket_requests(&mock, "terminal_take_control").len() >= 2
+                && focused_report_count(&mock) >= 2
             {
                 break;
             }
@@ -4667,7 +4257,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
             }
         }
         tokio::time::resume();
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
         drop(input_tx);
     };
 
@@ -4719,213 +4309,6 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
         "4.2.6: the reconnect re-attaches the workspace"
     );
     mock.shutdown().await;
-}
-
-#[test]
-fn daemon_loss_reducer_clears_control_without_frames() {
-    let mut ws = Workspace::scripted();
-    let pane = ws
-        .open_terminal("term-loss", "tmux", "epoch-loss")
-        .expect("pane");
-    ws.force_held(pane);
-    assert!(
-        ws.pane(pane).writable(),
-        "the pane held control before loss"
-    );
-    assert!(
-        !ws.pane(pane).direct_input(),
-        "tmux control remains daemon-bound even on a direct frame stream"
-    );
-    let rendered_before = ws.pane(pane).frames_rendered();
-    let sent_before = ws.daemon().ws_sent().len();
-
-    ws.observe_daemon_disconnect(
-        Generation(1),
-        DaemonError::Unavailable { retry_after: None },
-    );
-    assert!(!ws.pane(pane).writable());
-    assert!(
-        ws.pane(pane).is_live(),
-        "direct attachment stays renderable"
-    );
-    ws.push_frame(pane, "direct frame after daemon loss");
-    assert_eq!(ws.pane(pane).frames_rendered(), rendered_before + 1);
-    assert!(ws.send_input(pane, b"blocked").is_err());
-    assert!(ws.take_control(pane).is_err());
-    assert_eq!(ws.daemon().ws_sent().len(), sent_before);
-    assert!(ws
-        .pane(pane)
-        .status_message()
-        .is_some_and(|message| message.contains("unavailable")));
-}
-
-#[tokio::test]
-async fn control_tombstone_retires_the_attachment() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-tombstone", "tmux");
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-tombstone", "backend": "tmux", "state": "live"}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-tombstone", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-tombstone"]);
-    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    let (input_tx, input_rx) = mpsc::channel(16);
-    let observed_daemon = workspace.daemon().clone();
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let old_attachment = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("attachment_id")
-            .and_then(Value::as_str)
-            .expect("initial control attachment")
-            .to_string();
-
-        // The grant is applied beside the loop now, so a request on the socket
-        // is not proof the pane holds control yet, and an explicit take while
-        // one is still in flight is a no-op. A key that reaches the daemon is
-        // the proof: it only gets there once the pane is writable (#22573).
-        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-
-        mock.suppress_ws("terminal_take_control");
-        tokio::time::pause();
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
-        for _ in 0..1_024 {
-            if websocket_requests(&mock, "terminal_take_control").len() >= 2 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        let timed_take = websocket_requests(&mock, "terminal_take_control");
-        assert_eq!(timed_take.len(), 2);
-        assert_eq!(
-            timed_take[1].get("attachment_id").and_then(Value::as_str),
-            Some(old_attachment.as_str()),
-            "the indeterminate request reached the socket on the old scope"
-        );
-        assert_eq!(observed_daemon.pending_counts().2, 1);
-
-        tokio::time::advance(CONTROL_REQUEST_DEADLINE + Duration::from_millis(1)).await;
-        for _ in 0..1_024 {
-            if observed_daemon.pending_counts().2 == 0 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(observed_daemon.pending_counts().2, 0);
-        assert!(
-            websocket_requests(&mock, "terminal_detach").is_empty(),
-            "the daemon fences even detach traffic on a tombstoned control scope"
-        );
-        mock.allow_ws("terminal_take_control");
-
-        // The timed-out control reply is delivered to the loop on its own
-        // channel. Wait for that branch to start detaching before advancing
-        // the detach deadline.
-        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
-        tokio::time::advance(Duration::from_secs(2) + RENDER_TICK * 2).await;
-        tokio::time::resume();
-        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
-        // Again a key rather than the request: the recovered pane is writable
-        // once the grant is applied, and only a write proves that happened
-        // before the loop exits (#22573).
-        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-        drop(input_tx);
-        old_attachment
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, old_attachment) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("control tombstone recovery loop");
-    let pane_id = workspace
-        .pane_for_terminal("terminal-tombstone")
-        .expect("recovered tombstone pane");
-    let fresh_attachment = workspace.pane(pane_id).attachment_id().to_string();
-    assert_ne!(fresh_attachment, old_attachment);
-    assert!(workspace.pane(pane_id).writable());
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(takes.len(), 3);
-    assert_eq!(
-        takes[2].get("attachment_id").and_then(Value::as_str),
-        Some(fresh_attachment.as_str())
-    );
-    let releases = websocket_requests(&mock, "terminal_release_control");
-    assert_eq!(releases.len(), 1);
-    assert_eq!(
-        releases[0].get("attachment_id").and_then(Value::as_str),
-        Some(fresh_attachment.as_str()),
-        "shutdown releases only the recovered live attachment"
-    );
-    mock.shutdown().await;
-}
-
-#[test]
-fn control_tombstone_reducer_retires_the_attachment() {
-    let mut ws = Workspace::scripted();
-    let pane = ws
-        .open_terminal("term-tombstone", "native", "epoch-tombstone")
-        .expect("pane");
-    let old_attachment = ws.pane(pane).attachment_id().to_string();
-
-    let retired = ws
-        .retire_indeterminate_control(pane, Instant::now())
-        .expect("indeterminate control retires the attachment");
-    assert_eq!(retired.0, "term-tombstone");
-    assert_eq!(retired.1, old_attachment);
-    assert!(!ws.pane(pane).is_live());
-    assert!(!ws.pane(pane).writable());
-
-    ws.apply_ws(&json!({
-        "type": "terminal_attachment_finalized",
-        "attachment_id": old_attachment,
-        "reason": "control result indeterminate"
-    }))
-    .expect("finalize old attachment");
-    ws.reattach_frames(pane).expect("fresh attachment");
-    let fresh_attachment = ws.pane(pane).attachment_id().to_string();
-    assert_ne!(fresh_attachment, old_attachment);
-    ws.take_control(pane).expect("take fresh control");
-    let take_attachments: Vec<_> = ws
-        .daemon()
-        .ws_sent()
-        .into_iter()
-        .filter(|message| message.get("type") == Some(&json!("terminal_take_control")))
-        .filter_map(|message| {
-            message
-                .get("attachment_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-        .collect();
-    assert_eq!(take_attachments, vec![fresh_attachment]);
 }
 
 /// The keymap advertises prefix `?` and prefix `s`, so the live loop must act
@@ -5123,7 +4506,6 @@ async fn bare_navigation_keys_reach_a_focused_terminal() {
     // this test can read it back; a direct pane types on its own frame socket
     // (#22573), which `direct_pane_keys_reach_the_host_not_the_daemon` covers.
     ws.reattach_frames(pane).expect("proxy frame source");
-    ws.force_held(pane);
 
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane, "typing");
@@ -5171,696 +4553,8 @@ async fn bare_navigation_keys_reach_a_focused_terminal() {
     );
 }
 
-/// A completed click on an uncontrolled pane moves focus and requests one
-/// lease. Pressing alone must not take it because the gesture may become a
-/// selection drag. Alt+click moves focus alone and leaves the pane observed.
-#[tokio::test]
-async fn left_click_in_uncontrolled_pane_takes_control() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
-                    {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install initial attachments");
-
-    // The loop opens one split per roster terminal, in roster order; mirror
-    // that on a probe chrome to learn where each pane's content is drawn.
-    let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
-    for terminal_id in WorkspaceView::roster_terminal_ids(&workspace) {
-        let pane = workspace
-            .pane_for_terminal(&terminal_id)
-            .expect("roster pane");
-        probe.open_pane(pane, &terminal_id);
-    }
-    probe.compute_view(&workspace, area);
-    let cells: Vec<(String, (u16, u16))> = probe
-        .view
-        .pane_infos
-        .iter()
-        .map(|info| {
-            let pane = probe.pane_for_slot(info.id).expect("slot pane");
-            let inner = info.inner_rect;
-            (
-                workspace.pane(pane).terminal_id.clone(),
-                (inner.x + 1, inner.y + 1),
-            )
-        })
-        .collect();
-    assert_eq!(cells.len(), 2, "both terminals draw as panes");
-    let cell_of = |terminal_id: &str| {
-        cells
-            .iter()
-            .find(|(id, _)| id == terminal_id)
-            .map(|(_, cell)| *cell)
-            .expect("pane cell")
-    };
-
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let initial = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("terminal_id")
-            .and_then(Value::as_str)
-            .expect("initial focused terminal")
-            .to_string();
-        let other = if initial == "terminal-a" {
-            "terminal-b"
-        } else {
-            "terminal-a"
-        };
-
-        let (column, row) = cell_of(other);
-        send_mouse(
-            &input_tx,
-            MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            KeyModifiers::NONE,
-        )
-        .await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            1,
-            "a press alone must not take control before its release"
-        );
-        send_mouse(
-            &input_tx,
-            MouseEventKind::Up(MouseButton::Left),
-            column,
-            row,
-            KeyModifiers::NONE,
-        )
-        .await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        let releases = websocket_requests(&mock, "terminal_release_control");
-        assert_eq!(
-            releases[0].get("terminal_id").and_then(Value::as_str),
-            Some(initial.as_str()),
-            "a click releases the pane focus left"
-        );
-        let takes = websocket_requests(&mock, "terminal_take_control");
-        assert_eq!(
-            takes[1].get("terminal_id").and_then(Value::as_str),
-            Some(other),
-            "a click takes the clicked pane"
-        );
-
-        let (column, row) = cell_of(&initial);
-        send_mouse(
-            &input_tx,
-            MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            KeyModifiers::ALT,
-        )
-        .await;
-        send_mouse(
-            &input_tx,
-            MouseEventKind::Up(MouseButton::Left),
-            column,
-            row,
-            KeyModifiers::ALT,
-        )
-        .await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 2).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
-            2,
-            "alt+click must not take control"
-        );
-        let releases = websocket_requests(&mock, "terminal_release_control");
-        assert_eq!(
-            releases[1].get("terminal_id").and_then(Value::as_str),
-            Some(other),
-            "the lease still follows focus away from the clicked pane"
-        );
-        drop(input_tx);
-        initial
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, initial) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    let pane = workspace
-        .pane_for_terminal(&initial)
-        .expect("initial terminal pane");
-    assert_eq!(
-        chrome.focused_pane(),
-        Some(pane),
-        "alt+click moved focus back"
-    );
-    assert!(
-        workspace.pane(pane).is_observe(),
-        "alt+click leaves the pane observed"
-    );
-    mock.shutdown().await;
-}
-
-#[derive(Clone, Copy)]
-enum PaneClickCase {
-    Drag,
-    Controlled,
-    AgentHeld,
-    InitiallyHeld,
-    ExplicitTakeover,
-    Free,
-}
-
-async fn check_pane_click_case(case: PaneClickCase) -> usize {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    let peer_holder = matches!(case, PaneClickCase::InitiallyHeld | PaneClickCase::ExplicitTakeover)
-        .then(|| json!({"attachment_id": "agent-attachment", "kind": "gclient", "session_ref": "gobby#agent"}));
-    if let Some(holder) = &peer_holder {
-        mock.set_attach_lease_holder("terminal-b", holder.clone());
-    }
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
-                    {"terminal_id": "terminal-b", "backend": "native", "state": "live", "lease_holder": peer_holder}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install attachments");
-
-    let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
-    for terminal_id in WorkspaceView::roster_terminal_ids(&workspace) {
-        let pane = workspace
-            .pane_for_terminal(&terminal_id)
-            .expect("roster pane");
-        probe.open_pane(pane, &terminal_id);
-    }
-    probe.compute_view(&workspace, area);
-    let cells: Vec<(String, (u16, u16))> = probe
-        .view
-        .pane_infos
-        .iter()
-        .map(|info| {
-            let pane = probe.pane_for_slot(info.id).expect("slot pane");
-            (
-                workspace.pane(pane).terminal_id.clone(),
-                (info.inner_rect.x + 1, info.inner_rect.y + 1),
-            )
-        })
-        .collect();
-    let cell_of = |terminal_id: &str| {
-        cells
-            .iter()
-            .find(|(id, _)| id == terminal_id)
-            .map(|(_, cell)| *cell)
-            .expect("pane cell")
-    };
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        let initially_held = matches!(
-            case,
-            PaneClickCase::InitiallyHeld | PaneClickCase::ExplicitTakeover
-        );
-        if !initially_held {
-            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        }
-        let initial_request = websocket_requests(&mock, "terminal_take_control")
-            .first()
-            .cloned()
-            .unwrap_or(Value::Null);
-        let initial = if initially_held {
-            "terminal-a"
-        } else {
-            initial_request["terminal_id"]
-                .as_str()
-                .expect("initial terminal")
-        };
-        let other = if initially_held || initial == "terminal-a" {
-            "terminal-b"
-        } else {
-            "terminal-a"
-        };
-        match case {
-            PaneClickCase::Drag => {
-                let (column, row) = cell_of(other);
-                send_mouse(
-                    &input_tx,
-                    MouseEventKind::Down(MouseButton::Left),
-                    column,
-                    row,
-                    KeyModifiers::NONE,
-                )
-                .await;
-                send_mouse(
-                    &input_tx,
-                    MouseEventKind::Drag(MouseButton::Left),
-                    column + 4,
-                    row,
-                    KeyModifiers::NONE,
-                )
-                .await;
-                send_mouse(
-                    &input_tx,
-                    MouseEventKind::Up(MouseButton::Left),
-                    column + 4,
-                    row,
-                    KeyModifiers::NONE,
-                )
-                .await;
-                settle_live_event().await;
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control").len(),
-                    1,
-                    "a selection drag must never take control"
-                );
-            }
-            PaneClickCase::Controlled => {
-                send_click(&input_tx, cell_of(initial), KeyModifiers::NONE).await;
-                settle_live_event().await;
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control").len(),
-                    1,
-                    "clicking a controlled pane must not request control again"
-                );
-            }
-            PaneClickCase::AgentHeld => {
-                mock.send_event_and_wait(json!({
-                    "type": "terminal_lease_lost",
-                    "terminal_id": initial,
-                    "attachment_id": initial_request["attachment_id"],
-                    "holder": "agent",
-                    "lease_generation": 2,
-                    "daemon_epoch": "epoch-1",
-                    "seq": 2
-                }))
-                .await;
-                settle_live_event().await;
-                send_click(&input_tx, cell_of(other), KeyModifiers::ALT).await;
-                settle_live_event().await;
-                send_click(&input_tx, cell_of(initial), KeyModifiers::NONE).await;
-                settle_live_event().await;
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control").len(),
-                    1,
-                    "a click must not interrupt the agent holder"
-                );
-            }
-            PaneClickCase::InitiallyHeld | PaneClickCase::ExplicitTakeover => {
-                send_click(&input_tx, cell_of(other), KeyModifiers::ALT).await;
-                settle_live_event().await;
-                send_click(&input_tx, cell_of(other), KeyModifiers::NONE).await;
-                settle_live_event().await;
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control").len(),
-                    0,
-                    "plain click on an initially agent-held pane must not take control"
-                );
-                if matches!(case, PaneClickCase::ExplicitTakeover) {
-                    send_chord(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
-                    wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-                    assert_eq!(
-                        websocket_requests(&mock, "terminal_take_control")[0]["takeover"],
-                        true
-                    );
-                }
-            }
-            PaneClickCase::Free => {
-                send_click(&input_tx, cell_of(other), KeyModifiers::ALT).await;
-                wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
-                let (column, row) = cell_of(initial);
-                send_mouse(
-                    &input_tx,
-                    MouseEventKind::Down(MouseButton::Left),
-                    column,
-                    row,
-                    KeyModifiers::NONE,
-                )
-                .await;
-                settle_live_event().await;
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control").len(),
-                    1,
-                    "a press is not yet a click"
-                );
-                send_mouse(
-                    &input_tx,
-                    MouseEventKind::Up(MouseButton::Left),
-                    column,
-                    row,
-                    KeyModifiers::NONE,
-                )
-                .await;
-                wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control").len(),
-                    2,
-                    "a released pane is taken once on click"
-                );
-                assert_eq!(
-                    websocket_requests(&mock, "terminal_take_control")[1]["takeover"],
-                    false,
-                    "a click must never interrupt a holder that raced the free-pane check"
-                );
-            }
-        }
-        drop(input_tx);
-    };
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    if matches!(case, PaneClickCase::Drag) {
-        assert!(
-            chrome.selection.is_some(),
-            "the drag must retain its selection"
-        );
-    }
-    if matches!(
-        case,
-        PaneClickCase::AgentHeld | PaneClickCase::InitiallyHeld
-    ) {
-        let focused = chrome.focused_pane().expect("agent pane focused");
-        assert!(
-            workspace.pane(focused).take_back,
-            "agent pane offers take-back"
-        );
-    }
-    let take_requests = websocket_requests(&mock, "terminal_take_control").len();
-    mock.shutdown().await;
-    take_requests
-}
-
-#[tokio::test]
-async fn left_click_on_initially_agent_held_pane_leaves_lease_unchanged() {
-    assert_eq!(check_pane_click_case(PaneClickCase::InitiallyHeld).await, 0);
-}
-
-#[tokio::test]
-async fn explicit_takeover_of_initially_agent_held_pane_still_works() {
-    assert_eq!(
-        check_pane_click_case(PaneClickCase::ExplicitTakeover).await,
-        1
-    );
-}
-
-#[tokio::test]
-async fn left_drag_select_does_not_take_control() {
-    assert_eq!(check_pane_click_case(PaneClickCase::Drag).await, 1);
-}
-
-#[tokio::test]
-async fn left_click_on_controlled_pane_sends_no_take_control() {
-    assert_eq!(check_pane_click_case(PaneClickCase::Controlled).await, 1);
-}
-
-#[tokio::test]
-async fn left_click_on_agent_held_pane_offers_takeover_without_interrupting() {
-    assert_eq!(check_pane_click_case(PaneClickCase::AgentHeld).await, 1);
-}
-
-#[tokio::test]
-async fn left_click_on_free_pane_takes_control_immediately() {
-    assert_eq!(check_pane_click_case(PaneClickCase::Free).await, 2);
-}
-
-/// A control wish recorded during a disconnect survives until the workspace
-/// can send it, so input queued behind the focus change still has a grant to
-/// flush it (#22573).
-#[tokio::test]
-async fn pending_control_survives_until_the_daemon_is_ready() {
-    let mock = MockDaemon::start("local-token").await;
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install initial attachment");
-    let pane = workspace
-        .pane_for_terminal("terminal-a")
-        .expect("roster pane");
-
-    workspace.request_control(pane, true);
-    workspace.observe_daemon_disconnect(
-        workspace.daemon().generation(),
-        DaemonError::Unavailable { retry_after: None },
-    );
-    let (control_tx, _control_rx) = tokio::sync::mpsc::unbounded_channel();
-    workspace.start_control_request(&control_tx);
-    assert!(
-        workspace.awaiting_control(pane),
-        "an unavailable daemon must not consume the pending request"
-    );
-    assert!(websocket_requests(&mock, "terminal_take_control").is_empty());
-
-    workspace
-        .reconnect_daemon_ws()
-        .await
-        .expect("restore workspace readiness");
-    workspace.start_control_request(&control_tx);
-    wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-    mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn wheel_focuses_reporting_panes_without_taking_peer_control() {
-    for peer_held in [false, true] {
-        let mock = MockDaemon::start("local-token").await;
-        mock.use_unique_attachment_ids();
-        mock.set_attach_backend("terminal-a", "tmux");
-        mock.set_attach_backend("terminal-b", "tmux");
-        mock.seed_workspace(
-            "project-1",
-            &[(&["terminal-a", "terminal-b"], "terminal-a")],
-        );
-        let holder = peer_held.then(|| {
-            json!({
-                "attachment_id": "peer-attachment", "kind": "gclient", "session_ref": "gobby#peer"
-            })
-        });
-        if let Some(holder) = &holder {
-            mock.set_attach_lease_holder("terminal-b", holder.clone());
-        }
-        for _ in 0..2 {
-            mock.enqueue("GET", "/api/terminals?", 200, json!({
-            "items": [
-                {"terminal_id": "terminal-a", "backend": "tmux", "state": "live"},
-                {"terminal_id": "terminal-b", "backend": "tmux", "state": "live", "lease_holder": holder}
-            ],
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }));
-        }
-        let daemon = LiveDaemon::connect(mock.url(), "local-token")
-            .await
-            .expect("daemon");
-        let mut workspace = Workspace::live(daemon);
-        workspace.select_project("project-1");
-        workspace
-            .reconcile_subscribe_first()
-            .await
-            .expect("attachments");
-        let target = workspace
-            .pane_for_terminal("terminal-b")
-            .expect("target pane");
-        let attachment = workspace.pane(target).attachment_id().to_string();
-        mock.send_event_and_wait(json!({
-            "type": "terminal_frame", "terminal_id": "terminal-b", "attachment_id": attachment,
-            "encoding": "bincode-b64", "payload": encode_frame(&reporting_frame("mouse app"))
-        }))
-        .await;
-        workspace
-            .recv_pane_frame(target)
-            .await
-            .expect("tracking frame applied");
-        assert_eq!(
-            workspace.pane(target).has_take_back(),
-            peer_held,
-            "initial peer lease reflected"
-        );
-
-        let mut chrome = pinned_chrome();
-        sync_live_chrome(&mut workspace, &mut chrome);
-        chrome.compute_view(&workspace, Rect::new(0, 0, 120, 40));
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
-        let mut hits = None;
-        terminal
-            .draw(|frame| hits = Some(render_workspace(frame, &workspace, &chrome)))
-            .expect("draw");
-        chrome.view.apply_hits(hits.expect("hit map"));
-        let inner = chrome
-            .view
-            .pane_infos
-            .iter()
-            .find(|info| chrome.pane_for_slot(info.id) == Some(target))
-            .expect("target drawn")
-            .inner_rect;
-        let cell = (inner.x + 1, inner.y + 1);
-        assert!(matches!(
-            hit_test(&chrome.view, cell.0, cell.1),
-            Hit::Pane { .. }
-        ));
-        let (input_tx, input_rx) = mpsc::channel(32);
-        let driver = async {
-            wait_for_take_control_of(&mock, "terminal-a").await;
-            send_mouse(
-                &input_tx,
-                MouseEventKind::ScrollUp,
-                cell.0,
-                cell.1,
-                KeyModifiers::NONE,
-            )
-            .await;
-            if peer_held {
-                wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
-            } else {
-                wait_for_take_control_of(&mock, "terminal-b").await;
-                wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-                send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-                wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-                send_mouse(
-                    &input_tx,
-                    MouseEventKind::ScrollDown,
-                    cell.0,
-                    cell.1,
-                    KeyModifiers::NONE,
-                )
-                .await;
-                wait_for_websocket_requests(&mock, "terminal_input", 3).await;
-            }
-            drop(input_tx);
-        };
-        let mut switch = TerminalGuard::recording().0;
-        let (result, ()) = tokio::join!(
-            run_live_loop(
-                &mut workspace,
-                &mut terminal,
-                &mut chrome,
-                input_rx,
-                &mut switch
-            ),
-            driver
-        );
-        result.expect("wheel loop exits");
-        assert_eq!(chrome.focused_pane(), Some(target));
-        let takes = websocket_requests(&mock, "terminal_take_control");
-        assert_eq!(
-            takes.len(),
-            if peer_held { 1 } else { 2 },
-            "peer_held={peer_held}: {takes:?}"
-        );
-        assert!(takes.iter().all(|take| take["takeover"] == false));
-        let writes = websocket_requests(&mock, "terminal_input");
-        if peer_held {
-            assert!(
-                writes.is_empty(),
-                "the wheel cannot write to a peer-held pane"
-            );
-            assert!(
-                workspace.pane(target).has_take_back(),
-                "peer control remains held"
-            );
-        } else {
-            assert!(workspace.pane(target).writable());
-            assert_eq!(
-                writes
-                    .iter()
-                    .map(|write| write["data"].as_str().expect("data"))
-                    .collect::<Vec<_>>(),
-                ["\u{1b}[<64;2;2M", "x", "\u{1b}[<65;2;2M"]
-            );
-            assert!(writes
-                .iter()
-                .all(|write| write["terminal_id"] == "terminal-b"));
-        }
-        assert_eq!(
-            websocket_requests(&mock, "terminal_release_control")[0]["terminal_id"],
-            "terminal-a"
-        );
-        mock.shutdown().await;
-    }
-}
-
 /// 3.3: a pane whose app tracks the mouse gets SGR reports for its presses
-/// and releases; a press in another such pane focuses it and takes the lease
-/// before the report; a pane left observed by alt+click gets nothing; a
+/// and releases; a press in another such pane focuses it before the report; a
 /// right-click passes through with the configured modifier held, hidden from
 /// the app, or with the pane's own flag, and stays gclient's otherwise; a
 /// shifted press selects instead of reporting.
@@ -5957,12 +4651,8 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let initial = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("terminal_id")
-            .and_then(Value::as_str)
-            .expect("initial focused terminal")
-            .to_string();
+        wait_for_focus_reports(&mock, 1).await;
+        let initial = first_focused_terminal(&mock);
         let other = if initial == "terminal-a" {
             "terminal-b".to_string()
         } else {
@@ -5982,31 +4672,21 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         mouse(left_up, cell_of(&initial), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 2).await;
 
-        // A press in the other pane focuses it and takes its lease first.
+        // A press in the other pane focuses it and is reported there.
         mouse(left_down, cell_of(&other), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
         wait_for_websocket_requests(&mock, "terminal_input", 3).await;
         mouse(left_up, cell_of(&other), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 4).await;
-
-        // alt+click observes the first pane; a click there now reports nothing.
-        mouse(left_down, cell_of(&initial), KeyModifiers::ALT).await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 2).await;
-        settle_live_event().await;
-        mouse(left_down, cell_of(&initial), KeyModifiers::NONE).await;
-        mouse(left_up, cell_of(&initial), KeyModifiers::NONE).await;
-        settle_live_event().await;
         assert_eq!(
-            websocket_requests(&mock, "terminal_take_control").len(),
+            focused_report_count(&mock),
             2,
-            "a report never takes the lease"
+            "a report moves no focus of its own"
         );
-        assert_eq!(inputs(), 4, "an observed pane gets no report");
 
-        // alt+right-click passes through with the modifier hidden, after the
-        // focus and lease move back; the pane flag passes a plain one through.
+        // alt+right-click passes through with the modifier hidden; the pane
+        // flag passes a plain one through.
         mouse(right_down, cell_of(&other), KeyModifiers::ALT).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
         wait_for_websocket_requests(&mock, "terminal_input", 5).await;
         mouse(right_up, cell_of(&other), KeyModifiers::ALT).await;
         wait_for_websocket_requests(&mock, "terminal_input", 6).await;
@@ -6166,7 +4846,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
 
         let offsets = || -> Vec<u64> {
             websocket_requests(&mock, "terminal_set_scroll_offset")
@@ -6449,7 +5129,7 @@ async fn an_alternate_screen_wheel_over_a_tmux_pane_types_three_arrows_a_notch()
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         mock.send_event_and_wait(json!({
             "type": "terminal_frame",
             "terminal_id": "terminal-tmux",
@@ -6657,7 +5337,7 @@ async fn a_scroll_reply_echoing_its_own_offset_never_lowers_the_ceiling() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         let offsets = || -> Vec<u64> {
             websocket_requests(&mock, "terminal_set_scroll_offset")
                 .iter()
@@ -6726,178 +5406,6 @@ async fn a_scroll_reply_echoing_its_own_offset_never_lowers_the_ceiling() {
         driver
     );
     result.expect("live loop exits cleanly");
-    mock.shutdown().await;
-}
-
-/// 2.5.1: a lone pane has no border, so its metadata leads the status line,
-/// and only an exception there is a button. A click on the focused pane's
-/// `Focused` does nothing; once the daemon reports the lease lost, the same
-/// cells read `Read-only` and a click accepts the pending take-back.
-#[tokio::test]
-async fn control_indicator_click_takes_back_only_a_lost_lease() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-lease", "tmux");
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{"terminal_id": "terminal-lease", "backend": "tmux", "state": "live"}],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install initial attachments");
-    let pane = workspace
-        .pane_for_terminal("terminal-lease")
-        .expect("roster pane");
-    let attachment = workspace.pane(pane).attachment_id().to_string();
-
-    // Mirror the loop's one-pane chrome to click the top-left title.
-    // Focused and Read-only share its first cells.
-    let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
-    probe.open_pane(pane, "terminal-lease");
-    probe.compute_view(&workspace, area);
-    let corners =
-        gobby_client::ui::pane_chrome::pane_corners(&workspace, &probe, workspace.pane(pane), true);
-    let indicator = gobby_client::ui::pane_chrome::title_rect(&probe.view.pane_infos[0], &corners)
-        .expect("one-pane title");
-    let (column, row) = (indicator.x + 1, indicator.y);
-
-    let (frames_tx, mut frames_rx) = watch::channel(String::new());
-    let mut terminal = Terminal::new(CountingBackend {
-        inner: TestBackend::new(120, 40),
-        draws: Arc::new(AtomicUsize::new(0)),
-        frames: Some(frames_tx),
-    })
-    .expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        let click = || async {
-            send_mouse(
-                &input_tx,
-                MouseEventKind::Down(MouseButton::Left),
-                column,
-                row,
-                KeyModifiers::NONE,
-            )
-            .await;
-            send_mouse(
-                &input_tx,
-                MouseEventKind::Up(MouseButton::Left),
-                column,
-                row,
-                KeyModifiers::NONE,
-            )
-            .await;
-        };
-        let lease_requests = |kind: &str| -> Vec<(Option<String>, Option<String>)> {
-            websocket_requests(&mock, kind)
-                .iter()
-                .map(|request| {
-                    (
-                        request
-                            .get("terminal_id")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                        request
-                            .get("attachment_id")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                    )
-                })
-                .collect()
-        };
-        let lease = (Some("terminal-lease".to_string()), Some(attachment.clone()));
-
-        // Startup focus took the lease. Focus is a condition, not a button:
-        // a click on it neither releases the lease nor asks again.
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        wait_for_drawn_text(&mut frames_rx, "Focused").await;
-        click().await;
-        // Input follows the click in the channel. Its request proves the loop
-        // processed both mouse events before we inspect the absence of a take.
-        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        assert!(
-            lease_requests("terminal_release_control").is_empty(),
-            "a click on Focused releases nothing"
-        );
-        assert_eq!(
-            lease_requests("terminal_take_control").len(),
-            1,
-            "a click on Focused takes nothing"
-        );
-
-        // A peer takes the lease; the daemon offers a take-back, and the
-        // click accepts it with a fresh grant at the peer's generation.
-        mock.send_event_and_wait(json!({
-            "type": "terminal_lease_lost",
-            "terminal_id": "terminal-lease",
-            "attachment_id": attachment,
-            "holder": "peer",
-            "lease_generation": 2,
-            "daemon_epoch": "epoch-1",
-            "seq": 2
-        }))
-        .await;
-        // Sending the event acknowledges the mock's write, not its application
-        // or a redraw. Wait for the actual title whose hit map the click uses.
-        wait_for_drawn_text(&mut frames_rx, "Read-only").await;
-        mock.enqueue_take_control_reply(true, 2, None);
-        click().await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        // This input can leave only after the take-back grant is applied;
-        // closing the input channel earlier can discard the queued reply.
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-        assert_eq!(lease_requests("terminal_take_control").len(), 2);
-        assert_eq!(
-            lease_requests("terminal_take_control")[1],
-            lease,
-            "a click on Read-only accepts the take-back"
-        );
-        assert!(
-            lease_requests("terminal_release_control").is_empty(),
-            "accepting a take-back releases nothing"
-        );
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    let pane = workspace.pane(pane);
-    assert!(
-        pane.is_held() && !pane.has_take_back(),
-        "the accepted take-back holds the lease again: {:?} take_back={}",
-        pane.control,
-        pane.has_take_back()
-    );
     mock.shutdown().await;
 }
 
@@ -7015,7 +5523,7 @@ async fn open_link_failure_surfaces_a_toast() {
 }
 
 /// 4.1.2: the keymap actions that were inert drive the live workspace. Focus
-/// moves are read off the daemon's `terminal_take_control` requests, the
+/// moves are read off the daemon's `terminal_focus` reports, the
 /// split off the daemon workspace op, and the swap off the first tab's layout.
 #[tokio::test]
 async fn wired_actions_split_focus_swap_and_switch_tabs() {
@@ -7116,29 +5624,29 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         let chord =
             |c: char, modifiers: KeyModifiers| send_chord(&input_tx, KeyCode::Char(c), modifiers);
-        // FocusPaneRight: the lease follows focus to the neighbour.
+        // FocusPaneRight moves focus to the neighbour.
         chord('l', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
         // SwapPaneLeft: b takes a's place, focus stays on b.
         chord('H', KeyModifiers::SHIFT).await;
         settle_live_event().await;
         // LastPane (custom chord): back to a.
         chord('i', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        wait_for_focus_reports(&mock, 3).await;
         chord('z', KeyModifiers::NONE).await;
         settle_live_event().await;
         // NextTab, PreviousTab, SwitchTab(2), SwitchTab(1).
         chord('n', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 4).await;
+        wait_for_focus_reports(&mock, 4).await;
         chord('p', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 5).await;
+        wait_for_focus_reports(&mock, 5).await;
         chord('2', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 6).await;
+        wait_for_focus_reports(&mock, 6).await;
         chord('1', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 7).await;
+        wait_for_focus_reports(&mock, 7).await;
         // SplitHorizontal spawns under the focused pane.
         chord('-', KeyModifiers::NONE).await;
         wait_until(|| workspace_ops(&mock, "pane.split").len() == 1).await;
@@ -7155,14 +5663,18 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         })
         .await
         .expect("the spawned terminal attaches");
-        settle_live_event().await;
-        let before_jumps = websocket_requests(&mock, "terminal_take_control").len();
+        // The viewport precedes the split's asynchronous focus report. Wait
+        // for that report before it can be mistaken for either jump below.
+        wait_until(|| focused_terminals(&mock).last().map(String::as_str) == Some(SPAWNED)).await;
+        let before_jumps = focused_report_count(&mock);
         // OpenNotificationTarget: c, in the other tab.
         chord('o', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 1).await;
+        wait_until(|| focused_terminals(&mock).last().map(String::as_str) == Some("terminal-c"))
+            .await;
         // NextAttention (custom chord): b's terminal, back in the first tab.
         chord('f', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 2).await;
+        wait_until(|| focused_terminals(&mock).last().map(String::as_str) == Some("terminal-b"))
+            .await;
         drop(input_tx);
         before_jumps
     };
@@ -7179,16 +5691,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         driver
     );
     result.expect("live loop exits cleanly");
-    let targets: Vec<String> = websocket_requests(&mock, "terminal_take_control")
-        .iter()
-        .map(|request| {
-            request
-                .get("terminal_id")
-                .and_then(Value::as_str)
-                .expect("take_control target")
-                .to_string()
-        })
-        .collect();
+    let targets = focused_terminals(&mock);
     assert_eq!(
         &targets[..7],
         [
@@ -7200,7 +5703,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
             "terminal-c",
             "terminal-a"
         ],
-        "focus-direction, last-pane and tab switching move the lease"
+        "focus-direction, last-pane and tab switching move the focus"
     );
     assert_eq!(
         &targets[before_jumps..],
@@ -7620,7 +6123,7 @@ async fn run_pane_move_case(
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         for (code, modifiers) in chords {
             send_chord(&input_tx, code, modifiers).await;
             settle_live_event().await;
@@ -7842,7 +6345,7 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_chord(&input_tx, KeyCode::Char('2'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
         send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
@@ -7963,7 +6466,7 @@ async fn daemon_tab_drag_reorders_and_reattaches_in_that_order() {
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),
@@ -8129,7 +6632,7 @@ async fn sort_tabs_menu_reorders_by_title_and_reattaches_in_that_order() {
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         // The second pass finds the tabs sorted and sends nothing.
         for _ in 0..2 {
             send_mouse(
@@ -8272,7 +6775,7 @@ async fn ratio_drag_sends_one_op_on_drop() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         settle_live_event().await;
         let mouse = |kind, column, modifiers| send_mouse(&input_tx, kind, column, row, modifiers);
         mouse(
@@ -8342,15 +6845,24 @@ async fn ratio_drag_sends_one_op_on_drop() {
     mock.shutdown().await;
 }
 
-/// Poll `condition` on the test runtime until it holds or two seconds pass.
-async fn wait_until(mut condition: impl FnMut() -> bool) {
-    timeout(Duration::from_secs(2), async {
-        while !condition() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("condition holds before the deadline");
+/// Poll `condition` on the test runtime until it holds or ten seconds pass.
+/// The bound only guards against a hang. Under a full parallel suite run the
+/// daemon threads this waits on can get less than a 2s share of the CPU, and
+/// the same check finishes in about 60 ms when the machine is quiet.
+#[track_caller]
+fn wait_until(mut condition: impl FnMut() -> bool) -> impl std::future::Future<Output = ()> {
+    // `track_caller` does not reach into an async body, so the caller is
+    // captured here, at the call, and the future is returned.
+    let at = std::panic::Location::caller();
+    async move {
+        timeout(Duration::from_secs(10), async {
+            while !condition() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("condition holds before the deadline, waited at {at}"));
+    }
 }
 
 /// 4.1.2: toggling the settings `mouse capture` row flips the terminal's
@@ -8530,12 +7042,8 @@ async fn context_menu_dispatches_items_and_closes_outside() {
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let initial = websocket_requests(&mock, "terminal_take_control")[0]
-            .get("terminal_id")
-            .and_then(Value::as_str)
-            .expect("initial focused terminal")
-            .to_string();
+        wait_for_focus_reports(&mock, 1).await;
+        let initial = first_focused_terminal(&mock);
         let other = if initial == "terminal-a" {
             "terminal-b"
         } else {
@@ -8580,9 +7088,9 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             initial,
             "the press that closed the menu must not reach the pane under it"
         );
-        assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 1);
+        assert_eq!(focused_report_count(&mock), 1);
         send_click(&input_tx, cell_of(other), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
 
         // Hover picks `split right` on the focused pane's menu and enter
         // activates it: the spawn lands beside that pane.
@@ -8749,7 +7257,6 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(8);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         mock.enqueue(
             "GET",
             "/api/terminals?",
@@ -8758,10 +7265,16 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
         );
         send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
         wait_until(|| workspace_ops(&mock, "pane.split").len() == 3).await;
+        // The second chord must start after the first adoption has applied, when
+        // the tab is no longer local. The OWNED pane can attach earlier, through
+        // any relist, so its focus report is the sign that the adoption applied.
         wait_until(|| {
-            websocket_requests(&mock, "terminal_set_viewport")
+            websocket_requests(&mock, "terminal_focus")
                 .iter()
-                .any(|request| request.get("terminal_id") == Some(&json!(OWNED)))
+                .any(|request| {
+                    request.get("terminal_id") == Some(&json!(OWNED))
+                        && request.get("focused") == Some(&json!(true))
+                })
         })
         .await;
         mock.enqueue(
@@ -8776,6 +7289,17 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
             websocket_requests(&mock, "terminal_set_viewport")
                 .iter()
                 .any(|request| request.get("terminal_id") == Some(&json!(NEXT_OWNED)))
+        })
+        .await;
+        // The final settle applies focus to the adopted pane; its focus report
+        // is the wire sign that settle ran, so the input may close only after it.
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_focus")
+                .iter()
+                .any(|request| {
+                    request.get("terminal_id") == Some(&json!(NEXT_OWNED))
+                        && request.get("focused") == Some(&json!(true))
+                })
         })
         .await;
         // The placement that focuses the new pane lands after its viewport is
@@ -8868,6 +7392,79 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
 }
 
 #[tokio::test]
+async fn a_split_typed_while_a_local_tab_adopts_is_refused_not_orphaned() {
+    const OWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(OWNED);
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&["terminal-a", "terminal-b", "terminal-c"]),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("load bare terminals");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let tab = chrome.active_tab_mut().expect("local roster tab");
+    assert!(tab.is_local());
+    assert!(tab.layout.set_ratio_at(&[], 0.3));
+    assert!(tab.layout.set_ratio_at(&[true], 0.7));
+    chrome.keymap = Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+        .expect("test keymap");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a", "terminal-b", "terminal-c", OWNED]),
+        );
+        // The second chord arrives while the first adoption is still in flight,
+        // so the local tab it would adopt is the one already being adopted.
+        send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
+        send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_focus")
+                .iter()
+                .any(|request| {
+                    request.get("terminal_id") == Some(&json!(OWNED))
+                        && request.get("focused") == Some(&json!(true))
+                })
+        })
+        .await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("local tab adoption");
+    assert_eq!(workspace_ops(&mock, "tab.create").len(), 1);
+    assert_eq!(workspace_ops(&mock, "pane.split").len(), 3);
+    assert!(chrome
+        .alert_log
+        .iter()
+        .any(|toast| toast.title == "This tab is still opening; split again once it settles"));
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn local_bare_tab_migration_refusals_restore_the_original_view() {
     const OWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     for failure in ["adoption", "resize", "spawn", "snapshot"] {
@@ -8913,7 +7510,7 @@ async fn local_bare_tab_migration_refusals_restore_the_original_view() {
         let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
-            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            wait_for_focus_reports(&mock, 1).await;
             let snapshots = websocket_requests(&mock, "workspace_snapshot").len();
             send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
             wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
@@ -9830,13 +8427,6 @@ impl ratatui::backend::Backend for CountingBackend {
     }
 }
 
-async fn wait_for_drawn_text(frames: &mut watch::Receiver<String>, text: &str) {
-    timeout(WAIT_BUDGET, frames.wait_for(|frame| frame.contains(text)))
-        .await
-        .unwrap_or_else(|_| panic!("timed out waiting for drawn {text:?}"))
-        .expect("loop keeps the frame recorder open");
-}
-
 /// Drives `future` while keeping this task runnable. A paused runtime that
 /// parks jumps its clock to the next timer, so waiting idle on the mock's
 /// socket would move time the test never advanced.
@@ -10282,7 +8872,7 @@ async fn the_render_tick_applies_a_background_git_refresh() {
         }))
         .await;
         wait_for_http_requests(&mock, "GET", status_path, 1).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         tokio::time::pause();
         tokio::time::advance(GIT_REFRESH_INTERVAL + RENDER_TICK * 2).await;
         tokio::time::resume();
@@ -10700,6 +9290,14 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         .unwrap_or_else(|_| panic!("{path:?} did not reveal the daemon-hosted pane"));
         activate_daemon_hosted_terminal(&input_tx, path, agent_cell).await;
         settle_live_event().await;
+        // The focus report leaves on a render tick, which can land after the
+        // input closes. Wait for it so the count below sees every report.
+        wait_until(|| {
+            focused_terminals(&mock)
+                .iter()
+                .any(|terminal_id| terminal_id == HOSTED)
+        })
+        .await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -10736,13 +9334,13 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         .filter(|request| request.get("terminal_id") == Some(&json!(HOSTED)))
         .count();
     assert_eq!(attaches, 1, "{path:?} attaches once");
-    let takes = websocket_requests(&mock, "terminal_take_control")
+    let focuses = focused_terminals(&mock)
         .into_iter()
-        .filter(|request| request.get("terminal_id") == Some(&json!(HOSTED)))
+        .filter(|terminal_id| terminal_id == HOSTED)
         .count();
     assert_eq!(
-        takes, 1,
-        "{path:?} takes control once across repeat activation"
+        focuses, 1,
+        "{path:?} focuses the terminal once across repeat activation"
     );
     assert_eq!(
         websocket_requests(&mock, "terminal_create").len(),
@@ -10847,8 +9445,8 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     chrome.activate_tab(0);
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        let before = websocket_requests(&mock, "terminal_take_control").len();
+        wait_for_focus_reports(&mock, 1).await;
+        let before = focused_report_count(&mock);
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),
@@ -10857,7 +9455,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", before + 1).await;
+        wait_for_focus_reports(&mock, before + 1).await;
         drop(input_tx);
         before
     };
@@ -10875,16 +9473,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     );
     result.expect("live loop exits cleanly");
 
-    let targets: Vec<String> = websocket_requests(&mock, "terminal_take_control")
-        .into_iter()
-        .map(|request| {
-            request
-                .get("terminal_id")
-                .and_then(Value::as_str)
-                .expect("take-control target")
-                .to_string()
-        })
-        .collect();
+    let targets = focused_terminals(&mock);
     assert_eq!(&targets[before..], [TABBED]);
     assert_eq!(chrome.tabs().tabs.len(), 2, "no duplicate tab opens");
     assert_eq!(chrome.active_index(), 1, "the existing tab becomes active");
@@ -11023,7 +9612,7 @@ async fn tab_sets_follow_the_focused_project() {
 
 /// Plan 2.3.1: after startup and after a slot change every shown pane, tmux
 /// or native, held or observing, carries the geometry of its inner rect: a
-/// `SetViewport` plus a `terminal_resize` claiming `viewer: "gclient"`.
+/// `SetViewport` plus a `terminal_resize` claiming the pane's size.
 #[tokio::test]
 async fn every_shown_pane_sizes_its_terminal() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -11072,7 +9661,7 @@ async fn every_shown_pane_sizes_its_terminal() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         wait_for_websocket_requests(&mock, "terminal_resize", 2).await;
         let sized_at_startup: Vec<Value> = websocket_requests(&mock, "terminal_resize")
             .iter()
@@ -11125,8 +9714,8 @@ async fn every_shown_pane_sizes_its_terminal() {
     assert!(
         resizes
             .iter()
-            .all(|request| request.get("viewer") == Some(&json!("gclient"))),
-        "every size claim names the gclient viewer: {resizes:?}"
+            .all(|request| request.get("viewer").is_none()),
+        "every size claim names no viewer label: {resizes:?}"
     );
     for info in &chrome.view.pane_infos {
         let pane = workspace.pane(tab.slots[&info.id]);
@@ -11176,12 +9765,12 @@ async fn every_shown_pane_sizes_its_terminal() {
         .pane_for_terminal("term-native")
         .expect("native pane");
     assert!(
-        workspace.pane(tmux).is_held(),
-        "the focused tmux pane holds control"
+        workspace.pane(tmux).writable(),
+        "the focused tmux pane stays writable"
     );
     assert!(
-        workspace.pane(native).is_observe(),
-        "the native pane observes"
+        workspace.pane(native).writable(),
+        "the native pane is writable too"
     );
     mock.shutdown().await;
 }
@@ -12344,87 +10933,6 @@ async fn row_menus_dispatch_project_and_agent_actions() {
     mock.shutdown().await;
 }
 
-/// 4.3.2: a held pane keeps a keyboard exit under an outer tmux. `prefix
-/// prefix` writes the prefix chord itself to the pane (herdr's `ctrl+b
-/// ctrl+b`), and `ctrl+\` releases control with no prefix at all, so an outer
-/// tmux eating the prefix can never lock the keyboard into a pane.
-#[tokio::test]
-async fn held_pane_has_literal_prefix_and_keyboard_escape() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.set_attach_backend("terminal-held", "tmux");
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": [{"terminal_id": "terminal-held", "backend": "tmux", "state": "live"}],
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-held", "seq": 1}
-        }),
-    );
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-held"]);
-    let mut chrome = Chrome::dark();
-    chrome.nested = true;
-    chrome.keymap = Keymap::defaults(default_prefix(true));
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        // Startup focus takes the lease and the mock grants it: the pane is
-        // held before the first key arrives.
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        settle_live_event().await;
-        send_key(&input_tx, KeyCode::Char(']'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char(']'), KeyModifiers::CONTROL).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        send_key(&input_tx, KeyCode::Char('\\'), KeyModifiers::CONTROL).await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
-        settle_live_event().await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    let pane = workspace
-        .pane_for_terminal("terminal-held")
-        .expect("terminal pane");
-
-    let typed: Vec<String> = websocket_requests(&mock, "terminal_input")
-        .iter()
-        .filter_map(|request| request.get("data")?.as_str().map(str::to_string))
-        .collect();
-    assert_eq!(
-        typed,
-        vec!["\u{1d}".to_string()],
-        "prefix prefix reaches the held pane as the literal chord; ctrl+\\ never does"
-    );
-    assert_eq!(
-        websocket_requests(&mock, "terminal_release_control").len(),
-        1,
-        "ctrl+\\ releases control without the prefix"
-    );
-    assert!(
-        !workspace.pane(pane).is_held(),
-        "the pane is observed after the keyboard escape: {:?}",
-        workspace.pane(pane).control
-    );
-    mock.shutdown().await;
-}
-
 /// The two-project fixture the placement tests share: project-1 has one
 /// daemon tab, project-2 none, and every roster page carries the three
 /// terminals the tests place.
@@ -12681,7 +11189,7 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
@@ -12755,7 +11263,7 @@ async fn startup_sends_no_focus_hint_for_the_snapshot_focus() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_chord(&input_tx, KeyCode::Char('n'), KeyModifiers::NONE).await;
         // The hint naming the spare tab says the loop applied the switch;
         // a startup echo would already be on record ahead of it.
@@ -12804,7 +11312,7 @@ async fn an_unknown_pane_close_stays_quiet() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         // The fixture focuses the external pane; cycle to the owned one.
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
@@ -12856,7 +11364,7 @@ async fn a_busy_refusal_of_a_pane_close_still_shows() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         // Enqueued after the startup focus hint, so the refusal meets the close.
         mock.enqueue_workspace_refusal("busy", "another window is moving the workspace");
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -12886,26 +11394,93 @@ async fn a_busy_refusal_of_a_pane_close_still_shows() {
     mock.shutdown().await;
 }
 
-/// Wait for a `terminal_take_control` naming `terminal_id`.
+/// The attachment the loop last reported focused for `terminal_id`.
 ///
-/// The loop takes control of whatever it focuses, so counting requests would
-/// also match the pane focused at startup. Per the loop-ordering rule, an
-/// assertion after `run_live_loop` has to wait for a mock-visible request the
-/// loop can only send once it applied the click, then drop the input.
-async fn wait_for_take_control_of(mock: &MockDaemon, terminal_id: &str) {
-    timeout(Duration::from_secs(1), async {
+/// Focus is the observable because every attached pane is writable and the
+/// loop sends no take or release request any more: the one daemon-visible
+/// signal that the loop applied a focus move is its `terminal_focus` report,
+/// sent on both the direct and the proxy transport. `None` when the latest
+/// report for the terminal is an unfocus (or there is none).
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .rfind(|body| body.get("terminal_id") == Some(&json!(terminal_id)))
+        .filter(|body| body.get("focused") == Some(&json!(true)))
+        .and_then(|body| body.get("attachment_id")?.as_str().map(str::to_owned))
+}
+
+/// The attachment of the latest focused report, whatever its terminal.
+fn last_focused_attachment(mock: &MockDaemon) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .rfind(|body| body.get("focused") == Some(&json!(true)))
+        .and_then(|body| body.get("attachment_id")?.as_str().map(str::to_owned))
+}
+
+/// The terminal of every focused report, in the order the loop sent them.
+fn focused_terminals(mock: &MockDaemon) -> Vec<String> {
+    websocket_requests(mock, "terminal_focus")
+        .iter()
+        .filter(|body| body.get("focused") == Some(&json!(true)))
+        .filter_map(|body| body.get("terminal_id")?.as_str().map(str::to_owned))
+        .collect()
+}
+
+/// The terminal of the first focused report: the pane focused at startup.
+fn first_focused_terminal(mock: &MockDaemon) -> String {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .find(|body| body.get("focused") == Some(&json!(true)))
+        .and_then(|body| body.get("terminal_id")?.as_str().map(str::to_owned))
+        .expect("initial focused terminal")
+}
+
+/// How many `terminal_focus` reports with `focused: true` the loop has sent.
+fn focused_report_count(mock: &MockDaemon) -> usize {
+    websocket_requests(mock, "terminal_focus")
+        .iter()
+        .filter(|body| body.get("focused") == Some(&json!(true)))
+        .count()
+}
+
+/// Wait until `expected` focused reports reached the daemon, for any terminal.
+async fn wait_for_drawn_text(frames: &mut watch::Receiver<String>, text: &str) {
+    timeout(WAIT_BUDGET, frames.wait_for(|frame| frame.contains(text)))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for drawn {text:?}"))
+        .expect("loop keeps the frame recorder open");
+}
+
+async fn wait_for_focus_reports(mock: &MockDaemon, expected: usize) {
+    timeout(WAIT_BUDGET, async {
+        while focused_report_count(mock) < expected {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        let seen = websocket_requests(mock, "terminal_focus");
+        panic!("timed out waiting for {expected} focused reports; saw {seen:?}")
+    });
+}
+
+/// Wait for the loop to report `terminal_id` focused and return its attachment.
+///
+/// Counting requests would also match the pane focused at startup. Per the
+/// loop-ordering rule, an assertion after `run_live_loop` has to wait for a
+/// mock-visible request the loop can only send once it applied the click, then
+/// drop the input.
+async fn wait_for_focus_of(mock: &MockDaemon, terminal_id: &str) -> String {
+    timeout(WAIT_BUDGET, async {
         loop {
-            if websocket_requests(mock, "terminal_take_control")
-                .iter()
-                .any(|body| body.get("terminal_id") == Some(&json!(terminal_id)))
-            {
-                break;
+            if let Some(attachment) = focused_attachment(mock, terminal_id) {
+                return attachment;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for take control of {terminal_id}"));
+    .unwrap_or_else(|_| panic!("timed out waiting for focus of {terminal_id}"))
 }
 
 /// A bare terminal row is a click target.
@@ -12991,7 +11566,7 @@ async fn clicking_a_bare_terminal_row_focuses_that_terminal() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_take_control_of(&mock, "terminal-b").await;
+        wait_for_focus_of(&mock, "terminal-b").await;
         drop(input_tx);
     };
 
@@ -13070,7 +11645,7 @@ async fn clicking_a_bare_terminal_in_workspace_one_focuses_its_existing_pane() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_take_control_of(&mock, TARGET).await;
+        wait_for_focus_of(&mock, TARGET).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -13260,9 +11835,9 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
             )
         };
         // `agent_items` for an unblocked bare row: focus, open in new tab,
-        // mark seen, take control, close terminal.
+        // mark seen, close terminal.
         press(MouseButton::Right, anchor).await;
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 3)).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
         drop(input_tx);
     };
@@ -13362,7 +11937,7 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
     chrome.prefs.confirm_close = false;
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         let press = |button, (column, row): (u16, u16)| {
             send_mouse(
                 &input_tx,
@@ -13373,8 +11948,8 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
             )
         };
         press(MouseButton::Right, anchor).await;
-        // Unblocked row: focus, open in new tab, mark seen, take control, close.
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
+        // Unblocked row: focus, open in new tab, mark seen, close.
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 3)).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
         // The kill is a job: its reply drops the pane and relists.
         wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
@@ -13420,7 +11995,7 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
 /// case. Without the guard the sidebar's close destroyed a terminal living
 /// outside gclient entirely.
 #[tokio::test]
-async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
+async fn closing_an_external_row_detaches_instead_of_killing_it() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     for _ in 0..3 {
@@ -13499,9 +12074,9 @@ async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
         tokio::time::advance(RENDER_TICK * 2).await;
         settle_live_event().await;
         tokio::time::resume();
-        // `close terminal` is the fifth item of an unblocked row's menu.
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
-        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        // `close terminal` is the fourth item of an unblocked row's menu.
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 3)).await;
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
         drop(input_tx);
     };
 
@@ -13522,10 +12097,10 @@ async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
         "an external terminal is never killed from the sidebar"
     );
     assert!(
-        websocket_requests(&mock, "terminal_release_control")
+        websocket_requests(&mock, "terminal_detach")
             .iter()
             .any(|body| body.get("terminal_id") == Some(&json!("terminal-tmux"))),
-        "closing it hands the lease back instead"
+        "closing it detaches this client's attachment and leaves the terminal running"
     );
     mock.shutdown().await;
 }
@@ -13668,7 +12243,7 @@ async fn occupied_worktree_mouse_and_keyboard_activation_reuse_the_agent_pane() 
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
             let (input_tx, input_rx) = mpsc::channel(32);
             let driver = async {
-                wait_for_take_control_of(&mock, "terminal-a").await;
+                wait_for_focus_of(&mock, "terminal-a").await;
                 if keyboard {
                     send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
                 } else {
@@ -13681,7 +12256,7 @@ async fn occupied_worktree_mouse_and_keyboard_activation_reuse_the_agent_pane() 
                     )
                     .await;
                 }
-                wait_for_take_control_of(&mock, "terminal-b").await;
+                wait_for_focus_of(&mock, "terminal-b").await;
                 drop(input_tx);
             };
             let mut switch = TerminalGuard::recording().0;
@@ -13794,7 +12369,7 @@ async fn opening_a_bare_terminal_row_in_a_new_tab_reveals_that_terminal() {
         press(MouseButton::Right, anchor).await;
         // `open in new tab` is the second item of an unblocked row's menu.
         press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 1)).await;
-        wait_for_take_control_of(&mock, "terminal-b").await;
+        wait_for_focus_of(&mock, "terminal-b").await;
         drop(input_tx);
     };
 
@@ -14698,7 +13273,7 @@ async fn a_relist_older_than_a_pane_opened_here_does_not_reap_it() {
 /// still queued for the old attachment are reported unsent and never go out
 /// under it; the next key goes out under the new one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
+async fn a_reattach_never_moves_typed_writes_to_the_new_attachment() {
     const TERMINAL_ID: &str = "terminal-reattached";
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
@@ -14740,7 +13315,7 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
             .collect()
     };
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 1).await;
         // The hold is one-shot, so x's reply must be out before it is set.
@@ -14751,12 +13326,15 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
         })
         .await
         .expect("x is answered");
-        // 'y' is held on the wire; 'z' and 'w' queue behind it.
-        let release = mock.hold_ws("terminal_input", |_| true);
+        // y, z and w are each held on the wire, so all three stay unsettled
+        // when the attachment changes.
+        let releases: Vec<_> = (0..3)
+            .map(|_| mock.hold_ws("terminal_input", |_| true))
+            .collect();
         for key in ['y', 'z', 'w'] {
             send_key(&input_tx, KeyCode::Char(key), KeyModifiers::NONE).await;
         }
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
         settle_before_lag(&mock).await;
         lag_the_loop_receiver(&mock, &daemon);
         wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
@@ -14772,10 +13350,12 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
         })
         .await
         .expect("attachment-2 installed");
-        release.notify_one();
-        // The new attachment observes, so 'q' takes control again first.
+        for release in releases {
+            release.notify_one();
+        }
+        // The new attachment is writable at once; the loop reports it focused.
         send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
         timeout(WAIT_BUDGET, async {
             while !typed(&mock).iter().any(|(data, _)| data == "q") {
                 tokio::task::yield_now().await;
@@ -14801,21 +13381,22 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
     let data: Vec<&str> = sent.iter().map(|(data, _)| data.as_str()).collect();
     assert_eq!(
         data,
-        ["x", "y", "q"],
-        "z and w were queued for the retired attachment and never sent"
+        ["x", "y", "z", "w", "q"],
+        "y, z and w went out before the reattach; q is the first write after it"
     );
-    assert_ne!(sent[2].1, sent[0].1, "q goes out under the new attachment");
+    let old = sent[1].1.clone();
+    assert!(
+        sent[1..4].iter().all(|(_, attachment)| *attachment == old),
+        "y, z and w stay on the attachment they were typed for: {sent:?}"
+    );
+    assert_ne!(sent[4].1, old, "q goes out under the new attachment");
     let titles: Vec<&str> = chrome
         .alert_log
         .iter()
         .map(|toast| toast.title.as_str())
         .collect();
-    // y was on the wire when its attachment went away; z and w never left.
-    assert_eq!(
-        titles,
-        ["Input delivery unconfirmed.", "Input not sent: 2 bytes."],
-        "only y is unconfirmed; z and w are reported unsent"
-    );
+    // Every write reached the wire before the reattach, so none is abandoned.
+    assert!(titles.is_empty(), "no write is reported unsent: {titles:?}");
     mock.shutdown().await;
 }
 
@@ -14853,7 +13434,7 @@ async fn a_key_typed_while_reattaching_lands_on_the_new_attachment() {
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         settle_before_lag(&mock).await;
         // Holding the re-attach's reply keeps the pane attaching.
         let attached = mock.hold_ws("terminal_attach", |_| true);
@@ -14864,6 +13445,9 @@ async fn a_key_typed_while_reattaching_lands_on_the_new_attachment() {
         send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
         attached.notify_one();
         wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        // The reattached pane's focus report leaves on a render tick, which can
+        // land after the input closes. Wait for it before the count below.
+        wait_for_focus_reports(&mock, 2).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -14878,10 +13462,12 @@ async fn a_key_typed_while_reattaching_lands_on_the_new_attachment() {
         driver
     );
     result.expect("reattached loop");
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(takes.len(), 2);
-    assert_eq!(takes[1]["attachment_id"], "attachment-2");
-    assert_eq!(takes[1]["takeover"], true, "the key takes control back");
+    assert_eq!(focused_report_count(&mock), 2);
+    assert_eq!(
+        last_focused_attachment(&mock).as_deref(),
+        Some("attachment-2"),
+        "the new attachment is the one reported focused"
+    );
     let typed = websocket_requests(&mock, "terminal_input");
     assert_eq!(typed.len(), 1);
     assert_eq!(typed[0]["data"], "q");
@@ -14923,7 +13509,7 @@ async fn a_key_typed_while_a_recovery_detaches_lands_on_the_new_attachment() {
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_reports(&mock, 1).await;
         settle_before_lag(&mock).await;
         // Holding the detach's reply keeps the pane detaching.
         let detached = mock.hold_ws("terminal_detach", |_| true);
@@ -14941,6 +13527,7 @@ async fn a_key_typed_while_a_recovery_detaches_lands_on_the_new_attachment() {
         }));
         detached.notify_one();
         wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        wait_for_focus_reports(&mock, 2).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -14955,10 +13542,12 @@ async fn a_key_typed_while_a_recovery_detaches_lands_on_the_new_attachment() {
         driver
     );
     result.expect("reattached loop");
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(takes.len(), 2);
-    assert_eq!(takes[1]["attachment_id"], "attachment-2");
-    assert_eq!(takes[1]["takeover"], true, "the key takes control back");
+    assert_eq!(focused_report_count(&mock), 2);
+    assert_eq!(
+        last_focused_attachment(&mock).as_deref(),
+        Some("attachment-2"),
+        "the new attachment is the one reported focused"
+    );
     let typed = websocket_requests(&mock, "terminal_input");
     assert_eq!(typed.len(), 1);
     assert_eq!(typed[0]["data"], "q");
@@ -15072,9 +13661,9 @@ fn terminal_inventory_renders_each_backend() {
             .map(|row| row.detail.clone())
             .expect("navigator row for every terminal")
     };
-    assert!(detail("term-native").contains("0:1 gclient "));
-    assert!(detail("term-bare").contains("· gclient "));
-    assert!(detail("term-tmux").contains("%16 tmux "));
+    assert!(detail("term-native").ends_with(" · 0:1 gclient"));
+    assert!(detail("term-bare").ends_with(" · gclient"));
+    assert!(detail("term-tmux").ends_with(" · %16 tmux"));
 
     let orphan = |backend: Backend, name: &str| {
         row_summary(&OrphanRow {
