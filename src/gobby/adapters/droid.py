@@ -20,10 +20,10 @@ from gobby.adapters.base import (
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.degradation import (
     AdapterDegradationKind,
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
     record_adapter_degradation,
     record_unsupported_response_fields,
-    truncate_context_for_adapter,
 )
 from gobby.adapters.droid_contract import (
     DROID_EVENT_MAP,
@@ -308,16 +308,17 @@ class DroidAdapter(BaseAdapter):
             if context_lines:
                 parts.append(("metadata", "\n".join(context_lines)))
 
-        if not parts:
-            return None
-
-        return truncate_context_for_adapter(
-            parts,
-            provider=self.source,
-            hook_type=hook_type,
-            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-            event_logger=logger,
-            **persist_kwargs_from_hook_response(response, self._hook_manager),
+        # Always page: a delivery with nothing fresh still carries the session's queued remainder.
+        return (
+            page_context_for_adapter(
+                parts,
+                provider=self.source,
+                hook_type=hook_type,
+                destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+                event_logger=logger,
+                **persist_kwargs_from_hook_response(response, self._hook_manager),
+            )
+            or None
         )
 
     def _deny_reason_with_context(
@@ -336,7 +337,7 @@ class DroidAdapter(BaseAdapter):
             destination_channel="permissionDecisionReason",
             event_logger=logger,
         )
-        bounded = truncate_context_for_adapter(
+        bounded = page_context_for_adapter(
             response.context_contributors(),
             provider=self.source,
             hook_type=hook_type,

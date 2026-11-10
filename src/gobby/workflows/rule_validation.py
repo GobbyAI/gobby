@@ -159,6 +159,20 @@ def validate_rule(
     Trace entries describe prepared effects; none claim an external effect executed.
     """
     report = RuleValidation(name=name, source=source)
+    # Imported here: the llm package reaches the workflow engine, so a top-level import cycles.
+    from gobby.llm.sdk_utils import MAX_CONTEXT_LABEL_CHARS
+
+    label = f"rule:{name}"
+    if len(label) > MAX_CONTEXT_LABEL_CHARS:
+        report.issues.append(
+            RuleValidationIssue(
+                "name",
+                "label",
+                f"rule '{name}' makes a {len(label)}-character context label; "
+                f"the limit is {MAX_CONTEXT_LABEL_CHARS}",
+            )
+        )
+        return report
     try:
         data = json.loads(definition) if isinstance(definition, str) else dict(definition)
         body = RuleDefinitionBody.model_validate(data)

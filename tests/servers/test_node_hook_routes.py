@@ -265,3 +265,29 @@ def test_receipts_route(
             )
         assert response.status_code == 422
         assert response.json() == {"detail": detail}
+
+
+def test_receipts_ack_whose_variable_write_fails_surfaces_the_error_and_stays_prepared(
+    session_manager: SessionManager, node_session: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = session_manager.db
+    receipt = prepare_receipt(
+        db,
+        session_id=node_session,
+        envelope_id="original",
+        staged_payload={"session_variables": {"delivered_once": True}},
+    )
+
+    def failing_merge(*_args: Any, **_kwargs: Any) -> bool:
+        raise RuntimeError("queue write failed")
+
+    monkeypatch.setattr(SessionVariableManager, "merge_variables", failing_merge)
+    body = {"v": 1, "op": "ack", "receipt_id": receipt.receipt_id, "delivery_generation": 1}
+    with _client(db, monkeypatch) as client:
+        with pytest.raises(RuntimeError, match="queue write failed"):
+            client.post("/api/nodes/receipts", headers=_headers(), json=body)
+
+    stored = db.fetchone(
+        "SELECT state FROM hook_receipt_effects WHERE receipt_id = %s", (receipt.receipt_id,)
+    )
+    assert stored is not None and stored["state"] == "prepared"

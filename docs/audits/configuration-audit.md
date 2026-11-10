@@ -323,8 +323,6 @@ already-created registry continue to use the live per-epoch configuration contra
 | skills.core_skills_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | mcp-tools |  |
 | skills.injection_format | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | mcp-tools |  |
 | skills.hubs | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | mcp-tools | object items= map=object |
-| chat_history.max_message_chars | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
-| chat_history.max_total_chars | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
 | message_tracking.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | projects-sessions |  |
 | message_tracking.poll_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
 | message_tracking.debounce_delay | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
