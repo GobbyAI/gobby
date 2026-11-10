@@ -11,7 +11,10 @@ use super::{
         start_planned,
     },
     repair::RepairEnv,
-    sandbox::{external_roots::validate_external_write_roots, runtime::require_managed_srt},
+    sandbox::{
+        external_roots::validate_external_write_roots, operator_bootstrap_path,
+        runtime::require_managed_srt,
+    },
     state::{RunPhase, RunRecord},
     workspace::{self, plan_workspace},
 };
@@ -315,11 +318,23 @@ async fn spawn(
         ));
     }
     // Refused before acceptance, so the hub settles the run as never launched.
+    let operator_bootstrap = match operator_bootstrap_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return Dispatched::answer(reply_err(
+                request_id,
+                "invalid_payload",
+                format!("operator account lookup failed: {error}"),
+                Stage::None,
+            ));
+        }
+    };
     if let Err(message) = validate_external_write_roots(
         &payload.sandbox.extra_write_paths,
         &agents.home,
         &context.home,
         &context.ambient,
+        operator_bootstrap.as_deref(),
     ) {
         return Dispatched::answer(reply_err(
             request_id,

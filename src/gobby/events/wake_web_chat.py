@@ -19,15 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def dispatch_web_chat_wake(
-    dispatcher: WakeDispatcher, session_id: str, *, priority: str = "normal"
-) -> dict[str, Any]:
+async def dispatch_web_chat_wake(dispatcher: WakeDispatcher, session_id: str) -> dict[str, Any]:
     if dispatcher._web_chat_session_registry is None:
         return _web_chat_no_live_result(session_id)
 
-    _session, state_failure = await dispatcher._preflight_live_side_effect(
-        session_id, priority=priority
-    )
+    _session, state_failure = await dispatcher._preflight_live_side_effect(session_id)
     if state_failure is not None:
         return state_failure
 

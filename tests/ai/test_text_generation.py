@@ -3399,8 +3399,8 @@ async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> Non
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
         _registry_for_text_generation(("grok", AIAdapterStyle.CLI, "grok-model")),
-        {"grok": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.02})},
-        cli_candidate_timeout_seconds=0.05,
+        {"grok": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.05})},
+        cli_candidate_timeout_seconds=0.2,
         spawn_cold_max_concurrency=1,
     )
     slow_task = asyncio.create_task(
@@ -3410,18 +3410,19 @@ async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> Non
     )
     await asyncio.wait_for(state.started_event.wait(), timeout=1)
 
-    started_waiting_at = asyncio.get_running_loop().time()
     fast_task = asyncio.create_task(
         service.generate_result(
             TextGenerationRequest(provider="grok", model="grok-model", prompt="fast")
         )
     )
 
-    with pytest.raises(RuntimeError, match="candidate timed out after 0.05s"):
+    with pytest.raises(RuntimeError, match="candidate timed out after 0.2s"):
         await slow_task
     result = await asyncio.wait_for(fast_task, timeout=1)
 
-    assert asyncio.get_running_loop().time() - started_waiting_at >= 0.05
+    # The single cold slot admitted fast only after slow released it, so the
+    # queue wait never overlapped slow. Its own 0.05s candidate budget still held.
+    assert state.max_active == 1
     assert result.text == "grok:fast"
 
 

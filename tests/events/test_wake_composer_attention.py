@@ -22,12 +22,15 @@ from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead, WriteKin
 from gobby.terminals.host_events import InputActivityEvent
 from tests.events.test_wake import FakeSession
 from tests.fixtures.isolated_checkout import patch_local_machine_id
+from tests.terminal_scene import CLAUDE_IDLE
 
 pytestmark = pytest.mark.unit
 
 TERMINAL_ID = "terminal-1"
 HOST_EPOCH = "host-epoch-1"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+# The idle Claude frame with text in its composer: a recalled prompt or staged daemon text.
+CLAUDE_TEXT_DRAFT = "────────────────────\n❯ continue\n────────────────────"
 
 
 @dataclass
@@ -179,8 +182,6 @@ async def test_repeated_withheld_wakes_keep_one_attention_item(
         "\x1b[<64;12;8M",
         "\x1b[M !!",
         "\x1b[M`!!",
-        "\x1b[A",
-        "\x1bOD",
     ],
 )
 async def test_non_text_input_allows_following_wake(
@@ -220,11 +221,11 @@ async def test_native_input_effect_controls_following_wake(
     )
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
     assert result["delivered"] is (effect != "edit")
-    if effect == "edit":
+    if effect != "edit":
+        seat.pane_sender.assert_awaited_once()
+    else:
         assert result["decline_reason"] == "composer_occupied"
         seat.pane_sender.assert_not_awaited()
-    else:
-        seat.pane_sender.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -281,6 +282,51 @@ async def test_operator_draft_still_withholds_wake_for_each_cli(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payload", ["\x1b[A", "\x1bOD", "\x15"])
+async def test_cursor_or_control_draft_delivers_over_an_empty_idle_frame(
+    seat: Seat, composer_ledger: ComposerLedger, payload: str
+) -> None:
+    # Up and Down may recall history and control keys may rewrite the composer, so the
+    # ledger cannot vouch for it. The pane can: an idle frame with no text confirms it empty.
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload=payload)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is True
+    seat.pane_sender.assert_awaited_once()
+    assert composer_ledger.read(TERMINAL_ID) == LedgerRead("empty")
+
+
+@pytest.mark.asyncio
+async def test_stale_draft_keeps_withholding_the_wake_until_confirmed_empty(
+    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x15")
+    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
+    for _ in range(2):
+        result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
+    agent_target(foreground="claude", snapshot=CLAUDE_IDLE)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is True
+    seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_empty_composer_after_a_draft_delivers_the_wake(
+    seat: Seat, composer_ledger: ComposerLedger
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x15")
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="key", payload="enter")
+    composer_ledger.record_submit(TERMINAL_ID)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is True
+    seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_released_composer_delivers_the_wake_and_retires_the_item(
     seat: Seat, composer_ledger: ComposerLedger
 ) -> None:
@@ -302,15 +348,49 @@ async def test_released_composer_delivers_the_wake_and_retires_the_item(
 
 @pytest.mark.asyncio
 async def test_arrow_over_held_daemon_text_withholds_wake(
-    seat: Seat, composer_ledger: ComposerLedger
+    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
 ) -> None:
+    # The staged daemon text stays in the pane, so the frame is not empty and the seat holds.
     composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     composer_ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload="continue")
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
     assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
+    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
     assert result["skipped"] == "composer_occupied"
     seat.pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_history_recall_leaving_text_keeps_the_seat_held(
+    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
+) -> None:
+    # Up recalls the last prompt into an empty composer: the pane shows text, so the seat holds.
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
+    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is False
+    assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_cursor_draft_raises_an_attention_item_naming_seat_and_reason(
+    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
+    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
+    await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    item = seat.attention.get(seat.entry_id)
+    assert item is not None
+    assert item.state == "blocked"
+    assert item.reason == "composer_blocked"
+    assert item.fingerprint == "composer_blocked:cursor"
+    message = str(item.payload["message"])
+    assert f'release_composer(session_id="{seat.session.ref}")' in message
+    assert "cursor or control key" in message
 
 
 @pytest.mark.asyncio

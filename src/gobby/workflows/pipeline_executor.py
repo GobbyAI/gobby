@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 from opentelemetry.trace import Status, StatusCode
 
 from gobby.config.pipelines import PipelineConfig
+from gobby.fleet_health import launch_refusal
 from gobby.telemetry.tracing import create_span
 from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
@@ -216,6 +217,12 @@ class PipelineExecutor(
         if not pipeline.enabled:
             raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
 
+        # Admit before the record exists or is marked RUNNING. The background run would
+        # otherwise start as RUNNING and skip the fresh-run gate in _execute.
+        fleet_refusal = await asyncio.to_thread(launch_refusal)
+        if fleet_refusal is not None:
+            raise PipelineStepRefusal(fleet_refusal.message, refusal=fleet_refusal)
+
         execution = await self._run_db(
             self._create_execution_record, pipeline, inputs, session_id, project_id
         )
@@ -370,6 +377,14 @@ class PipelineExecutor(
 
                 _pipeline_stack = _pipeline_stack | {pipeline.name}
 
+                # 0b. A fresh run is refused before any record is written, so a refused launch
+                # leaves nothing behind. A nested run checks health only; its seats are paced at
+                # their own spawn.
+                if execution_id is None:
+                    fleet_refusal = await asyncio.to_thread(launch_refusal, ramp=_depth == 0)
+                    if fleet_refusal is not None:
+                        raise PipelineStepRefusal(fleet_refusal.message, refusal=fleet_refusal)
+
                 # 1. Create or load execution record
                 _terminal_statuses = {ExecutionStatus.CANCELLED, ExecutionStatus.COMPLETED}
                 prior_status: ExecutionStatus | None = None
@@ -397,6 +412,20 @@ class PipelineExecutor(
                     if span.is_recording():
                         span.set_attribute("execution_id", str(execution.id))
                     execution_id = execution.id
+
+                # 1b. A resumed record that never started is new work: refuse it while the
+                # fleet is unhealthy or its ramp is full. That covers a still-PENDING record,
+                # and a FAILED record with no step rows: a refused or pre-step failure never
+                # started, so resuming it is admission again.
+                never_started = prior_status == ExecutionStatus.PENDING
+                if prior_status == ExecutionStatus.FAILED:
+                    never_started = not await self._run_db(
+                        self.execution_manager.get_steps_for_execution, execution_id
+                    )
+                if never_started:
+                    fleet_refusal = await asyncio.to_thread(launch_refusal, ramp=_depth == 0)
+                    if fleet_refusal is not None:
+                        raise PipelineStepRefusal(fleet_refusal.message, refusal=fleet_refusal)
 
                 # 2. Update status to RUNNING. Failed resumes use an atomic claim
                 # so concurrent callers cannot both reset and execute the same rows.
@@ -852,12 +881,19 @@ class PipelineExecutor(
                                 current_step_execution.id,
                             )
 
+                    failure_outputs: dict[str, Any] = {"error": str(e)}
+                    if isinstance(e, PipelineStepRefusal) and e.refusal is not None:
+                        failure_outputs["error_code"] = e.refusal.code
+                        failure_outputs["fleet"] = {
+                            "state": e.refusal.state,
+                            "reasons": list(e.refusal.reasons),
+                        }
                     try:
                         failed = await self._run_db(
                             self.execution_manager.update_execution_status,
                             execution_id=execution.id,
                             status=ExecutionStatus.FAILED,
-                            outputs_json=json_dumps({"error": str(e)}),
+                            outputs_json=json_dumps(failure_outputs),
                         )
                         if failed:
                             execution = failed

@@ -1182,8 +1182,13 @@ async def test_web_chat_failed_compact_restores_precompact_status(
     assert not settled.get(HANDOFF_TURN_END_PENDING_VARIABLE)
     assert _delivery_count(temp_db, attempt_id) == 0
     dispatcher = WakeDispatcher(manager, MagicMock())
-    _, wake_failure = await dispatcher._preflight_live_side_effect(session_id, priority="urgent")
-    assert wake_failure is None
+    _, wake_failure = await dispatcher._preflight_live_side_effect(session_id)
+    if session.status == "active":
+        # A restored active turn takes no typed input at any priority (#25830).
+        assert wake_failure is not None
+        assert wake_failure["skipped"] == "session_active"
+    else:
+        assert wake_failure is None
     with session_context_for_test(session_id):
         recovered = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
     assert recovered["found"] is True
@@ -1242,7 +1247,7 @@ async def test_compact_timeout_restores_precompact_status_and_releases_wake(
                 metadata={"_platform_session_id": session_id},
             )
         )
-        _, withheld = await dispatcher._preflight_live_side_effect(session_id, priority="urgent")
+        _, withheld = await dispatcher._preflight_live_side_effect(session_id)
         assert withheld is not None
         assert withheld["skipped"] == "session_awaiting_handoff"
         return True, None, True, None
@@ -1298,8 +1303,13 @@ async def test_compact_timeout_restores_precompact_status_and_releases_wake(
     assert settled[HANDOFF_DISPATCH_GATE_VARIABLE]["error_code"] == "compact_unconfirmed"
     assert not settled.get(HANDOFF_TURN_END_PENDING_VARIABLE)
     assert _delivery_count(temp_db, attempt_id) == 0
-    _, wake_failure = await dispatcher._preflight_live_side_effect(session_id, priority="urgent")
-    assert wake_failure is None
+    _, wake_failure = await dispatcher._preflight_live_side_effect(session_id)
+    if session.status == "active":
+        # A restored active turn takes no typed input at any priority (#25830).
+        assert wake_failure is not None
+        assert wake_failure["skipped"] == "session_active"
+    else:
+        assert wake_failure is None
     with session_context_for_test(session_id):
         recovered = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
     assert recovered["found"] is True

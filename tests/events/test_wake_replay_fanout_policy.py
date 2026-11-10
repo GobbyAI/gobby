@@ -1,8 +1,9 @@
-"""Replay never live-wakes a parked seat with no claimed task for fanout rows alone.
+"""Replay applies the per-recipient direct wake rule to fanout rows (#25830).
 
 A fanout row sent while a seat was still active keeps its wake intent. When that seat
-later parks between turns with no claimed task, turn-end and startup replay must leave
-the row queued for the seat's next natural turn instead of waking it.
+later parks between turns, turn-end and startup replay wake it like a direct row, with
+or without a claimed task. The composer and turn gates in the dispatcher decide whether
+input is typed.
 """
 
 from __future__ import annotations
@@ -49,17 +50,16 @@ def _session(session_manager: SessionManager, project_id: str, external_id: str)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("claimed", "direct_row", "expect_wake"),
-    [(False, False, False), (True, False, True), (False, True, True)],
-    ids=["fanout-only-parked-unclaimed-stays-queued", "claimed-seat-wakes", "direct-row-wakes"],
+    ("claimed", "direct_row"),
+    [(False, False), (True, False), (False, True)],
+    ids=["fanout-only-parked-unclaimed-wakes", "claimed-seat-wakes", "direct-row-wakes"],
 )
-async def test_replay_leaves_fanout_rows_queued_for_a_parked_seat_without_a_task(
+async def test_replay_wakes_a_parked_seat_for_fanout_rows_without_a_task(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     claimed: bool,
     direct_row: bool,
-    expect_wake: bool,
 ) -> None:
     project_id = sample_project["id"]
     sender_id = _session(session_manager, project_id, "sender")
@@ -100,5 +100,5 @@ async def test_replay_leaves_fanout_rows_queued_for_a_parked_seat_without_a_task
 
     await coordinator.open()
 
-    assert dispatcher.calls == ([(seat_id, "normal")] if expect_wake else [])
+    assert dispatcher.calls == [(seat_id, "normal")]
     assert messages.get_undelivered_wake_messages(seat_id)

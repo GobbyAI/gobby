@@ -7,7 +7,7 @@ fn text(path: &Path) -> String {
 }
 
 fn check(roots: &[String], gobby: &Path, home: &Path) -> Result<(), String> {
-    validate_external_write_roots(roots, gobby, home, &BTreeMap::new())
+    validate_external_write_roots(roots, gobby, home, &BTreeMap::new(), None)
 }
 
 #[test]

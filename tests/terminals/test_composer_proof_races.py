@@ -59,10 +59,9 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
-@pytest.mark.parametrize("priority", ["normal", "urgent"])
 @pytest.mark.parametrize("probe_state", ["unknown", "error", "in_flight"])
 async def test_installed_wake_observer_preserves_unconfirmed_result_and_retry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, priority: str, probe_state: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, probe_state: str
 ) -> None:
     trace, event = registered_trace(tmp_path)
     own = replace(trace.surfaces[str(event["terminal_id"])], provider=provider)
@@ -127,7 +126,7 @@ async def test_installed_wake_observer_preserves_unconfirmed_result_and_retry(
         patch.object(dispatcher, "_composer_retry_wait", wait_for_retry),
     ):
         try:
-            result = await dispatcher.dispatch_live_wake(own.session_id, priority=priority)
+            result = await dispatcher.dispatch_live_wake(own.session_id)
             assert result == composer_unconfirmed_result(own.session_id, method="terminal")
             await asyncio.wait_for(retry_waiting.wait(), 1)
             retry = dispatcher._composer_retries[own.session_id]

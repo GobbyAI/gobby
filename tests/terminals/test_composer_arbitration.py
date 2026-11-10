@@ -329,7 +329,22 @@ async def test_wake_and_handoff_writes_never_concatenate_across_providers(
         wake_result, compact_result = await asyncio.wait_for(
             asyncio.gather(wake, compact), timeout=5
         )
-        assert wake_result["delivered"] is True
+        if first_writer == "command":
+            # The command's text is held until it submits: the wake takes no typed input
+            # and its durable row stays queued for a wake after the submit.
+            assert wake_result["delivered"] is False, wake_result
+            assert wake_result["decline_reason"] == "composer_unconfirmed", wake_result
+            # The provider's consume acknowledges the submitted command; until then the
+            # ledger keeps it held.
+            composer_ledger.record_command_consumed(runtime.terminal_id, command)
+            # The first attempt recorded a debounce; the retry runs after that window, which
+            # the test skips with bypass_debounce rather than sleeping.
+            _PHASE.set("wake")
+            wake_result = await asyncio.wait_for(
+                dispatcher._dispatch_live_wake_unlocked(session_id, bypass_debounce=True),
+                timeout=5,
+            )
+        assert wake_result["delivered"] is True, wake_result
         assert compact_result[0] is True
         expected = [CONTINUE_WAKE_MESSAGE, command]
         assert runtime.submitted == (expected if first_writer == "wake" else expected[::-1])
@@ -394,7 +409,7 @@ async def test_wake_keeps_operator_draft_while_set_handoff_wipes_it(
 
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
 @pytest.mark.parametrize("command", ["/compact", "/clear"])
-async def test_wake_drains_a_cancelled_staged_handoff_without_submitting_it(
+async def test_wake_leaves_a_cancelled_staged_handoff_held_and_untyped(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -403,7 +418,7 @@ async def test_wake_drains_a_cancelled_staged_handoff_without_submitting_it(
     cli_source: str,
     command: str,
 ) -> None:
-    """The cancelled command is daemon text, so the next wake clears it and delivers."""
+    """The cancelled command is daemon text: a held composer takes no wake, and nothing submits."""
     dispatcher, messages, runtime, session_id, pane = _editor_seat(
         temp_db, session_manager, sample_project["id"], cli_source, monkeypatch, composer_ledger
     )
@@ -418,10 +433,12 @@ async def test_wake_drains_a_cancelled_staged_handoff_without_submitting_it(
         with pytest.raises(asyncio.CancelledError):
             await compact
         result = await asyncio.wait_for(wake, timeout=5)
-        assert result["delivered"] is True
-        assert runtime.submitted == [CONTINUE_WAKE_MESSAGE]
-        assert runtime.buffer == ""
-        assert composer_ledger.read(runtime.terminal_id).state == "empty"
+        # Held daemon text is never typed into: the wake waits, and only a clear drains it.
+        assert result["delivered"] is False, result
+        assert result["decline_reason"] == "composer_unconfirmed", result
+        assert runtime.submitted == []
+        assert runtime.buffer == command
+        assert composer_ledger.read(runtime.terminal_id).state == "held"
         assert [
             message.content for message in messages.get_undelivered_wake_messages(session_id)
         ] == ["durable composer-race notification"]
@@ -485,10 +502,7 @@ async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff
     from gobby.sessions.handoff import clear_handoff_turn_end_pending, stage_handoff_attempt
     from gobby.sessions.handoff_records import build_handoff_payload
     from gobby.sessions.mailbox import MailboxService
-    from gobby.terminals.composer_ledger import (
-        record_composer_command_consumed,
-        record_composer_submit,
-    )
+    from gobby.terminals.composer_ledger import record_composer_command_consumed
     from gobby.utils.session_context import session_context_for_test
 
     dispatcher, messages, runtime, session_id, pane = _editor_seat(
@@ -594,19 +608,16 @@ async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff
             )
             assert wake.success is True
             assert len(wake.wake_results) == 1
+            # Grok ships no composer frame rules, so the ledger alone vouches for its empty
+            # composer. The wake types the continue line, as a Grok seat's wake did before the
+            # send_keys gate joined the wake path (#25830).
             assert wake.wake_results[0]["delivered"] is True, wake.wake_results
             assert runtime.submitted[-1] == CONTINUE_WAKE_MESSAGE
-            record_composer_submit(pane.target)
             unread = messages.get_undelivered_messages(session_id)
             assert [message.content for message in unread] == [f"compact-cycle-{cycle}-wake"]
             messages.mark_delivered_batch([message.id for message in unread], session_id)
             assert runtime.buffer == ""
-        assert runtime.submitted == [
-            "/compact",
-            CONTINUE_WAKE_MESSAGE,
-            "/compact",
-            CONTINUE_WAKE_MESSAGE,
-        ]
+        assert runtime.submitted == ["/compact", CONTINUE_WAKE_MESSAGE] * 2
     finally:
         await _cancel_retries(dispatcher)
 

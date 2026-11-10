@@ -5,6 +5,7 @@ Tests FastAPI endpoints for pipeline execution, approval, and querying.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,8 +14,18 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.fleet_health import FleetAdmissionRefusal, spawn_refusal
+from gobby.fleet_health.gate import FLEET_UNHEALTHY
 from gobby.servers.routes.pipelines import _batch_load_cron_info, create_pipelines_router
-from gobby.workflows.pipeline_state import ExecutionStatus, PipelineStepError, StepStatus
+from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+from gobby.workflows.pipeline_executor import PipelineExecutor
+from gobby.workflows.pipeline_state import (
+    ExecutionStatus,
+    PipelineStepError,
+    PipelineStepRefusal,
+    StepStatus,
+)
+from tests.fleet_health.support import write_fleet_state
 
 pytestmark = pytest.mark.unit
 
@@ -247,13 +258,13 @@ class TestRunPipeline:
 
         mock_pipeline = MagicMock()
         mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
-        error = "Step 'triage' failed: Unsupported spawn provider: pipeline"
+        error = "Step 'fixture-step' failed: Unsupported spawn provider: pipeline"
         executor = mock_server.services.get_pipeline_executor.return_value
         executor.execute = AsyncMock(side_effect=PipelineStepError(error))
 
         response = client.post(
             "/api/pipelines/run",
-            json={"name": "support", "project_id": "proj-1"},
+            json={"name": "fixture-pipeline", "project_id": "proj-1"},
         )
 
         assert response.status_code == 422
@@ -412,6 +423,107 @@ class TestRunPipeline:
             json={"name": "test-pipeline", "project_id": "proj-1", "background": True},
         )
         assert response.status_code == 500
+
+    def test_run_pipeline_background_refusal_is_422(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """A refused detached start is the caller's error: a step refusal maps to 422, not 500."""
+        mock_pipeline = MagicMock()
+        mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
+
+        executor = mock_server.services.get_pipeline_executor.return_value
+        refusal = FleetAdmissionRefusal(
+            FLEET_UNHEALTHY,
+            "fleet_unhealthy: daemon health is unstable",
+            "unstable",
+            ("probe_failed:refused",),
+        )
+        executor.start_detached = AsyncMock(
+            side_effect=PipelineStepRefusal(refusal.message, refusal=refusal)
+        )
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "test-pipeline", "project_id": "proj-1", "background": True},
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "fleet_unhealthy"
+        assert detail["fleet"] == {"state": "unstable", "reasons": ["probe_failed:refused"]}
+
+
+class TestFleetRefusalBoundary:
+    """A launch refused by the fleet gate answers 422 with the typed result and records nothing."""
+
+    @pytest.mark.parametrize("background", [True, False], ids=["detached", "foreground"])
+    @pytest.mark.parametrize(
+        ("state", "reasons", "age_seconds", "expected_state"),
+        [
+            ("degraded", ("load_per_core:2.9",), 0, "degraded"),
+            ("unstable", ("probe_failed:refused",), 0, "unstable"),
+            # A sample older than 90 seconds counts as unstable, whatever it last said.
+            ("healthy", (), 120, "unstable"),
+        ],
+    )
+    def test_a_refused_launch_returns_the_typed_fleet_result(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        background: bool,
+        state: str,
+        reasons: tuple[str, ...],
+        age_seconds: int,
+        expected_state: str,
+    ) -> None:
+        write_fleet_state(at=time.time() - age_seconds, state=state, reasons=reasons)
+        execution_manager = _attach_real_executor(mock_server)
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "fixture-pipeline", "project_id": "proj-1", "background": background},
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "fleet_unhealthy"
+        assert detail["fleet"]["state"] == expected_state
+        execution_manager.create_execution.assert_not_called()
+
+    @pytest.mark.parametrize("background", [True, False], ids=["detached", "foreground"])
+    def test_a_capped_ramp_returns_the_typed_fleet_result(
+        self, client: TestClient, mock_server: MagicMock, background: bool
+    ) -> None:
+        write_fleet_state(state="healthy", max_new_seats=1)
+        assert spawn_refusal() is None
+        execution_manager = _attach_real_executor(mock_server)
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "fixture-pipeline", "project_id": "proj-1", "background": background},
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["error_code"] == "fleet_ramp_capped"
+        assert detail["fleet"]["state"] == "healthy"
+        execution_manager.create_execution.assert_not_called()
+
+
+def _attach_real_executor(mock_server: MagicMock) -> MagicMock:
+    """Serve the route a real PipelineExecutor, so the real gate answers the launch."""
+    definition = PipelineDefinition(
+        name="fixture-pipeline",
+        steps=[PipelineStep(id="step1", exec="echo step1")],
+    )
+    mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=definition)
+    execution_manager = MagicMock()
+    mock_server.services.get_pipeline_executor.return_value = PipelineExecutor(
+        db=MagicMock(),
+        execution_manager=execution_manager,
+        llm_service=AsyncMock(),
+        tool_proxy_getter=lambda: AsyncMock(),
+    )
+    return execution_manager
 
 
 # ═══════════════════════════════════════════════════════════════════════

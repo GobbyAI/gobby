@@ -40,6 +40,7 @@ pub(super) fn prepare(
         inputs.home.as_path(),
         &inputs.env,
     );
+    let operator_bootstrap = inputs.operator_bootstrap.as_deref();
     let raw_source = env
         .get("GROK_HOME")
         .cloned()
@@ -67,7 +68,13 @@ pub(super) fn prepare(
     let source_list = vec![source_text.clone()];
     let credential_roots = paths::credential_read_roots(user_home);
     let grok_required = paths::provider_credential_read_exceptions("grok", user_home);
-    paths::assert_sensitive_path_contract(&[source_list.as_slice(), &[]], gobby, user_home, env)?;
+    paths::assert_sensitive_path_contract(
+        &[source_list.as_slice(), &[]],
+        gobby,
+        user_home,
+        env,
+        operator_bootstrap,
+    )?;
     paths::assert_credential_read_contract(
         &source_list,
         &credential_roots,
@@ -92,6 +99,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
         &[
@@ -140,6 +148,7 @@ pub(super) fn prepare(
         gobby,
         user_home,
         env,
+        operator_bootstrap,
     )?;
     paths::assert_credential_read_contract(
         &resolved_runtime,
