@@ -33,19 +33,13 @@ async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
         terminal_id = str(created["terminal_id"])
         proof.created_terminal_ids.append(terminal_id)
         proof.creation_uncertain = False
-        # Consume registration events, rereading the authoritative row after each.
-        start = 0
+        # Poll the authoritative row. The row binds after the SessionStart event, so waiting
+        # for a later event let the seat's launch turn stage and deliver its handoff before
+        # the proof trace owned the terminal.
         async with asyncio.timeout(90):
             item = await proof.terminal(terminal_id)
             while not item.get("session_id"):
-                await ws.wait_for(
-                    lambda event, baseline=start: event.get("type") == "session_event"
-                    and event.get("project_id") == proof.scope.project_id
-                    and event in ws.messages[baseline:],
-                    timeout=90,
-                    description="real provider registration",
-                )
-                start = len(ws.messages)
+                await asyncio.sleep(0.2)
                 item = await proof.terminal(terminal_id)
         locator = proof.locator(item)
         own, details = await proof.row_surface(provider, item)
