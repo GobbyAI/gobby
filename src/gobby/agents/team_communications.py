@@ -12,7 +12,7 @@ from gobby.workflows.agent_models import AgentDefinitionBody, holds_capability
 from gobby.workflows.agent_resolver import (
     AgentResolutionError,
     resolve_agent_with_row,
-    session_has_capability,
+    session_declares_capability,
 )
 
 RECIPIENT_REFUSED = "message_recipient_not_allowed"
@@ -110,7 +110,7 @@ def recipient_policy(
 
 def relaunched_seat(db: HubDatabase, session_id: str, project_id: str) -> str | None:
     """Follow a declared standing identity only when exactly one live holder exists."""
-    if not session_has_capability(db, session_id, "follow_relaunch"):
+    if not session_declares_capability(db, session_id, "follow_relaunch"):
         return None
     rows = db.fetchall(
         """

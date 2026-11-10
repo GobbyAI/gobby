@@ -111,7 +111,7 @@ def advance_seat(
                 step = protocol["report_step"]
                 consumed.append(message.id)
             continue
-        elif body.holds("track_plan_consensus") and message.from_session == session_id:
+        elif body.declares("track_plan_consensus") and message.from_session == session_id:
             pattern = protocol.get("consensus_pattern")
             if not isinstance(pattern, str):
                 continue

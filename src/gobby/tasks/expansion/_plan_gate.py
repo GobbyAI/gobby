@@ -69,7 +69,7 @@ def _validate_plan_for_agent_spawn(
         ``None`` when the gate does not apply or the plan validates clean.
         A structured failure when validation blocks the role.
     """
-    if agent_body is None or not agent_body.holds("track_plan_consensus"):
+    if agent_body is None or not agent_body.declares("track_plan_consensus"):
         return None
     if not task_id or task_manager is None:
         return None

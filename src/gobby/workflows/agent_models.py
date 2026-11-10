@@ -32,24 +32,17 @@ ALL_CAPABILITIES = "*"
 # Exempts a definition from the review gates: implementer-authorship refusal at record time,
 # and the close/land review and security gates that test it in their YAML conditions.
 WAIVE_REVIEW_GATES = "waive_review_gates"
-# Capabilities that switch seat behavior on rather than permit an action. The wildcard never
-# turns them on; a definition that wants one names it.
-BEHAVIOR_CAPABILITIES = frozenset(
-    {
-        "auto_attach_operator_conversations",
-        "follow_relaunch",
-        "team_main_checkout",
-        "track_plan_consensus",
-    }
-)
 
 
 def holds_capability(capabilities: Iterable[str], capability: str) -> bool:
-    """Whether a declared capability list holds ``capability``, honoring the wildcard."""
+    """Whether a capability list passes a restriction check; the wildcard passes every one.
+
+    Restriction checks (permissions, admission, review gates) use this. A capability that
+    switches seat behavior on is read literally instead (AgentDefinitionBody.declares), so
+    the wildcard never turns behavior on.
+    """
     held = set(capabilities)
-    return capability in held or (
-        ALL_CAPABILITIES in held and capability not in BEHAVIOR_CAPABILITIES
-    )
+    return capability in held or ALL_CAPABILITIES in held
 
 
 def capabilities_contain(caller: Iterable[str], target: Iterable[str]) -> bool:
@@ -267,8 +260,8 @@ class AgentDefinitionBody(BaseModel):
     capabilities: list[StrictStr] = Field(
         default_factory=list,
         description=(
-            "Permissions granted to this definition, independent of its name. ['*'] grants "
-            "every permission capability; behavior capabilities must still be named."
+            "Permissions granted to this definition, independent of its name. ['*'] passes "
+            "every restriction check; capabilities that switch behavior on must be named."
         ),
     )
     direct_integration_commit_paths: list[StrictStr] = Field(
@@ -444,8 +437,12 @@ class AgentDefinitionBody(BaseModel):
         return any(holds_capability(held, required) for required in self.spawner_capabilities)
 
     def holds(self, capability: str) -> bool:
-        """Whether this definition holds ``capability``, honoring the wildcard."""
+        """Whether this definition passes a restriction check; the wildcard passes every one."""
         return holds_capability(self.capabilities, capability)
+
+    def declares(self, capability: str) -> bool:
+        """Whether this definition names a behavior switch; the wildcard never does."""
+        return capability in self.capabilities
 
     def covers_direct_integration_paths(self, paths: Sequence[str]) -> bool:
         """Whether this definition's direct-commit grant covers every path.

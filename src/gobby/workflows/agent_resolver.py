@@ -51,6 +51,13 @@ def session_has_capability(db: HubDatabase, session_id: str, capability: str) ->
     return resolved is not None and resolved[0].holds(capability)
 
 
+def session_declares_capability(db: HubDatabase, session_id: str, capability: str) -> bool:
+    """Whether a known session's enabled definition names this behavior switch literally."""
+    session = SessionManager(db).get(session_id)
+    resolved = session_agent_definition(db, session) if session is not None else None
+    return resolved is not None and resolved[0].declares(capability)
+
+
 def session_declared_paths_cover(db: HubDatabase, session_id: str, paths: Sequence[str]) -> bool:
     """Whether a known session's enabled definition declares direct commit rights over all paths."""
     session = SessionManager(db).get(session_id)
