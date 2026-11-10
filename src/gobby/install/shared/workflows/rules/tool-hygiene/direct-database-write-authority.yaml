@@ -24,7 +24,9 @@ rules:
       - type: block
         tools: [Bash]
         mask_quoted: true
-        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?(?:psql|pgcli|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=\s|$|[;&|)])'
+        # Launch wrappers (caffeinate, arch, script, docker or podman exec) may carry
+        # their own options and operands before the client.
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:(?:[^\s;&|]*/)?(?:caffeinate|arch|script|(?:docker|podman)\s+(?:compose\s+)?exec)\b[^;&|\n]*\s)?(?:[^\s;&|]*/)?(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=\s|$|[;&|)])'
         reason: &db_reason >-
           Direct database access through CLI tools requires a definition that grants
           write_database_directly, or the operator's terminal. Use the governed MCP
@@ -41,5 +43,8 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: '(?m)(?:(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?python(?:3(?:\.\d+)?)?\s[^\n]*\b(?:psycopg2?|asyncpg)\b|^\s*(?:import|from)\s+(?:psycopg2?|asyncpg)\b)'
+        # Alternatives: a `python -c` body that imports a driver; an executed heredoc
+        # line or `;`-separated statement that imports one (`import os, psycopg`);
+        # a dynamic import by name. Driver names elsewhere in arguments stay open.
+        command_pattern: '(?m)(?:(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?python(?:3(?:\.\d+)?)?\s(?:[^\n]*\s)?-[A-Za-z]*c[^\n]*?\b(?:import|from)\s+[^\n;''"]*\b(?:psycopg2?|asyncpg)\b|(?:^|(?<=;))[ \t]*(?:import|from)\s[^\n;]*\b(?:psycopg2?|asyncpg)\b|\b(?:__import__|import_module)[(\s]\s*[''"](?:psycopg2?|asyncpg)\b)'
         reason: *db_reason
