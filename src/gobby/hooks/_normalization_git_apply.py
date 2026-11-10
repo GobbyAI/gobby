@@ -204,10 +204,13 @@ def _validated_patch_text(
 
     The file is read only inside a command the Bash normalizer proved to be exactly one
     literal `git apply`, so the bytes the rewrite embeds are the bytes classified here,
-    and only from inside the checkout root (see `read_validated_patch`).
+    and only from inside the checkout root (see `read_validated_patch`). A node-origin
+    event is refused before any I/O: its root names the node's filesystem, so a hub-local
+    read at the same path would return the hub's bytes to the node's CLI.
     """
     if (
-        root is None
+        checkout_reads.node_origin()
+        or root is None
         or not apply_rewrite_scope.get()
         or len(operands) != 1
         or arguments[-1:] != operands
@@ -230,7 +233,7 @@ def _literal_patch_write(
     git_cwd: str | None,
     root: Path | None,
 ) -> _ShellSegmentMetadata | None:
-    if root is None or git_cwd is None or checkout_reads.node_origin():
+    if root is None or git_cwd is None:
         return None
     if not flags <= _TARGET_PRESERVING:
         return None

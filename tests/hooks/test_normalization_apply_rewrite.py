@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from gobby.hooks import checkout_reads
 from gobby.hooks._normalization_apply_rewrite import MAX_PATCH_BYTES
 from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
 
@@ -253,6 +254,26 @@ def test_a_patch_outside_the_checkout_is_refused_unread(
     assert data["canonical_repo_mutation_scope_unknown"] is True
     assert _SECRET not in repr(data)
     assert _SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("cached", [True, False], ids=["cached", "worktree"])
+def test_a_node_origin_apply_never_reads_the_hub_file_at_the_same_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: bool
+) -> None:
+    # A node reports its own checkout root; a hub file at the same path is not the node's
+    # patch, so its bytes must never reach the node's CLI.
+    repo = _repo(tmp_path)
+    patch = repo / "set-aside.patch"
+    patch.write_text(_SECRET + "\n" + _PATCH, encoding="utf-8")
+    monkeypatch.setattr(checkout_reads, "node_origin", lambda: True)
+    flags = "--cached " if cached else ""
+
+    data = _bash(repo, f"git apply {flags}{patch}")
+
+    assert _REWRITE not in data
+    assert _READS not in data
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert _SECRET not in repr(data)
 
 
 @pytest.mark.parametrize("cached", [True, False], ids=["cached", "worktree"])
