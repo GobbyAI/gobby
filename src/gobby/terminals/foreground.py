@@ -78,8 +78,12 @@ def command_name(raw: str) -> str:
 def foreground_executables(shell_pids: Mapping[str, int]) -> dict[str, str]:
     """Map each key in ``shell_pids`` to the executable in its terminal's foreground.
 
-    The value is the leader's raw ``ps`` comm: an absolute path on macOS, which
-    :func:`command_name` reduces to a bare name. Keys whose shell is gone, whose
+    The value is the leader's absolute on-disk executable path, which :func:`command_name`
+    reduces to a bare name. ``ps`` reports only the accounting name, a basename cut to 16
+    characters on macOS, so a versioned build (``2.1.322``, ``grok-1.0.77-maco``) cannot be
+    told apart by it; the path can. When the path is unreadable (another user's process),
+    the accounting name stands, which names a program but never proves a versioned build.
+    Keys whose shell is gone, whose
     shell has no controlling terminal, or whose foreground group leader cannot be
     read are absent from the result rather than present with a placeholder, so a
     caller can tell "unknown" from a real name. An idle shell is its own foreground
@@ -98,8 +102,17 @@ def foreground_executables(shell_pids: Mapping[str, int]) -> dict[str, str]:
         leader = snapshot.get(shell[0])
         if leader is None:
             continue
-        resolved[key] = leader[1]
+        resolved[key] = _executable_path(shell[0]) or leader[1]
     return resolved
+
+
+def _executable_path(pid: int) -> str | None:
+    """``pid``'s absolute on-disk executable, or ``None`` when it cannot be read."""
+    try:
+        path = psutil.Process(pid).exe()
+    except (psutil.Error, OSError):
+        return None
+    return path if path and Path(path).is_absolute() else None
 
 
 def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:

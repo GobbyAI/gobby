@@ -397,23 +397,13 @@ def test_typed_text_draft_is_not_a_cursor_draft() -> None:
     assert ledger.cursor_mark("t1") is None
 
 
-def test_confirm_empty_clears_a_cursor_draft() -> None:
+def test_cursor_key_over_held_daemon_text_is_not_a_cursor_draft() -> None:
+    """A wake drains a cursor-only draft; staged daemon text under the cursor is not one."""
     ledger = _tracked()
+    ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
     ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
-    mark = ledger.cursor_mark("t1")
-    assert mark is not None
-    assert ledger.confirm_empty("t1", mark) is True
-    assert ledger.read("t1") == _EMPTY
-
-
-def test_confirm_empty_refuses_a_mark_that_later_input_outran() -> None:
-    ledger = _tracked()
-    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
-    mark = ledger.cursor_mark("t1")
-    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
-    assert mark is not None
-    assert ledger.confirm_empty("t1", mark) is False
     assert ledger.read("t1") == _DRAFT
+    assert ledger.cursor_mark("t1") is None
 
 
 def test_bound_read_names_a_cursor_draft_with_its_reason() -> None:

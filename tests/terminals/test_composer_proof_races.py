@@ -998,6 +998,16 @@ async def test_clear_readback_authorizes_only_actual_lineage_and_attachment(
     proof.scope, proof.trace, proof.seats, proof.evidence = trace.scope, trace, [seat], []
     proof.terminal = AsyncMock(return_value=row)
     proof.locator.return_value = locator
+
+    async def row_surface(provider: str, bound: dict[str, Any]) -> tuple[Surface, dict[str, Any]]:
+        # The row's surface, with its project read from the bound session, as the driver does.
+        epoch = proof.locator(bound).frame_host_epoch
+        surface = Surface(
+            provider, str(bound["session_id"]), str(bound["id"]), epoch, new.project_id
+        )
+        return surface, {"project_id": new.project_id}
+
+    proof.row_surface = row_surface
     proof.call = AsyncMock(side_effect=[predecessor, successor])
     variables = MagicMock()
     variables.get_variables.return_value = {CLEAR_ATTEMPT_VARIABLE: marker}

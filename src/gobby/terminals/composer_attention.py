@@ -21,10 +21,10 @@ from gobby.storage.attention import (
 from gobby.terminals.composer_ledger import read_composer
 
 COMPOSER_BLOCKED_REASON = "composer_blocked"
-ATTENTION_BLOCKS = frozenset({"cursor", "gap", "interrupt"})
+# A cursor-only draft is no block: the wake's drain keys clear it (#25901).
+ATTENTION_BLOCKS = frozenset({"gap", "interrupt"})
 
 _CAUSES = {
-    "cursor": "a cursor or control key",
     "gap": "a terminal host event gap",
     "interrupt": "an interrupt",
 }

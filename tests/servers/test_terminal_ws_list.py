@@ -261,6 +261,7 @@ async def test_list_names_the_native_foreground_command(
 
     process = MagicMock()
     process.return_value.cwd.return_value = "/srv/app"
+    process.return_value.exe.return_value = "/usr/local/bin/nvim"
 
     with (
         patch("gobby.terminals.foreground.spawn.run", ps),

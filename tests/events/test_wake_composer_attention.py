@@ -283,31 +283,37 @@ async def test_operator_draft_still_withholds_wake_for_each_cli(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("payload", ["\x1b[A", "\x1bOD", "\x15"])
-async def test_cursor_or_control_draft_delivers_over_an_empty_idle_frame(
-    seat: Seat, composer_ledger: ComposerLedger, payload: str
+async def test_cursor_or_control_draft_is_delivered_with_the_drain(
+    seat: Seat,
+    composer_ledger: ComposerLedger,
+    agent_target: Callable[..., None],
+    payload: str,
 ) -> None:
-    # Up and Down may recall history and control keys may rewrite the composer, so the
-    # ledger cannot vouch for it. The pane can: an idle frame with no text confirms it empty.
+    # Up and Down may recall history and control keys may rewrite the composer, but no
+    # typed text reached it: the wake's drain keys clear whatever they recalled before it
+    # types. The pane is never read, so even a frame showing text does not hold the wake.
     composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload=payload)
+    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
     assert result["delivered"] is True
     seat.pane_sender.assert_awaited_once()
-    assert composer_ledger.read(TERMINAL_ID) == LedgerRead("empty")
+    assert seat.pane_sender.await_args is not None
+    assert seat.pane_sender.await_args.kwargs["clear_before_submit"] is True
 
 
 @pytest.mark.asyncio
-async def test_stale_draft_keeps_withholding_the_wake_until_confirmed_empty(
-    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
+async def test_typed_draft_keeps_withholding_the_wake_until_submitted(
+    seat: Seat, composer_ledger: ComposerLedger
 ) -> None:
     composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
-    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x15")
-    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="hi")
     for _ in range(2):
         result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
         assert result["skipped"] == "composer_occupied"
     seat.pane_sender.assert_not_awaited()
-    agent_target(foreground="claude", snapshot=CLAUDE_IDLE)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\r")
+    composer_ledger.record_submit(TERMINAL_ID)
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
     assert result["delivered"] is True
     seat.pane_sender.assert_awaited_once()
@@ -350,47 +356,15 @@ async def test_released_composer_delivers_the_wake_and_retires_the_item(
 async def test_arrow_over_held_daemon_text_withholds_wake(
     seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
 ) -> None:
-    # The staged daemon text stays in the pane, so the frame is not empty and the seat holds.
+    # The staged daemon text is still in the composer; no wake drains it away.
     composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     composer_ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload="continue")
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
     assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
-    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
+    agent_target(foreground="claude", snapshot=CLAUDE_IDLE)
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
     assert result["skipped"] == "composer_occupied"
     seat.pane_sender.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_history_recall_leaving_text_keeps_the_seat_held(
-    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
-) -> None:
-    # Up recalls the last prompt into an empty composer: the pane shows text, so the seat holds.
-    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
-    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
-    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
-    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
-    assert result["delivered"] is False
-    assert result["skipped"] == "composer_occupied"
-    seat.pane_sender.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_unconfirmed_cursor_draft_raises_an_attention_item_naming_seat_and_reason(
-    seat: Seat, composer_ledger: ComposerLedger, agent_target: Callable[..., None]
-) -> None:
-    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
-    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
-    agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
-    await seat.dispatcher.dispatch_live_wake(seat.session.id)
-    item = seat.attention.get(seat.entry_id)
-    assert item is not None
-    assert item.state == "blocked"
-    assert item.reason == "composer_blocked"
-    assert item.fingerprint == "composer_blocked:cursor"
-    message = str(item.payload["message"])
-    assert f'release_composer(session_id="{seat.session.ref}")' in message
-    assert "cursor or control key" in message
 
 
 @pytest.mark.asyncio
