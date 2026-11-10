@@ -197,6 +197,14 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     else:
         _run_managed_native_binary_installs()
 
+    from .installers.fleet_service import install_fleet_service
+
+    try:
+        if install_fleet_service(project_path):
+            click.echo("Fleet watcher service loaded and fresh sample confirmed")
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(f"Failed to provision fleet watcher: {exc}") from exc
+
     try:
         from .installers.tmux_config import configure_tmux_clipboard
 

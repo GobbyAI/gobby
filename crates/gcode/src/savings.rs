@@ -49,10 +49,12 @@ pub fn report_savings(
         if let Some(session_id) = &grant.principal.session_id {
             request = request.set(gobby_core::grant::SESSION_HEADER, session_id);
         }
-        if let Ok(token) = gobby_core::local_token::read_api_key() {
+        if let Ok(token) = gobby_core::local_token::read_api_key()
+            && let Ok(bearer) = gobby_core::grant::presentation_bearer(Some(grant), &token)
+        {
             request = request.set(
                 gobby_core::local_token::AUTHORIZATION_HEADER,
-                &gobby_core::local_token::authorization_bearer(&token),
+                &gobby_core::local_token::authorization_bearer(&bearer),
             );
         }
     }

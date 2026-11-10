@@ -75,7 +75,9 @@ class ManagedWebChatPermissionsMixin:
     plan_auto_switch: bool = False
 
     conversation_id: str
-    _on_prompt_delivered: Callable[[], None] | None
+    _on_prompt_delivered: Callable[..., None] | None
+    _owed_settle: Callable[[], None] | None
+    _deferred_contexts: list[str]
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
@@ -303,7 +305,11 @@ class ManagedWebChatPermissionsMixin:
         if self._on_plan_ready is not None:
             await self._on_plan_ready(text, {"plan": text}, None)
 
-    def _pop_plan_mode_context(self) -> str | None:
+    def _plan_mode_context(self) -> str | None:
+        """Return the plan-mode context for the next prompt. Feedback stays pending.
+
+        The caller runs ``_clear_plan_feedback`` once the payload carrying the feedback is built.
+        """
         if self.chat_mode != "plan":
             return None
 
@@ -347,10 +353,34 @@ class ManagedWebChatPermissionsMixin:
                 "wrapped in <proposed_plan> tags again; structured plan tools "
                 "(ExitSpecMode, plan_update) submit plain content."
             )
-            self._plan_feedback = None
 
         parts.append("</plan-mode>")
         return "\n".join(parts)
+
+    def _clear_plan_feedback(self) -> None:
+        """Drop plan feedback once a payload carrying it is delivered.
+
+        Only the active-plan context carries feedback, so the same condition gates the clear.
+        """
+        if self.chat_mode == "plan" and not self._plan_approved:
+            self._plan_feedback = None
+
+    def _arm_owed_context_settle(self) -> None:
+        """Arm the settle that drops the owed context this payload carries, on delivery.
+
+        Called once the payload is built, so a send that raises before delivery keeps the
+        feedback and the fragments owed. The settle drops only what the payload carried:
+        feedback changed during the send stays owed, and so do fragments queued after the build.
+        """
+        feedback = self._plan_feedback
+        carried = len(self._deferred_contexts)
+
+        def settle() -> None:
+            if self._plan_feedback is feedback:
+                self._clear_plan_feedback()
+            del self._deferred_contexts[:carried]
+
+        self._owed_settle = settle
 
     async def _wait_for_tool_approval(
         self, tool_name: str, input_data: dict[str, Any]
@@ -414,7 +444,7 @@ class ManagedWebChatPermissionsMixin:
         Managed CLIs expose no protocol-level mode push (no session/set_mode),
         so on plan approval the user-visible fallback is to broadcast the
         Gobby-side mode change. The plan gate stops re-injecting because
-        chat_mode is no longer "plan" (see _pop_plan_mode_context).
+        chat_mode is no longer "plan" (see _plan_mode_context).
 
         _pending_post_plan_mode is set only by the plan-approval handler, which
         distinguishes an approval from a manual mode switch (where this is a

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.events import (
@@ -22,9 +22,9 @@ from gobby.hooks.events import (
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
-    apply_acknowledged_receipt,
     worker_staging_scope,
 )
+from gobby.hooks.replay_decision import commit_staged_effects
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
 from gobby.utils.machine_id import get_machine_id
@@ -144,8 +144,13 @@ class ChatLifecycleMixin:
         # workflow actions can look up the session via session_manager.get(session_id).
         session = self._chat_sessions.get(conversation_id)
 
-        def pending_prompt_delivery() -> None:
-            """Reserve this attempt until evaluation finishes; no receipt exists yet."""
+        def pending_prompt_delivery(after_commit: Callable[[], None] | None = None) -> None:
+            """Reserve this attempt until evaluation finishes; no receipt exists yet.
+
+            No payload is owed, so only the caller's commit runs.
+            """
+            if after_commit is not None:
+                after_commit()
 
         if event_type is HookEventType.BEFORE_AGENT and session is not None:
             # Mode changes/context reset clear this reservation while we await rules.
@@ -432,11 +437,42 @@ class ChatLifecycleMixin:
             if event_type is HookEventType.BEFORE_AGENT and session is not None:
                 payload = response.metadata.get(STAGED_EFFECTS_FIELD)
 
-                def acknowledge_prompt() -> None:
-                    apply_acknowledged_receipt(
-                        SimpleNamespace(session_id=db_session_id, staged_payload=payload),
-                        variable_manager=workflow_handler._session_var_manager,
+                def acknowledge_prompt(after_commit: Callable[[], None] | None = None) -> None:
+                    """Commit the lifecycle payload and the caller's commit as one, then mark messages.
+
+                    The payload commit and ``after_commit`` share one transaction, so a raise in
+                    ``after_commit`` rolls back the payload's receipt and its effects too. The
+                    output is withheld and the next delivery re-applies both. The message marks run
+                    after that commit and do not raise, so an output that reached this point ships.
+                    """
+                    from contextlib import nullcontext
+
+                    from gobby.storage.hub.protocol import SessionVariableMutation
+
+                    variable_manager = workflow_handler._session_var_manager
+                    boundary = (
+                        variable_manager.db.transaction_immediate(
+                            SessionVariableMutation(session_id=db_session_id)
+                        )
+                        if variable_manager is not None
+                        else nullcontext()
                     )
+                    with boundary:
+                        if payload and variable_manager is not None:
+                            commit_staged_effects(
+                                variable_manager.db,
+                                session_id=db_session_id,
+                                staged=payload,
+                                variable_manager=variable_manager,
+                            )
+                        elif payload:
+                            logger.warning(
+                                "acknowledge_prompt: no session variable manager; staged effects "
+                                "not applied for %s",
+                                db_session_id,
+                            )
+                        if after_commit is not None:
+                            after_commit()
                     self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
                 if session._on_prompt_delivered is pending_prompt_delivery:

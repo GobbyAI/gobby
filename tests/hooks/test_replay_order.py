@@ -88,7 +88,10 @@ async def test_backlog_keeps_later_same_session_events(
     session_manager.update_status(session.id, "paused")
     manager = LifecycleHooks(session_manager)
     server = create_http_server(session_manager=session_manager)
+    server.app.state.server = server
     server.app.state.hook_manager = manager
+    # The daemon app exposes its hub database to replay, so a replayed envelope can keep its session.
+    server.app.state.database = session_manager.db
     route_hook_replay_to_app(server.app)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     monkeypatch.setattr(
@@ -130,7 +133,10 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     )
     manager = LifecycleHooks(session_manager)
     server = create_http_server(session_manager=session_manager)
+    server.app.state.server = server
     server.app.state.hook_manager = manager
+    # The daemon app exposes its hub database to replay, so a replayed envelope can keep its session.
+    server.app.state.database = session_manager.db
     route_hook_replay_to_app(server.app)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     monkeypatch.setattr(
@@ -139,7 +145,8 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     now = utc_now()
     assert (
         await inbox._post_envelope(
-            envelope(session.id, "UserPromptSubmit", now - timedelta(minutes=10))
+            envelope(session.id, "UserPromptSubmit", now - timedelta(minutes=10)),
+            app=server.app,
         )
     ).status_code == 200
     first = session_manager.get(session.id)
@@ -149,7 +156,7 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     old_stop = pending / "old-stop.json"
     old_stop.write_text(json.dumps(envelope(session.id, "Stop", now - timedelta(minutes=5))))
     assert (
-        await inbox._post_envelope(envelope(session.id, "UserPromptSubmit", now))
+        await inbox._post_envelope(envelope(session.id, "UserPromptSubmit", now), app=server.app)
     ).status_code == 200
     lifecycle = TurnLifecycleReducer(session_manager).get(session.id)
     assert lifecycle.generation == 2
@@ -165,7 +172,8 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     # Reordered live starts must never move the durable event clock backwards.
     assert (
         await inbox._post_envelope(
-            envelope(session.id, "UserPromptSubmit", now - timedelta(minutes=1))
+            envelope(session.id, "UserPromptSubmit", now - timedelta(minutes=1)),
+            app=server.app,
         )
     ).status_code == 200
     assert TurnLifecycleReducer(session_manager).get(session.id).started_at == now

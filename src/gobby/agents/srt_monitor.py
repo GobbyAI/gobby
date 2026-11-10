@@ -37,6 +37,8 @@ _RECORD_LIMIT = 65536
 _SOL_LOCAL = 0  # macOS sys/un.h
 _LOCAL_PEERPID = 2  # macOS sys/un.h
 _PROBE_TIMEOUT_SECONDS = 2
+# Bound on a freshly started broker's readiness line.
+_READY_TIMEOUT_SECONDS = 30
 
 
 def _node_executable(launcher: str) -> str | None:
@@ -412,7 +414,7 @@ def ensure_srt_monitor(
         )
         parent, child_ready = socket.socketpair()
         with os.fdopen(descriptor, "ab") as log, parent, child_ready:
-            parent.settimeout(30)
+            parent.settimeout(_READY_TIMEOUT_SECONDS)
             argv = _monitor_argv(node=node, runner=runner, path=path, ready_fd=child_ready.fileno())
             child = _start_monitor(
                 argv=argv,

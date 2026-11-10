@@ -40,6 +40,7 @@ from gobby.events.wake_active_recovery import (
 )
 from gobby.events.wake_notifications import persist_completion_notification
 from gobby.events.wake_sdk import dispatch_sdk_wake
+from gobby.events.wake_target import settle_cursor_draft, target_gate
 from gobby.events.wake_terminal_resolution import (
     LiveTerminalResolver,
     SessionTerminalRoute,
@@ -50,6 +51,7 @@ from gobby.hub.remote_runtime import remote_composer_state
 from gobby.sessions.compact_continuation_store import delivered_compact_continuation
 from gobby.sessions.continuation_retry import continuation_write_refusal
 from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE, build_handoff_continue_prompt
+from gobby.sessions.transcript_cursor import TURN_SETTLED_SOURCES
 from gobby.terminals.composer_attention import sync_composer_attention
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
@@ -68,7 +70,7 @@ CONTINUE_WAKE_MESSAGE = "[Gobby] Check messages"
 CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 
 # Session variable holding when the last delivered live wake was attempted. The
-# wake stays outstanding, and later wakes of any priority are skipped, while it
+# wake stays outstanding, and later wakes are skipped, while it
 # is fresh, mail sent by then is unread, and nothing has been read since (#23125).
 LIVE_WAKE_SENT_AT_VARIABLE = "live_wake_sent_at"
 # A wake reported delivered but lost (e.g. dropped by the TUI) expires after
@@ -162,9 +164,7 @@ class WakeDispatcher:
         lifecycle_refresh: LifecycleRefresh | None = None,
         activity_probe: ActivityProbe | None = None,
         attention_manager: AttentionStateManager | None = None,
-        remote_wake_sender: NativeBatchSender | None = None,
     ) -> None:
-        self._remote_wake_sender = remote_wake_sender
         self._session_manager = session_manager
         self._ism_manager = ism_manager
         self._tmux_sender = tmux_sender
@@ -173,6 +173,7 @@ class WakeDispatcher:
         self._agent_run_manager = agent_run_manager
         self._web_chat_session_registry = web_chat_session_registry
         self._terminal_manager = terminal_manager
+        self._terminal_runtime_registry: Any | None = None
         self._run_db = run_db or _default_run_db
         self._lifecycle_refresh = lifecycle_refresh
         self._activity_probe = activity_probe
@@ -184,7 +185,7 @@ class WakeDispatcher:
         )
         self._deferred_refreshes: dict[str, asyncio.Task[None]] = {}
         self._lease_registry: LeaseFocusRegistry | None = None
-        self._focus_holds: dict[str, dict[str, str]] = {}
+        self._focus_holds: dict[str, set[str]] = {}
         self._focus_releases: set[asyncio.Task[dict[str, Any]]] = set()
         self._composer_retries: dict[str, asyncio.Task[None]] = {}
         self._owner_loop: asyncio.AbstractEventLoop | None = None
@@ -238,16 +239,18 @@ class WakeDispatcher:
         focus, so it only schedules. Each held session gets one dispatch that clears
         before submitting; a mailbox a hook read meanwhile is left unwoken.
         """
-        for session_id, priority in self._focus_holds.pop(terminal_id, {}).items():
-            task = asyncio.create_task(
-                self.dispatch_live_wake(session_id, priority=priority, require_unread=True)
-            )
+        for session_id in self._focus_holds.pop(terminal_id, set()):
+            task = asyncio.create_task(self.dispatch_live_wake(session_id, require_unread=True))
             self._focus_releases.add(task)
             task.add_done_callback(self._focus_releases.discard)
 
     def set_terminal_manager(self, manager: LiveTerminalResolver | None) -> None:
         """Wire the terminal row lookup once the composition root has built it."""
         self._terminal_manager = manager
+
+    def set_terminal_runtime_registry(self, registry: Any | None) -> None:
+        """Wire the runtime registry the send_keys target gate reads panes through."""
+        self._terminal_runtime_registry = registry
 
     async def wake(
         self,
@@ -297,9 +300,8 @@ class WakeDispatcher:
             )
             return {**failure, "ism_persisted": False}
 
-        priority = str(result.get("priority") or "normal")
         live_result = await self.dispatch_live_wake(
-            session_id, priority=priority, bypass_debounce=bypass_debounce, prompt=prompt
+            session_id, bypass_debounce=bypass_debounce, prompt=prompt
         )
         return {**live_result, "ism_persisted": True}
 
@@ -307,7 +309,6 @@ class WakeDispatcher:
         self,
         session_id: str,
         *,
-        priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = CONTINUE_WAKE_MESSAGE,
         require_unread: bool = False,
@@ -321,35 +322,30 @@ class WakeDispatcher:
         async with lock:
             result = await self._dispatch_live_wake_unlocked(
                 session_id,
-                priority=priority,
                 bypass_debounce=bypass_debounce,
                 prompt=prompt,
                 require_unread=require_unread,
             )
-            self._schedule_wake_followup(session_id, result, priority=priority)
+            self._schedule_wake_followup(session_id, result)
             return normalize_live_wake_result(result)
 
     async def dispatch_live_wakes(
         self,
         session_ids: list[str],
-        *,
-        priority: str = "normal",
     ) -> list[dict[str, Any]]:
         """Batch eligible native-terminal wakes and preserve recipient order."""
         self._require_owner_loop()
         from gobby.events.wake_batch import dispatch_live_wakes
 
-        results = await dispatch_live_wakes(self, session_ids, priority=priority)
+        results = await dispatch_live_wakes(self, session_ids)
         for session_id, result in zip(session_ids, results, strict=True):
-            self._schedule_wake_followup(session_id, result, priority=priority)
+            self._schedule_wake_followup(session_id, result)
         return [normalize_live_wake_result(result) for result in results]
 
     def _schedule_wake_followup(
         self,
         session_id: str,
         result: dict[str, Any],
-        *,
-        priority: str,
     ) -> None:
         """Keep a durable wake moving after it was withheld instead of delivered.
 
@@ -361,15 +357,15 @@ class WakeDispatcher:
         """
         skipped = result.get("skipped")
         if skipped == "session_active":
-            self._schedule_deferred_refresh(session_id, priority=priority)
+            self._schedule_deferred_refresh(session_id)
         elif skipped in RETRYABLE_WAKE_SKIPS:
-            self._schedule_composer_retry(session_id, priority=priority)
+            self._schedule_composer_retry(session_id)
 
-    def _schedule_deferred_refresh(self, session_id: str, *, priority: str) -> None:
+    def _schedule_deferred_refresh(self, session_id: str) -> None:
         """Refresh stale active state after returning the durable wake outcome."""
         if self._lifecycle_refresh is None or session_id in self._deferred_refreshes:
             return
-        task = asyncio.create_task(self._refresh_and_retry_wake(session_id, priority=priority))
+        task = asyncio.create_task(self._refresh_and_retry_wake(session_id))
         self._deferred_refreshes[session_id] = task
 
         def forget(completed: asyncio.Task[None]) -> None:
@@ -378,7 +374,7 @@ class WakeDispatcher:
 
         task.add_done_callback(forget)
 
-    def _schedule_composer_retry(self, session_id: str, *, priority: str) -> None:
+    def _schedule_composer_retry(self, session_id: str) -> None:
         """Retry a wake withheld from a composer that was not confirmed empty.
 
         Each withheld or failed attempt doubles the wait until
@@ -388,7 +384,7 @@ class WakeDispatcher:
         """
         if session_id in self._composer_retries:
             return
-        task = asyncio.create_task(self._retry_withheld_wake(session_id, priority=priority))
+        task = asyncio.create_task(self._retry_withheld_wake(session_id))
         self._composer_retries[session_id] = task
 
         def forget(completed: asyncio.Task[None]) -> None:
@@ -397,7 +393,7 @@ class WakeDispatcher:
 
         task.add_done_callback(forget)
 
-    async def _retry_withheld_wake(self, session_id: str, *, priority: str) -> None:
+    async def _retry_withheld_wake(self, session_id: str) -> None:
         delay = COMPOSER_RETRY_BASE_SECONDS
         await self._composer_retry_wait(delay)
         while True:
@@ -408,7 +404,7 @@ class WakeDispatcher:
             try:
                 async with lock:
                     result = await self._dispatch_live_wake_unlocked(
-                        session_id, priority=priority, require_unread=True
+                        session_id, require_unread=True
                     )
             except asyncio.CancelledError:
                 raise
@@ -463,7 +459,7 @@ class WakeDispatcher:
             run_db=self._run_db,
         )
 
-    async def _refresh_and_retry_wake(self, session_id: str, *, priority: str) -> None:
+    async def _refresh_and_retry_wake(self, session_id: str) -> None:
         assert self._lifecycle_refresh is not None
         # Phase marks: refresh, idle-prompt reconcile, lock wait, dispatch. The
         # four phases tile the span, so their sum is duration_ms.
@@ -499,9 +495,7 @@ class WakeDispatcher:
         try:
             async with lock:
                 locked = time.monotonic()
-                result = await self._dispatch_live_wake_unlocked(
-                    session_id, priority=priority, require_unread=True
-                )
+                result = await self._dispatch_live_wake_unlocked(session_id, require_unread=True)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -512,9 +506,9 @@ class WakeDispatcher:
         # The refresh may have idled the row only to find a composer that was
         # not confirmed empty: the withheld message still owes a retry.
         if skipped == "session_active":
-            self._schedule_composer_retry(session_id, priority=priority)
+            self._schedule_composer_retry(session_id)
         else:
-            self._schedule_wake_followup(session_id, result, priority=priority)
+            self._schedule_wake_followup(session_id, result)
         # A debounced skip is routine; session_active stays at INFO because it is
         # the only trace of a session stranded as active (#22887).
         logger.log(
@@ -539,7 +533,6 @@ class WakeDispatcher:
         session_id: str,
         *,
         session: Any | None = None,
-        priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = CONTINUE_WAKE_MESSAGE,
         require_unread: bool = False,
@@ -576,9 +569,9 @@ class WakeDispatcher:
 
         # Context-capable hooks inject the durable message on the next model call.
         # Submitting terminal input while a provider is active would steer that turn
-        # and cancel its in-flight tool batch. Check after acquiring the lock and
-        # refreshing lifecycle state for both mailbox and completion wakes.
-        if getattr(session, "status", None) == "active" and priority != "urgent":
+        # and cancel its in-flight tool batch, so an active turn takes no typed input.
+        # Check after acquiring the lock and refreshing lifecycle state.
+        if getattr(session, "status", None) == "active":
             if self._activity_probe is not None and self._restart_horizon_ms is not None:
                 terminal_route = await self._terminal_route_for_session(session)
                 reconciled = await reconcile_restart_stale_session(
@@ -593,10 +586,10 @@ class WakeDispatcher:
                 if reconciled is not None:
                     session = reconciled
             if getattr(session, "status", None) == "active":
-                # A Claude turn that ended at an empty prompt leaves its row active. The
-                # deferred retry idles such a row the same way; a direct wake takes it now.
+                # A turn that ended at an empty prompt leaves its row active. Only a source
+                # with turn-end evidence may idle it; the deferred retry idles it too.
                 if (
-                    getattr(session, "source", None) == "claude"
+                    getattr(session, "source", None) in TURN_SETTLED_SOURCES
                     and await self._reconcile_idle_prompt(session_id) == "idle"
                 ):
                     session = await self._run_db(self._session_manager.get, session_id)
@@ -628,7 +621,7 @@ class WakeDispatcher:
                 return wake_debounced_result(session_id, method="web_chat")
             from gobby.events.wake_web_chat import dispatch_web_chat_wake
 
-            result = await dispatch_web_chat_wake(self, session_id, priority=priority)
+            result = await dispatch_web_chat_wake(self, session_id)
             if result.get("delivered"):
                 await self._record_live_wake(session_id, utc_now())
             return result
@@ -645,7 +638,6 @@ class WakeDispatcher:
                 session,
                 terminal,
                 self._tmux_sender,
-                priority=priority,
                 prompt=prompt,
                 handoff_attempt_id=handoff_attempt_id,
             )
@@ -665,7 +657,6 @@ class WakeDispatcher:
         sdk_result = await dispatch_sdk_wake(
             self,
             session_id,
-            priority=priority,
             prompt=prompt,
             timeout_seconds=LIVE_WAKE_TIMEOUT_SECONDS,
         )
@@ -702,7 +693,6 @@ class WakeDispatcher:
         self,
         session_id: str,
         *,
-        priority: str = "normal",
         handoff_attempt_id: str | None = None,
     ) -> tuple[Any | None, dict[str, Any] | None]:
         """Re-read lifecycle state immediately before a wake side effect."""
@@ -720,7 +710,7 @@ class WakeDispatcher:
                 error_message=f"Session {session_id} not found",
             )
         status = getattr(session, "status", None)
-        if status == "active" and priority != "urgent":
+        if status == "active":
             return session, {
                 "session_id": session_id,
                 "delivered": False,
@@ -761,7 +751,6 @@ class WakeDispatcher:
         terminal: Any | None,
         *,
         method: str,
-        priority: str = "normal",
         handoff_continuation: bool = False,
     ) -> tuple[dict[str, Any] | None, bool]:
         """Withhold the wake unless the composer ledger admits typing.
@@ -769,32 +758,34 @@ class WakeDispatcher:
         Returns the withheld outcome (``None`` to deliver) and whether the composer
         was confirmed empty; only an unconfirmed delivery keeps the drain.
 
-        ``empty`` authorizes typing, and ``held`` daemon text is drained first. A
-        human ``draft`` blocks, and so does ``unknown``: a blocked or untracked
-        entry (a gap, an interrupt, a provider limit, a tmux pane) whose composer
-        only a submit or an operator release vouches for again. Its durable
-        messages arrive through hook context on its next tool call instead. A
-        missing probe has no safer read to offer, so it stays on its existing
-        path; a probe *error* withholds and retries. Priority remains on the
-        durable notification; it never authorizes typing over a draft. No
-        debounce record is written, so the next wake probes again.
+        ``empty`` alone authorizes typing. A ``held`` composer (daemon text staged
+        and unsubmitted) and a human ``draft`` block, and so does ``unknown``: a
+        blocked or untracked entry (a gap, an interrupt, a provider limit, a tmux
+        pane, a permission or credential prompt) whose composer only a submit or an
+        operator release vouches for again. Its durable messages arrive through hook
+        context on its next tool call instead. A missing probe has no safer read to
+        offer, so it stays on its existing path; a probe *error* withholds and
+        retries. No debounce record is written,
+        so the next wake probes again.
 
         An open transcript turn blocks even on an ``empty`` composer: the row was
         reconciled idle earlier, so a turn that started since then would be
         steered or cancelled by this write.
 
-        An operator comms wake is the exception to the composer-state blocks: it
-        replaces a ``draft`` or ``unknown`` composer, delivering through
-        clear-before-submit. It only waits while a focused holder of the terminal
-        is typing into it. The hold is recorded for ``release_focus_hold``, which
-        re-dispatches it. The turn checks above run first, so a running turn is
-        never steered, and the hold does not apply to other wakes.
+        An operator comms wake meets the same composer rules: it never replaces a
+        ``draft``, ``held`` or ``unknown`` composer, whatever the operator's policy.
+        It also waits while a focused holder of the terminal is typing into it. The
+        hold is recorded for ``release_focus_hold``, which re-dispatches it. The turn
+        checks above run first, so a running turn is never steered, and the hold does
+        not apply to other wakes.
 
-        A gap or interrupt block raises the seat's attention item naming
-        ``release_composer``; any other read retires it (``composer_attention``).
+        A gap, an interrupt, or a cursor-only draft the pane does not confirm empty raises
+        the seat's attention item naming ``release_composer``; any other read retires it
+        (``composer_attention``).
 
         A node terminal's composer is the node's report, read from the hub store.
-        Only an empty one takes the wake; the activity probe and turn checks are
+        Only an empty one passes this check, and target_gate then withholds every
+        node terminal, so no node wake types. The activity probe and turn checks are
         local-only and do not run for it.
         """
         if terminal is not None and not is_local_machine(terminal.machine_id):
@@ -813,16 +804,17 @@ class WakeDispatcher:
         except Exception:
             logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return composer_unconfirmed_result(session_id, method=method), False
+        composer = await settle_cursor_draft(self, session_id, terminal, activity)
         if self._attention_manager is not None:
             await sync_composer_attention(
-                self._attention_manager, self._run_db, session, activity.composer.reason
+                self._attention_manager, self._run_db, session, composer.reason
             )
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
         if handoff_continuation:
-            if activity.composer.state == "empty":
+            if composer.state == "empty":
                 return None, True
-            if activity.composer.state == "draft":
+            if composer.state == "draft":
                 return composer_occupied_result(session_id, method=method), False
             return composer_unconfirmed_result(session_id, method=method), False
         pending = await self._run_db(self._ism_manager.get_undelivered_wake_messages, session_id)
@@ -830,17 +822,13 @@ class WakeDispatcher:
         if comms_pending and terminal is not None and self._lease_registry is not None:
             terminal_id = str(terminal.id)
             if self._lease_registry.focus_held(terminal_id):
-                self._focus_holds.setdefault(terminal_id, {})[session_id] = priority
+                self._focus_holds.setdefault(terminal_id, set()).add(session_id)
                 return pane_focused_result(session_id, method=method), False
             # The pane is unfocused now, so a hold recorded earlier is stale.
-            self._focus_holds.get(terminal_id, {}).pop(session_id, None)
-        if comms_pending:
-            # Josh's operator policy: a comms wake replaces leftover composer text.
-            # False forces the existing clear-before-submit path, even on an empty ledger.
-            return None, False
-        state = activity.composer.state
-        if state in {"empty", "held"}:
-            return None, state == "empty"
+            self._focus_holds.get(terminal_id, set()).discard(session_id)
+        state = composer.state
+        if state == "empty":
+            return None, True
         if state == "draft":
             logger.warning(
                 "wake for session %s deferred: composer holds an operator draft", session_id
@@ -855,7 +843,6 @@ class WakeDispatcher:
         terminal: Any,
         send: TmuxSender,
         *,
-        priority: str = "normal",
         prompt: str = CONTINUE_WAKE_MESSAGE,
         handoff_attempt_id: str | None = None,
     ) -> dict[str, Any]:
@@ -874,7 +861,7 @@ class WakeDispatcher:
         # that turned active while this wake waited for the lock is not steered.
         async with composer_action_lock(terminal_id):
             current, state_failure = await self._preflight_live_side_effect(
-                session_id, priority=priority, handoff_attempt_id=handoff_attempt_id
+                session_id, handoff_attempt_id=handoff_attempt_id
             )
             if state_failure is not None:
                 return state_failure
@@ -885,14 +872,16 @@ class WakeDispatcher:
                 session,
                 terminal,
                 method="terminal",
-                priority=priority,
                 handoff_continuation=handoff_attempt_id is not None,
             )
             if blocked is not None:
                 return blocked
+            refused = await target_gate(self, session_id, terminal)
+            if refused is not None:
+                return refused
             if handoff_attempt_id is not None:
                 _, state_failure = await self._preflight_live_side_effect(
-                    session_id, priority=priority, handoff_attempt_id=handoff_attempt_id
+                    session_id, handoff_attempt_id=handoff_attempt_id
                 )
                 if state_failure is not None:
                     return state_failure

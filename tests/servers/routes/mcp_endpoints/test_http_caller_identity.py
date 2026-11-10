@@ -2,17 +2,18 @@
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION,
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
 )
-from gobby.servers.auth_service import AuthService
+from gobby.servers.auth_service import SESSION_REQUIRES_BOUND_CREDENTIAL, AuthService
 from gobby.servers.routes.mcp.endpoints.request_context import (
     _reset_context,
     _set_context_for_request,
@@ -20,7 +21,7 @@ from gobby.servers.routes.mcp.endpoints.request_context import (
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.session_context import get_session_context
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -46,14 +47,13 @@ def _request(headers: dict[str, str]) -> Request:
     )
 
 
-@pytest.mark.parametrize("wrapper,explicit_caller", [(False, False), (False, True), (True, True)])
+@pytest.mark.parametrize("wrapper", [False, True])
 async def test_operator_body_target_never_becomes_caller(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     tmp_path: Path,
     wrapper: bool,
-    explicit_caller: bool,
 ) -> None:
     caller = session_manager.register(
         external_id="http-caller",
@@ -82,29 +82,38 @@ async def test_operator_body_target_never_becomes_caller(
         "X-Gobby-Front-Door": FRONT_DOOR_SECRET,
     }
     headers = {"X-Gobby-Project-Id": sample_project["id"]}
-    if explicit_caller:
-        headers["X-Gobby-Session-Id"] = caller.id
     if wrapper:
         headers[MCP_WRAPPER_PROTOCOL_VERSION_HEADER] = MCP_WRAPPER_PROTOCOL_VERSION
     assert not service.authenticate(_request(headers)).allowed
     request = _request(headers | identity)
     assert service.authenticate(request).allowed
+    # The verified operator front door names no session: a selector is refused, so the body
+    # target never binds.
+    selected = service.authenticate(
+        _request(headers | identity | {"X-Gobby-Session-Id": caller.id})
+    )
+    assert (selected.allowed, selected.code) == (False, SESSION_REQUIRES_BOUND_CREDENTIAL)
     server = MagicMock()
     server.session_manager = session_manager
     server.auth_service = service
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     assert get_session_context() is None
     arguments = {"session_id": target.id}
+    if wrapper:
+        # A wrapper call names its session. With none, the body target still never binds.
+        with pytest.raises(HTTPException) as refused:
+            await _set_context_for_request(server, arguments, request)
+        assert refused.value.status_code == 409
+        detail = refused.value.detail
+        assert isinstance(detail, dict)
+        assert detail["error_code"] == "SESSION_REQUIRED"
+        assert arguments == {"session_id": target.id}
+        assert get_session_context() is None
+        return
     tokens = await _set_context_for_request(server, arguments, request)
     try:
-        context = get_session_context()
-        if explicit_caller:
-            assert context is not None
-            assert context.session_id == caller.id
-            assert tokens.resolved_session_id == caller.id
-        else:
-            assert context is None
-            assert tokens.resolved_session_id is None
+        assert get_session_context() is None
+        assert tokens.resolved_session_id is None
         assert arguments == {"session_id": target.id}
     finally:
         _reset_context(tokens)
@@ -144,7 +153,7 @@ async def test_managed_wrapper_header_is_bound_to_signed_caller(
         break_glass_file=tmp_path / "absent-break-glass",
     )
     token = issue_agent_api_token(
-        derive_managed_signing_key("operator-test-key"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=run.id,
         session_id=caller.id,
         project_id=sample_project["id"],

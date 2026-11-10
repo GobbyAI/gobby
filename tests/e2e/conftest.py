@@ -11,6 +11,7 @@ Provides fixtures for:
 """
 
 import asyncio
+import functools
 import json
 import math
 import os
@@ -22,9 +23,11 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
@@ -143,6 +146,73 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
         return terminal_native_binary_headers(tuple(config.args))
     except NativeBinarySelectionError as exc:
         raise pytest.UsageError(f"terminal e2e binary selection failed: {exc}") from exc
+
+
+@functools.cache
+def build_tree_gclient() -> Path | str:
+    """Build ``gclient`` from this tree once: its binary, or the failure report.
+
+    Every failure to build or locate the binary returns a report, so the collection hook
+    never aborts the session.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    try:
+        build = subprocess.run(
+            ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2400.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"building gclient from the tree timed out after {exc.timeout}s"
+    except OSError as exc:
+        return f"building gclient from the tree could not run cargo: {exc}"
+    if build.returncode != 0:
+        return f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}"
+    try:
+        metadata = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"cargo metadata timed out after {exc.timeout}s"
+    except OSError as exc:
+        return f"cargo metadata could not run: {exc}"
+    if metadata.returncode != 0:
+        return f"cargo metadata failed:\n{metadata.stderr}"
+    try:
+        target_directory = json.loads(metadata.stdout)["target_directory"]
+    except (ValueError, KeyError, TypeError) as exc:
+        return f"cargo metadata output is unusable: {exc!r}"
+    binary = Path(str(target_directory)) / "debug" / "gclient"
+    if not binary.is_file():
+        return f"cargo build left no gclient at {binary}"
+    return binary
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Build the tree's gclient before any test starts, outside each test's timeout.
+
+    A cold build inside the first test's setup can outlast the per-test timeout and kill the
+    run. The result is cached here; the fixture reports a failed build on the tests needing it.
+    """
+    if any("tree_gclient" in getattr(item, "fixturenames", ()) for item in session.items):
+        build_tree_gclient()
+
+
+@pytest.fixture(scope="session")
+def tree_gclient() -> Path:
+    """Build ``gclient`` from this tree; the installed one may predate the change."""
+    built = build_tree_gclient()
+    if isinstance(built, str):
+        pytest.fail(built)
+    return built
 
 
 @dataclass
@@ -829,6 +899,11 @@ E2E_HOST_OWNER_FILE = "e2e-owner.pid"
 E2E_HOST_SETTLE_SECONDS = 1.0
 
 
+def keep_e2e_artifacts() -> bool:
+    """Test-only: ``GOBBY_E2E_KEEP_ARTIFACTS=1`` keeps the project and socket dirs for diagnosis."""
+    return os.environ.get("GOBBY_E2E_KEEP_ARTIFACTS") == "1"
+
+
 def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
     """Create a fresh directory named ``prefix`` plus three hex digits.
 
@@ -924,25 +999,35 @@ def _reap_orphaned_terminal_hosts() -> None:
 def e2e_project_dir() -> Generator[Path]:
     """Create an isolated project directory for E2E tests.
 
-    ``ignore_cleanup_errors=True`` protects against ENOTEMPTY on macOS when a
+    The cleanup's ``ignore_errors=True`` protects against ENOTEMPTY on macOS when a
     daemon subprocess (or one of its helpers — gcode, CLI tools, etc.) still
     holds file descriptors inside the tree at teardown. terminate_process_tree
     gives children a few seconds to exit, but the kernel may still report a
     directory as non-empty briefly after. Without this flag, the whole test
     errors at teardown even though the assertions already passed.
     """
-    with tempfile.TemporaryDirectory(prefix="gobby_e2e_", ignore_cleanup_errors=True) as tmpdir:
+    tmpdir = tempfile.mkdtemp(prefix="gobby_e2e_")
+    try:
         project_dir = Path(tmpdir).resolve()
-        gobby_dir = project_dir / ".gobby"
-        gobby_dir.mkdir(parents=True, exist_ok=True)
+        build_e2e_project(project_dir)
+        yield project_dir
+    finally:
+        if not keep_e2e_artifacts():
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
+
+def build_e2e_project(project_dir: Path, *, git: bool = True) -> None:
+    """Populate an empty directory as the E2E project: marker, pipelines and (by default) git.
+
+    ``git=False`` builds a plain directory for proofs that never touch clones or worktrees.
+    """
+    gobby_dir = project_dir / ".gobby"
+    gobby_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "README.md").write_text("# E2E Test Project\n")
+
+    if git:
         # Initialize git repository for clone/worktree tests
-        subprocess.run(
-            ["git", "init"],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
+        subprocess.run(["git", "init"], cwd=project_dir, capture_output=True, check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
             cwd=project_dir,
@@ -956,13 +1041,7 @@ def e2e_project_dir() -> Generator[Path]:
             check=True,
         )
         # Create initial commit (needed for worktree/clone operations)
-        (project_dir / "README.md").write_text("# E2E Test Project\n")
-        subprocess.run(
-            ["git", "add", "."],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
+        subprocess.run(["git", "add", "."], cwd=project_dir, capture_output=True, check=True)
         subprocess.run(
             ["git", "commit", "-m", "Initial commit"],
             cwd=project_dir,
@@ -970,28 +1049,19 @@ def e2e_project_dir() -> Generator[Path]:
             check=True,
         )
 
-        # Create project.json
-        project_json = gobby_dir / "project.json"
-        project_json.write_text(
-            json.dumps(
-                {
-                    "id": "00000000-0000-0000-0000-000000000e2e",
-                    "name": "E2E Test Project",
-                }
-            )
-        )
+    (gobby_dir / "project.json").write_text(
+        json.dumps({"id": "00000000-0000-0000-0000-000000000e2e", "name": "E2E Test Project"})
+    )
 
-        # Copy shared pipelines for spawn_agent tests
-        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+    # Copy shared pipelines for spawn_agent tests
+    from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 
-        shared_pipelines = get_bundled_pipelines_path()
-        if shared_pipelines.exists():
-            target_workflows = gobby_dir / "workflows"
-            target_workflows.mkdir(parents=True, exist_ok=True)
-            for wf_file in shared_pipelines.glob("*.yaml"):
-                shutil.copy2(wf_file, target_workflows / wf_file.name)
-
-        yield project_dir
+    shared_pipelines = get_bundled_pipelines_path()
+    if shared_pipelines.exists():
+        target_workflows = gobby_dir / "workflows"
+        target_workflows.mkdir(parents=True, exist_ok=True)
+        for wf_file in shared_pipelines.glob("*.yaml"):
+            shutil.copy2(wf_file, target_workflows / wf_file.name)
 
 
 @pytest.fixture(scope="function")
@@ -1138,7 +1208,8 @@ front_door:
     yield config_path, http_port, ws_port
 
     stop_terminal_host(terminal_host_socket_dir)
-    shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
+    if not keep_e2e_artifacts():
+        shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
@@ -1177,7 +1248,67 @@ def native_daemon_command(env: dict[str, str], backend_command: list[str]) -> li
     return [str(binary), "serve"]
 
 
+FLEET_STATE_REFRESH_SECONDS = 30  # fleet-watch's cadence; the daemon treats 90 s as stale.
+
+
+def _write_healthy_fleet_state(state_path: Path) -> None:
+    """Write the document fleet-watch writes for a healthy fleet, sampled now."""
+    healthy = {
+        "schema_version": 1,
+        "state": "healthy",
+        "sampled_at_unix": time.time(),
+        "last_non_healthy_at_unix": None,
+        "reasons": [],
+        "ramp": {"max_new_seats": 1000, "ramp_window_seconds": 900},
+        "thresholds_source": "defaults",
+        "watcher_pid": 0,
+    }
+    staged = state_path.with_name(state_path.name + ".tmp")
+    staged.write_text(json.dumps(healthy), encoding="utf-8")
+    os.replace(staged, state_path)
+
+
+@contextmanager
+def _keep_fleet_state_fresh(state_path: Path) -> Generator[None]:
+    """Stand in for fleet-watch in the isolated home for the daemon's whole lifetime.
+
+    The daemon gates seat admission on the state file under its own GOBBY_HOME, and no
+    watcher runs in E2E, so the file must be written there and kept younger than
+    STALE_AFTER_SECONDS until teardown.
+    """
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_healthy_fleet_state(state_path)
+    stop = threading.Event()
+
+    def refresh() -> None:
+        while not stop.wait(FLEET_STATE_REFRESH_SECONDS):
+            _write_healthy_fleet_state(state_path)
+
+    refresher = threading.Thread(target=refresh, name="e2e-fleet-state", daemon=True)
+    refresher.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        refresher.join(timeout=5)
+
+
 def spawn_daemon_instance(
+    e2e_project_dir: Path,
+    e2e_config: tuple[Path, int, int],
+    *,
+    tls: str | None = None,
+    runner_module: str = "gobby.runner",
+) -> Generator[DaemonInstance]:
+    """Spawn the isolated daemon with a fresh healthy fleet state in its home."""
+    config_path, _, _ = e2e_config
+    with _keep_fleet_state_fresh(config_path.parent / "state" / "fleet-health.json"):
+        yield from _start_daemon_instance(
+            e2e_project_dir, e2e_config, tls=tls, runner_module=runner_module
+        )
+
+
+def _start_daemon_instance(
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
     *,
@@ -1208,6 +1339,9 @@ def spawn_daemon_instance(
 
     log_file = log_dir / "daemon.log"
     error_log_file = log_dir / "daemon_error.log"
+    # Pre-create the stage-timing file: the supervisor records waits only when it exists,
+    # and a lease-lock wait can block before the readiness bootstrap creates it.
+    (log_dir / "startup-timings.jsonl").touch()
 
     # Use prepare_daemon_env for consistent isolation (PYTHONPATH, API keys,
     # env cleanup, and HOME override so ~/.gobby resolves inside the temp dir)
@@ -2180,7 +2314,12 @@ def assert_no_external_writes() -> Generator[None]:
     snapshot verdict for uninstrumented children and native filesystem writes.
     In live mode these remain outside the Python audit attribution boundary.
     """
-    from tests.fixtures.external_write_audit import daemon_writes, observe_writes, write_log_offset
+    from tests.fixtures.external_write_audit import (
+        daemon_writes,
+        is_e2e_owned,
+        observe_writes,
+        write_log_offset,
+    )
 
     root = Path.home() / ".gobby"
     prod_before = _production_daemon_running()
@@ -2193,6 +2332,8 @@ def assert_no_external_writes() -> Generator[None]:
     if not prod_before and not prod_after:
         for rel_path, mtime in _snapshot_dir(root).items():
             basename = Path(rel_path).name
+            if is_e2e_owned(rel_path):
+                continue
             if rel_path not in before:
                 if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                     continue

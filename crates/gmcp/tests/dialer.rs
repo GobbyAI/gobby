@@ -5,6 +5,8 @@ use serde_json::json;
 use std::fs;
 use stub_daemon::{Response, StubDaemon};
 
+/// Run `test` as a managed run: these tests cover the machine-key wire contract, which
+/// an unspawned client never uses. Unspawned behavior is covered in `session_binding`.
 fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     fs::write(home.path().join("bootstrap.yaml"), "api_key: first\n")?;
@@ -14,7 +16,7 @@ fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow
             ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
             ("GOBBY_MANAGED_EXECUTION_ID", None),
             ("GOBBY_AGENT_API_TOKEN", None),
-            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_AGENT_RUN_ID", Some("run")),
             ("GOBBY_SESSION_ID", None),
             ("GOBBY_PROJECT_ID", None),
         ],
@@ -433,7 +435,7 @@ fn managed_envelope_credential_is_reread_per_request() -> anyhow::Result<()> {
 }
 
 #[test]
-fn unmanaged_credential_is_cached_until_unauthorized() -> anyhow::Result<()> {
+fn managed_credential_is_cached_until_unauthorized() -> anyhow::Result<()> {
     isolated(|root| {
         let server = StubDaemon::start((0..2).map(|_| Response::json(200, json!({}))).collect())?;
         temp_env::with_var(

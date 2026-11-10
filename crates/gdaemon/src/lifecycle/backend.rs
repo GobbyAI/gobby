@@ -4,7 +4,7 @@ use super::{
     pid_file::PidFileClaim,
     shutdown_intent::{Intent, IntentMarker},
 };
-use crate::lease::ActiveDaemonLease;
+use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gobby_terminals::write_api::{TokenLease, TokenSlot};
@@ -22,9 +22,9 @@ use std::{
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
-    sync::{Mutex, oneshot, watch},
+    sync::{oneshot, watch},
     task::JoinHandle,
-    time::{Instant, interval, sleep_until, timeout},
+    time::{Instant, interval, interval_at, sleep_until, timeout},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +62,14 @@ pub struct BackendConfig {
     pub heartbeat_interval: Duration,
     /// Holds the running child's write token; each spawn installs a fresh one.
     pub write_token: TokenSlot,
+    /// Grace a backend gets after an observed shutdown intent before it is drained.
+    pub exit_grace: Duration,
+    /// Cadence of the supervisor's wait reports while a backend has not exited.
+    pub report_interval: Duration,
+    /// Longest the supervisor waits for the lease lock before it fails, naming the holder.
+    pub lease_lock_limit: Duration,
+    /// Sink for supervisor wait reports; stderr unless a caller captures them.
+    pub reporter: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
 impl BackendConfig {
@@ -93,38 +101,81 @@ impl BackendConfig {
             drain_timeout: Duration::from_secs(17),
             heartbeat_interval: Duration::from_secs(1),
             write_token: TokenSlot::default(),
+            exit_grace: Duration::from_secs(60),
+            report_interval: Duration::from_secs(60),
+            lease_lock_limit: Duration::from_secs(120),
+            reporter: Arc::new(|line: &str| eprintln!("{line}")),
         })
     }
 }
 
 pub struct BackendSupervisor {
-    lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+    lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
     pid_claim: Option<PidFileClaim>,
     config: BackendConfig,
     state: watch::Sender<BackendStatus>,
+    /// The reason the supervisor is waiting now (a lease-lock holder or the backend's exit),
+    /// or None when it is not waiting. The front door reports it beside the backend state.
+    wait: watch::Sender<Option<String>>,
 }
 
 impl BackendSupervisor {
     pub fn new(lease: ActiveDaemonLease, pid_claim: PidFileClaim, config: BackendConfig) -> Self {
-        Self::with_lease(Some(Arc::new(Mutex::new(lease))), pid_claim, config)
+        Self::with_lease(Some(Arc::new(NamedLock::new(lease))), pid_claim, config)
     }
 
     pub fn with_lease(
-        lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+        lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
         pid_claim: PidFileClaim,
         config: BackendConfig,
     ) -> Self {
         let (state, _) = watch::channel(BackendStatus::Standby);
+        let (wait, _) = watch::channel(None);
         Self {
             lease,
             pid_claim: Some(pid_claim),
             config,
             state,
+            wait,
         }
     }
 
     pub fn subscribe(&self) -> watch::Receiver<BackendStatus> {
         self.state.subscribe()
+    }
+
+    /// The supervisor's current wait reason, or None when it is not waiting.
+    pub fn subscribe_wait(&self) -> watch::Receiver<Option<String>> {
+        self.wait.subscribe()
+    }
+
+    /// Publishes a wait reason for the front door and echoes it to the configured reporter.
+    fn report(&self, line: &str) {
+        self.wait.send_replace(Some(line.to_owned()));
+        (self.config.reporter)(line);
+    }
+
+    /// Waits for the lease lock, publishing each wait reason and clearing it once the wait ends.
+    async fn lock_lease<'a>(
+        &'a self,
+        lease: &'a NamedLock<ActiveDaemonLease>,
+    ) -> Result<NamedGuard<'a, ActiveDaemonLease>> {
+        let started = Instant::now();
+        let reporter = |line: &str| {
+            self.report(line);
+            self.record_progress(std::process::id(), "lease lock wait", started);
+        };
+        let outcome = lock_reporting(
+            lease,
+            self.config.report_interval,
+            self.config.lease_lock_limit,
+            &reporter,
+        )
+        .await;
+        if outcome.is_ok() {
+            self.wait.send_replace(None);
+        }
+        outcome
     }
 
     /// Run one ownership lifetime. Refused instances never acquire or spawn again.
@@ -137,7 +188,7 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Stopped);
         }
         if let Some(lease) = &self.lease
-            && lease.lock().await.fence().is_none()
+            && self.lock_lease(lease).await?.fence().is_none()
         {
             return Ok(SupervisorExit::Standby);
         }
@@ -156,7 +207,10 @@ impl BackendSupervisor {
         }
         let release = match &self.lease {
             _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
-            Some(lease) => lease.lock().await.release().await,
+            Some(lease) => match self.lock_lease(lease).await {
+                Ok(mut guard) => guard.release().await,
+                Err(error) => Err(error),
+            },
             None => Ok(()),
         };
         match result {
@@ -178,6 +232,10 @@ impl BackendSupervisor {
             !self.config.heartbeat_interval.is_zero(),
             "heartbeat interval must be positive"
         );
+        ensure!(
+            !self.config.report_interval.is_zero(),
+            "report interval must be positive"
+        );
         let mut markers = IntentMarker::new(&self.config.home);
         let mut crashes = 0u32;
         let mut heartbeats = interval(self.config.heartbeat_interval);
@@ -198,7 +256,14 @@ impl BackendSupervisor {
             let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
-            let status: ExitStatus = loop {
+            let mut reports = interval_at(
+                Instant::now() + self.config.report_interval,
+                self.config.report_interval,
+            );
+            reports.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // The first intent this backend announced, and when the supervisor first saw it.
+            let mut announced: Option<(Intent, Instant)> = None;
+            let (status, reaped): (ExitStatus, bool) = loop {
                 tokio::select! { biased;
                     _ = shutdown_signal(shutdown) => {
                         backend.drain(self.config.drain_timeout).await?;
@@ -208,20 +273,45 @@ impl BackendSupervisor {
                         }
                         return Ok(SupervisorExit::Stopped);
                     }
-                    status = backend.child.wait() => break status?,
+                    status = backend.child.wait() => break (status?, false),
                     _ = heartbeats.tick() => {
                         if let Err(error) = self.heartbeat().await {
                             eprintln!("backend lease lost: {error:#}");
                             backend.drain(self.config.drain_timeout).await?;
+                            self.state.send_replace(BackendStatus::Stopped);
                             return Ok(SupervisorExit::LeaseLost);
                         }
+                        if announced.is_none() {
+                            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+                            if let Some(intent) = markers.pending(now).await? {
+                                announced = Some((intent, Instant::now()));
+                            }
+                        }
+                        // A backend that announced its own exit gets the grace to leave on its
+                        // own; a lingering one is drained, and its intent is then applied below.
+                        if let Some((_, seen)) = announced
+                            && seen.elapsed() >= self.config.exit_grace
+                        {
+                            break (backend.drain(self.config.drain_timeout).await?, true);
+                        }
+                    }
+                    _ = reports.tick() => {
+                        self.report_wait(
+                            pid,
+                            started_at,
+                            announced.map(|(intent, seen)| (intent, seen.elapsed())),
+                        );
                     }
                 }
             };
-            // The leader may exit while descendants retain sockets or stderr.
-            // Retain process-group ownership through reaping, including exit 78.
-            backend.kill_group()?;
-            backend.finish_stderr().await;
+            // The child is reaped, so it no longer holds the supervisor's wait.
+            self.wait.send_replace(None);
+            if !reaped {
+                // The leader may exit while descendants retain sockets or stderr.
+                // Retain process-group ownership through reaping, including exit 78.
+                backend.kill_group()?;
+                backend.finish_stderr().await;
+            }
             if started_at.elapsed() >= Duration::from_secs(30) {
                 crashes = 0;
             }
@@ -236,6 +326,8 @@ impl BackendSupervisor {
                 });
                 return Ok(SupervisorExit::Refused);
             }
+            // The child is gone: report it down until the next spawn or stop, not starting.
+            self.state.send_replace(BackendStatus::Stopped);
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
             let intent = markers.after_exit(now).await?;
             if shutdown_requested(shutdown) {
@@ -281,9 +373,45 @@ impl BackendSupervisor {
 
     async fn heartbeat(&self) -> Result<()> {
         if let Some(lease) = &self.lease {
-            lease.lock().await.heartbeat().await?;
+            self.lock_lease(lease).await?.heartbeat().await?;
         }
         Ok(())
+    }
+
+    /// Logs what a live backend is still waited on; called once per report interval.
+    fn report_wait(&self, pid: u32, started_at: Instant, announced: Option<(Intent, Duration)>) {
+        let elapsed = started_at.elapsed().as_secs();
+        let line = match announced {
+            None => format!("backend pid {pid} has run {elapsed}s; waiting on its exit"),
+            Some((intent, seen)) => format!(
+                "backend pid {pid} has run {elapsed}s; waiting on its exit after announced {intent:?} (drains in {}s)",
+                self.config.exit_grace.saturating_sub(seen).as_secs()
+            ),
+        };
+        self.report(&line);
+        self.record_progress(pid, "backend wait", started_at);
+    }
+
+    /// Adds a progress record to the startup timings file that the readiness bootstrap opened.
+    /// Production has no such file, so nothing is written there outside that harness.
+    fn record_progress(&self, pid: u32, stage: &str, started_at: Instant) {
+        let timings = self.config.home.join("logs").join("startup-timings.jsonl");
+        if !timings.is_file() {
+            return;
+        }
+        let record = serde_json::json!({
+            "pid": pid,
+            "stage": stage,
+            "state": "progress",
+            "duration_seconds": started_at.elapsed().as_secs_f64(),
+        });
+        let written = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&timings)
+            .and_then(|mut file| writeln!(file, "{record}"));
+        if let Err(error) = written {
+            self.report(&format!("startup timings progress not recorded: {error}"));
+        }
     }
 }
 
@@ -315,13 +443,21 @@ const SPAWN_DEADLINE: Duration = Duration::from_secs(10);
 /// exec therefore blocks whichever thread calls it for as long as the stall lasts. The helper
 /// thread keeps that blocked call, and the async wait gives up at the deadline. A child produced
 /// after the deadline is dropped on the helper thread, and `kill_on_drop` ends it.
-async fn spawn_bounded(mut command: Command, deadline: Duration) -> Result<Child> {
+///
+/// The helper owns `read_ends` until spawn returns. A `pre_exec` captures their raw numbers, so
+/// those numbers stay occupied when the caller gives up at the deadline.
+async fn spawn_bounded(
+    read_ends: Vec<io::PipeReader>,
+    spawn: impl FnOnce() -> io::Result<Child> + Send + 'static,
+    deadline: Duration,
+) -> Result<Child> {
     let (spawned, outcome) = oneshot::channel();
     let runtime = tokio::runtime::Handle::current();
     std::thread::spawn(move || {
         let _runtime = runtime.enter();
+        let _read_ends = read_ends;
         // A failed send means the caller gave up; dropping the returned child kills it.
-        let _ = spawned.send(command.spawn());
+        let _ = spawned.send(spawn());
     });
     match timeout(deadline, outcome).await {
         Ok(Ok(child)) => child.context("spawn backend"),
@@ -344,7 +480,7 @@ impl BackendChild {
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
-        // child reads it to EOF. The parent drops its read end after spawn.
+        // child reads it to EOF. spawn_bounded owns its read end until spawn returns.
         let secret = match config.front_door_secret.as_deref() {
             Some(secret) => {
                 let (secret_reader, mut secret_writer) = std::io::pipe()?;
@@ -386,9 +522,11 @@ impl BackendChild {
                 Ok(())
             });
         }
-        let mut child = spawn_bounded(command, SPAWN_DEADLINE).await?;
+        // The helper owns both read ends until command.spawn returns, so the raw numbers that
+        // pre_exec captures stay valid even when the caller gives up at the deadline.
+        let read_ends: Vec<io::PipeReader> = std::iter::once(reader).chain(secret).collect();
+        let mut child = spawn_bounded(read_ends, move || command.spawn(), SPAWN_DEADLINE).await?;
         let group = i32::try_from(child.id().context("spawned backend has no PID")?)?;
-        drop(reader);
         let mut token = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut token);
         let token = URL_SAFE_NO_PAD.encode(token);
@@ -401,7 +539,6 @@ impl BackendChild {
             }
             _ => {}
         }
-        drop(secret);
         let mut stderr = child.stderr.take().context("backend stderr pipe missing")?;
         let (last, last_line) = watch::channel(String::new());
         let stderr = tokio::spawn(async move {
@@ -445,21 +582,21 @@ impl BackendChild {
         }
     }
 
-    async fn drain(&mut self, deadline: Duration) -> Result<()> {
+    async fn drain(&mut self, deadline: Duration) -> Result<ExitStatus> {
         if !self.signal_owned_group(libc::SIGTERM)? {
             self.group = None;
-            self.child.wait().await?;
+            let status = self.child.wait().await?;
             self.finish_stderr().await;
-            return Ok(());
+            return Ok(status);
         }
         // Keep the group leader unreaped through the grace window: its PID
         // cannot be reused for an unrelated group even if a launcher exits
         // before its TERM-ignoring descendant. Then kill and reap the command.
         sleep_until(Instant::now() + deadline).await;
         self.kill_group()?;
-        timeout(Duration::from_secs(5), self.child.wait()).await??;
+        let status = timeout(Duration::from_secs(5), self.child.wait()).await??;
         self.finish_stderr().await;
-        Ok(())
+        Ok(status)
     }
 
     fn signal_owned_group(&mut self, signal: i32) -> io::Result<bool> {
@@ -467,13 +604,13 @@ impl BackendChild {
             return Ok(false);
         };
         match signal_group(group, signal) {
-            // Darwin reports EPERM for an all-zombie group. Only accept that
-            // completion after verifying our leader has exited; never suppress
-            // a permission error while the owned leader is still running.
+            // Darwin reports EPERM when every group member is a zombie. Accept
+            // that completion only when the leader is reaped or has exited;
+            // a live leader keeps its permission error.
             Err(error)
                 if cfg!(target_os = "macos")
                     && error.raw_os_error() == Some(libc::EPERM)
-                    && self.child.try_wait()?.is_some() =>
+                    && (self.child.try_wait()?.is_some() || leader_has_exited(group)) =>
             {
                 Ok(false)
             }
@@ -497,6 +634,25 @@ impl Drop for BackendChild {
     }
 }
 
+/// Whether the kernel no longer shows `pid` as a live process while `waitpid` has not reaped it.
+/// Darwin hides an exited leader from `proc_pidinfo` (ESRCH) before `waitpid` reports it, and a
+/// live leader is always visible to it, so this identifies a leader that has finished exiting.
+#[cfg(target_os = "macos")]
+fn leader_has_exited(pid: i32) -> bool {
+    // SAFETY: proc_bsdinfo is a C POD struct; proc_pidinfo receives its exact size
+    // and a writable pointer that lives through the call.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let read =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    read <= 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn leader_has_exited(_pid: i32) -> bool {
+    false
+}
+
 fn signal_group(group: i32, signal: i32) -> io::Result<bool> {
     // SAFETY: spawn creates a new group whose ID is the directly owned child PID.
     // Negative ID signals that group, never the supervisor's process group.
@@ -518,6 +674,36 @@ fn publish_line(line: &mut Vec<u8>, last: &watch::Sender<String>) {
         last.send_replace(text);
     }
     line.clear();
+}
+
+/// Takes `lock` for the supervisor. While another task holds it, reports through `reporter` at
+/// each `interval`, and gives up once `limit` has passed, naming the holder.
+async fn lock_reporting<'a, T>(
+    lock: &'a NamedLock<T>,
+    interval: Duration,
+    limit: Duration,
+    reporter: &(dyn Fn(&str) + Send + Sync),
+) -> Result<NamedGuard<'a, T>> {
+    let started = Instant::now();
+    loop {
+        let remaining = limit.saturating_sub(started.elapsed());
+        if let Ok(guard) =
+            timeout(interval.min(remaining), lock.lock_as("backend supervisor")).await
+        {
+            return Ok(guard);
+        }
+        // The attempt that ran out the remaining budget is the last one.
+        if remaining <= interval {
+            bail!(
+                "backend supervisor gave up after {limit:?} waiting on the lease lock, held by {}",
+                lock.holder()
+            );
+        }
+        reporter(&format!(
+            "backend supervisor waiting on the lease lock held by {}",
+            lock.holder()
+        ));
+    }
 }
 
 #[cfg(test)]

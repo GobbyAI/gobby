@@ -484,9 +484,21 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 491,
-        filename: "491_token_event_per_key_archive.sql",
+        filename: "491_worktree_notes.sql",
+        checksum: "19ff29bc58e2cba31705bf9e8c186fb7348bffac52f4a615110bf7192240c870",
+        sql: include_str!("../../assets/schema/migrations/491_worktree_notes.sql"),
+    },
+    EmbeddedMigration {
+        version: 492,
+        filename: "492_scope_role_sweeps_to_owning_hub.sql",
+        checksum: "f73c703a077253bc9e539fa3409c6c856dc871ba36d916f436d1f6be5fc6c211",
+        sql: include_str!("../../assets/schema/migrations/492_scope_role_sweeps_to_owning_hub.sql"),
+    },
+    EmbeddedMigration {
+        version: 493,
+        filename: "493_token_event_per_key_archive.sql",
         checksum: "a91fb9ab01e17ef35047ec9282f1dbe66af7e67f9c7cb86db19e0b8339634679",
-        sql: include_str!("../../assets/schema/migrations/491_token_event_per_key_archive.sql"),
+        sql: include_str!("../../assets/schema/migrations/493_token_event_per_key_archive.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

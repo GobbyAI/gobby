@@ -137,7 +137,7 @@ async def create_worktree(
     try:
         # The branch can move after selection; creation consumes only the captured SHA.
         selected = await runner._run_git(
-            ["rev-parse", "--verify", f"{base_commit_sha}^{{commit}}"], timeout=5
+            ["rev-parse", "--verify", f"{base_commit_sha}^{{commit}}"], timeout=30
         )
         if selected.returncode != 0 or selected.stdout.strip() != base_commit_sha:
             return GitOperationResult(
@@ -149,7 +149,7 @@ async def create_worktree(
             branch_name if branch_name.startswith("refs/heads/") else f"refs/heads/{branch_name}"
         )
         existing = await runner._run_git(
-            ["rev-parse", "--verify", "--quiet", f"{branch_ref}^{{commit}}"], timeout=5
+            ["rev-parse", "--verify", "--quiet", f"{branch_ref}^{{commit}}"], timeout=30
         )
         if existing.returncode == 0 and existing.stdout.strip() != base_commit_sha:
             return GitOperationResult(
@@ -178,7 +178,7 @@ async def create_worktree(
             args.extend(["-b", branch_name, str(worktree_path), base_commit_sha])
         result = await runner._run_git(args, timeout=60)
         if result.returncode == 0:
-            head = await runner._run_git(["rev-parse", "HEAD"], cwd=worktree_path, timeout=5)
+            head = await runner._run_git(["rev-parse", "HEAD"], cwd=worktree_path, timeout=30)
             if head.returncode != 0 or head.stdout.strip() != base_commit_sha:
                 cleanup = await runner._run_git(
                     ["worktree", "remove", str(worktree_path)], timeout=60
@@ -566,10 +566,16 @@ async def delete_worktree(
             output=output,
         )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        # Name the stalled command and the daemon's diagnostic (pid, phase, elapsed).
+        command = " ".join(map(str, exc.cmd))
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
         return GitOperationResult(
             success=False,
             message="Git command timed out",
+            error=f"{command} timed out after {exc.timeout}s; {stderr or 'no diagnostic'}",
         )
     except Exception as e:
         return GitOperationResult(

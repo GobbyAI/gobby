@@ -20,8 +20,8 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.capabilities import ContextChannel
 from gobby.adapters.degradation import (
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
-    truncate_context_for_adapter,
 )
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
@@ -217,15 +217,16 @@ class AgyAdapter(ACPHookAdapter):
 
         if event_name in {"PreInvocation", "PostInvocation"}:
             steps: list[dict[str, str]] = []
-            if response.context:
-                context = truncate_context_for_adapter(
-                    response.context_contributors(),
-                    provider=self.source,
-                    hook_type=hook_type,
-                    destination_channel=ContextChannel.INJECT_STEPS,
-                    event_logger=logger,
-                    **persist_kwargs_from_hook_response(response, self._hook_manager),
-                )
+            # Always page: a step with nothing fresh still carries the queued remainder.
+            context = page_context_for_adapter(
+                response.context_contributors(),
+                provider=self.source,
+                hook_type=hook_type,
+                destination_channel=ContextChannel.INJECT_STEPS,
+                event_logger=logger,
+                **persist_kwargs_from_hook_response(response, self._hook_manager),
+            )
+            if context:
                 steps.append({"ephemeralMessage": context})
             if response.system_message:
                 steps.append({"userMessage": response.system_message})

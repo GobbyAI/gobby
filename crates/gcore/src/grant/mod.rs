@@ -3,6 +3,7 @@
 mod acquisition;
 #[cfg(feature = "ai")]
 pub(crate) use acquisition::acquire_with_reachability;
+mod bearer;
 mod bundle;
 mod cache;
 pub mod fixture;
@@ -14,6 +15,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub use bearer::presentation_bearer;
 pub use bundle::{
     AiCapability, BrokerOperation, EXPECTED_API_CONTRACT, FalkorCapability, GRANT_VERSION,
     GrantBundle, GrantCapabilities, GrantDeployment, GrantPrincipal, GrantSchemaIdentity,
@@ -73,6 +75,8 @@ pub enum GrantError {
     Timeout,
     /// The local bootstrap configuration cannot provide a daemon endpoint.
     BootstrapConfig(String),
+    /// This process holds no session credential that may present the grant's session.
+    SessionCredentialRefused(&'static str),
     Malformed(String),
     Io(String),
 }
@@ -111,6 +115,9 @@ impl fmt::Display for GrantError {
             Self::Unauthorized(code) => write!(f, "daemon rejected the credential: {code}"),
             Self::Timeout => f.write_str("grant operation timed out"),
             Self::BootstrapConfig(message) => write!(f, "bootstrap configuration error: {message}"),
+            Self::SessionCredentialRefused(reason) => {
+                write!(f, "session credential refused: {reason}")
+            }
             Self::Malformed(message) => write!(f, "malformed grant: {message}"),
             Self::Io(message) => write!(f, "grant io error: {message}"),
         }
@@ -135,6 +142,7 @@ impl GrantError {
             Self::Unauthorized(_) => "unauthorized",
             Self::Timeout => "timeout",
             Self::BootstrapConfig(_) => "bootstrap_config",
+            Self::SessionCredentialRefused(_) => "session_credential_refused",
             Self::Malformed(_) => "malformed",
             Self::Io(_) => "io",
         }
@@ -262,16 +270,31 @@ pub fn fetch_runtime_config(
     // The config route binds identity like the handshake: a managed bearer must
     // carry the caller-project, session, and owner headers from its capability
     // claims or the daemon rejects it. Operator tokens carry none.
-    let claims = bearer.and_then(|token| parse_envelope(token).ok());
-    let identity_headers = claims
-        .as_ref()
-        .map(handshake::managed_identity_headers)
-        .unwrap_or_default();
+    // An interactive grant bound to a session presents that session's own credential. It
+    // names the session by header, as a managed bearer names its claims.
+    let presented = bearer
+        .map(|token| presentation_bearer(Some(grant), token))
+        .transpose()?;
+    let claims = presented
+        .as_deref()
+        .and_then(|token| parse_envelope(token).ok());
+    let identity_headers = match (&claims, grant.principal.session_id.as_deref()) {
+        (Some(claims), _) => handshake::managed_identity_headers(claims),
+        (None, Some(session_id))
+            if presented.is_some() && grant.principal.kind == PrincipalKind::Interactive =>
+        {
+            vec![
+                (CALLER_PROJECT_HEADER, grant.principal.project_id.as_str()),
+                (SESSION_HEADER, session_id),
+            ]
+        }
+        (None, _) => Vec::new(),
+    };
     let response = handshake::http_json(
         "GET",
         &url,
         None,
-        bearer,
+        presented.as_deref(),
         Some(grant),
         &identity_headers,
         timeout,
