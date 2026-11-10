@@ -1,9 +1,12 @@
-"""Review gates refuse a runbook-like caller and waive a caller holding the "*" wildcard."""
+"""Review gates refuse a runbook-like caller and waive a caller holding the "*" wildcard.
+
+Bundled rules are enumerated generically: every closure or landing rule whose condition
+tests the waiver capability is evaluated against synthetic callers.
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,9 +14,10 @@ import yaml
 
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.tasks.attestation_authorship import attestation_authorship_refusal
+from gobby.tasks.attestation_shapes import CLOSURE_EVENTS
 from gobby.tasks.attestations import TaskAttestation
 from gobby.tasks.closure_policy import build_closure_condition_helpers
-from gobby.workflows.agent_models import ALL_CAPABILITIES, AgentDefinitionBody
+from gobby.workflows.agent_models import ALL_CAPABILITIES, WAIVE_REVIEW_GATES, AgentDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -21,25 +25,26 @@ pytestmark = pytest.mark.unit
 
 _AT = datetime(2026, 11, 10, tzinfo=UTC)
 _RUNBOOK_CAPABILITIES = ["land_tasks", "coordinate_tasks"]
-_GATES = [
-    ("task-closure/implementer-review.yaml", "closure-review-by-implementer-refused"),
-    ("task-closure/implementer-review.yaml", "landing-review-by-implementer-refused"),
-    ("task-closure/landing.yaml", "landing-requires-path-grant-or-independent-review"),
-    ("task-closure/epic.yaml", "epic-completion-requires-descendants"),
-    ("task-closure/epic.yaml", "epic-landing-requires-descendants"),
-    ("task-closure/epic.yaml", "epic-completion-requires-exact-evidence"),
-    ("task-closure/epic.yaml", "epic-landing-requires-exact-evidence"),
-    ("task-closure/epic.yaml", "epic-completion-requires-independent-author"),
-    ("task-closure/epic.yaml", "epic-landing-requires-independent-author"),
-    ("task-closure/security.yaml", "closure-requires-security-approval"),
-    ("task-closure/security.yaml", "landing-requires-security-approval"),
+_SYNTHETIC_TAG = "synthetic-review-gates"
+
+
+def _bundled_closure_rules() -> list[tuple[str, dict[str, Any]]]:
+    rules: list[tuple[str, dict[str, Any]]] = []
+    for path in sorted(get_bundled_rules_path().rglob("*.yaml")):
+        if {"deprecated", "_deprecated"}.intersection(path.parts):
+            continue
+        document = yaml.safe_load(path.read_text()) or {}
+        for name, definition in (document.get("rules") or {}).items():
+            if definition.get("event") in CLOSURE_EVENTS:
+                rules.append((name, definition))
+    return rules
+
+
+_WAIVED = [
+    pytest.param(definition["when"], id=name)
+    for name, definition in _bundled_closure_rules()
+    if WAIVE_REVIEW_GATES in str(definition.get("when", ""))
 ]
-
-
-def _rule(relative: str, name: str) -> dict[str, Any]:
-    document = yaml.safe_load(Path(get_bundled_rules_path(), relative).read_text())
-    rule: dict[str, Any] = document["rules"][name]
-    return rule
 
 
 def _record(kind: str, sequence: int) -> dict[str, Any]:
@@ -57,6 +62,7 @@ def _record(kind: str, sequence: int) -> dict[str, Any]:
 
 
 def _context(capabilities: list[str]) -> dict[str, Any]:
+    """A closure snapshot that trips every review gate: the implementer reviewed its own work."""
     records = [_record("implementation", 1), _record("independent-review", 2)]
     return {
         "reason": "done",
@@ -79,26 +85,27 @@ def _context(capabilities: list[str]) -> dict[str, Any]:
     }
 
 
-def _blocks(relative: str, name: str, capabilities: list[str]) -> bool:
+def _blocks(when: str, capabilities: list[str]) -> bool:
     context = _context(capabilities)
     evaluator = SafeExpressionEvaluator(context, build_closure_condition_helpers(context))
-    return bool(evaluator.evaluate(_rule(relative, name)["when"]))
+    return bool(evaluator.evaluate(when))
 
 
-@pytest.mark.parametrize(("relative", "name"), _GATES)
-def test_runbook_caller_is_still_refused(relative: str, name: str) -> None:
-    assert _blocks(relative, name, _RUNBOOK_CAPABILITIES)
+def test_bundled_review_gates_declare_the_waiver() -> None:
+    assert len(_WAIVED) >= 2
 
 
-@pytest.mark.parametrize(("relative", "name"), _GATES)
-def test_wildcard_caller_needs_no_review(relative: str, name: str) -> None:
-    assert not _blocks(relative, name, [ALL_CAPABILITIES])
+@pytest.mark.parametrize("when", _WAIVED)
+def test_runbook_caller_is_still_refused(when: str) -> None:
+    assert _blocks(when, _RUNBOOK_CAPABILITIES)
 
 
-def _implementer_review_rows() -> list[RuleDefinitionRow]:
-    document = yaml.safe_load(
-        Path(get_bundled_rules_path(), "task-closure/implementer-review.yaml").read_text()
-    )
+@pytest.mark.parametrize("when", _WAIVED)
+def test_wildcard_caller_needs_no_review(when: str) -> None:
+    assert not _blocks(when, [ALL_CAPABILITIES])
+
+
+def _authorship_rows() -> list[RuleDefinitionRow]:
     return [
         RuleDefinitionRow(
             id=name,
@@ -112,11 +119,12 @@ def _implementer_review_rows() -> list[RuleDefinitionRow]:
                 if key not in {"description", "priority"}
             },
             source="installed",
-            tags=["synthetic-review-gates"],
+            tags=[_SYNTHETIC_TAG],
             created_at=_AT,
             updated_at=_AT,
         )
-        for name, definition in document["rules"].items()
+        for name, definition in _bundled_closure_rules()
+        if definition.get("attestation_authorship")
     ]
 
 
@@ -126,7 +134,7 @@ def _author(capabilities: list[str]) -> AgentDefinitionBody:
             "name": "synthetic-author",
             "prompts": {"agent": "Act."},
             "capabilities": capabilities,
-            "workflows": {"rule_selectors": {"include": ["tag:synthetic-review-gates"]}},
+            "workflows": {"rule_selectors": {"include": [f"tag:{_SYNTHETIC_TAG}"]}},
         }
     )
 
@@ -153,12 +161,14 @@ def _implementation() -> TaskAttestation:
 def test_implementer_may_record_review_only_with_the_wildcard(
     capabilities: list[str], refused: bool
 ) -> None:
+    rows = _authorship_rows()
+    assert rows
     refusal = attestation_authorship_refusal(
         kind="independent-review",
         session_id="implementer",
         records=[_implementation()],
         reference=None,
         agent=_author(capabilities),
-        rules=_implementer_review_rows(),
+        rules=rows,
     )
     assert (refusal is not None) is refused
