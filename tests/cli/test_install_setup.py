@@ -52,6 +52,15 @@ from tests.fixtures.fake_hub import fake_database_url
 from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolated_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.cli.installers.fleet_service.install_fleet_service", lambda path: False
+    )
+
+
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
 _BUNDLED_INSTALL_ROOT = Path(__file__).parents[2] / "src" / "gobby" / "install"
 _MCP_ADD_SERVER_COMMAND = "gobby mcp-proxy add-server <name> --template <template> [--global]"

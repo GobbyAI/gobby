@@ -39,6 +39,9 @@ from gobby.utils.native_bin import (
     resolve_native_bin,
 )
 
+CATALOG_CANDIDATE_BUILD_TIMEOUT_SECONDS = 1200
+CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS = 600
+
 _PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks")
 _BINARY_NAMES = ("gcode", "gdaemon", "ghook")
 # gclient shares gobby-core with the set but is promoted separately, outside the stamp.
@@ -258,7 +261,7 @@ def _prove_catalog_freshness(root: Path, candidate: Path) -> None:
             ],
             cwd=root,
             label="catalog manifest freshness",
-            timeout=600,
+            timeout=CATALOG_FRESHNESS_PROOF_TIMEOUT_SECONDS,
             env=env,
         )
         if "test result: ok. 1 passed; 0 failed; 0 ignored;" not in result.stdout:
@@ -319,6 +322,9 @@ def run_cutover(
                 ),
             )
             _verify_restart_target(bin_dir)
+            from gobby.cli.installers.fleet_service import reload_fleet_service
+
+            reload_fleet_service()
         start_daemon()
     except Exception as exc:
         # After confirmed shutdown, every failed phase needs operator recovery

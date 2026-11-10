@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -36,16 +38,22 @@ from gobby.storage.workspace_panes import WorkspacePane
 from gobby.storage.workspaces import WorkspaceManager, WorkspaceTab
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.workflows.imports import sync_imported_workflow_file
-from tests.e2e.conftest import DaemonInstance, daemon_token
+from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, MCPTestClient, daemon_token
 from tests.fixtures.isolated_checkout import write_project_marker
 from tests.fixtures.postgres import TEST_USER_ID
+from tests.fleet_health.support import write_fleet_state
 
 daemon_instance = e2e_fixtures.daemon_instance
 e2e_config = e2e_fixtures.e2e_config
 e2e_home_dir = e2e_fixtures.e2e_home_dir
 e2e_project_dir = e2e_fixtures.e2e_project_dir
+mcp_client = e2e_fixtures.mcp_client
+cli_events = e2e_fixtures.cli_events
 
-pytestmark = [pytest.mark.e2e, pytest.mark.slow]
+pytestmark = [pytest.mark.e2e, pytest.mark.slow, pytest.mark.usefixtures("healthy_fleet")]
+
+# A seat ceiling above any one run's seat count, so the ramp window never caps the rerun test.
+FLEET_SEATS = 50
 
 FIXTURE = Path(__file__).parent / "fixtures" / "two_seat_placement.yaml"
 PIPELINE = "two-seat-placement-fixture"
@@ -248,6 +256,55 @@ def e2e_pre_daemon_setup(
             shutil.rmtree(sockets, ignore_errors=True)
     finally:
         _release_install(root)
+
+
+class FleetStub:
+    """The daemon's fleet state, published the way the watcher writes it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state = "healthy"
+        self._reasons: tuple[str, ...] = ()
+
+    def publish(self, state: str = "healthy", reasons: tuple[str, ...] = ()) -> None:
+        with self._lock:
+            self._state, self._reasons = state, reasons
+            self._write()
+
+    def heartbeat(self) -> None:
+        with self._lock:
+            self._write()
+
+    def _write(self) -> None:
+        write_fleet_state(state=self._state, reasons=self._reasons, max_new_seats=FLEET_SEATS)
+
+
+@pytest.fixture
+def healthy_fleet(
+    daemon_instance: DaemonInstance, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[FleetStub]:
+    """Stand in for the fleet watcher so the daemon admits launches and spawns.
+
+    The gate refuses unless the state is healthy and sampled within 90 s. A real watcher
+    rewrites it every 30 s, so a background thread re-samples the published state every
+    20 s under the daemon's Gobby home for the life of the test. A test may publish another.
+    """
+    monkeypatch.setenv("GOBBY_HOME", str(daemon_instance.gobby_home))
+    fleet = FleetStub()
+    fleet.publish()
+    stop = threading.Event()
+
+    def refresh() -> None:
+        while not stop.wait(20):
+            fleet.heartbeat()
+
+    watcher = threading.Thread(target=refresh, daemon=True)
+    watcher.start()
+    try:
+        yield fleet
+    finally:
+        stop.set()
+        watcher.join(timeout=5)
 
 
 @pytest.fixture
@@ -535,3 +592,48 @@ def test_cli_run_parent_and_project(
             "project_id": PROJECT_ID,
         }
     assert len(_providers(seat_state, 2)) == 2
+
+
+def _claude_session(cli_events: CLIEventSimulator, home: Home) -> str:
+    """Start a Claude session in the home checkout and return its internal session id."""
+    cwd = str(home.checkout)
+    started = cli_events.session_start(session_id="refused-launch", project_id=PROJECT_ID, cwd=cwd)
+    assert started.get("continue") is True, started
+    prompted = cli_events.user_prompt_submit(
+        session_id="refused-launch",
+        prompt="hello",
+        source="claude",
+        project_id=PROJECT_ID,
+        cwd=cwd,
+    )
+    context = prompted.get("hookSpecificOutput", {}).get("additionalContext", "")
+    match = re.search(r"Gobby Session ID: [^(\n]*\(([^)]+)\)", context)
+    assert match, prompted
+    return match.group(1)
+
+
+def test_unhealthy_fleet_refuses_public_mcp_launch(
+    postgres_db: HubDatabase,
+    home: Home,
+    cli_events: CLIEventSimulator,
+    mcp_client: MCPTestClient,
+    healthy_fleet: FleetStub,
+) -> None:
+    """The public MCP launch refuses with the typed result and records no execution."""
+    _import_fixture(postgres_db)
+    mcp_client.session_id = _claude_session(cli_events, home)
+    healthy_fleet.publish("unstable", ("probe_failed:refused",))
+    response = mcp_client.call_tool(
+        "gobby-workflows",
+        "run_pipeline",
+        {"name": PIPELINE, "inputs": _inputs(home, "refused")},
+    )
+    # Refusals come back flat: the proxy returns the tool result with success=False.
+    assert response["success"] is False, response
+    assert response["error_code"] == "fleet_unhealthy", response
+    assert response["fleet"] == {"state": "unstable", "reasons": ["probe_failed:refused"]}
+    row = postgres_db.fetchone(
+        "SELECT COUNT(*) AS n FROM pipeline_executions WHERE pipeline_name = %s", (PIPELINE,)
+    )
+    assert row is not None
+    assert row["n"] == 0
