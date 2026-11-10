@@ -54,7 +54,8 @@ Current degradation kinds:
 
 - `dropped_field`: populated `HookResponse` field has no native destination
 - `rerouted_field`: context is moved to a different native channel
-- `context_truncated`: context exceeds the adapter safety limit
+- `context_paged`: context exceeds the adapter ship limit; the overflow pages to the
+  session's next delivery in order and is never dropped or cut (`docs/contracts/truncation.md`)
 - `reason_compacted`: retained telemetry vocabulary; current Claude capability
   declarations use passthrough reasons, so do not infer active compaction from
   the existence of this metric kind

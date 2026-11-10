@@ -30,6 +30,8 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.replay_decision import acknowledge_and_apply_receipt, decide_replay
 from gobby.hooks.replay_fence import defer_live_hook
+from gobby.storage.hook_receipts import HookReceipt, get_receipt
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import daemon_url as daemon_address
 from gobby.utils.local_token import (
     daemon_bootstrap_path,
@@ -116,8 +118,8 @@ def _consume_inbox_delivery_receipt(
             receipt_id,
             generation,
         )
-    if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
-        try:
+    try:
+        if db is not None and isinstance(receipt_id, str) and isinstance(generation, int):
             from gobby.workflows.state_manager import SessionVariableManager
 
             committed = acknowledge_and_apply_receipt(
@@ -128,12 +130,14 @@ def _consume_inbox_delivery_receipt(
                 variable_manager=SessionVariableManager(db),
             )
             if committed is None:
+                committed = _acknowledged_at_generation(db, receipt_id, generation)
+            if committed is None:
                 logger.debug(
                     "Delivery receipt %s generation %s was stale or unknown at consumption",
                     receipt_id,
                     generation,
                 )
-            if committed is not None:
+            else:
                 # The acknowledged delivery terminalizes every envelope that
                 # carried it; a retained original must never replay its hook.
                 _mark_carrying_envelopes_processed(
@@ -141,15 +145,20 @@ def _consume_inbox_delivery_receipt(
                     ack_envelope_id=envelope_id,
                     processed_dir=processed_dir,
                 )
-        except Exception as exc:
-            logger.warning(
-                "Failed to consume delivery receipt %s generation %s: %s",
-                receipt_id,
-                generation,
-                exc,
-            )
-    if envelope_id:
-        mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+        if envelope_id:
+            mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    except Exception:
+        # A failed acknowledgment rolled back, so the receipt stays prepared. Restore the
+        # claim so the next sweep acknowledges it again. A failure after the commit leaves
+        # the receipt acknowledged at this generation; the next sweep finds it there, repeats
+        # the carrier marks, and then terminalizes the ack envelope.
+        logger.exception(
+            "Failed to consume delivery receipt %s generation %s; restoring its claim",
+            receipt_id,
+            generation,
+        )
+        inbox_envelopes.restore_inbox_claim(claimed, path)
+        return False
     claimed.unlink(missing_ok=True)
     return True
 
@@ -247,7 +256,11 @@ def _mark_carrying_envelopes_processed(
     ack_envelope_id: str | None,
     processed_dir: Path,
 ) -> None:
-    """Mark the receipt's original and current carrying envelopes processed."""
+    """Mark the receipt's original and current carrying envelopes processed.
+
+    A failed mark raises, so the caller keeps the acknowledgment claimable until every
+    carrier is terminal.
+    """
     carrying: list[str] = []
     for attribute in ("original_envelope_id", "current_envelope_id"):
         candidate = getattr(receipt, attribute, None)
@@ -259,15 +272,23 @@ def _mark_carrying_envelopes_processed(
         ):
             carrying.append(candidate)
     for carried_id in carrying:
-        try:
-            mark_envelope_processed(carried_id, processed_dir=processed_dir)
-        except Exception as exc:
-            logger.warning(
-                "Failed to terminalize carrying envelope %s for receipt %s: %s",
-                carried_id,
-                getattr(receipt, "receipt_id", None),
-                exc,
-            )
+        mark_envelope_processed(carried_id, processed_dir=processed_dir)
+
+
+def _acknowledged_at_generation(
+    db: HubDatabase, receipt_id: str, generation: int
+) -> HookReceipt | None:
+    """The receipt when this generation is already acknowledged, else None.
+
+    A sweep that committed the acknowledgment and then failed its carrier marks leaves the
+    claim restored. The next sweep finds the generation acknowledged here and finishes them.
+    """
+    receipt = get_receipt(db, receipt_id=receipt_id)
+    if receipt is None or receipt.state != "acknowledged":
+        return None
+    if receipt.delivery_generation != generation:
+        return None
+    return receipt
 
 
 def _replay_session_token(app: Any, envelope: dict[str, Any]) -> str | None:

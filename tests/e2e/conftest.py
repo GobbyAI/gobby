@@ -1348,6 +1348,9 @@ def _start_daemon_instance(
 
     log_file = log_dir / "daemon.log"
     error_log_file = log_dir / "daemon_error.log"
+    # Pre-create the stage-timing file: the supervisor records waits only when it exists,
+    # and a lease-lock wait can block before the readiness bootstrap creates it.
+    (log_dir / "startup-timings.jsonl").touch()
 
     # Use prepare_daemon_env for consistent isolation (PYTHONPATH, API keys,
     # env cleanup, and HOME override so ~/.gobby resolves inside the temp dir)

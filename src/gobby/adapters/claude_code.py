@@ -25,9 +25,9 @@ from gobby.adapters.claude_contract import (
     get_claude_contract,
 )
 from gobby.adapters.degradation import (
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
     record_unsupported_response_fields,
-    truncate_context_for_adapter,
 )
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
@@ -310,16 +310,17 @@ class ClaudeCodeAdapter(BaseAdapter):
             if context_lines:
                 additional_context_parts.append(("metadata", "\n".join(context_lines)))
 
-        if not additional_context_parts:
-            return None
-
-        return truncate_context_for_adapter(
-            additional_context_parts,
-            provider=self.source,
-            hook_type=hook_type,
-            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-            event_logger=logger,
-            **persist_kwargs_from_hook_response(response, self._hook_manager),
+        # Always page: a delivery with nothing fresh still carries the session's queued remainder.
+        return (
+            page_context_for_adapter(
+                additional_context_parts,
+                provider=self.source,
+                hook_type=hook_type,
+                destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
+                event_logger=logger,
+                **persist_kwargs_from_hook_response(response, self._hook_manager),
+            )
+            or None
         )
 
     def translate_from_hook_response(

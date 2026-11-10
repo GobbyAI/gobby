@@ -81,10 +81,6 @@ function makeConfigValues(): Record<string, unknown> {
       transcript_processing_batch_size: 10,
       transcript_archive_dir: null,
     },
-    chat_history: {
-      max_message_chars: 2000,
-      max_total_chars: 30000,
-    },
     message_tracking: {
       enabled: true,
       poll_interval: 5,
@@ -179,7 +175,7 @@ describe("ProjectsSessionsSection", () => {
     ).toHaveValue(SUMMARY_PROMPT);
   });
 
-  it("reads session lifecycle and chat history config rows", () => {
+  it("reads session lifecycle config rows", () => {
     renderSection(makeContext());
 
     expect(
@@ -194,7 +190,9 @@ describe("ProjectsSessionsSection", () => {
     expect(
       screen.queryByLabelText("Default context source"),
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Max total characters")).toHaveValue(30000);
+    expect(
+      screen.queryByLabelText("Max total characters"),
+    ).not.toBeInTheDocument();
   });
 
   it("reads verification defaults: command fields and the custom map editor", () => {

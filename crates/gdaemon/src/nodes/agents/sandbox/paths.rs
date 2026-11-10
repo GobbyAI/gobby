@@ -7,7 +7,7 @@ use super::{PolicyInputs, tables};
 use crate::node_commands::Sandbox;
 use anyhow::{Result, anyhow, bail};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     iter::once,
     os::unix::fs::PermissionsExt,
@@ -109,23 +109,42 @@ pub(super) fn lexical_normal(path: &Path) -> PathBuf {
 /// `Path.resolve(strict=False)`: canonicalize the longest existing prefix and
 /// re-append the rest, so a path that does not exist yet still resolves.
 pub(super) fn resolve_nonstrict(path: &Path) -> PathBuf {
-    let normal = lexical_normal(path);
-    let mut existing = normal.clone();
-    let mut rest: Vec<std::ffi::OsString> = Vec::new();
-    loop {
-        if let Ok(canonical) = existing.canonicalize() {
-            let mut out = canonical;
-            for part in rest.iter().rev() {
-                out.push(part);
-            }
-            return out;
+    Resolver::default().resolve(&lexical_normal(path))
+}
+
+/// Memoizes `resolve_nonstrict` across one list of paths, so the filesystem is probed
+/// once per directory rather than once per entry. Filesystem changes between calls are
+/// not seen, so a resolver lives for one list only.
+#[derive(Default)]
+pub(super) struct Resolver {
+    memo: HashMap<PathBuf, PathBuf>,
+}
+
+impl Resolver {
+    /// Resolves a lexically normal path. A path that does not exist resolves as its
+    /// parent does, plus its name, so each missing entry costs one `lstat`.
+    pub(super) fn resolve(&mut self, path: &Path) -> PathBuf {
+        if let Some(resolved) = self.memo.get(path) {
+            return resolved.clone();
         }
-        match (existing.file_name(), existing.parent()) {
-            (Some(name), Some(parent)) => {
-                rest.push(name.to_os_string());
-                existing = parent.to_path_buf();
-            }
-            _ => return normal,
+        let resolved = self.resolve_uncached(path);
+        self.memo.insert(path.to_path_buf(), resolved.clone());
+        resolved
+    }
+
+    fn resolve_uncached(&mut self, path: &Path) -> PathBuf {
+        let parent_and_name = path.parent().zip(path.file_name());
+        if fs::symlink_metadata(path).is_err()
+            && let Some((parent, name)) = parent_and_name
+        {
+            return self.resolve(parent).join(name);
+        }
+        match path.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(_) => match parent_and_name {
+                Some((parent, name)) => self.resolve(parent).join(name),
+                None => path.to_path_buf(),
+            },
         }
     }
 }
@@ -152,9 +171,10 @@ pub(super) fn canonical_paths<S: AsRef<str>>(
     base: Option<&Path>,
     home: &Path,
 ) -> Vec<String> {
+    let mut resolver = Resolver::default();
     dedupe(
         raws.into_iter()
-            .map(|raw| text(&canonical_pathbuf(raw.as_ref(), base, home))),
+            .map(|raw| text(&resolver.resolve(&absolute_path(raw.as_ref(), base, home)))),
     )
 }
 
@@ -164,12 +184,10 @@ pub(super) fn deny_paths<S: AsRef<str>>(
     base: Option<&Path>,
     home: &Path,
 ) -> Vec<String> {
+    let mut resolver = Resolver::default();
     dedupe(raws.into_iter().flat_map(|raw| {
-        let raw = raw.as_ref();
-        [
-            text(&absolute_path(raw, base, home)),
-            text(&canonical_pathbuf(raw, base, home)),
-        ]
+        let absolute = absolute_path(raw.as_ref(), base, home);
+        [text(&absolute), text(&resolver.resolve(&absolute))]
     }))
 }
 

@@ -1199,11 +1199,12 @@ def _claim_open_task(temp_db: HubDatabase, project_id: str, session_id: str) -> 
     return task
 
 
-def test_ended_session_holding_an_open_claim_stays_on_the_roster_as_dead(
+def test_ended_session_holding_an_open_claim_leaves_the_roster(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
 ) -> None:
+    # Josh, 2026-11-09: ended agents must not linger in the sidebar as rows he cannot open.
     session = session_manager.register(
         external_id="roster-ended-claimed-session",
         machine_id=require_machine_id(),
@@ -1211,15 +1212,13 @@ def test_ended_session_holding_an_open_claim_stays_on_the_roster_as_dead(
         project_id=sample_project["id"],
     )
     SessionVariableManager(temp_db).set_variable(session.id, "_agent_type", "fixture-seat")
-    task = _claim_open_task(temp_db, sample_project["id"], session.id)
+    _claim_open_task(temp_db, sample_project["id"], session.id)
     session_manager.update_session_status(session.id, "completed")
 
-    entry = _roster_by_id(temp_db)[f"session:{session.id}"]
+    roster = _roster_by_id(temp_db)
 
-    assert entry["lifecycle_status"] == "dead"
-    assert entry["terminal"] is None
-    assert entry["definition_name"] == "fixture-seat"
-    assert entry["task"]["id"] == task.id
+    assert f"session:{session.id}" not in roster
+    assert all(entry["lifecycle_status"] != "dead" for entry in roster.values())
 
 
 def test_ended_session_without_an_open_claim_leaves_the_roster(
@@ -1256,7 +1255,7 @@ def test_ended_session_whose_claimed_task_closed_leaves_the_roster(
     assert f"session:{session.id}" not in _roster_by_id(temp_db)
 
 
-def test_ended_run_whose_child_still_holds_a_claim_is_a_dead_entry(
+def test_ended_run_whose_child_still_holds_a_claim_leaves_the_roster(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
@@ -1268,7 +1267,7 @@ def test_ended_run_whose_child_still_holds_a_claim_is_a_dead_entry(
         project_id=sample_project["id"],
     )
     SessionVariableManager(temp_db).set_variable(child.id, "_agent_type", "fixture-seat")
-    task = _claim_open_task(temp_db, sample_project["id"], child.id)
+    _claim_open_task(temp_db, sample_project["id"], child.id)
     manager = LocalAgentRunManager(temp_db)
     run = manager.create(
         parent_session_id=child.id,
@@ -1281,15 +1280,14 @@ def test_ended_run_whose_child_still_holds_a_claim_is_a_dead_entry(
     manager.complete(run.id)
     session_manager.update_session_status(child.id, "completed")
 
-    entry = _roster_by_id(temp_db)[f"run:{run.id}"]
+    roster = _roster_by_id(temp_db)
 
-    assert entry["lifecycle_status"] == "dead"
-    assert entry["definition_name"] == "fixture-seat"
-    assert entry["task"]["id"] == task.id
+    assert f"run:{run.id}" not in roster
+    assert f"session:{child.id}" not in roster
 
 
 @pytest.mark.parametrize("ended", [False, True], ids=["running", "ended"])
-def test_task_linked_run_without_child_uses_its_own_lifecycle(
+def test_task_linked_run_without_child_is_listed_only_while_live(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
@@ -1317,14 +1315,18 @@ def test_task_linked_run_without_child_uses_its_own_lifecycle(
     if ended:
         manager.complete(run.id)
 
-    entry = _roster_by_id(temp_db)[f"run:{run.id}"]
+    roster = _roster_by_id(temp_db)
 
+    if ended:
+        assert f"run:{run.id}" not in roster
+        return
+    entry = roster[f"run:{run.id}"]
     assert entry["session_id"] is None
     assert entry["task"]["id"] == task.id
-    assert entry["lifecycle_status"] == ("dead" if ended else "running")
+    assert entry["lifecycle_status"] == "running"
 
 
-def test_ended_run_with_released_claim_stays_until_its_linked_task_closes(
+def test_ended_run_with_released_claim_leaves_the_roster_while_its_task_is_open(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
@@ -1353,14 +1355,8 @@ def test_ended_run_with_released_claim_stays_until_its_linked_task_closes(
     assert released.claimed_by_session_id is None
 
     roster = _roster_by_id(temp_db)
-    entry = roster[f"run:{run.id}"]
-    assert entry["lifecycle_status"] == "dead"
-    assert entry["task"]["id"] == task.id
+    assert f"run:{run.id}" not in roster
     assert f"session:{child.id}" not in roster
-
-    LocalTaskManager(temp_db).close_task(task.id, closed_in_session_id=child.id)
-
-    assert f"run:{run.id}" not in _roster_by_id(temp_db)
 
 
 def test_ended_run_under_a_live_child_is_not_a_second_row(
