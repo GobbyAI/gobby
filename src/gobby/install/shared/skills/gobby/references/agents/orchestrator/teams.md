@@ -16,12 +16,12 @@ admitting an epic, or handling review, sign-off or a disposition close.
 ## Review and sign-off
 
 - Cost. Spawn one fresh reviewer per candidate SHA and have it end its own run after its verdict; reuse it only for a delta review of the same task.
-- Review fast path. Send a small, concrete finding straight to the developer; the same reviewer checks the delta, or a fresh reviewer reviews the new SHA. Run code and security review in parallel on one candidate; security review goes only to the standing Security Auditor. Every reviewer prompt carries the known sandbox issues: pytest can stall on teardown tests, and reviewers run `uv run --no-sync`.
+- Review fast path. Send a small, concrete finding straight to the developer; the same reviewer checks the delta, or a fresh reviewer reviews the new SHA. When the candidate changes a file on `project_policy.security_paths`, security review runs first: the code-reviewer gets that SHA only after the Security Auditor approves it, and a security rejection is fixed and re-audited before any code review. Otherwise run code and security review in parallel on one candidate. Security review goes only to the standing Security Auditor. Every reviewer prompt carries the known sandbox issues: pytest can stall on teardown tests, and reviewers run `uv run --no-sync`.
 - Sign-offs follow the selected workflow. Each reviewer records its own truthful attestation against the exact candidate reference and criteria evidence. Keep priority, ownership, contract decisions, activation and smoke tests with the responsible coordinator.
 - Reviewer selection. Review requirements come from installed definitions, rules and pipelines. The bundled `dev-team` pairs `developer` with `code-reviewer` and accepts no routed reviewer or legacy manager inputs. Code grants no authority by definition names.
 - Research report review. A researcher's report spike need not launch a DevTeam. Check the report against its cited primary evidence, then record your own `gobby-tasks:record_attestation` (kind `independent-review`, `approved` or `rejected`) on the exact candidate reference. The selected report policy requires `approve_report_review` on your installed definition. Close once that policy accepts the evidence.
 - Disposition closes. An authorized closer records a truthful disposition attestation with the chosen reason and evidence, including the replacement reference for superseded work. Preserve linked work and provenance. Preview the selected policy, then close once its requirements pass. Reasons carry no built-in role ownership.
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
-_Last verified: 2026-11-05_
+_Last verified: 2026-11-10_

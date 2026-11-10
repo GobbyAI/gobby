@@ -218,6 +218,20 @@
     },
     {
       "surface": "cli",
+      "command": "gobby build-sweep",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "src/gobby/cli/build_sweep.py",
+        "symbol": "build_sweep"
+      },
+      "verification": [
+        "source-audit",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby test-quality audit",
       "reference": "src/gobby/install/shared/skills/gobby/references/development/obligations.md",
       "implementation": {
