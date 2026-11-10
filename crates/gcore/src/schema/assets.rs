@@ -502,9 +502,15 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 494,
-        filename: "494_skills_live_name_slots.sql",
+        filename: "494_code_index_reconcile_receipts.sql",
+        checksum: "f450128071ac171b519d75b47c94770023288ef49d901b2d6cbb5887a83c65b6",
+        sql: include_str!("../../assets/schema/migrations/494_code_index_reconcile_receipts.sql"),
+    },
+    EmbeddedMigration {
+        version: 495,
+        filename: "495_skills_live_name_slots.sql",
         checksum: "fa41e53264261e7da9f476975a473ffa41d398b2356204a1e0d31b8bff0ff33a",
-        sql: include_str!("../../assets/schema/migrations/494_skills_live_name_slots.sql"),
+        sql: include_str!("../../assets/schema/migrations/495_skills_live_name_slots.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

@@ -39,6 +39,88 @@ GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
 PRUNE_BUDGET_VERSION_STDOUT = f"gcode {MIN_GCODE_PRUNE_BUDGET_VERSION}\n".encode()
 
 
+async def test_vector_rebuild_hands_the_caller_env_and_timeout_to_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The nightly grant env and budget reach the rebuild child, not the gateway default."""
+    processes = [
+        FakeProcess(stdout=PRUNE_BUDGET_VERSION_STDOUT),
+        FakeProcess(stdout=b'{"success": true, "rebuilt": true}'),
+    ]
+    spawned: list[tuple[tuple[Any, ...], Mapping[str, str] | None]] = []
+
+    async def fake_create_session_exec(
+        *args: Any,
+        env: Mapping[str, str] | None = None,
+        **_kwargs: Any,
+    ) -> FakeProcess:
+        spawned.append((args, env))
+        return processes.pop(0)
+
+    monkeypatch.setattr(spawn, "create_session_exec", fake_create_session_exec)
+    timeouts: list[float | None] = []
+
+    async def fake_wait_for(awaitable: Any, timeout: float | None = None) -> Any:
+        timeouts.append(timeout)
+        return await awaitable
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=7.0, rebuild_timeout_seconds=42.0)
+    grant = {"GOBBY_TEST_GRANT": "grant"}
+
+    assert await gateway.vector_rebuild(tmp_path, timeout=5.0, env=grant) == {
+        "success": True,
+        "rebuilt": True,
+    }
+
+    args, env = spawned[-1]
+    assert args[1:3] == ("vector", "rebuild")
+    assert env == grant
+    assert timeouts[-1] == 5.0
+
+
+async def test_maintenance_index_full_forces_the_full_index_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A forced maintenance index reaches the child as --full, after the existing args."""
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok"}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    await gateway.maintenance_index(tmp_path, full=True)
+
+    assert calls[1] == (
+        "/tmp/gcode",
+        "index",
+        "--project",
+        str(tmp_path),
+        "--skip-if-locked",
+        "--full",
+    )
+
+
+async def test_maintenance_index_default_keeps_the_incremental_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Routine maintenance stays incremental: no --full unless the caller asks for it."""
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok"}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    await gateway.maintenance_index(tmp_path)
+
+    assert calls[1] == ("/tmp/gcode", "index", "--project", str(tmp_path), "--skip-if-locked")
+
+
 async def test_managed_gcode_pin_matches_prune_budget_floor() -> None:
     assert GCODE_PIN == MIN_GCODE_PRUNE_BUDGET_VERSION
 

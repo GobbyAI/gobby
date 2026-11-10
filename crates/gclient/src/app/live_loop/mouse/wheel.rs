@@ -78,8 +78,8 @@ pub(super) fn overlay<W: WorkspaceView>(
 /// has confirmed so far, and a notch that would not move it is consumed. A
 /// tmux pane has no daemon-side scroll offset — the daemon skips the host
 /// verb for it and would answer with the client's own number — so its notch
-/// is consumed rather than pretending to scroll. Focus never moves: in gclient
-/// focus takes the lease, and a scroll is not a claim on the pane. A slot
+/// is consumed rather than pretending to scroll. Focus never moves on a
+/// scroll, since a scroll is not a claim on the pane. A slot
 /// whose pane has left the roster is stale until the next chrome sync and is
 /// left alone.
 pub(super) fn wheel<W: WorkspaceView>(
@@ -119,7 +119,7 @@ pub(super) fn wheel<W: WorkspaceView>(
             }
             let step = if up { count - 1 } else { 1 };
             chrome.activate_tab((chrome.active_index() + step) % count);
-            focus_active_tab(chrome, false)
+            focus_active_tab(chrome)
         }
         Hit::Machine(_)
         | Hit::Project(_)

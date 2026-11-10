@@ -25,10 +25,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::super::attention::{open_response_dialog, route_response_input};
 use super::super::{PaneId, Workspace};
-use super::control::{
-    focus_live_pane, observe_live_pane, release_live_control, send_live_report,
-    set_live_scroll_offset, take_live_control,
-};
+use super::control::{focus_live_pane, send_live_report, set_live_scroll_offset};
 use super::daemon_ops::{
     move_active_daemon_tab, move_daemon_tab, move_focused_pane_to_tab, rename_daemon_target,
     resize_daemon_split, sort_daemon_tabs, swap_live_slots,
@@ -50,9 +47,8 @@ mod sidebar;
 
 pub(super) use sidebar::toggle_sidebar_pin;
 
-/// Apply what `route_mouse` decided. Focus moves chrome first and then the
-/// lease (it follows focus), or only the workspace focus for an observe-only
-/// click; actions dispatch exactly as their chords would; a spawn goes through
+/// Apply what `route_mouse` decided. Focus moves chrome and the workspace
+/// focus together; actions dispatch exactly as their chords would; a spawn goes through
 /// the same request as `NewTerminal`; forwarded bytes go to the pane; a
 /// scroll moves the pane's viewport on its frame source; an attention click
 /// focuses its terminal and opens that entry's prompt; a link goes to
@@ -74,19 +70,14 @@ pub(super) async fn apply_live_mouse_outcome(
                 issue_response(workspace.daemon(), jobs, submission);
             }
         }
-        MouseOutcome::Focus { pane, observe_only } => {
+        MouseOutcome::Focus { pane } => {
             chrome.focus_pane(pane);
-            if observe_only {
-                observe_live_pane(workspace, pane);
-            } else {
-                focus_live_pane(workspace, pane);
-            }
+            focus_live_pane(workspace, pane);
         }
         MouseOutcome::Action(Action::Quit) => return Ok(true),
         MouseOutcome::Action(action) => {
             handle_live_action(workspace, chrome, outcomes, action).await?
         }
-        MouseOutcome::TakeFreeControl { pane } => workspace.request_control(pane, false),
         MouseOutcome::Spawn { placement } => {
             spawn_live_terminal(workspace, chrome, outcomes, placement).await?;
         }
@@ -311,11 +302,6 @@ pub(super) async fn handle_live_action(
                 close_live_tab(workspace, chrome, outcomes).await?;
             }
         }
-        Action::TakeControl | Action::TakeBack => {
-            if let Some(pane_id) = chrome.focused_pane() {
-                take_live_control(workspace, pane_id);
-            }
-        }
         Action::Respond => open_response_dialog(workspace, chrome, None).await?,
         Action::CopyMode => chrome.mode = Mode::Copy,
         // Help opens fresh: a search left from an earlier visit would hide
@@ -332,11 +318,6 @@ pub(super) async fn handle_live_action(
                 ..NavigatorState::default()
             };
             chrome.mode = Mode::Navigator;
-        }
-        Action::ReleaseControl | Action::Detach => {
-            if let Some(pane_id) = chrome.focused_pane() {
-                release_live_control(workspace, pane_id);
-            }
         }
         Action::PreviousTerminal | Action::CyclePanePrevious => {
             focus_relative_live_pane(workspace, chrome, -1).await?;

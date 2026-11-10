@@ -1,23 +1,18 @@
 //! herdr `src/ui/status.rs` (4) keep-set render tests.
 
-use std::collections::BTreeSet;
-
-use gobby_client::app::ControlState;
 use gobby_client::daemon::{DaemonError, Generation, RunRow, SidebarRows};
 use gobby_client::ui::chrome::{Mode, RowState};
 use gobby_client::ui::hit::Hit;
 use gobby_client::ui::status::{
-    control_indicator, copy_feedback_rect, render_status_line, state_dot, toast_cue_width,
-    toast_notification_rect, Toast, ToastKind,
+    copy_feedback_rect, render_status_line, state_dot, toast_cue_width, toast_notification_rect,
+    Toast, ToastKind,
 };
 use gobby_client::ui::status_segments::{agent_counts, AgentCounts};
 use gobby_client::ui::text::display_width_u16;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
-use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::Terminal;
 use serde_json::json;
 
 use super::fixtures::{cell, rect_rows, render};
@@ -120,121 +115,6 @@ parity_tests! {
             );
         }
     }
-}
-
-/// 2.5.2 (gclient-only, outside the keep-set): a focused pane whose edge is
-/// too narrow for its metadata keeps it at the head of the status line, and
-/// only an exception there is a button. Focus is a condition; Read-only and
-/// Uncertain take control back on a press, the pointer resting on them
-/// underlines their words, and the words, not the hue, tell the states apart.
-#[test]
-fn control_indicator_is_a_button() {
-    let palette = palette();
-    let mut ws = Workspace::scripted();
-    ws.daemon_mut().set_roster(json!({
-        "epoch": "e1",
-        "seq": 1,
-        "entries": []
-    }));
-    ws.reconcile_subscribe_first().expect("install roster");
-    ws.open_terminal("term-alpha", "native", "epoch")
-        .expect("open terminal");
-    let pane = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
-    let mut chrome = Chrome::dark();
-    chrome.open_pane(pane, "alpha");
-    chrome.compute_view(&ws, Rect::new(0, 0, 18, 10));
-    // Only a pane too narrow for any title hands it to the status row.
-    chrome
-        .view
-        .pane_infos
-        .iter_mut()
-        .find(|info| info.is_focused)
-        .expect("focused pane info")
-        .rect
-        .width = 4;
-
-    let mut indicator = None;
-    let focused = render(80, 1, |frame| {
-        indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator;
-    });
-    assert_eq!(indicator, None, "focus is not a button");
-    assert_eq!(
-        rect_rows(&focused, Rect::new(0, 0, 23, 1)),
-        vec!["   term-alpha · Focused".to_string()]
-    );
-
-    ws.pane_mut(pane).control = ControlState::LeaseLost;
-    ws.pane_mut(pane).take_back = true;
-    let lost = render(80, 1, |frame| {
-        indicator = render_status_line(frame, frame.area(), &ws, &chrome).control_indicator;
-    });
-    let indicator = indicator.expect("an exception draws the indicator");
-    let button = vec!["   term-alpha · Read-only".to_string()];
-    let words = || indicator.x + 1..indicator.right();
-    let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
-        words()
-            .map(|x| {
-                cell(terminal, x, indicator.y)
-                    .modifier
-                    .contains(Modifier::UNDERLINED)
-            })
-            .collect()
-    };
-    assert_eq!(rect_rows(&lost, indicator), button);
-    assert!(
-        underlined(&lost).iter().all(|cell| !cell),
-        "nothing is underlined until the pointer rests on the button"
-    );
-    assert_eq!(
-        cell(&lost, indicator.x + 1, indicator.y).fg,
-        palette.subtext0,
-        "a held pane reads in the held tone"
-    );
-
-    chrome.hover = Some(Hit::ControlIndicator);
-    let hovered = render(80, 1, |frame| {
-        render_status_line(frame, frame.area(), &ws, &chrome);
-    });
-    assert!(
-        underlined(&hovered).iter().all(|cell| *cell),
-        "hover underlines the whole label"
-    );
-    assert_eq!(
-        rect_rows(&hovered, indicator),
-        button,
-        "hover changes no text"
-    );
-
-    ws.pane_mut(pane).take_back = false;
-    ws.pane_mut(pane).control = ControlState::UncertainReadOnly;
-    let uncertain = render(80, 1, |frame| {
-        render_status_line(frame, frame.area(), &ws, &chrome);
-    });
-    assert!(
-        rect_rows(&uncertain, Rect::new(0, 0, 25, 1))[0].starts_with("   term-alpha · Uncertain"),
-        "Uncertain reads apart from Read-only"
-    );
-
-    // The sidebar's per-row control glyphs still read without hue.
-    let states = [
-        (ControlState::Observe, false),
-        (ControlState::Held, false),
-        (ControlState::LeaseLost, false),
-        (ControlState::UncertainReadOnly, false),
-        (ControlState::Held, true),
-    ];
-    let readings: BTreeSet<String> = states
-        .iter()
-        .map(|(control, take_back)| {
-            let (glyph, label, _) = control_indicator(*control, *take_back, &palette);
-            format!("{glyph} {label}")
-        })
-        .collect();
-    assert_eq!(
-        readings.len(),
-        states.len(),
-        "every state reads without hue: {readings:?}"
-    );
 }
 
 #[test]

@@ -76,8 +76,9 @@ gcode vector rebuild --format json
 
 Migration points in the Python daemon:
 
-- `CodeIndexTrigger` calls `gcode index --sync-projections` for daemon-triggered
-  indexing.
+- `CodeIndexTrigger` should call `gcode index --sync-projections` for daemon-triggered
+  indexing. Today no Python caller passes that flag; default requests still repair
+  missing vectors, and projection sync stays opt-in.
 - `sync_worker.py` stops rebuilding graph and vector projections directly and
   delegates clear/rebuild work to Rust.
 - `CodeIndexContext` drops projection lifecycle methods once callers route
@@ -128,13 +129,20 @@ deletes a version's projections before its hub rows.
 compares project-scoped `CodeFile.path` and `CodeSymbol.file_path` values
 against PostgreSQL `code_indexed_files`, deletes file-scoped graph projection
 data for missing paths, and then runs project-wide graph orphan cleanup once.
-`gcode vector cleanup-orphans` is the Qdrant counterpart: it scrolls
-`code_symbols_{project_id}` payloads filtered by `project_id`, compares
-distinct `file_path` values against PostgreSQL, and deletes orphaned vector
-points. Plain `gcode prune` composes stale-project pruning with both projection
-cleanup paths for every remaining indexed project. `gcode --project
-<path-or-name> prune` keeps projection cleanup scoped to the resolved project,
-and both modes report graph/vector degradation independently.
+`gcode vector reconcile` is the Qdrant counterpart. By default it is a
+read-only dry run: it scrolls `code_symbols_{project_id}`, reads PostgreSQL,
+and reports orphan points (IDs absent from `code_symbols`) and content versions
+with missing points, with an `inventory_digest`. `--apply --expect-digest
+<digest> --receipt <file>` deletes those orphans and resets `vectors_synced` on
+synced versions with missing points, under the maintenance lease and only
+while the digest still matches. See the
+[user guide](./gcode-user-guide.md#projection-reconciliation) for the classes
+and receipt rules.
+
+`gcode prune` sweeps no projection orphans. It invalidates stale projects and
+runs content GC, which deletes each collected version's graph and vector
+projections before its hub rows and then runs one graph orphan sweep per
+project whose graph facts it deleted.
 
 ## Report And Degradation Contract
 
@@ -157,4 +165,4 @@ all callers have moved off Python `CodeGraph`, Python graph/vector projection
 code in `sync_worker.py`, and projection lifecycle methods on
 `CodeIndexContext`.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-11-06_

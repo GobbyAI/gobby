@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -11,8 +12,8 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{timeout, Instant};
 
 use super::{
-    encoded_message_bytes, enqueue_control, send_control, write_outbound, ControlClose,
-    ControlOutbound, FrameMailbox, PushResult, REPLY_DELIVERY_GRACE,
+    encoded_message_bytes, enqueue_control, write_outbound, ControlClose, ControlOutbound,
+    FrameMailbox, OnWritten, PushResult, REPLY_DELIVERY_GRACE,
 };
 use crate::host::config::HostConfig;
 use crate::host::helpers::push_terminal_ansi;
@@ -380,7 +381,11 @@ async fn completed_rpc_reply_waits_for_outbound_capacity() {
     let (tx, mut rx) = mpsc::channel(1);
     enqueue_control(&tx, json!({"id": "held"})).expect("fill");
     let sender = tx.clone();
-    let wait = tokio::spawn(async move { send_control(&sender, json!({"id": "rpc"})).await });
+    let wait = tokio::spawn(async move {
+        sender
+            .send(ControlOutbound::Reply(json!({"id": "rpc"})))
+            .await
+    });
     tokio::task::yield_now().await;
     assert!(
         !wait.is_finished(),
@@ -716,6 +721,63 @@ async fn write_outbound_distinguishes_disconnect_from_peer_error() {
     drop(tx);
     let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
     assert_eq!(errored, ControlClose::Io);
+}
+
+/// The post-write hook runs once a reply is fully written. A failed write leaves
+/// it unrun so a retry can still be served, and an oversized reply that is
+/// replaced by the error line never runs it.
+#[tokio::test]
+async fn served_hook_runs_only_after_a_successful_write() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let hook = |runs: &Arc<AtomicUsize>| {
+        let runs = Arc::clone(runs);
+        OnWritten(Box::new(move || {
+            runs.fetch_add(1, Ordering::SeqCst);
+        }))
+    };
+
+    let (tx, rx) = mpsc::channel(4);
+    tx.try_send(ControlOutbound::Served(json!({"id": "ok"}), hook(&runs)))
+        .expect("enqueue");
+    drop(tx);
+    let closed = write_outbound(Vec::<u8>::new(), rx, Duration::from_millis(50)).await;
+    assert_eq!(closed, ControlClose::Disconnected);
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "a written reply must run its hook"
+    );
+
+    let (tx, rx) = mpsc::channel(4);
+    tx.try_send(ControlOutbound::Served(
+        json!({"id": "failed"}),
+        hook(&runs),
+    ))
+    .expect("enqueue");
+    drop(tx);
+    let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
+    assert_eq!(errored, ControlClose::Io);
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "a failed write must not run the hook"
+    );
+
+    let (tx, rx) = mpsc::channel(4);
+    let blob = "x".repeat(2 * 1024 * 1024);
+    tx.try_send(ControlOutbound::Served(
+        json!({"id": "big", "blob": blob}),
+        hook(&runs),
+    ))
+    .expect("enqueue");
+    drop(tx);
+    let closed = write_outbound(Vec::<u8>::new(), rx, Duration::from_millis(50)).await;
+    assert_eq!(closed, ControlClose::Disconnected);
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "a substituted error line must not run the hook"
+    );
 }
 
 #[tokio::test]

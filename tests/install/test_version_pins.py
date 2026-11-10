@@ -58,6 +58,18 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         # gcode: commit-bound search scope verification changed in #24029 under installed 1.9.80.
         # gcode: admitted-version read binding changed in #23834 under installed 1.9.81.
         ("gcode", "1.9.82"),
+        # gcode: history eligibility at the current config changed in #23582 under installed 1.9.105.
+        ("gcode", "1.9.106"),
+        # gcode: reconcile apply under the maintenance lease changed in #23580 under installed 1.9.106.
+        ("gcode", "1.9.107"),
+        # gcode: prune help text and dead inventory removal changed in #25799 under installed 1.9.107.
+        ("gcode", "1.9.108"),
+        # gcode: vector prune on sync, missing-vector repair, explicit-file repair scope, pinned-overlay scroll guard, bounded hook lock wait and timed-out lock paths persisted for the next run changed in #25810 under installed 1.9.108.
+        ("gcode", "1.9.109"),
+        # gcode: queued explicit-path and whole-tree batches checked against the project root, and the queue dir keyed by a validated project UUID, changed in #25810 under installed 1.9.109.
+        ("gcode", "1.9.110"),
+        # gcode: nightly vector reconcile receipts, the apply switch and the reconcile migration changed in #23584 under installed 1.9.110.
+        ("gcode", "1.9.111"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
         # #25710: gcore's embedded catalog manifest changed, so every shipped binary whose

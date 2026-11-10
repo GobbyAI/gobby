@@ -767,3 +767,117 @@ fn dirty_version_sync_touches_only_named_flags_and_version() {
         (true, false)
     );
 }
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn file_symbol_ids_cover_every_content_version_of_one_file() {
+    let (mut conn, project_id, _cleanup) = seeded_file("file-symbol-ids", "hash-current");
+    upsert_content_version(&mut conn, &project_id, "hash-old");
+    let other = IndexedFile {
+        id: IndexedFile::make_id(&project_id, "src/other.rs", "hash-current"),
+        project_id: project_id.clone(),
+        file_path: "src/other.rs".to_string(),
+        language: "rust".to_string(),
+        content_hash: "hash-current".to_string(),
+        symbol_count: 0,
+        byte_size: 16,
+        indexed_at: String::new(),
+    };
+    api::upsert_file(&mut conn, &other).expect("upsert other file");
+    let project_uuid = uuid::Uuid::parse_str(&project_id).expect("project uuid");
+    let current = uuid::Uuid::from_u128(0x1);
+    let old = uuid::Uuid::from_u128(0x2);
+    let elsewhere = uuid::Uuid::from_u128(0x3);
+    for (symbol_id, file_path, hash) in [
+        (current, "src/lib.rs", "hash-current"),
+        (old, "src/lib.rs", "hash-old"),
+        (elsewhere, "src/other.rs", "hash-current"),
+    ] {
+        insert_code_symbol(&mut conn, project_uuid, symbol_id, file_path, hash);
+    }
+
+    let ids = file_symbol_ids(&mut conn, &project_id, "src/lib.rs").expect("file symbol ids");
+
+    assert_eq!(ids, vec![current.to_string(), old.to_string()]);
+}
+
+fn insert_code_symbol(
+    conn: &mut postgres::Client,
+    project_uuid: uuid::Uuid,
+    symbol_id: uuid::Uuid,
+    file_path: &str,
+    hash: &str,
+) {
+    conn.execute(
+        "INSERT INTO code_symbols
+            (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
+             byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
+             file_content_hash, content_hash, summary, created_at, updated_at)
+         VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
+             1, 1, 'pub fn indexed()', NULL, NULL, $4, $4, NULL, NOW(), NOW())",
+        &[&symbol_id, &project_uuid, &file_path, &hash],
+    )
+    .expect("insert symbol");
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[cfg(feature = "ai")]
+fn prune_after_reindex_deletes_only_points_whose_symbol_is_gone() {
+    use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
+    use crate::vector::code_symbols::tests::spawn_http_responses;
+    use crate::vector::code_symbols::{CodeSymbolVectorLifecycle, prune_stale_file_points};
+
+    let (mut conn, project_id, _cleanup) = seeded_file("prune-reindex", "hash-current");
+    let project_uuid = uuid::Uuid::parse_str(&project_id).expect("project uuid");
+    // The re-index removed the vanished symbol's row; only the survivor remains.
+    let survivor = uuid::Uuid::from_u128(0x11);
+    insert_code_symbol(
+        &mut conn,
+        project_uuid,
+        survivor,
+        "src/lib.rs",
+        "hash-current",
+    );
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (
+            200,
+            serde_json::json!({"result": {"count": 1}, "status": "ok"}),
+        ),
+        (
+            200,
+            serde_json::json!({"result": {"operation_id": 22, "status": "completed"}, "status": "ok"}),
+        ),
+    ]);
+    let lifecycle = CodeSymbolVectorLifecycle::new(
+        project_id.clone(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle");
+
+    let pruned = prune_stale_file_points(&lifecycle, &mut conn, &project_id, "src/lib.rs", &[])
+        .expect("prune after re-index");
+    let requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(pruned, 1);
+    assert!(requests[1].contains(&format!(r#""must_not":[{{"has_id":["{survivor}"]}}]"#)));
+}

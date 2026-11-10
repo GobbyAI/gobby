@@ -9,7 +9,6 @@ use crate::config::Context;
 use crate::db;
 use crate::models::Symbol;
 use crate::output::{self, Format};
-use crate::savings;
 use crate::visibility;
 
 #[derive(Clone, Debug, Serialize)]
@@ -23,8 +22,6 @@ pub(super) struct RetrievedSymbol {
 pub(super) struct PreparedSymbolBatch {
     pub(super) results: Vec<RetrievedSymbol>,
     pub(super) missing_ids: Vec<String>,
-    total_file_bytes: usize,
-    total_symbol_bytes: usize,
 }
 
 pub(super) fn prepare_symbol_batch(
@@ -38,8 +35,6 @@ pub(super) fn prepare_symbol_batch(
         .collect::<BTreeMap<_, _>>();
     let mut results = Vec::with_capacity(ids.len());
     let mut missing_ids = Vec::new();
-    let mut total_file_bytes = 0usize;
-    let mut total_symbol_bytes = 0usize;
 
     for id in ids {
         let Some(symbol) = by_id.get(id).cloned() else {
@@ -47,10 +42,6 @@ pub(super) fn prepare_symbol_batch(
             continue;
         };
         let source = read_symbol_source(root, &symbol)?;
-        if let Some(source) = &source {
-            total_file_bytes = total_file_bytes.saturating_add(source.file_bytes);
-            total_symbol_bytes = total_symbol_bytes.saturating_add(source.symbol_bytes);
-        }
         results.push(RetrievedSymbol {
             symbol,
             source: source.map(|source| source.text),
@@ -60,8 +51,6 @@ pub(super) fn prepare_symbol_batch(
     Ok(PreparedSymbolBatch {
         results,
         missing_ids,
-        total_file_bytes,
-        total_symbol_bytes,
     })
 }
 
@@ -129,16 +118,6 @@ pub fn symbols(
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let symbols = visibility::visible_symbols_by_ids(&mut conn, ctx, ids)?;
     let batch = prepare_symbol_batch(&ctx.project_root, ids, symbols)?;
-
-    if batch.total_symbol_bytes > 0 && batch.total_file_bytes > batch.total_symbol_bytes {
-        let url = gobby_core::daemon_url::daemon_url()?;
-        savings::report_savings(
-            &url,
-            batch.total_file_bytes,
-            batch.total_symbol_bytes,
-            ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
-        );
-    }
 
     let (total, limit, results) = token_budget::window(batch.results, offset, limit);
     let meta = token_budget::CollectionPageMeta {

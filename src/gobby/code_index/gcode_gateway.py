@@ -12,10 +12,12 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path, PurePath, PureWindowsPath
 from time import perf_counter
 from typing import Any
 
+from gobby.code_index.gcode_reconcile import GcodeReconcileMixin
 from gobby.code_index.gcode_versions import (
     GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION,
     MIN_GCODE_GRAPH_VERSION,
@@ -29,6 +31,14 @@ from gobby.runtime_output import (
 )
 from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
+
+
+class GcodeIndexLock(Enum):
+    """How an index run treats a project lock another indexer holds."""
+
+    SKIP = "skip"  # exit 3 at once; the caller owns the retry
+    WAIT = "wait"  # block until the lock frees, under gcode's bounded wait
+
 
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
@@ -406,7 +416,7 @@ def _classify_gcode_command_error(
     return GcodeCommandError(command, returncode, stderr_text, stdout=stdout_text)
 
 
-class GcodeGateway:
+class GcodeGateway(GcodeReconcileMixin):
     """Small async subprocess wrapper for gcode projection commands."""
 
     def __init__(
@@ -608,10 +618,18 @@ class GcodeGateway:
             env=env,
         )
 
-    async def vector_rebuild(self, project_root: Path) -> dict[str, Any]:
+    async def vector_rebuild(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        budget = self._rebuild_timeout_seconds if timeout is None else timeout
         return await self._run_json(
             ["vector", "rebuild", "--project", str(project_root)],
-            timeout=self._rebuild_timeout_seconds,
+            timeout=budget,
+            env=env,
         )
 
     async def prune(self, project_root: Path) -> dict[str, Any]:
@@ -624,12 +642,15 @@ class GcodeGateway:
         self,
         project_root: Path,
         *,
+        full: bool = False,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
+        # --full skips the incremental hash check, which keeps unchanged file records.
+        flags = ["--full"] if full else []
         return await self._run_command_result(
-            [binary, "index", "--project", str(project_root), "--skip-if-locked"],
+            [binary, "index", "--project", str(project_root), "--skip-if-locked", *flags],
             timeout=timeout,
             env=env,
         )
@@ -652,6 +673,7 @@ class GcodeGateway:
         *,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        lock: GcodeIndexLock = GcodeIndexLock.SKIP,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         base_env = env if env is not None else self._child_env
@@ -665,7 +687,7 @@ class GcodeGateway:
                 str(project_root),
                 *(f"--files={file}" for file in files),
                 "--quiet",
-                "--skip-if-locked",
+                *(["--skip-if-locked"] if lock is GcodeIndexLock.SKIP else []),
                 "--format",
                 "json",
             ],

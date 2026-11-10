@@ -214,3 +214,86 @@ fn skips_ast_source_file_with_late_nul_byte() {
         None
     );
 }
+
+fn init_git_repository(root: &Path) {
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(root)
+        .status()
+        .expect("initialize test repository");
+    assert!(status.success());
+}
+
+#[test]
+fn history_eligibility_applies_hidden_allowlist() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, ".gobby/screenshots/shot.md", b"# Screenshot\n");
+    write_file(root, ".gobby/plans/plan.md", b"# Plan\n");
+    let excludes: Vec<&str> = Vec::new();
+    let eligibility = HistoryPathEligibility::new(root, &excludes, true);
+
+    assert!(
+        !eligibility.is_eligible(".gobby/screenshots/shot.md"),
+        "a hidden path outside the allowlist is never indexed, so history cannot protect it",
+    );
+    assert!(
+        eligibility.is_eligible(".gobby/plans/plan.md"),
+        "an allowlisted hidden path is indexed, so history may protect it",
+    );
+}
+
+#[test]
+fn history_eligibility_respects_gitignore_for_existing_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_git_repository(root);
+    write_file(root, ".gitignore", b"/wiki/\n");
+    write_file(root, "wiki/page.md", b"# Retired vault\n");
+    write_file(root, "src/lib.rs", b"pub fn kept() {}\n");
+    let excludes: Vec<&str> = Vec::new();
+
+    let respecting = HistoryPathEligibility::new(root, &excludes, true);
+    assert!(
+        !respecting.is_eligible("wiki/page.md"),
+        "an existing gitignored file is not indexed, so history cannot protect it",
+    );
+    assert!(respecting.is_eligible("src/lib.rs"));
+    assert!(
+        respecting.is_eligible("wiki/deleted.md"),
+        "a missing path is never gitignore-excluded",
+    );
+
+    let ignoring = HistoryPathEligibility::new(root, &excludes, false);
+    assert!(
+        ignoring.is_eligible("wiki/page.md"),
+        "without respect_gitignore the gitignored file is indexed, so history may protect it",
+    );
+}
+
+#[test]
+fn history_eligibility_ignores_file_size() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_git_repository(root);
+    // One byte over the indexing cap: plain ASCII, not ignored, so only size excludes it.
+    let oversized = vec![b'a'; crate::index::MAX_FILE_SIZE as usize + 1];
+    write_file(root, "data/large.txt", &oversized);
+    let excludes: Vec<&str> = Vec::new();
+
+    let eligibility = HistoryPathEligibility::new(root, &excludes, true);
+    assert!(
+        eligibility.is_eligible("data/large.txt"),
+        "an oversized file that is not ignored stays eligible, so history still protects it",
+    );
+    assert_eq!(
+        classify_explicit_file_with_options(
+            root,
+            &root.join("data/large.txt"),
+            &excludes,
+            DiscoveryOptions::default(),
+        ),
+        None,
+        "classification still excludes the oversized file from indexing",
+    );
+}

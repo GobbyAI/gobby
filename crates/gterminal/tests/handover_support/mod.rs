@@ -55,7 +55,6 @@ pub struct HelperPane {
     /// The child exits in the window while frozen; its zombie crosses exec.
     pub exits_in_window: bool,
     pub title: String,
-    pub input_grant: Option<String>,
     /// Carries a prepared reservation and an `Entitled` observer bind.
     pub entitled: bool,
     /// The host theme the pane starts with; `None` is the default theme.
@@ -75,7 +74,6 @@ impl HelperPane {
             recorded_exit: false,
             exits_in_window: false,
             title: String::new(),
-            input_grant: None,
             entitled: false,
             theme: None,
         }
@@ -452,7 +450,6 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
             dropped_bytes: 0,
             total_bytes: 0,
             truncated: false,
-            input_grant: pane.input_grant.clone(),
             locator: None,
             reported_cwd: None,
             reservation_id: reservation_id.clone(),

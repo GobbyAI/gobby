@@ -627,7 +627,7 @@ fn build_carries_definition_name_and_task_title() {
             PROJECT.to_string(),
             vec![RunRow {
                 run_id: "run-b".to_string(),
-                agent_name: Some("backend-developer".to_string()),
+                agent_name: Some("sample-worker".to_string()),
                 provider: Some("codex".to_string()),
                 status: "running".to_string(),
                 ..Default::default()
@@ -657,13 +657,13 @@ fn build_carries_definition_name_and_task_title() {
     let run_row = &model.agents[0];
     assert_eq!(
         run_row.agent_definition_name.as_deref(),
-        Some("backend-developer")
+        Some("sample-worker")
     );
     assert_eq!(run_row.task_title.as_deref(), Some("Agent data model"));
     assert_eq!(run_row.task_ref.as_deref(), Some("#22744"));
     assert_eq!(run_row.context_percent, Some(42));
     assert_eq!(run_row.tokens_used, Some(128_000));
-    assert_eq!(run_row.definition_label(), "backend-developer");
+    assert_eq!(run_row.definition_label(), "sample-worker");
     let claude_code_row = &model.agents[1];
     assert_eq!(claude_code_row.agent_definition_name, None);
     assert_eq!(claude_code_row.task_title, None);
@@ -679,12 +679,12 @@ fn build_carries_definition_name_and_task_title() {
 fn roster_seat_title_survives_task_titles_and_missing_run_rows() {
     let mut seat = entry("session:s", Some("terminal-s"));
     seat.session_id = Some("s".into());
-    seat.definition_title = Some("Lane 1 Developer".into());
+    seat.definition_title = Some("Lane 1 Worker".into());
     let mut rows = SidebarRows::default();
     for (source, title, expected) in [
-        ("task", "Fix attention", "Lane 1 Developer"),
-        ("provisional", "Codex", "Lane 1 Developer"),
-        ("definition", "Lane 1 Developer", "Lane 1 Developer"),
+        ("task", "Fix attention", "Lane 1 Worker"),
+        ("provisional", "Codex", "Lane 1 Worker"),
+        ("definition", "Lane 1 Worker", "Lane 1 Worker"),
         ("manual", "My custom seat", "My custom seat"),
     ] {
         rows.sessions.insert(
@@ -700,7 +700,7 @@ fn roster_seat_title_survives_task_titles_and_missing_run_rows() {
         assert_eq!(model.agents[0].definition_label(), expected, "{source}");
     }
     let model = model(&SidebarRows::default(), &[seat], &[]);
-    assert_eq!(model.agents[0].definition_label(), "Lane 1 Developer");
+    assert_eq!(model.agents[0].definition_label(), "Lane 1 Worker");
 }
 
 /// A parked session's ref shows, and a seat moved onto a successor session

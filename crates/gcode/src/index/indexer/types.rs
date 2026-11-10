@@ -68,6 +68,9 @@ pub enum IndexDegradation {
     HotspotSnapshotFailed {
         message: String,
     },
+    VectorRepairFailed {
+        message: String,
+    },
     ParentProjectionSyncFailed {
         parent_project_id: String,
         target: ProjectionTarget,

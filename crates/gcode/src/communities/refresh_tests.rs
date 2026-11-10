@@ -400,6 +400,7 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 false,
                 false,
                 false,
+                None,
                 crate::output::Format::Json,
             )
             .expect_err("index positional foreign path is denied");
@@ -617,6 +618,7 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 false,
                 false,
                 false,
+                None,
                 crate::output::Format::Json,
             )
             .expect_err("review assignment cannot run index writes");

@@ -2,33 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 
 from gobby.code_index.models import IndexedFile, Symbol
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.runtime_grants.launch import write_grant_file
-from gobby.runtime_grants.schema import (
-    AIUnavailableCapability,
-    GrantBundle,
-    GrantCapabilities,
-    GrantDeployment,
-    GrantPrincipal,
-    PostgresDirect,
-    SchemaIdentity,
-    UnavailableCapability,
-)
-from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.machine_id import get_machine_id
-from gobby.utils.native_bin import resolve_native_bin
+from tests.fixtures.gcode_binary import cache_interactive_grant, interactive_grant
 
 pytestmark = pytest.mark.integration
 
@@ -46,68 +31,18 @@ class Worker:
 CHANGED_SOURCE = INITIAL_SOURCE.replace("Hello", "Hi")
 
 
-def _interactive_grant(*, project_id: str, machine_id: str, dsn: str) -> GrantBundle:
-    # This fixture owns an ordinary per-test hub, not a managed agent DB role.
-    now = int(time.time())
-    unsigned = GrantBundle(
-        config_revision=1,
-        deployment=GrantDeployment(token="cafebabedeadbeef", fencing_epoch=1),
-        schema_identity=SchemaIdentity.model_validate(expected_schema_identity()),
-        principal=GrantPrincipal(
-            kind="interactive",
-            machine_id=machine_id,
-            project_id=project_id,
-            execution_id=None,
-            session_id=None,
-        ),
-        capabilities=GrantCapabilities(
-            postgres=PostgresDirect(
-                dsn=dsn,
-                role_name="gobby_grant_fixture",
-                credential_generation=1,
-                valid_until=now + 86_400,
-            ),
-            falkordb=UnavailableCapability(),
-            qdrant=UnavailableCapability(),
-            embed=AIUnavailableCapability(),
-            text_generate=AIUnavailableCapability(),
-            tool_chat=AIUnavailableCapability(),
-            vision_extract=AIUnavailableCapability(),
-            audio_transcribe=AIUnavailableCapability(),
-            broker_operations=(),
-        ),
-        issued_at=now,
-        expires_at=now + 86_400,
-    )
-    return sign_grant(unsigned, "secret")
-
-
-def _cache_interactive_grant(home: Path, daemon_url: str, grant: GrantBundle) -> None:
-    write_grant_file(
-        home / "grants" / grant.deployment.token / f"{grant.principal.project_id}.json",
-        grant,
-    )
-    endpoint = daemon_url.strip().rstrip("/")
-    digest = hashlib.sha256(endpoint.encode()).hexdigest()[:16]
-    binding = home / "grants" / "bindings" / f"{digest}.json"
-    binding.parent.mkdir(parents=True, exist_ok=True)
-    binding.write_text(
-        json.dumps({"endpoint": endpoint, "deployment_token": grant.deployment.token})
-    )
-    binding.chmod(0o600)
-
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def _gcode_bin() -> str:
-    debug = ROOT / "target" / "debug" / "gcode"
-    if debug.is_file():
-        return str(debug)
-    found = resolve_native_bin("gcode")
-    if found is None:
-        pytest.skip("gcode binary is not installed")
-    return found
+    # The checkout's build is the writer under test. Gobby redirects Cargo output through
+    # CARGO_TARGET_DIR, so that location wins over ROOT/target. An installed binary is another
+    # release with another schema identity, so it is never substituted.
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
+    debug = target / "debug" / "gcode"
+    if not debug.is_file():
+        pytest.skip(f"checkout gcode build missing at {debug}; run cargo build -p gobby-code")
+    return str(debug)
 
 
 def _run_gcode(gcode_bin: str, root: Path, env: dict[str, str], *args: str) -> None:
@@ -228,21 +163,21 @@ def test_real_gcode_writer_matches_python_model_contract(
         "INSERT INTO project_checkouts (machine_id, project_id, root_path) VALUES (%s, %s, %s)",
         (machine_id, project_id, str(root.resolve())),
     )
-    grant = _interactive_grant(
+    grant = interactive_grant(
         project_id=project_id,
         machine_id=machine_id,
         dsn=scoped_database_url,
     )
-    _cache_interactive_grant(gobby_home, daemon_url, grant)
+    cache_interactive_grant(gobby_home, daemon_url, grant)
 
     _run_gcode(gcode_bin, root, env, "init", "--quiet")
     project_id = _project_id(root)
-    grant = _interactive_grant(
+    grant = interactive_grant(
         project_id=project_id,
         machine_id=machine_id,
         dsn=scoped_database_url,
     )
-    _cache_interactive_grant(gobby_home, daemon_url, grant)
+    cache_interactive_grant(gobby_home, daemon_url, grant)
     request.addfinalizer(lambda: code_storage.delete_project_index(project_id))
     _run_gcode(gcode_bin, root, env, "index", "--full", "--quiet")
 

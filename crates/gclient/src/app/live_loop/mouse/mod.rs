@@ -97,13 +97,10 @@ pub enum Placement {
 pub enum MouseOutcome {
     /// Consumed by chrome; nothing else sees it.
     Handled,
-    /// Focus `pane`; `observe_only` (alt+click) moves focus without taking
-    /// control, the gobby lease escape.
-    Focus { pane: PaneId, observe_only: bool },
+    /// Focus `pane`.
+    Focus { pane: PaneId },
     /// A keymap action, dispatched exactly as its chord would be.
     Action(Action),
-    /// A completed pane click requests control only if no other viewer holds it.
-    TakeFreeControl { pane: PaneId },
     /// Spawn a terminal and place it.
     Spawn { placement: Placement },
     /// Bytes for a pane: a forwarded SGR report where it reports mouse, or
@@ -407,9 +404,9 @@ fn settings_mouse<W: WorkspaceView>(
 
 /// Focus the active tab's focused pane. A tab whose slots have all gone is
 /// still activated; there is just nothing to focus.
-fn focus_active_tab(chrome: &Chrome, observe_only: bool) -> MouseOutcome {
+fn focus_active_tab(chrome: &Chrome) -> MouseOutcome {
     match chrome.focused_pane() {
-        Some(pane) => MouseOutcome::Focus { pane, observe_only },
+        Some(pane) => MouseOutcome::Focus { pane },
         None => MouseOutcome::Handled,
     }
 }
@@ -576,11 +573,8 @@ mod tests {
         let (ws, mut chrome, _, other, (col, row)) = split_chrome();
         assert_eq!(
             route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::NONE)),
-            MouseOutcome::Focus {
-                pane: other,
-                observe_only: true
-            },
-            "the press focuses the other pane in observe mode until release"
+            MouseOutcome::Focus { pane: other },
+            "the press focuses the other pane"
         );
         chrome.prefs.mouse_capture = false;
         assert_eq!(
@@ -590,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn route_mouse_focuses_the_other_pane_and_alt_observes() {
+    fn route_mouse_focuses_the_other_pane_on_alt_click() {
         let (ws, mut chrome, (fcol, frow), other, (col, row)) = split_chrome();
         assert_eq!(
             route_mouse(&ws, &mut chrome, &down(fcol, frow, KeyModifiers::NONE)),
@@ -601,10 +595,7 @@ mod tests {
         assert!(chrome.selection.is_some());
         assert_eq!(
             route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::ALT)),
-            MouseOutcome::Focus {
-                pane: other,
-                observe_only: true
-            }
+            MouseOutcome::Focus { pane: other }
         );
         chrome.mode = Mode::Settings;
         assert_eq!(
@@ -817,13 +808,26 @@ mod tests {
                 KeyModifiers::NONE,
             ),
         );
+        // Alt is an ordinary modifier now: the press reports to the pane with
+        // the Alt bit (8) and focuses it, like any other press.
         assert_eq!(
             route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::ALT)),
-            MouseOutcome::Focus {
+            MouseOutcome::FocusWrite {
                 pane: other,
-                observe_only: true
+                bytes: b"\x1b[<8;2;2M".to_vec()
             },
-            "alt+click observes without writing"
+            "alt is an ordinary modifier, so the press reports with the Alt bit"
+        );
+        // The release closes the forwarded press before the scroll checks.
+        route_mouse(
+            &ws,
+            &mut chrome,
+            &at(
+                MouseEventKind::Up(MouseButton::Left),
+                col,
+                row,
+                KeyModifiers::ALT,
+            ),
         );
         assert_eq!(
             route_mouse(

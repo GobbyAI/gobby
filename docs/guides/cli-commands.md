@@ -259,7 +259,17 @@ Operator token-ledger diagnostics:
 gobby tokens stats [--project PROJECT]
 gobby tokens audit --session SESSION [--project PROJECT]
 gobby tokens audit --all [--project PROJECT]
+gobby tokens ledger (--session REF | --task REF) [--cursor CURSOR] [--limit N] [--json]
+gobby tokens quota [PROVIDER...]
 ```
+
+`ledger` prints one session's or one task's per-call usage page: totals,
+per-source totals, reported spend by unit, durations, coverage and
+`next_cursor`. Unknown spend prints as unknown with its reason, never as `0`.
+`--json` emits the page as the store returns it. `quota` reads the running
+daemon's capacity snapshot for each named provider, or for every known provider
+when none is named, and exits 1 when the daemon is unreachable. See
+[Token Usage And Savings](observability.md#token-usage-and-savings).
 
 Audit compares transcript-derived events, stored token events, and cached
 session usage. An explicit unknown project fails before token-ledger access.
@@ -1157,6 +1167,8 @@ exit 2 because remote clients hold no datastore credentials.
 ```bash
 gobby sync [--force] [--verify-only] [--fail-on-verify] [--type TYPE] [--verbose] [--reinstall rules|agents|pipelines|variables|all]
 gobby tokens audit [--session SESSION] [--all] [--fix] [--project PROJECT]
+gobby tokens ledger (--session REF | --task REF) [--cursor CURSOR] [--limit N] [--json]
+gobby tokens quota [PROVIDER...]
 gobby comms status
 gobby comms send [--redact] CHANNEL MESSAGE
 gobby comms channels list

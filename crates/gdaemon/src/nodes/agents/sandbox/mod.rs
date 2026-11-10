@@ -44,6 +44,8 @@ pub struct PolicyInputs {
     pub workspace: PathBuf,
     pub home: PathBuf,
     pub gobby_home: PathBuf,
+    /// Additional credential roots resolved by the trusted hub, never by the seat environment.
+    pub credential_authority_roots: Vec<PathBuf>,
     /// The operator account's bootstrap credential, from the passwd entry (see
     /// `operator_bootstrap_path`). `None` when the account has no passwd entry. The policy denies
     /// it whatever HOME or GOBBY_HOME name, so the environment never supplies it.

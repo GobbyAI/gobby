@@ -16,7 +16,9 @@ pytestmark = pytest.mark.unit
 async def test_bridge_shares_lease_and_leaves_external_options_alone() -> None:
     registry = TerminalLeaseRegistry()
     socket = object()
-    attach = await registry.attach("term-ext", frame_delivery="proxy", websocket=socket)
+    attach = await registry.attach(
+        "term-ext", frame_delivery="proxy", websocket=socket, viewer="web"
+    )
     refused = registry.admit_write(
         "term-ext",
         websocket=socket,
@@ -27,7 +29,7 @@ async def test_bridge_shares_lease_and_leaves_external_options_alone() -> None:
         payload=b"x",
     )
     assert refused.ok is False
-    gobby = await registry.attach("term-gobby", frame_delivery="proxy")
+    gobby = await registry.attach("term-gobby", frame_delivery="proxy", viewer="web")
     granted = await registry.take_control("term-gobby", gobby.attachment_id, takeover=False)
     assert granted.granted is True
 

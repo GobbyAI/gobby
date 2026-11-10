@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use crate::app::{ControlState, PaneId};
+use crate::app::PaneId;
 use crate::theme::ThemeName;
 use crate::ui::chrome::attention_pane;
 use crate::ui::sidebar::{agent_blocked, ALL_MACHINES};
@@ -85,9 +85,8 @@ fn move_to_tab_items(chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
 
 /// herdr `ContextMenu::items` for a pane, in its order: rename, clear the
 /// label it has, swap with the focused pane when it is another pane, the
-/// splits, zoom or unzoom by the active tab, the lease item for its control
-/// state, respond while an attention entry blocks on it, copy mode, the
-/// right-click passthrough flip, close.
+/// splits, zoom or unzoom by the active tab, respond while an attention entry
+/// blocks on it, copy mode, the right-click passthrough flip, close.
 pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
     let state = ws.pane(pane);
     let zoomed = chrome.is_zoomed();
@@ -119,7 +118,6 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
         pane: Some(pane),
     })));
     items.push(move_to_tab_row(chrome, pane));
-    items.push(control_item(state, pane));
     if let Some(entry_id) = blocked_entry(ws, pane) {
         items.push(item("Respond", MenuAction::Respond(entry_id)));
     }
@@ -222,11 +220,6 @@ pub(super) fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuI
         item("Mark seen", MenuAction::MarkSeen(id())),
         attention_id(ws, entry_id).is_some(),
     ));
-    // Disabled no-pane rows never dispatch either `Act` placeholder.
-    let control = pane.map_or_else(
-        || item("Take control", MenuAction::Act(Action::TakeControl)),
-        |pane| control_item(ws.pane(pane), pane),
-    );
     // An orphaned row has no host to close; the daemon can only destroy it.
     let close = match orphaned_terminal(ws, entry_id) {
         Some(terminal_id) => item(
@@ -244,7 +237,7 @@ pub(super) fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuI
             pane.is_some(),
         ),
     };
-    items.extend([enabled_if(control, pane.is_some()), close]);
+    items.push(close);
     items
 }
 
@@ -454,7 +447,6 @@ pub(super) fn global_items() -> Vec<MenuItem> {
         // Always enabled: the candidates are fetched on activation, and an
         // empty result reports itself in a toast.
         item("Destroy orphaned terminals…", MenuAction::DestroyOrphans),
-        item("Detach", MenuAction::Act(Action::Detach)),
         // The chord is prefix+shift+q; the menu is where a new user finds it.
         item("Quit", MenuAction::Act(Action::Quit)),
     ]
@@ -492,13 +484,6 @@ pub(in crate::app::live_loop) fn sort_tabs_item(chrome: &Chrome) -> MenuItem {
         item("Sort tabs A–Z", MenuAction::Act(Action::SortTabs)),
         daemon_tabs.count() >= 2,
     )
-}
-
-fn control_item(state: &crate::app::Pane, pane: PaneId) -> MenuItem {
-    match state.control {
-        ControlState::Held => item("Release control", MenuAction::ReleaseControl(pane)),
-        _ => item("Take control", MenuAction::TakeControl(pane)),
-    }
 }
 
 pub(in crate::app::live_loop) fn blocked_entry<W: WorkspaceView>(

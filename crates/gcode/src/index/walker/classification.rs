@@ -55,7 +55,7 @@ pub fn classify_explicit_file_with_options(
     options: DiscoveryOptions,
 ) -> Option<FileClassification> {
     let context = HiddenPathContext::load(root);
-    if !explicit_path_visible(root, path, options, &context) {
+    if !explicit_path_visible(root, path, options, &context, Some(MAX_FILE_SIZE)) {
         return None;
     }
     classify_file(root, path, exclude_patterns)
@@ -172,6 +172,7 @@ fn explicit_path_visible(
     path: &Path,
     options: DiscoveryOptions,
     context: &HiddenPathContext,
+    max_filesize: Option<u64>,
 ) -> bool {
     // Explicitly allowlisted metadata bypasses hidden filtering and gitignore,
     // matching discovery.
@@ -186,7 +187,7 @@ fn explicit_path_visible(
     super::op_counts::record_visibility_walk();
     let mut settings = gobby_core::indexing::WalkerSettings::new(root);
     settings.respect_gitignore = options.respect_gitignore;
-    settings.max_filesize = Some(MAX_FILE_SIZE);
+    settings.max_filesize = max_filesize;
     let mut builder = settings.into_walker();
     builder.hidden(false);
     // Start at the repository boundary so ignored ancestors are admitted by
@@ -247,4 +248,60 @@ pub(crate) fn passes_path_filters(
 /// Whether a file of `len` bytes is inside the indexable size range.
 pub(crate) fn indexable_len(len: u64) -> bool {
     len > 0 && len <= MAX_FILE_SIZE
+}
+
+/// Whether the current config indexes a path. History protects a version only
+/// at an eligible path, so a path the config no longer indexes is collectible
+/// even when history holds it.
+pub(crate) struct HistoryPathEligibility {
+    root: PathBuf,
+    exclude_patterns: Vec<String>,
+    respect_gitignore: bool,
+    hidden: HiddenPathContext,
+}
+
+impl HistoryPathEligibility {
+    pub(crate) fn new(
+        root: &Path,
+        exclude_patterns: &[impl AsRef<str>],
+        respect_gitignore: bool,
+    ) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            exclude_patterns: exclude_patterns
+                .iter()
+                .map(|pattern| pattern.as_ref().to_string())
+                .collect(),
+            respect_gitignore,
+            hidden: HiddenPathContext::load(root),
+        }
+    }
+
+    /// Lexical filters and the hidden allowlist come first. An existing path
+    /// under gitignore respect must also be visible to the walk. The walk has
+    /// no size limit: history protects the version at any size, and
+    /// classification still keeps the oversized file out of indexing. A
+    /// missing path is never gitignore-excluded.
+    pub(crate) fn is_eligible(&self, rel: &str) -> bool {
+        let path = self.root.join(rel);
+        if !passes_path_filters(&self.root, &path, &self.exclude_patterns) {
+            return false;
+        }
+        if !self.hidden.allowlist().matches(&self.root, &path) && is_hidden_path(&self.root, &path)
+        {
+            return false;
+        }
+        if !self.respect_gitignore || !path.exists() {
+            return true;
+        }
+        explicit_path_visible(
+            &self.root,
+            &path,
+            DiscoveryOptions {
+                respect_gitignore: self.respect_gitignore,
+            },
+            &self.hidden,
+            None,
+        )
+    }
 }

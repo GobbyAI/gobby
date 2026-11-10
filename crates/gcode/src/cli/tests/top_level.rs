@@ -381,7 +381,7 @@ fn structural_commands_keep_json_defaults() {
         vec!["gcode", "status"],
         vec!["gcode", "graph", "overview"],
         vec!["gcode", "graph", "rebuild"],
-        vec!["gcode", "vector", "cleanup-orphans"],
+        vec!["gcode", "vector", "reconcile"],
     ] {
         let cli = Cli::try_parse_from(argv.clone()).expect("structural command parses");
         assert!(

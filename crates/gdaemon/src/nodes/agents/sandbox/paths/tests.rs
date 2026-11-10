@@ -77,26 +77,34 @@ fn resolver_matches_reference_for_every_path_shape() {
 }
 
 #[test]
-fn credential_roots_end_with_the_operator_bootstrap_when_present() {
+fn credential_roots_end_with_the_operator_bootstrap_and_its_break_glass_pair() {
     let operator = PathBuf::from(OPERATOR_BOOTSTRAP);
-    let roots = credential_roots(Path::new(GOBBY), Some(&operator));
-    assert_eq!(roots.last(), Some(&operator));
+    let account = operator.parent().expect("operator bootstrap has a parent");
+    let roots = credential_roots(Path::new(GOBBY), &[], Some(&operator));
+    assert_eq!(
+        roots[roots.len() - 3..],
+        [
+            operator.clone(),
+            account.join("break_glass"),
+            account.join(".break_glass-staging"),
+        ]
+    );
     assert_eq!(
         roots.len(),
-        credential_roots(Path::new(GOBBY), None).len() + 1
+        credential_roots(Path::new(GOBBY), &[], None).len() + 3
     );
 }
 
 #[test]
 fn credential_roots_without_an_operator_entry_keep_the_gobby_roots() {
-    let roots = credential_roots(Path::new(GOBBY), None);
+    let roots = credential_roots(Path::new(GOBBY), &[], None);
     assert_eq!(roots.len(), 9);
     assert!(roots.iter().all(|root| root.starts_with(GOBBY)));
 }
 
 #[test]
 fn credential_roots_deny_the_signing_key_its_staging_and_the_session_store() {
-    let roots = credential_roots(Path::new(GOBBY), None);
+    let roots = credential_roots(Path::new(GOBBY), &[], None);
     for name in [
         "capability_signing_key",
         ".capability_signing_key-staging",
@@ -112,8 +120,8 @@ fn credential_roots_deny_the_signing_key_its_staging_and_the_session_store() {
 #[test]
 fn read_and_write_denies_cover_the_signing_key_and_session_store() {
     let home = Path::new(SEAT_HOME);
-    let reads = sensitive_roots(Path::new(GOBBY), home, &BTreeMap::new(), None);
-    let writes = sensitive_write_roots(Path::new(GOBBY), home, &BTreeMap::new(), None);
+    let reads = sensitive_roots(Path::new(GOBBY), home, &BTreeMap::new(), &[], None);
+    let writes = sensitive_write_roots(Path::new(GOBBY), home, &BTreeMap::new(), &[], None);
     for name in ["capability_signing_key", "session-credentials"] {
         let entry = deny_paths([text(&Path::new(GOBBY).join(name))], None, home)
             .into_iter()
@@ -134,7 +142,13 @@ fn read_and_write_denies_cover_the_signing_key_and_session_store() {
 fn read_denies_cover_the_operator_bootstrap_not_the_seat_home() {
     let home = Path::new(SEAT_HOME);
     let operator = PathBuf::from(OPERATOR_BOOTSTRAP);
-    let denied = sensitive_roots(Path::new(GOBBY), home, &BTreeMap::new(), Some(&operator));
+    let denied = sensitive_roots(
+        Path::new(GOBBY),
+        home,
+        &BTreeMap::new(),
+        &[],
+        Some(&operator),
+    );
     assert!(
         denied.contains(&operator_entry(home)),
         "operator bootstrap missing from read denies: {denied:?}"
@@ -151,7 +165,13 @@ fn read_denies_cover_the_operator_bootstrap_not_the_seat_home() {
 fn write_denies_cover_the_operator_bootstrap() {
     let home = Path::new(SEAT_HOME);
     let operator = PathBuf::from(OPERATOR_BOOTSTRAP);
-    let denied = sensitive_write_roots(Path::new(GOBBY), home, &BTreeMap::new(), Some(&operator));
+    let denied = sensitive_write_roots(
+        Path::new(GOBBY),
+        home,
+        &BTreeMap::new(),
+        &[],
+        Some(&operator),
+    );
     assert!(
         denied.contains(&operator_entry(home)),
         "operator bootstrap missing from write denies: {denied:?}"

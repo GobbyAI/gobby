@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::commands::receipt::{no_symlinks, require_private_file};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -156,26 +158,6 @@ fn is_hash(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-pub(super) fn no_symlinks(path: &Path) -> anyhow::Result<()> {
-    ensure!(
-        path.is_absolute(),
-        "path must be absolute: {}",
-        path.display()
-    );
-    for ancestor in path.ancestors() {
-        match fs::symlink_metadata(ancestor) {
-            Ok(metadata) => ensure!(
-                !metadata.file_type().is_symlink(),
-                "symlink path refused: {}",
-                ancestor.display()
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn require_absent(root: &Path, relative: &str) -> anyhow::Result<()> {
     let path = root.join(relative);
     no_symlinks(&path)?;
@@ -184,22 +166,4 @@ pub(super) fn require_absent(root: &Path, relative: &str) -> anyhow::Result<()> 
         Err(error) => Err(error.into()),
         Ok(_) => anyhow::bail!("retired path is still present: {}", path.display()),
     }
-}
-
-pub(super) fn require_private_file(file: &File) -> anyhow::Result<()> {
-    let metadata = file.metadata()?;
-    ensure!(metadata.is_file(), "expected a regular private file");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        // SAFETY: getuid has no arguments and no memory-safety preconditions.
-        let uid = unsafe { libc::getuid() };
-        ensure!(
-            metadata.uid() == uid && metadata.mode() & 0o077 == 0,
-            "file must be owner-only and owned by this user"
-        );
-    }
-    #[cfg(not(unix))]
-    anyhow::bail!("retirement requires Unix ownership validation");
-    Ok(())
 }

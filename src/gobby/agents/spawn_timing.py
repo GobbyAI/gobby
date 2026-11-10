@@ -10,7 +10,7 @@ TOP_LEVEL_SPAWN_PHASES = (
     "prepare_terminal_spawn",
     "code_index_status",
     "code_index_pin",
-    "code_index_index",
+    "code_overlay_index",
     "code_index_search_content",
     "prepare_sandbox_run_paths",
     "compute_sandbox_paths",

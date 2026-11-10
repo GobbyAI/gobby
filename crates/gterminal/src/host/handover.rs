@@ -98,7 +98,6 @@ pub struct CarriedPane {
     pub dropped_bytes: u64,
     pub total_bytes: u64,
     pub truncated: bool,
-    pub input_grant: Option<String>,
     pub locator: Option<PaneLocator>,
     pub reported_cwd: Option<PathBuf>,
     pub reservation_id: String,
@@ -298,6 +297,96 @@ impl Drop for StagedState {
     }
 }
 
+/// Every `HandoverState` field but `panes`, in declaration order.
+#[derive(Serialize)]
+struct StateHead<'a> {
+    format_version: u32,
+    host_epoch: &'a str,
+    generation: u64,
+    host_pid: u32,
+    deadline_monotonic_ns: u64,
+    attempt: &'a UpgradeAttempt,
+    previous_image: &'a Path,
+    argv: &'a [String],
+    control_listener_fd: RawFd,
+    frames_listener_fd: RawFd,
+    next_host_id: u64,
+    next_attachment: u64,
+    events: &'a CarriedEvents,
+}
+
+/// Encodes `state` exactly as `serde_json::to_vec` would.
+///
+/// The panes are serialized inside the upgrade's soft window, on the machine's cores. Lanes beyond
+/// the core count only add contention, so the lane count is capped at `available_parallelism`
+/// rather than one thread per pane, which grew without bound with the pane count.
+fn encode_state(state: &HandoverState) -> io::Result<Vec<u8>> {
+    encode_state_with_lanes(
+        state,
+        std::thread::available_parallelism().map_or(1, usize::from),
+    )
+}
+
+/// Encodes the state with panes serialized on at most `lanes` threads. The bytes do not depend on
+/// `lanes`: each lane takes a contiguous run of panes, and the runs are joined in carried order.
+fn encode_state_with_lanes(state: &HandoverState, lanes: usize) -> io::Result<Vec<u8>> {
+    let head = StateHead {
+        format_version: state.format_version,
+        host_epoch: &state.host_epoch,
+        generation: state.generation,
+        host_pid: state.host_pid,
+        deadline_monotonic_ns: state.deadline_monotonic_ns,
+        attempt: &state.attempt,
+        previous_image: &state.previous_image,
+        argv: &state.argv,
+        control_listener_fd: state.control_listener_fd,
+        frames_listener_fd: state.frames_listener_fd,
+        next_host_id: state.next_host_id,
+        next_attachment: state.next_attachment,
+        events: &state.events,
+    };
+    let mut out = serde_json::to_vec(&head).map_err(io::Error::other)?;
+    // The head closes its object; reopen it for the panes, which come last.
+    out.pop();
+    out.extend_from_slice(b",\"panes\":[");
+    let per_lane = state.panes.len().div_ceil(lanes.max(1)).max(1);
+    let encoded: Vec<io::Result<Vec<u8>>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = state
+            .panes
+            .chunks(per_lane)
+            .map(|lane| scope.spawn(move || encode_lane(lane)))
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|_| Err(io::Error::other("pane encoding panicked")))
+            })
+            .collect()
+    });
+    for (index, lane) in encoded.into_iter().enumerate() {
+        if index > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(&lane?);
+    }
+    out.extend_from_slice(b"]}");
+    Ok(out)
+}
+
+/// Serializes one lane's panes as comma-separated JSON values, in order.
+fn encode_lane(panes: &[CarriedPane]) -> io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (index, pane) in panes.iter().enumerate() {
+        if index > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(&serde_json::to_vec(pane).map_err(io::Error::other)?);
+    }
+    Ok(out)
+}
+
 /// Writes `state` to a private file of its own beside `path` and `fsync`s it.
 /// Nothing reads that file until `commit_state` puts it in place.
 pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<StagedState> {
@@ -309,7 +398,7 @@ pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<StagedState
         .mode(0o600)
         .open(&temp)?;
     let staged = StagedState(temp);
-    serde_json::to_writer(&mut file, state)?;
+    file.write_all(&encode_state(state)?)?;
     file.flush()?;
     file.sync_all()?;
     Ok(staged)

@@ -8,12 +8,12 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{oneshot, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockWriteGuard};
+use tokio::sync::{oneshot, Mutex, MutexGuard, Notify, OwnedMutexGuard, OwnedRwLockWriteGuard};
 
 use super::handover::{
     commit_state, monotonic_now_ns, stage_state, UpgradeAttempt, UpgradeOutcome, UpgradeReason,
@@ -26,8 +26,10 @@ use super::state::{CommitState, HostState};
 use crate::pty::actor::{HandoffAckFault, PtyIoActorHandle};
 
 mod capture;
+mod serve;
 
 use capture::{capture, CaptureSpec};
+pub(crate) use serve::drain_endpoint;
 
 /// Decision 10's budget, fixed when the attempt takes `upgrade_lock`.
 const BUDGET: Duration = Duration::from_secs(15);
@@ -44,6 +46,10 @@ const REPLY_WAIT: Duration = Duration::from_secs(1);
 /// Upper bounds on test-fault holds, so no fault is unbounded.
 const FAULT_DELAY_CAP: Duration = Duration::from_secs(5);
 const FAULT_STALL_CAP: Duration = Duration::from_secs(60);
+/// How long a drain waits for a client to read a recorded outcome. It bounds
+/// serving only: it never produces an outcome, and it starts after the alarm
+/// is disarmed.
+const SERVE_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -112,6 +118,15 @@ pub(crate) struct Attempts {
     lock: Arc<Mutex<()>>,
     live: StdMutex<Option<LiveAttempt>>,
     context: OnceLock<UpgradeContext>,
+    /// Set once a client reads the recorded outcome; cleared when an attempt
+    /// writes a new record. Both happen under the `upgrade` lock.
+    served: AtomicBool,
+    /// Wakes a drain waiting in `await_served`.
+    read: Notify,
+    /// Sequence of the recorded outcome; `replace_record` bumps it. A reply
+    /// carries the sequence of its record, so an older reply cannot mark a newer
+    /// record, even one with the same attempt id.
+    record_seq: AtomicU64,
 }
 
 impl Attempts {
@@ -149,12 +164,12 @@ impl HostState {
 }
 
 fn upgrade_record(state: &HostState) -> Value {
-    let last = state
-        .upgrade
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+    let upgrade = state.upgrade.lock().unwrap_or_else(PoisonError::into_inner);
+    let record_seq = state.attempts.record_seq.load(Ordering::SeqCst);
+    let last = upgrade
         .as_ref()
-        .and_then(outcome_json);
+        .and_then(|record| outcome_json(record, record_seq));
+    drop(upgrade);
     let live = state
         .attempts
         .live
@@ -178,7 +193,7 @@ fn upgrade_record(state: &HostState) -> Value {
     }
 }
 
-fn outcome_json(record: &UpgradeRecord) -> Option<Value> {
+fn outcome_json(record: &UpgradeRecord, record_seq: u64) -> Option<Value> {
     let (outcome, reason, errno) = match record.outcome? {
         UpgradeOutcome::Succeeded => ("succeeded", None, None),
         UpgradeOutcome::Fallback(reason) => ("fallback", Some(reason.as_str()), None),
@@ -193,6 +208,7 @@ fn outcome_json(record: &UpgradeRecord) -> Option<Value> {
         "outcome": outcome,
         "candidate_sha256": (!sha.is_empty()).then_some(sha),
         "reason": reason,
+        "record_seq": record_seq,
     });
     if let Some(errno) = errno {
         value["errno"] = json!(errno);
@@ -290,7 +306,7 @@ enum AckFault {
 
 impl Faults {
     fn parse(extra: &Map<String, Value>) -> Self {
-        let helper = std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1");
+        let helper = crate::test_seam::helper_enabled();
         let Some(fault) = extra
             .get("test_fault")
             .filter(|_| helper)
@@ -444,11 +460,7 @@ impl Attempt {
 
     /// Records the terminal outcome, which returns `ping` to idle.
     fn record(&self, outcome: UpgradeOutcome, candidate_sha256: String) {
-        *self
-            .state
-            .upgrade
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(UpgradeRecord {
+        self.state.replace_record(UpgradeRecord {
             attempt: UpgradeAttempt {
                 attempt_id: self.attempt_id.clone(),
                 candidate_sha256,
@@ -869,3 +881,7 @@ fn resume(panes: &[(String, PtyIoActorHandle)], fail: Option<&str>) -> Vec<Strin
             .collect()
     })
 }
+
+#[cfg(test)]
+#[path = "upgrade/tests.rs"]
+mod tests;
