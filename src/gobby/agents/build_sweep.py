@@ -67,7 +67,7 @@ def sweep_build_root(
     clock = time.time() if now is None else now
     findings: list[SweepFinding] = []
     for folder in _build_folders(root):
-        finding = _classify(folder, live, clock, quiet_seconds, apply=apply)
+        finding = _classify(root, folder, live, clock, quiet_seconds, apply=apply)
         findings.append(finding)
         if finding.action is SweepAction.KEEP_LIVE:
             findings.extend(
@@ -121,8 +121,27 @@ def _children(anchor: Path, directory: Path) -> list[Path]:
     return sorted(directory.iterdir())
 
 
+def _remove_tree_nofollow(anchor: Path, folder: Path) -> None:
+    """Remove ``folder`` through its parent's descriptor, opened without following links.
+
+    ``shutil.rmtree`` with ``dir_fd`` refuses a link at ``folder`` itself and walks the
+    subtree by descriptor, so a link swapped in anywhere on the way never redirects it.
+    """
+    parent_fd = _open_dir_nofollow(anchor, folder.parent)
+    try:
+        shutil.rmtree(folder.name, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
 def _classify(
-    folder: Path, live: set[str], clock: float, quiet_seconds: float, *, apply: bool
+    anchor: Path,
+    folder: Path,
+    live: set[str],
+    clock: float,
+    quiet_seconds: float,
+    *,
+    apply: bool,
 ) -> SweepFinding:
     if folder.is_symlink():
         return SweepFinding(folder, SweepAction.REFUSED, detail="symbolic link, not followed")
@@ -139,24 +158,38 @@ def _classify(
     if not apply:
         return SweepFinding(folder, SweepAction.WOULD_REMOVE, size_bytes=size)
     try:
-        shutil.rmtree(folder)
+        _remove_tree_nofollow(anchor, folder)
     except OSError as exc:
         return SweepFinding(folder, SweepAction.REFUSED, size_bytes=size, detail=str(exc))
     return SweepFinding(folder, SweepAction.REMOVED, size_bytes=size)
 
 
-def _test_metas(profile: Path) -> set[str]:
+def _test_metas(profile_fd: int) -> set[str]:
     """Metadata hashes of the profile's units whose fingerprint names a test target."""
-    fingerprints = profile / ".fingerprint"
-    if fingerprints.is_symlink() or not fingerprints.is_dir():
+    try:
+        fingerprints_fd = os.open(".fingerprint", _DIR_FLAGS, dir_fd=profile_fd)
+    except OSError:
         return set()
     metas: set[str] = set()
-    for unit in fingerprints.iterdir():
-        match = _FINGERPRINT_UNIT.match(unit.name)
-        if match is None or unit.is_symlink() or not unit.is_dir():
-            continue
-        if any(child.name.startswith("test-") for child in unit.iterdir()):
-            metas.add(match["meta"])
+    try:
+        units: list[tuple[str, str]] = []
+        with os.scandir(fingerprints_fd) as entries:
+            for entry in entries:
+                match = _FINGERPRINT_UNIT.match(entry.name)
+                if match is not None and entry.is_dir(follow_symlinks=False):
+                    units.append((entry.name, match["meta"]))
+        for name, meta in units:
+            try:
+                unit_fd = os.open(name, _DIR_FLAGS, dir_fd=fingerprints_fd)
+            except OSError:
+                continue
+            try:
+                if any(child.startswith("test-") for child in os.listdir(unit_fd)):
+                    metas.add(meta)
+            finally:
+                os.close(unit_fd)
+    finally:
+        os.close(fingerprints_fd)
     return metas
 
 
@@ -179,48 +212,107 @@ def _trim_test_executables(
     """
     findings: list[SweepFinding] = []
     for profile in _PROFILES:
-        profile_dir = tree / profile
-        deps = profile_dir / "deps"
-        if _path_has_link(anchor, deps):
-            findings.append(
-                SweepFinding(deps, SweepAction.REFUSED, detail="symbolic link, not followed")
-            )
-            continue
-        if not deps.is_dir():
-            continue
-        metas = _test_metas(profile_dir)
-        candidates: list[tuple[float, int, Path]] = []
-        for entry in sorted(deps.iterdir()):
-            match = _HASHED_EXECUTABLE.match(entry.name)
-            if match is None or match["meta"] not in metas or not _is_executable_file(entry):
-                continue
-            info = entry.lstat()
-            candidates.append((info.st_mtime, info.st_size, entry))
-        excess = sum(size for _, size, _ in candidates) - budget_bytes
-        for mtime, size, entry in sorted(candidates):
-            if excess <= 0:
-                break
-            if clock - mtime < quiet_seconds:
-                findings.append(SweepFinding(entry, SweepAction.KEEP_RECENT, size_bytes=size))
-                continue
-            if not apply:
-                findings.append(SweepFinding(entry, SweepAction.WOULD_REMOVE, size_bytes=size))
-                excess -= size
-                continue
-            try:
-                entry.unlink()
-            except OSError as exc:
+        deps = tree / profile / "deps"
+        # A sandboxed build owns this tree and can swap any directory in it for a link at any
+        # moment, so every step from the anchor down is fd-relative and refuses links: the
+        # unlink below lands in the directory that was opened, never in a re-resolved path.
+        try:
+            profile_fd = _open_dir_nofollow(anchor, tree / profile)
+        except OSError:
+            if _path_has_link(anchor, deps):
                 findings.append(
-                    SweepFinding(entry, SweepAction.REFUSED, size_bytes=size, detail=str(exc))
+                    SweepFinding(deps, SweepAction.REFUSED, detail="symbolic link, not followed")
                 )
-                continue
-            findings.append(SweepFinding(entry, SweepAction.REMOVED, size_bytes=size))
-            excess -= size
+            continue
+        try:
+            findings.extend(
+                _trim_profile(profile_fd, deps, clock, quiet_seconds, budget_bytes, apply=apply)
+            )
+        finally:
+            os.close(profile_fd)
     return findings
 
 
-def _is_executable_file(entry: Path) -> bool:
-    return not entry.is_symlink() and entry.is_file() and os.access(entry, os.X_OK)
+def _trim_profile(
+    profile_fd: int,
+    deps: Path,
+    clock: float,
+    quiet_seconds: float,
+    budget_bytes: int,
+    *,
+    apply: bool,
+) -> list[SweepFinding]:
+    try:
+        deps_fd = os.open("deps", _DIR_FLAGS, dir_fd=profile_fd)
+    except OSError:
+        if os.path.islink(deps):
+            return [SweepFinding(deps, SweepAction.REFUSED, detail="symbolic link, not followed")]
+        return []
+    findings: list[SweepFinding] = []
+    try:
+        metas = _test_metas(profile_fd)
+        candidates: list[tuple[float, int, str]] = []
+        with os.scandir(deps_fd) as entries:
+            for entry in entries:
+                match = _HASHED_EXECUTABLE.match(entry.name)
+                if match is None or match["meta"] not in metas:
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if not _is_executable_file(info):
+                    continue
+                candidates.append((info.st_mtime, info.st_size, entry.name))
+        excess = sum(size for _, size, _ in candidates) - budget_bytes
+        for mtime, size, name in sorted(candidates):
+            if excess <= 0:
+                break
+            path = deps / name
+            if clock - mtime < quiet_seconds:
+                findings.append(SweepFinding(path, SweepAction.KEEP_RECENT, size_bytes=size))
+                continue
+            if not apply:
+                findings.append(SweepFinding(path, SweepAction.WOULD_REMOVE, size_bytes=size))
+                excess -= size
+                continue
+            try:
+                os.unlink(name, dir_fd=deps_fd)
+            except OSError as exc:
+                findings.append(
+                    SweepFinding(path, SweepAction.REFUSED, size_bytes=size, detail=str(exc))
+                )
+                continue
+            findings.append(SweepFinding(path, SweepAction.REMOVED, size_bytes=size))
+            excess -= size
+    finally:
+        os.close(deps_fd)
+    return findings
+
+
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _open_dir_nofollow(anchor: Path, path: Path) -> int:
+    """Open ``path`` as a directory, walking from ``anchor`` one component at a time.
+
+    Each component is opened relative to its parent's descriptor with ``O_NOFOLLOW``, so a
+    link anywhere below ``anchor`` fails the open instead of redirecting it.
+    """
+    fd = os.open(anchor, _DIR_FLAGS)
+    try:
+        for part in path.relative_to(anchor).parts:
+            child = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = child
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _is_executable_file(info: os.stat_result) -> bool:
+    return stat.S_ISREG(info.st_mode) and bool(info.st_mode & _ANY_EXECUTE)
+
+
+_ANY_EXECUTE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 
 def _propagate(error: OSError) -> None:

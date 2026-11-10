@@ -1,8 +1,10 @@
 """The build sweep removes only stale build folders that no registered checkout owns."""
 
 import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -327,3 +329,57 @@ def test_a_symlinked_build_root_is_refused_whole(tmp_path: Path) -> None:
     assert stale.is_dir()
     assert _action_for(findings, link) is SweepAction.REFUSED
     assert len(findings) == 1
+
+
+def test_deps_swapped_for_a_link_after_the_scan_never_redirects_the_trim(
+    root: Path, trees: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sandboxed build owns its tree, so it can swap deps for a link between scan and unlink."""
+    name = "gobby_core-0123456789abcdef"
+    outside = tmp_path / "outside" / "debug" / "deps"
+    victim = _executable(outside / name, mtime=STALE)
+    profile = trees["live_agent"] / "debug"
+    _test_unit(profile, "gobby-core", "0123456789abcdef")
+    deps = profile / "deps"
+    _executable(deps / name, mtime=STALE)
+    moved = profile / "deps-moved"
+    real_unlink = os.unlink
+
+    def swap_then_unlink(path: str | Path, *args: Any, **kwargs: Any) -> None:
+        # Swap only before the trim's own unlink; rmtree of stale folders also unlinks.
+        if os.path.basename(path) == name and not deps.is_symlink():
+            deps.rename(moved)
+            deps.symlink_to(outside, target_is_directory=True)
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr("gobby.agents.build_sweep.os.unlink", swap_then_unlink)
+
+    findings = sweep_build_root(
+        root, [trees["live"], trees["other"]], apply=True, now=NOW, executable_budget_bytes=0
+    )
+
+    assert victim.is_file()
+    assert not (moved / name).exists()
+    assert _action_for(findings, deps / name) is SweepAction.REMOVED
+
+
+def test_an_unowned_folder_swapped_for_a_link_is_never_removed_through_it(
+    root: Path, trees: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = _folder(tmp_path / "outside-tree", mtime=STALE)
+    stale = trees["stale_agent"]
+    real_rmtree = shutil.rmtree
+
+    def swap_then_rmtree(path: str | Path, *args: Any, **kwargs: Any) -> None:
+        # Swap only before the sweep's own removal of the stale folder.
+        if os.path.basename(path) == stale.name and not stale.is_symlink():
+            real_rmtree(stale)
+            stale.symlink_to(outside, target_is_directory=True)
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("gobby.agents.build_sweep.shutil.rmtree", swap_then_rmtree)
+
+    findings = sweep_build_root(root, [trees["live"], trees["other"]], apply=True, now=NOW)
+
+    assert (outside / "debug" / "deps" / "libgobby.rlib").is_file()
+    assert _action_for(findings, stale) is SweepAction.REFUSED
