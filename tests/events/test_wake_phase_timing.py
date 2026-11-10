@@ -48,7 +48,7 @@ async def test_deferred_wake_line_reports_phases_that_sum_to_duration(
     )
     caplog.set_level(logging.DEBUG, logger="gobby.events.wake")
 
-    await dispatcher._refresh_and_retry_wake(SESSION_ID, priority="normal")
+    await dispatcher._refresh_and_retry_wake(SESSION_ID)
 
     refresh.assert_awaited_once_with(SESSION_ID)
     message = _wake_record(caplog).getMessage()
@@ -83,7 +83,7 @@ async def test_deferred_wake_log_level_by_outcome(
     dispatcher, _ = _dispatcher(monkeypatch, result)
     caplog.set_level(logging.DEBUG, logger="gobby.events.wake")
 
-    await dispatcher._refresh_and_retry_wake(SESSION_ID, priority="normal")
+    await dispatcher._refresh_and_retry_wake(SESSION_ID)
 
     record = _wake_record(caplog)
     assert record.levelno == level

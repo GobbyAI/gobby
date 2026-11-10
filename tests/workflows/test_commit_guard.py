@@ -2232,6 +2232,20 @@ async def test_dirty_directory_owner_blocks_overlapping_edit(
         harness.foreign_task.id: [ledger_path],
     }
 
+    # The requester's own unbound edit to the same child stays refused under the holder (#25843).
+    await _bound_then_unbound_edit(
+        harness,
+        harness.current_session,
+        dirty_path,
+        "requester change\n",
+        boundary_before_post=True,
+    )
+    child_edit = await harness.handler._evaluate_rules(harness.edit_event(dirty_path))
+    assert child_edit.decision == "block", child_edit.reason
+    _git(harness.repo, "add", dirty_path)
+    staged_commit = await harness.handler._evaluate_rules(harness.event("git commit -m mine"))
+    assert staged_commit.decision == "block", staged_commit.reason
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["edit_owned", "commit_only", "commit_staged", "edit_clean"])
@@ -4266,3 +4280,117 @@ async def test_session_sets_aside_and_restores_only_its_own_edits(
     assert refused.decision == "block"
     assert refused.reason is not None
     assert "foreign.txt" in refused.reason
+
+
+def _as(h: GuardHarness, session: Session) -> GuardHarness:
+    return replace(h, current_session=session)
+
+
+async def _bound_then_unbound_edit(
+    h: GuardHarness, session: Session, path: str, content: str, *, boundary_before_post: bool
+) -> None:
+    """Run one native edit the way the hooks do: pre binding, write, post attribution.
+
+    With ``boundary_before_post`` a new prompt retires the pending binding before the post
+    event is attributed, as happens when the post event is delivered late.
+    """
+    sid = session.id
+    sv = SessionVariableManager(h.db)
+    bindings = TaskToolBindings(sv, sid)
+    scoped = _as(h, session)
+    bindings.start(scoped.edit_event(path))
+    (h.repo / path).write_text(content, encoding="utf-8")
+    if boundary_before_post:
+        bindings.clear_pending("prompt")
+    post = scoped.edit_event(path)
+    started = bindings.started_at(post)
+    sv.record_edited_files(
+        sid,
+        [path],
+        checkout_root=str(h.repo),
+        edited_at=post.timestamp.timestamp(),
+        started_at=started,
+        attribute_to_task=started is not None,
+    )
+    bindings.complete(post)
+
+
+@pytest.mark.asyncio
+async def test_own_edit_whose_binding_was_retired_stays_editable(
+    guard_harness: GuardHarness,
+) -> None:
+    """A seat's own edit whose tool-start binding was retired stays editable (#25843)."""
+    h = guard_harness
+    await _bound_then_unbound_edit(
+        h, h.current_session, "new.txt", "v1\n", boundary_before_post=False
+    )
+    assert (await h.handler._evaluate_rules(h.edit_event("new.txt"))).decision == "allow"
+
+    await _bound_then_unbound_edit(
+        h, h.current_session, "new.txt", "v2\n", boundary_before_post=True
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("new.txt"))
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_claim_successor_own_unbound_edit_stays_editable(guard_harness: GuardHarness) -> None:
+    """After a hand-off, the developer's own dirt stays editable even when its later edit is unbound."""
+    h = guard_harness
+    developer = h.session_manager.register(
+        external_id="developer-ext",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=h.project.id,
+    )
+    LocalTaskManager(h.db).claim_task_for_agent(
+        h.current_task.id,
+        session_id=developer.id,
+        expected_owner=h.current_session.id,
+        handed=True,
+    )
+    await _bound_then_unbound_edit(h, developer, "new.txt", "v1\n", boundary_before_post=False)
+
+    await _bound_then_unbound_edit(h, developer, "new.txt", "v2\n", boundary_before_post=True)
+
+    scoped = _as(h, developer)
+    decision = await scoped.handler._evaluate_rules(scoped.edit_event("new.txt"))
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_unbound_content_held_by_a_live_foreign_session_stays_refused(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    (h.repo / "new.txt").write_text("v1\n", encoding="utf-8")
+    SessionVariableManager(h.db).record_edited_files(
+        h.foreign_session.id, ["new.txt"], checkout_root=str(h.repo)
+    )
+    await _bound_then_unbound_edit(
+        h, h.current_session, "new.txt", "v2\n", boundary_before_post=True
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("new.txt"))
+
+    assert decision.decision == "block"
+    assert decision.reason is not None and "new.txt" in decision.reason
+
+
+@pytest.mark.asyncio
+async def test_unbound_content_without_a_claim_stays_refused(guard_harness: GuardHarness) -> None:
+    h = guard_harness
+    await _bound_then_unbound_edit(
+        h, h.current_session, "new.txt", "v1\n", boundary_before_post=True
+    )
+    h.db.execute(
+        "UPDATE tasks SET claimed_by_session_id = NULL WHERE id = %s", (h.current_task.id,)
+    )
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id, {"claimed_tasks": {}, "active_task_id": None}
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("new.txt"))
+
+    assert decision.decision == "block"

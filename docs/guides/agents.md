@@ -542,27 +542,30 @@ repository coordination. System-originated
 project sends must provide `project_id`; ordinary sessions derive their project and
 must not override it. `session` and `agent` require `target_id`.
 
-Fanout (`global`, and `project` with `wake=true`) live-wakes only active recipients and
-recipients holding a claimed task. An idle, paused, or waiting recipient with no claimed
-task keeps its message queued and reads it on its next turn; a direct `session`,
-`parent`, or `agent` send still wakes it.
+Fanout (`global`, and `project` with `wake=true`) applies the direct-send rule to each
+recipient, with no claimed-task filter. A wake types `[Gobby] Check messages` only into
+an idle, paused, or waiting seat whose composer is confirmed empty and that has no open
+turn, so the seat processes its queue without operator input. The same rule applies to
+a direct `session`, `parent`, or `agent` send. An active turn takes no typed input at
+any priority; its message arrives through the hook mailbox on its next tool call.
 
-Message text never triggers a wake. Set `wake=true` only when immediate processing is
-intended; it may steer an active turn. Interrupted sessions and sessions awaiting input,
-approval, or handoff retain the durable message without daemon input. Before typing
-into a terminal, the daemon probes the composer through the provider's detection
-manifest; a composer that positively shows an operator draft is left alone and the
-wake result carries `skipped: "composer_occupied"` (same bucket as `session_active`:
-the message is persisted and the hook piggyback injects it on the session's next
-turn). An operator comms wake to a pane the operator has focused is held the same way
-(`skipped: "pane_focused"`) and dispatched when focus ends. The probe reads a styled
-snapshot, so faint text (Claude Code's prompt
-suggestion, the Codex and Droid placeholders) reads as an empty composer.
-`priority="urgent"` bypasses only the active-row check (`session_active`); the composer
-probe and the focus hold still apply. A later mailbox
-receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interruption in
-Antigravity cannot be protected without positive provider or Gobby-mediated key/output
-evidence, so unconfirmed sessions remain active.
+Message text never triggers a wake. Omitting `wake` requests immediate processing for
+direct targets, and `wake=false` queues any target without a live wake. Interrupted
+sessions and sessions awaiting input, approval, or handoff retain the durable message
+without daemon input. The one exception is the `get_handoff` continuation of an
+awaiting-handoff terminal with a confirmed compact boundary and an empty composer.
+Before typing into a terminal, the daemon probes the composer through the provider's
+detection manifest. A positively shown operator draft is left alone, and the wake
+result carries `skipped: "composer_occupied"`. Held daemon text and any other
+unconfirmed read carry `skipped: "composer_unconfirmed"`. Both buckets sit alongside
+`session_active`: the message is persisted and the hook piggyback injects it on the
+session's next turn. An operator comms wake to a pane the operator has focused is held
+the same way (`skipped: "pane_focused"`) and dispatched when focus ends. The probe reads
+a styled snapshot, so faint text (Claude Code's prompt suggestion, the Codex and Droid
+placeholders) reads as an empty composer. Priority never authorizes typing. A later
+mailbox receipt, not a live trigger outcome, acknowledges delivery. Direct tmux
+interruption in Antigravity cannot be protected without positive provider or
+Gobby-mediated key/output evidence, so unconfirmed sessions remain active.
 
 A brief `send_message` or `send_attachment` response to a direct target whose session is
 not live (expired, or otherwise outside the live statuses) reports

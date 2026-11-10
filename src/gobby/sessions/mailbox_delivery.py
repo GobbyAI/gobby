@@ -15,9 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class WakeDispatcherProtocol(Protocol):
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]: ...
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
 
 
 def _normalize_wake_result(
@@ -48,8 +46,6 @@ def _normalize_wake_result(
 async def _wake_one(
     dispatcher: WakeDispatcherProtocol | None,
     session_id: str,
-    *,
-    priority: str,
 ) -> dict[str, Any]:
     if dispatcher is None:
         return {
@@ -61,7 +57,7 @@ async def _wake_one(
             "error_message": "Wake dispatcher is unavailable",
         }
     try:
-        result = await dispatcher.dispatch_live_wake(session_id, priority=priority)
+        result = await dispatcher.dispatch_live_wake(session_id)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -88,13 +84,11 @@ async def _wake_many(
     dispatcher: WakeDispatcherProtocol | None,
     session_manager: SessionManager,
     session_ids: list[str],
-    *,
-    priority: str,
 ) -> list[dict[str, Any]]:
     batch_wake = getattr(dispatcher, "dispatch_live_wakes", None)
     if len(session_ids) > 1 and callable(batch_wake):
         try:
-            raw_results = await batch_wake(session_ids, priority=priority)
+            raw_results = await batch_wake(session_ids)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -136,10 +130,7 @@ async def _wake_many(
         ]
 
     async with asyncio.TaskGroup() as group:
-        wakes = [
-            group.create_task(_wake_one(dispatcher, session_id, priority=priority))
-            for session_id in session_ids
-        ]
+        wakes = [group.create_task(_wake_one(dispatcher, session_id)) for session_id in session_ids]
     return [
         _normalize_wake_result(session_manager, session_id, wake.result())
         for session_id, wake in zip(session_ids, wakes, strict=True)
@@ -151,8 +142,6 @@ async def dispatch_mailbox_wakes(
     session_manager: SessionManager,
     messages: list[InterSessionMessage],
     session_ids: list[str],
-    *,
-    priority: str,
 ) -> list[dict[str, Any]]:
     """Dispatch and correlate one live-wake outcome per committed message."""
     if len(messages) != len(session_ids):
@@ -164,7 +153,6 @@ async def dispatch_mailbox_wakes(
             dispatcher,
             session_manager,
             session_ids,
-            priority=priority,
         )
     except asyncio.CancelledError:
         logger.warning(

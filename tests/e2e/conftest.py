@@ -11,6 +11,7 @@ Provides fixtures for:
 """
 
 import asyncio
+import functools
 import json
 import math
 import os
@@ -143,6 +144,73 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
         return terminal_native_binary_headers(tuple(config.args))
     except NativeBinarySelectionError as exc:
         raise pytest.UsageError(f"terminal e2e binary selection failed: {exc}") from exc
+
+
+@functools.cache
+def build_tree_gclient() -> Path | str:
+    """Build ``gclient`` from this tree once: its binary, or the failure report.
+
+    Every failure to build or locate the binary returns a report, so the collection hook
+    never aborts the session.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    try:
+        build = subprocess.run(
+            ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2400.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"building gclient from the tree timed out after {exc.timeout}s"
+    except OSError as exc:
+        return f"building gclient from the tree could not run cargo: {exc}"
+    if build.returncode != 0:
+        return f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}"
+    try:
+        metadata = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"cargo metadata timed out after {exc.timeout}s"
+    except OSError as exc:
+        return f"cargo metadata could not run: {exc}"
+    if metadata.returncode != 0:
+        return f"cargo metadata failed:\n{metadata.stderr}"
+    try:
+        target_directory = json.loads(metadata.stdout)["target_directory"]
+    except (ValueError, KeyError, TypeError) as exc:
+        return f"cargo metadata output is unusable: {exc!r}"
+    binary = Path(str(target_directory)) / "debug" / "gclient"
+    if not binary.is_file():
+        return f"cargo build left no gclient at {binary}"
+    return binary
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Build the tree's gclient before any test starts, outside each test's timeout.
+
+    A cold build inside the first test's setup can outlast the per-test timeout and kill the
+    run. The result is cached here; the fixture reports a failed build on the tests needing it.
+    """
+    if any("tree_gclient" in getattr(item, "fixturenames", ()) for item in session.items):
+        build_tree_gclient()
+
+
+@pytest.fixture(scope="session")
+def tree_gclient() -> Path:
+    """Build ``gclient`` from this tree; the installed one may predate the change."""
+    built = build_tree_gclient()
+    if isinstance(built, str):
+        pytest.fail(built)
+    return built
 
 
 @dataclass
@@ -829,6 +897,11 @@ E2E_HOST_OWNER_FILE = "e2e-owner.pid"
 E2E_HOST_SETTLE_SECONDS = 1.0
 
 
+def keep_e2e_artifacts() -> bool:
+    """Test-only: ``GOBBY_E2E_KEEP_ARTIFACTS=1`` keeps the project and socket dirs for diagnosis."""
+    return os.environ.get("GOBBY_E2E_KEEP_ARTIFACTS") == "1"
+
+
 def create_short_dir(root: Path | None = None, prefix: str = "g") -> Path:
     """Create a fresh directory named ``prefix`` plus three hex digits.
 
@@ -924,14 +997,15 @@ def _reap_orphaned_terminal_hosts() -> None:
 def e2e_project_dir() -> Generator[Path]:
     """Create an isolated project directory for E2E tests.
 
-    ``ignore_cleanup_errors=True`` protects against ENOTEMPTY on macOS when a
+    The cleanup's ``ignore_errors=True`` protects against ENOTEMPTY on macOS when a
     daemon subprocess (or one of its helpers — gcode, CLI tools, etc.) still
     holds file descriptors inside the tree at teardown. terminate_process_tree
     gives children a few seconds to exit, but the kernel may still report a
     directory as non-empty briefly after. Without this flag, the whole test
     errors at teardown even though the assertions already passed.
     """
-    with tempfile.TemporaryDirectory(prefix="gobby_e2e_", ignore_cleanup_errors=True) as tmpdir:
+    tmpdir = tempfile.mkdtemp(prefix="gobby_e2e_")
+    try:
         project_dir = Path(tmpdir).resolve()
         gobby_dir = project_dir / ".gobby"
         gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -992,6 +1066,9 @@ def e2e_project_dir() -> Generator[Path]:
                 shutil.copy2(wf_file, target_workflows / wf_file.name)
 
         yield project_dir
+    finally:
+        if not keep_e2e_artifacts():
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
@@ -1138,7 +1215,8 @@ front_door:
     yield config_path, http_port, ws_port
 
     stop_terminal_host(terminal_host_socket_dir)
-    shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
+    if not keep_e2e_artifacts():
+        shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
