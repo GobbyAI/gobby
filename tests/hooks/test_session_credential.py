@@ -363,6 +363,52 @@ def test_clear_successor_start_mints_a_new_credential(
     assert credential["session_id"] != started_session.id
 
 
+def test_resume_from_a_relaunched_cli_revives_the_expired_session_with_a_credential(
+    hook_route: HookRoute, temp_db: HubDatabase, started_session: Any
+) -> None:
+    """A seat whose old CLI died and was expired gets a credential when its new CLI resumes."""
+    _machine_caller(hook_route)
+    temp_db.execute(
+        "UPDATE sessions SET status = %s WHERE id = %s", ("expired", started_session.id)
+    )
+    relaunched = Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)
+
+    with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=relaunched):
+        body = _post_session_start(hook_route, start_source="resume")
+
+    credential = body[SESSION_CREDENTIAL_FIELD]
+    assert credential["session_id"] == started_session.id
+    row = temp_db.fetchone("SELECT status FROM sessions WHERE id = %s", (started_session.id,))
+    assert row is not None
+    assert row["status"] == "active"
+
+
+def test_resume_through_a_shared_host_says_why_it_carries_no_credential(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    started_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A shared host cannot attest one seat, so the start mints nothing and logs why."""
+    _machine_caller(hook_route)
+    temp_db.execute(
+        "UPDATE sessions SET status = %s WHERE id = %s", ("expired", started_session.id)
+    )
+    shared_host = Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=None)
+
+    with (
+        patch("gobby.hooks.session_claimant.resolve_claimant", return_value=shared_host),
+        caplog.at_level("WARNING", logger="gobby.hooks.session_claimant"),
+    ):
+        body = _post_session_start(hook_route, start_source="resume")
+
+    assert SESSION_CREDENTIAL_FIELD not in body
+    assert any(
+        "no session credential" in record.getMessage() and PROVIDER_SESSION in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_resolve_claimant_finds_this_process_behind_a_loopback_socket() -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -162,7 +162,16 @@ def claim_session_start(
     live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
     if claimant.cli_pid is None:
         # A shared host cannot attest one session: never mint, and never touch a live row.
-        return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED) if live else SessionStartClaim()
+        if live:
+            return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
+        logger.warning(
+            "SessionStart for %s session %s mints no session credential: its hook runs under "
+            "a shared host (pid %s) that cannot attest one session",
+            source,
+            external_id,
+            claimant.parent_pid,
+        )
+        return SessionStartClaim()
     if live is None:
         return SessionStartClaim(proven=True, cli_pid=claimant.cli_pid)
     if live.parent_pid != claimant.cli_pid:
