@@ -1,6 +1,8 @@
 //! Library surface of `gdaemon`, shared by the binary and its integration tests.
 
 mod casefold;
+#[cfg(unix)]
+pub mod fleet_health;
 pub mod front_door;
 pub mod heartbeat;
 pub mod lease;

@@ -10,9 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.utils.datetime import normalize_datetime_model
+
+if TYPE_CHECKING:
+    from gobby.fleet_health import FleetAdmissionRefusal
 
 
 class ExecutionStatus(Enum):
@@ -200,7 +203,15 @@ class PipelineStepError(RuntimeError):
 
 
 class PipelineStepRefusal(PipelineStepError):
-    """A designed guard refusal, reported without an execution-error traceback."""
+    """A designed guard refusal, reported without an execution-error traceback.
+
+    ``refusal`` carries the typed fleet refusal when one caused it, so the boundary that
+    answers the caller keeps the code, state and reasons rather than the message alone.
+    """
+
+    def __init__(self, message: str, *, refusal: FleetAdmissionRefusal | None = None) -> None:
+        super().__init__(message)
+        self.refusal = refusal
 
 
 class ApprovalRequired(Exception):

@@ -48,6 +48,15 @@ class PipelineApprovalResponse(BaseModel):
     message: str
 
 
+def _step_error_detail(error: Exception) -> str | dict[str, Any]:
+    """The 422 detail for a step error. A fleet refusal keeps its code, state and reasons."""
+    from gobby.workflows.pipeline_state import PipelineStepRefusal
+
+    if isinstance(error, PipelineStepRefusal) and error.refusal is not None:
+        return error.refusal.as_result()
+    return str(error)
+
+
 def _batch_load_cron_info(database: Any, execution_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Load cron trigger info for a batch of pipeline execution IDs.
 
@@ -313,6 +322,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                     inputs=request.inputs,
                     project_id=project_id,
                 )
+            except PipelineStepError as e:
+                raise HTTPException(status_code=422, detail=_step_error_detail(e)) from e
             except Exception as e:
                 logger.exception("Failed to start detached pipeline run: %s", e)
                 raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -354,7 +365,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             )
 
         except PipelineStepError as e:
-            raise HTTPException(status_code=422, detail=str(e)) from e
+            raise HTTPException(status_code=422, detail=_step_error_detail(e)) from e
 
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
@@ -498,7 +509,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             )
 
         except PipelineStepError as e:
-            raise HTTPException(status_code=422, detail=str(e)) from e
+            raise HTTPException(status_code=422, detail=_step_error_detail(e)) from e
 
         except ValueError:
             raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None

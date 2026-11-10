@@ -1,4 +1,5 @@
 use std::env;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -36,6 +37,22 @@ enum Command {
         /// Count only records at or after this Unix time in seconds.
         #[arg(long)]
         since: Option<i64>,
+    },
+    /// Sample daemon health and host load into the fleet state file. Runs as its own
+    /// process, outside the Python daemon, and keeps running across daemon restarts.
+    #[cfg(unix)]
+    FleetWatch {
+        /// Take one sample, write the state file, and exit.
+        #[arg(long)]
+        once: bool,
+        /// Project whose `project_policy` rows are read, in addition to global rows.
+        /// Without it only global rows are read.
+        #[arg(long)]
+        project_id: Option<String>,
+        /// Directory holding `daemon.log`. Defaults to `GOBBY_LOGGING_DIR`, then
+        /// `<home>/logs`. The daemon's `logging.dir` in config is not read.
+        #[arg(long)]
+        logs_dir: Option<PathBuf>,
     },
 }
 
@@ -93,6 +110,12 @@ fn main() -> Result<()> {
         } => sweep_test_schemas(age_hours),
         Command::Serve => gobby_daemon::serve::run(),
         Command::CompareReport { since } => compare_report(since),
+        #[cfg(unix)]
+        Command::FleetWatch {
+            once,
+            project_id,
+            logs_dir,
+        } => fleet_watch(once, project_id, logs_dir),
     };
     if let Err(error) = &result
         && verifying
@@ -113,6 +136,48 @@ fn compare_report(since: Option<i64>) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Run the fleet watcher on a single-threaded runtime: one sampling loop, no daemon state.
+/// The home, log directory and bootstrap follow the watcher's own resolution, which mirrors
+/// the Python daemon, so an empty or `~`-prefixed `GOBBY_HOME` reads the same files.
+#[cfg(unix)]
+fn fleet_watch(once: bool, project_id: Option<String>, logs_dir: Option<PathBuf>) -> Result<()> {
+    use gobby_daemon::fleet_health::paths::{gobby_home, logs_dir as resolve_logs_dir};
+
+    let user_home = env::var_os("HOME").map(PathBuf::from);
+    let home = gobby_home(env::var_os("GOBBY_HOME").as_deref(), user_home.as_deref())
+        .context("cannot determine the Gobby home: set GOBBY_HOME or HOME")?;
+    let logs = resolve_logs_dir(
+        logs_dir.as_deref(),
+        env::var_os("GOBBY_LOGGING_DIR").as_deref(),
+        &home,
+        user_home.as_deref(),
+    );
+    if let Some(id) = &project_id {
+        uuid::Uuid::parse_str(id).context("--project-id must be a project UUID")?;
+    }
+    let bootstrap = home.join("bootstrap.yaml");
+    let endpoint = gobby_core::bootstrap::read_daemon_endpoint_at(&bootstrap)?;
+    let database_url = match resolve_database_url_from(Some(&bootstrap)) {
+        Ok(url) => Some(url),
+        Err(error) => {
+            eprintln!("fleet-watch: {error:#}; thresholds fall back to defaults");
+            None
+        }
+    };
+    let config = gobby_daemon::fleet_health::watch::WatchConfig::under_home(
+        &home,
+        &logs,
+        &endpoint.host,
+        endpoint.port,
+        database_url,
+        project_id,
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(gobby_daemon::fleet_health::watch::run(config, once))
 }
 
 fn transient_schema_failure(error: &anyhow::Error) -> bool {
@@ -297,6 +362,11 @@ fn verify_database_identity(
 }
 
 fn resolve_database_url() -> Result<String> {
+    resolve_database_url_from(bootstrap_path().as_deref())
+}
+
+/// The environment override first, then the bootstrap file at `bootstrap`.
+fn resolve_database_url_from(bootstrap: Option<&Path>) -> Result<String> {
     if let Some(database_url) = env::var_os(DATABASE_URL_ENV) {
         let database_url = database_url
             .into_string()
@@ -305,8 +375,8 @@ fn resolve_database_url() -> Result<String> {
             return Ok(database_url);
         }
     }
-    let path = bootstrap_path().context("cannot resolve Gobby bootstrap path")?;
-    postgres_database_url_from_bootstrap_file(&path)?
+    let path = bootstrap.context("cannot resolve Gobby bootstrap path")?;
+    postgres_database_url_from_bootstrap_file(path)?
         .context("database_url is missing from bootstrap.yaml")
 }
 
