@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.tasks.attestation_shapes import select_closure_rules
 from gobby.tasks.attestations import TaskAttestation
-from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_models import AgentDefinitionBody, holds_capability
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
@@ -113,6 +113,7 @@ def build_closure_condition_helpers(context: dict[str, Any]) -> dict[str, Callab
         "int": int,
         "bool": bool,
         "paths_match": paths_match,
+        "holds_capability": holds_capability,
         "timestamp": lambda value: datetime.fromisoformat(value).timestamp(),
     }
 

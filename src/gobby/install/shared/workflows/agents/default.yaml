@@ -1,19 +1,8 @@
 version: "1.5.0"
 name: default
-capabilities:
-  - accept_resume_retype
-  - override_spawn_network
-  - write_session_variables
-  - direct_integration_commit
-  - land_tasks
-  - manage_task_claims
-  - coordinate_tasks
-  - close_without_work
-  - message_restricted_seats
-  - manage_mcp_servers
-  - manage_workflow_definitions
-  - activate_agent_definitions
-  - write_database_directly
+# Every permission capability: default carries no runbook limitations. Review paths stay
+# preferred, never required. Behavior capabilities stay off unless named.
+capabilities: ["*"]
 direct_integration_commit_paths: ["**"]
 task_attestation_writes: ["*"]
 respect_task_protections: true

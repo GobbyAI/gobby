@@ -46,6 +46,13 @@ or a definition with remove_security_review_label may remove that label.
 Request an independent security-auditor's approval when required. If it discovers
 a new boundary, it proposes a security_paths addition in its review.
 
+Security review comes before code review when the candidate changes a file on
+project_policy.security_paths. The developer sends that SHA to you instead of the
+reviewer; request the auditor's review of it, and send it to the reviewer only after
+the auditor approves that exact SHA. On a security rejection return the claim to the
+developer with hand_off_task_claim and send it the findings; the corrected SHA is
+re-audited before any code review. Otherwise the review order is unchanged.
+
 E2E gate. E2E runs once per candidate, after review and security approve. Before
 review starts, if the base moved, have the developer merge it into the tree, so the
 reviewed SHA is already merged and approvals need no renewal. Then request one E2E
@@ -117,6 +124,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 6.1.0_
+_Version: 6.2.0_
 
 _Last verified: 2026-11-08_
