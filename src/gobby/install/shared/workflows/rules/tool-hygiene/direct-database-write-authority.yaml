@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 tags: [gobby, default, tool-hygiene]
 
 # Operator ruling, 2026-11-10: direct database writes are allowed for the seats whose
@@ -43,8 +43,12 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        # Alternatives: a `python -c` body that imports a driver; an executed heredoc
-        # line or `;`-separated statement that imports one (`import os, psycopg`);
-        # a dynamic import by name. Driver names elsewhere in arguments stay open.
-        command_pattern: '(?m)(?:(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?python(?:3(?:\.\d+)?)?\s(?:[^\n]*\s)?-[A-Za-z]*c[^\n]*?\b(?:import|from)\s+[^\n;''"]*\b(?:psycopg2?|asyncpg)\b|(?:^|(?<=;))[ \t]*(?:import|from)\s[^\n;]*\b(?:psycopg2?|asyncpg)\b|\b(?:__import__|import_module)[(\s]\s*[''"](?:psycopg2?|asyncpg)\b)'
+        # The pattern selects only a Python command that runs inline code: a `-c`
+        # body or a heredoc it consumes. The exemption then reads the executed text
+        # (the matcher's unblanked command, heredoc bodies included) and passes the
+        # call unless that code imports a driver, statically or by name. Driver names
+        # in other commands' arguments are never selected. A command that pairs inline
+        # Python with a separate segment mentioning a driver import reads as one text.
+        command_pattern: '(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:(?:[^\s;&|]*/)?uv\s+run\s+(?:-\S+\s+)*)?(?:[^\s;&|]*/)?python(?:3(?:\.\d+)?)?(?=\s|$)[^\n]*?(?:\s-[A-Za-z]*c(?=[\s''"]|$)|<<)'
+        command_not_pattern: '^(?![\s\S]*(?:\b(?:import|from)\s[^\n]*?\b(?:psycopg2?|asyncpg)\b|\b(?:__import__|import_module)\W+(?:psycopg2?|asyncpg)\b))'
         reason: *db_reason
