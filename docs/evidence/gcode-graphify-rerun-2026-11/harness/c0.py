@@ -37,8 +37,9 @@ def c0_policy(root: Path, home: Path, interpreter: Path) -> dict[str, Any]:
     that read under the root-only allowRead, so C0 alone adds the base install, read-only.
     """
     policy = srt_policy(root, home)
-    base = interpreter.resolve().parent.parent
-    policy["filesystem"]["allowRead"] = [*policy["filesystem"]["allowRead"], str(base)]
+    base = str(interpreter.resolve().parent.parent)
+    if base not in policy["filesystem"]["allowRead"]:
+        policy["filesystem"]["allowRead"] = [*policy["filesystem"]["allowRead"], base]
     return policy
 
 

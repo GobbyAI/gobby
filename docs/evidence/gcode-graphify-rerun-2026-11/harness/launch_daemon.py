@@ -153,8 +153,45 @@ def _await_daemon_healthy(process: subprocess.Popen[bytes], url: str) -> None:
     )
 
 
+# Venv interpreters the sandboxed steps execute. Each is a symlink into a uv-managed base
+# install, usually outside the runtime root, which the home read-deny would otherwise hide.
+SANDBOX_INTERPRETERS = ("tools/gobby/venv/bin/python", "tools/graphify/venv/bin/python")
+
+
+def interpreter_bases(root: Path) -> list[str]:
+    """The base installs behind the runtime's venv interpreters that lie outside the root."""
+    bases: list[str] = []
+    for relative in SANDBOX_INTERPRETERS:
+        interpreter = root / relative
+        if not interpreter.exists():
+            continue
+        base = interpreter.resolve().parent.parent
+        if not base.is_relative_to(root.resolve()) and str(base) not in bases:
+            bases.append(str(base))
+    return bases
+
+
 def srt_policy(root: Path, home: Path) -> dict[str, Any]:
-    """Confine the daemon to writes under the runtime root and to loopback sockets."""
+    """Confine a sandboxed step to loopback sockets, root-only writes and home-denied reads.
+
+    SRT 0.0.79 allows every read by default, and an `allowRead` entry overrides a `denyRead`
+    entry. So the operator's whole home is denied, the runtime root and interpreter bases are
+    re-allowed, and the policy is refused when a re-allowed path would expose the home itself
+    or one of the named operator secrets.
+    """
+    secrets = [home / path for path in OPERATOR_HOME_DENY_READS]
+    allow_read = [str(root), *interpreter_bases(root)]
+    for allowed in allow_read:
+        opened = Path(allowed).resolve()
+        require(
+            not home.resolve().is_relative_to(opened),
+            f"read carve-out {allowed} would re-allow the operator home",
+        )
+        for secret in secrets:
+            require(
+                not secret.resolve().is_relative_to(opened),
+                f"read carve-out {allowed} would re-allow {secret}",
+            )
     return {
         "network": {
             "allowedDomains": ["localhost", "127.0.0.1"],
@@ -165,8 +202,8 @@ def srt_policy(root: Path, home: Path) -> dict[str, Any]:
             "allowAllUnixSockets": False,
         },
         "filesystem": {
-            "denyRead": [str(home / path) for path in OPERATOR_HOME_DENY_READS],
-            "allowRead": [str(root)],
+            "denyRead": [str(home), *(str(secret) for secret in secrets)],
+            "allowRead": allow_read,
             "allowWrite": [str(root)],
             "denyWrite": [],
             "allowGitConfig": False,

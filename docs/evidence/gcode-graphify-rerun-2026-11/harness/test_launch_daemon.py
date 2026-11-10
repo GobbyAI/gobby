@@ -219,10 +219,10 @@ def test_srt_policy_allows_writes_only_under_the_runtime_root() -> None:
     assert filesystem["denyWrite"] == []
 
 
-def test_srt_policy_denies_reads_of_the_five_operator_paths() -> None:
+def test_srt_policy_denies_the_operator_home_and_the_five_operator_paths() -> None:
     filesystem = srt_policy(ROOT, HOME)["filesystem"]
 
-    assert filesystem["denyRead"] == OPERATOR_DENY_READS
+    assert filesystem["denyRead"] == [str(HOME), *OPERATOR_DENY_READS]
 
 
 def test_srt_policy_permits_loopback_network_only() -> None:

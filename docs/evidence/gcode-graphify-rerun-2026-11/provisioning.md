@@ -234,6 +234,16 @@ The policy is the daemon's SRT policy plus read-only `allowRead` of the graphify
 resolved base install (`c0_policy` in `c0.py`). The venv `python` is a symlink into a uv-managed base
 outside the runtime root, and SRT denied that read without it.
 
+The shared SRT policy (`srt_policy` in `launch_daemon.py`) covers the daemon, C0 and the
+installation probe. It denies reads of the operator's whole home, `$HOME` as the harness
+resolves it at start, plus the five named operator secrets. It re-allows reads only for the
+runtime root and the uv base installs behind `tools/gobby/venv` and `tools/graphify/venv` that
+lie outside the root. SRT 0.0.79 reads are deny-then-allow: every read is allowed by default,
+and an `allowRead` entry wins over `denyRead`. So the policy is refused when a re-allowed path
+would contain the home itself or one of the five secrets. `test_srt_home_read_deny.py` checks
+the policy shape against synthetic files. With `GOBBY_HARNESS_LIVE_SRT=1`, it also runs the
+pinned SRT on a synthetic home file, which is denied, and a runtime-root file, which is read.
+
 1. **Graphify concurrency probe.** `graphify --help` and `graphify extract --help` are captured under
    `logs/c0/<attempt>/probe/`, with each stdout, its stderr and its return code in
    `graphify-probes.json`. Both must return 0, or the probe stops before deciding. Graphify 0.9.103's
