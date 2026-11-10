@@ -1,14 +1,14 @@
 name: orchestrator
 spawnable_agents: ["*"]
 cold_start_commands: [admin]
-capabilities: [message_restricted_seats, direct_release_manager, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, merge_base_commits, direct_integration_commit, remove_security_review_label, manage_rule_enforcement, spawn_any_definition, stop_any_seat, manage_workflow_definitions, manage_mcp_servers, manage_worktree_notes]
+capabilities: [message_restricted_seats, direct_release_manager, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, merge_base_commits, direct_integration_commit, remove_security_review_label, manage_rule_enforcement, spawn_any_definition, stop_any_seat, manage_workflow_definitions, manage_mcp_servers, manage_worktree_notes, write_database_directly]
 direct_integration_commit_paths: ["src/gobby/install/shared/workflows/agents/*.yaml", ".gobby/project.json"]
 message_sender_capabilities: [message_restricted_seats]
 description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and directs restarts and cutovers through the
   Release Manager.
-version: "8.1.1"
+version: "8.2.0"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]

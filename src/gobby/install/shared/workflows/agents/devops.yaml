@@ -1,10 +1,10 @@
 name: devops
-capabilities: [message_assistant, message_restricted_seats]
+capabilities: [message_assistant, message_restricted_seats, write_database_directly]
 description: |
   DevOps seat. Diagnoses and measures the host an agent fleet runs on: CPU and
   security-service load, build churn, disk, and local container services. Reports
   findings and fixes; never edits source or changes system settings.
-version: "1.1.0"
+version: "1.2.0"
 tags: [gobby, seat]
 # Root pane only: host diagnostics need to see the whole machine, and spawned agents
 # are always sandboxed. The operator opens this seat as a persona.

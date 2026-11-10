@@ -1,0 +1,45 @@
+version: "1.0.0"
+tags: [gobby, default, tool-hygiene]
+
+# Operator ruling, 2026-11-10: direct database writes are allowed for the seats whose
+# definition grants write_database_directly; every other seat is refused direct
+# database access through CLI tools. The command matcher unwraps uv run, env
+# assignments and shell wrappers before these patterns run. A PostgreSQL client
+# session cannot be told read-only from its command line, so the client CLIs are
+# refused whole; daemon reads go through query_readonly under its own policy.
+# Regex matching is defense in depth: a Python file run by path, and a heredoc
+# piped from a data sink such as cat into python, are not inspected.
+rules:
+  direct-database-client-authority:
+    description: Refuse PostgreSQL client CLIs without write_database_directly
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: &db_gate >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'write_database_directly'))
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?(?:psql|pgcli|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=\s|$|[;&|)])'
+        reason: &db_reason >-
+          Direct database access through CLI tools requires a definition that grants
+          write_database_directly, or the operator's terminal. Use the governed MCP
+          tools, or send the exact change you need to your report_to session through
+          gobby-agents:send_message.
+
+  inline-database-driver-authority:
+    description: Refuse inline Python database drivers without write_database_directly
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: *db_gate
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: '(?m)(?:(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?python(?:3(?:\.\d+)?)?\s[^\n]*\b(?:psycopg2?|asyncpg)\b|^\s*(?:import|from)\s+(?:psycopg2?|asyncpg)\b)'
+        reason: *db_reason

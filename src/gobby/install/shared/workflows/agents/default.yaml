@@ -1,4 +1,4 @@
-version: "1.4.0"
+version: "1.5.0"
 name: default
 capabilities:
   - accept_resume_retype
@@ -13,6 +13,7 @@ capabilities:
   - manage_mcp_servers
   - manage_workflow_definitions
   - activate_agent_definitions
+  - write_database_directly
 direct_integration_commit_paths: ["**"]
 task_attestation_writes: ["*"]
 respect_task_protections: true
