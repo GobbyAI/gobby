@@ -107,6 +107,7 @@ const CREATE_REFUSED_KEYS = new Set([
   "idle_ttl_seconds",
   "network",
   "spawnable_agents",
+  "spawner_capabilities",
   "send_message_targets",
   "operator_messaging",
   "communications_admin",

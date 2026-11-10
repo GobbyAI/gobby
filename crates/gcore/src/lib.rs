@@ -12,6 +12,7 @@ pub mod cli_contract;
 pub mod daemon_url;
 pub mod database_concurrency;
 pub mod domain_error;
+pub mod process_identity;
 pub mod project;
 
 // Always available - lightweight foundation modules.
@@ -28,6 +29,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod mermaid;
 pub mod progress;
+pub mod session_credential;
 pub mod token_budget;
 
 /// Return Gobby home, respecting `GOBBY_HOME` when set.

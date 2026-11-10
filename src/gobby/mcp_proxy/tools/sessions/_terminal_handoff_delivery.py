@@ -175,7 +175,8 @@ async def _wait_for_compact_boundary(
             return None
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            return _COMPACT_BOUNDARY_TIMEOUT_REASON
+            # A boundary observed in this pass wins over the expired budget, as at the loop head.
+            return None if waiter.event.is_set() else _COMPACT_BOUNDARY_TIMEOUT_REASON
         try:
             await asyncio.wait_for(
                 waiter.event.wait(), timeout=min(_COMPACT_BOUNDARY_POLL_SECONDS, remaining)

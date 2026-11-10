@@ -22,7 +22,7 @@ pub async fn handle(state: &RuntimeState, request: Request<Body>) -> Response<Bo
             json!({"detail": "node mode has no singleton lease"}),
         );
     };
-    let mut lease = lease.lock().await;
+    let mut lease = lease.lock_as("admin lease request").await;
     let result = match (request.method(), request.uri().path()) {
         (&Method::GET, "/api/admin/lease/status") => lease.owner().await.map(|owner| {
             json!({

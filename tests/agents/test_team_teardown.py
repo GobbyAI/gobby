@@ -386,6 +386,27 @@ async def test_teardown_keeps_every_team_tree_whatever_its_state(
     assert session_status(db, stranger) == "active"
 
 
+async def test_closed_tree_with_only_generated_dirt_is_retained_without_a_removal(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    team = await admitted_team(world, "Generated dirt team tree")
+    sha = land(world, team, "landed.py")
+    tree = tree_of(team.binding)
+    (tree / ".mcp.json").write_text("{}\n")
+    closed = close(world, team, sha)
+
+    with caplog.at_level(logging.INFO, logger="gobby.worktrees.deletion"):
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    # Teardown ends seats only; the completion owner's delete_worktree retires the tree.
+    assert teardown(world, team) == {"outcome": "retained"}
+    assert (tree / ".mcp.json").is_file()
+    assert branch_exists(world, team.binding.branch)
+    assert "Deleting worktree" not in caplog.text
+
+
 async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

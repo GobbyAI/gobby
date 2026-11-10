@@ -7,6 +7,7 @@ import os
 import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -317,7 +318,8 @@ async def test_barrier_replays_fresh_envelope_end_to_end(tmp_path: Path) -> None
     assert is_envelope_processed(envelope_id, processed_dir=inbox_dir / "processed")
     post.assert_awaited_once()
     assert post.await_args is not None
-    assert post.await_args.kwargs == {"envelope_id": envelope_id}
+    assert set(post.await_args.kwargs) == {"envelope_id", "app"}
+    assert post.await_args.kwargs["envelope_id"] == envelope_id
 
 
 @pytest.mark.asyncio
@@ -757,11 +759,14 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
         "n-0000000000001-abcd",
         processed_dir=inbox_dir / "processed",
     )
+    # Session selector headers are dropped on replay: the operator-token replay
+    # is a machine caller, and the envelope body names its session.
+    # See tests/hooks/test_inbox_replay_selectors.py.
     mock_client.post.assert_awaited_once_with(
         "/api/hooks/execute",
         json=envelope,
         headers={
-            **envelope["headers"],
+            "X-Gobby-Project-Id": "proj-123",
             ENVELOPE_ID_HEADER: "n-0000000000001-abcd",
             "Authorization": "Bearer test-operator-token",
         },
@@ -1250,6 +1255,19 @@ def test_quarantine_prune_recovers_orphan_payload_and_sidecar(tmp_path: Path) ->
     assert not sidecar.exists()
 
 
+class _ReceiptDb:
+    """Hub stand-in for the receipt CAS: one owning session and a no-op ambient transaction."""
+
+    def fetchone(self, sql: str, _params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        if "original_envelope_id" in sql:
+            # A full receipt-row read finds no row: the stale or unknown path these tests take.
+            return None
+        return {"session_id": "recipient-session"}
+
+    def transaction_immediate(self, _lock: object) -> nullcontext[None]:
+        return nullcontext()
+
+
 def _delivery_receipt_envelope() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -1371,7 +1389,8 @@ async def test_barrier_horizon_replays_pre_horizon_and_skips_live(tmp_path: Path
     assert live_path.exists()
     post.assert_awaited_once()
     assert post.await_args is not None
-    assert post.await_args.kwargs == {"envelope_id": "n-1000-stale"}
+    assert set(post.await_args.kwargs) == {"envelope_id", "app"}
+    assert post.await_args.kwargs["envelope_id"] == "n-1000-stale"
 
 
 @pytest.mark.asyncio
@@ -1449,7 +1468,7 @@ def test_sweep_consumes_only_well_formed_delivery_receipts(tmp_path: Path) -> No
     bad_ack = inbox_dir / "n-0000000000004-bad-ack.json"
     bad_ack.write_text(json.dumps(zero_generation), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
 
     with patch(
@@ -1485,7 +1504,7 @@ def test_sweep_decodes_a_retained_hook_envelope_once(tmp_path: Path) -> None:
     first_ack = inbox_dir / "n-0000000000002-ack1.json"
     first_ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
     reads: list[Path] = []
     read_text = Path.read_text
@@ -1530,7 +1549,7 @@ def test_sweep_consumes_a_receipt_that_replaced_a_decoded_envelope(tmp_path: Pat
         encoding="utf-8",
     )
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
 
     with patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None):
@@ -1561,7 +1580,7 @@ def test_concurrent_sweeps_and_drain_acknowledge_one_ack_once(
     ack = inbox_dir / "n-0000000000001-ack1.json"
     ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
     # Two per-hook sweeps and the drain all read the ack before any of them
     # consumes it, as concurrent hook requests do in the daemon.
@@ -1606,7 +1625,7 @@ async def test_drain_reads_and_acknowledges_receipts_off_the_event_loop(tmp_path
     ack = inbox_dir / "n-0000000000001-ack1.json"
     ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
     loop_thread = threading.get_ident()
     read_on: list[int] = []
@@ -1651,7 +1670,7 @@ def test_claim_stranded_by_a_crash_is_acknowledged_by_the_next_daemon(
     ack = inbox_dir / "n-0000000000001-ack1.json"
     ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
 
     with (
@@ -1703,7 +1722,7 @@ def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) 
     processed_dir.mkdir()
     message_manager = MagicMock()
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
     app.state.hook_manager._inter_session_msg_manager = message_manager
     receipt = HookReceipt(
@@ -1738,6 +1757,57 @@ def test_consume_delivery_receipt_applies_pending_message_marks(tmp_path: Path) 
     assert not path.exists()
 
 
+def test_consume_delivery_receipt_restores_the_claim_when_its_ack_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.hooks.inbox import _consume_inbox_delivery_receipt
+    from gobby.storage.hook_receipts import HookReceipt
+
+    path = tmp_path / "ack.json"
+    path.write_text("{}", encoding="utf-8")
+    signature = inbox_envelopes.file_signature(path)
+    assert signature is not None
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    message_manager = MagicMock()
+    app = FastAPI()
+    app.state.database = _ReceiptDb()
+    app.state.hook_manager = MagicMock()
+    app.state.hook_manager._inter_session_msg_manager = message_manager
+    receipt = HookReceipt(
+        receipt_id="r1",
+        original_envelope_id="env-1",
+        current_envelope_id="env-1",
+        session_id="recipient-session",
+        delivery_generation=1,
+        state="acknowledged",
+        staged_payload={
+            "session_variables": {"delivered_once": True},
+            "pending_message_ids": ["msg-lossless"],
+            "pending_message_session_id": "recipient-session",
+        },
+    )
+
+    def failing_merge(*_args: Any, **_kwargs: Any) -> bool:
+        raise RuntimeError("queue write failed")
+
+    monkeypatch.setattr(SessionVariableManager, "merge_variables", failing_merge)
+    with patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=receipt):
+        consumed = _consume_inbox_delivery_receipt(
+            app,
+            _delivery_receipt_envelope(),
+            path,
+            "env-1",
+            processed_dir=processed_dir,
+            expected_signature=signature,
+        )
+
+    assert consumed is False
+    assert path.exists()
+    assert list(processed_dir.iterdir()) == []
+    message_manager.mark_delivered_batch.assert_not_called()
+
+
 def test_consume_delivery_receipt_duplicate_ack_does_not_mark(tmp_path: Path) -> None:
     from gobby.hooks.inbox import _consume_inbox_delivery_receipt
 
@@ -1749,7 +1819,7 @@ def test_consume_delivery_receipt_duplicate_ack_does_not_mark(tmp_path: Path) ->
     processed_dir.mkdir()
     message_manager = MagicMock()
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
     app.state.hook_manager._inter_session_msg_manager = message_manager
     with patch(
@@ -1817,7 +1887,7 @@ async def test_drain_ack_before_original_terminalizes_the_original(tmp_path: Pat
     original_path = inbox_dir / f"{original_id}.json"
     original_path.write_text(json.dumps(_valid_envelope()), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
 
     with (
         patch(
@@ -1860,7 +1930,7 @@ async def test_drain_original_before_ack_never_replays_the_original(tmp_path: Pa
         processed_dir=processed_dir,
     )
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
 
     with (
         patch(
@@ -1895,7 +1965,7 @@ def test_consume_delivery_receipt_marks_original_and_current_envelopes(tmp_path:
     processed_dir = tmp_path / "processed"
     processed_dir.mkdir()
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     assert claim_envelope_processing("env-processing", processed_dir=processed_dir)
 
     with patch(
@@ -1931,7 +2001,7 @@ def test_consume_delivery_receipt_duplicate_ack_marks_nothing_else(tmp_path: Pat
     processed_dir = tmp_path / "processed"
     processed_dir.mkdir()
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     envelope = _delivery_receipt_envelope()
 
     with patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None):
@@ -1959,7 +2029,7 @@ def test_receipt_read_by_six_consumers_is_acknowledged_and_logged_once(
     ack = inbox_dir / "n-0000000000001-ack1.json"
     ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
     app = FastAPI()
-    app.state.database = object()
+    app.state.database = _ReceiptDb()
     app.state.hook_manager = MagicMock()
     readers = threading.Barrier(6, timeout=5)
     read_text = Path.read_text
@@ -2003,7 +2073,9 @@ async def test_drain_skips_session_after_adapter_timeout_and_replays_others(
         paths[envelope_id] = _write_inbox_envelope(inbox_dir, envelope_id, envelope)
     posted: list[str | None] = []
 
-    async def post(envelope: dict[str, Any], *, envelope_id: str | None = None) -> httpx.Response:
+    async def post(
+        envelope: dict[str, Any], *, envelope_id: str | None = None, app: object = None
+    ) -> httpx.Response:
         posted.append(envelope_id)
         if envelope["headers"]["X-Gobby-Session-Id"] == "wedged-session":
             return httpx.Response(503, json={"status": "retry", "retry_kind": "adapter_timeout"})
@@ -2029,7 +2101,9 @@ async def test_drain_keeps_replaying_session_after_other_503(tmp_path: Path) -> 
         _write_inbox_envelope(inbox_dir, envelope_id, envelope)
     posted: list[str | None] = []
 
-    async def post(envelope: dict[str, Any], *, envelope_id: str | None = None) -> httpx.Response:
+    async def post(
+        envelope: dict[str, Any], *, envelope_id: str | None = None, app: object = None
+    ) -> httpx.Response:
         posted.append(envelope_id)
         return httpx.Response(503, json={"status": "retry", "retry_kind": "preflight_timeout"})
 

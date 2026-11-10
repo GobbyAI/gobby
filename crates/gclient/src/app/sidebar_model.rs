@@ -39,6 +39,18 @@ pub struct SidebarModel {
     pub git_refreshed_at: Instant,
 }
 
+impl SidebarModel {
+    /// Agents contributing to worktree, project, machine and status roll-ups.
+    pub fn rollup_agents(&self) -> impl Iterator<Item = &AgentEntry> {
+        self.agents.iter().filter(|agent| {
+            !self.projects.iter().any(|project| {
+                project.project_id == agent.project_id
+                    && superseded_in_worktrees(agent, &self.agents, &project.worktrees)
+            })
+        })
+    }
+}
+
 impl Default for SidebarModel {
     fn default() -> Self {
         Self {
@@ -512,12 +524,34 @@ fn is_bound_to(agent: &AgentEntry, worktree_id: &str, task_id: Option<&str>) -> 
 
 /// A dead agent bound to a tree only by its task is a previous lead once
 /// another such agent runs: the tree shows its live lead's state.
-fn superseded_lead(agent: &AgentEntry, bound: &[&AgentEntry]) -> bool {
+fn superseded_lead<'a>(
+    agent: &AgentEntry,
+    mut bound: impl Iterator<Item = &'a AgentEntry>,
+) -> bool {
     agent.worktree_id.is_none()
         && agent.state == RowState::NoLive
-        && bound
-            .iter()
-            .any(|other| other.worktree_id.is_none() && other.state != RowState::NoLive)
+        && bound.any(|other| other.worktree_id.is_none() && other.state != RowState::NoLive)
+}
+
+fn superseded_in_worktrees(
+    agent: &AgentEntry,
+    agents: &[AgentEntry],
+    worktrees: &[WorktreeEntry],
+) -> bool {
+    if agent.worktree_id.is_some() || agent.state != RowState::NoLive {
+        return false;
+    }
+    worktrees.iter().any(|worktree| {
+        let task_id = worktree.task_id.as_deref();
+        is_bound_to(agent, &worktree.worktree_id, task_id)
+            && superseded_lead(
+                agent,
+                agents.iter().filter(|other| {
+                    other.project_id == agent.project_id
+                        && is_bound_to(other, &worktree.worktree_id, task_id)
+                }),
+            )
+    })
 }
 
 /// Logs each agent that just came to need the operator when its definition is
@@ -558,7 +592,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
         .iter()
         .filter(|agent| agent.project_id == row.id)
         .collect();
-    let worktrees = inputs
+    let worktrees: Vec<WorktreeEntry> = inputs
         .rows
         .worktrees
         .iter()
@@ -582,11 +616,15 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
                 state: rollup(
                     bound
                         .iter()
-                        .filter(|agent| !superseded_lead(agent, &bound))
+                        .filter(|agent| !superseded_lead(agent, bound.iter().copied()))
                         .map(|agent| agent.state),
                 ),
             }
         })
+        .collect();
+    let own: Vec<_> = own
+        .into_iter()
+        .filter(|agent| !superseded_in_worktrees(agent, agents, &worktrees))
         .collect();
     ProjectEntry {
         project_id: row.id.clone(),

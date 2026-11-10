@@ -64,6 +64,11 @@ def pytest_collection_finish(session: pytest.Session) -> None:
 
 @pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config: pytest.Config) -> None:
+    # Interpreter finalization collects every live object, and a session heap of about
+    # 378k objects took 2 to 17 s per full pass under load: that overran the 60 s guard
+    # on a clean run. Freezing first moves those objects to the permanent generation so
+    # the exit passes skip them; the guards then bound only the exit work that remains.
+    gc.freeze()
     # Bounds pytest's cleanup stack, which runs after this hook.
     teardown_timeout = float(config.getini("teardown_watchdog_timeout"))
     _arm_exit_watchdog(teardown_timeout)

@@ -13,11 +13,13 @@ from gobby.agents.idle_detector import ComposerRead
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import (
+    CURSOR_DRAFT_REASON,
     ComposerLedger,
     ComposerReleaseError,
     LedgerRead,
     WaitOutcome,
     WriteOrigin,
+    bind_composer_ledger,
     composer_drain_keys,
     load_ledger,
     persist_ledger,
@@ -318,15 +320,6 @@ def test_operator_writes_are_human_input_and_enter_flags_their_submit() -> None:
         "\x1b[M !!",
         "\x1b[M`!!",
         "\x1b[M \r!",
-        "\x1b[A",
-        "\x1b[B",
-        "\x1b[C",
-        "\x1b[D",
-        "\x1bOA",
-        "\x1bOB",
-        "\x1bOC",
-        "\x1bOD",
-        "\x1b[1;5C",
         # Terminal replies to the program's own queries: CPR, DA1, DA2, DSR, DECRPM,
         # kitty keyboard flags, DCS and OSC. The viewer answers them, never a person.
         "\x1b[12;40R",
@@ -372,6 +365,83 @@ def test_raw_interrupts_and_edits_invalidate_composer_content(payload: str, held
     assert not ledger.read("t1").holds("continue")
 
 
+@pytest.mark.parametrize("origin", ["operator", "attention"])
+@pytest.mark.parametrize(
+    "payload",
+    ["\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "\x1bOA", "\x1bOB", "\x1bOC", "\x1bOD", "\x1b[1;5C"],
+)
+def test_cursor_input_marks_a_clean_composer_draft(origin: WriteOrigin, payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin=origin, kind="input", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+
+
+@pytest.mark.parametrize("payload", ["\x1b[A", "\x15", "\x7f"])
+def test_cursor_or_control_draft_holds_no_typed_text(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+    assert ledger.cursor_mark("t1") is not None
+
+
+def test_typed_text_after_a_cursor_key_is_a_text_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
+    ledger.observe_write("t1", origin="operator", kind="input", payload="a")
+    assert ledger.cursor_mark("t1") is None
+
+
+def test_typed_text_draft_is_not_a_cursor_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="typed")
+    assert ledger.cursor_mark("t1") is None
+
+
+def test_confirm_empty_clears_a_cursor_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
+    mark = ledger.cursor_mark("t1")
+    assert mark is not None
+    assert ledger.confirm_empty("t1", mark) is True
+    assert ledger.read("t1") == _EMPTY
+
+
+def test_confirm_empty_refuses_a_mark_that_later_input_outran() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
+    mark = ledger.cursor_mark("t1")
+    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
+    assert mark is not None
+    assert ledger.confirm_empty("t1", mark) is False
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_bound_read_names_a_cursor_draft_with_its_reason() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="\x1b[A")
+    bind_composer_ledger(ledger)
+    try:
+        assert read_composer("t1") == ComposerRead("draft", reason=CURSOR_DRAFT_REASON)
+    finally:
+        bind_composer_ledger(None)
+
+
+@pytest.mark.parametrize("payload", ["\x15", "\x7f", "\x1b[3~"])
+def test_control_only_input_marks_a_clean_composer_draft(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_operator_enter_after_a_draft_confirms_empty_on_record_submit() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="\x15")
+    assert ledger.read("t1") == _DRAFT
+    ledger.observe_write("t1", origin="operator", kind="key", payload="enter")
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == _EMPTY
+
+
 @pytest.mark.parametrize("payload", ["tab", "backspace", "delete", "ctrl_u", "kp0", "kpenter"])
 def test_named_editing_keys_remain_human_input(payload: str) -> None:
     ledger = _tracked()
@@ -380,10 +450,10 @@ def test_named_editing_keys_remain_human_input(payload: str) -> None:
 
 
 @pytest.mark.parametrize("payload", ["up", "down", "left", "right"])
-def test_named_cursor_keys_leave_a_clean_composer_empty(payload: str) -> None:
+def test_named_cursor_keys_mark_a_clean_composer_draft(payload: str) -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="operator", kind="key", payload=payload)
-    assert ledger.read("t1") == _EMPTY
+    assert ledger.read("t1") == _DRAFT
 
 
 @pytest.mark.parametrize("payload", ["\x1b[A", "\x1b[B", "\x1bOC", "\x1bOD"])
@@ -410,14 +480,19 @@ def test_keypad_enter_flags_a_submit() -> None:
     assert ledger.read("t1") == _EMPTY
 
 
-@pytest.mark.parametrize("effect", ["control", "cursor"])
 @pytest.mark.parametrize("draft", [False, True])
-def test_native_non_text_input_preserves_composer_state(effect: InputEffect, draft: bool) -> None:
+def test_native_viewer_reports_preserve_composer_state(draft: bool) -> None:
     ledger = _tracked("t1")
     if draft:
         ledger.observe_host_event(_host(1))
-    ledger.observe_host_event(_host(2, effect=effect))
+    ledger.observe_host_event(_host(2, effect="control"))
     assert ledger.read("t1") == (_DRAFT if draft else _EMPTY)
+
+
+def test_native_cursor_input_drafts_a_clean_composer() -> None:
+    ledger = _tracked("t1")
+    ledger.observe_host_event(_host(1, effect="cursor"))
+    assert ledger.read("t1") == _DRAFT
 
 
 def test_native_controls_preserve_held_text_and_advance_the_cursor() -> None:

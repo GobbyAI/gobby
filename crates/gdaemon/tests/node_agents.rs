@@ -1245,7 +1245,16 @@ async fn retry_removals_defers_to_a_held_removal_lock() -> Result<()> {
         "a busy lock never touches the worktree"
     );
     drop(held);
-    workspace::retry_removals(&agents).await?;
+    // A child another test forks shares the lock's descriptor until it execs, so the release
+    // can trail the drop; a busy retry keeps the record, as the next pass would.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        workspace::retry_removals(&agents).await?;
+        if !record.path.exists() || Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     assert!(
         !agents
             .state
@@ -1272,9 +1281,17 @@ fn removal_lock_follows_the_tree_it_guards() -> Result<()> {
         RemovalLock::acquire(&real.join("wt"))?.is_none(),
         "the canonical path sees the symlinked holder's lock"
     );
-    // Cancellation: dropping a guard (a cancelled removal) releases the lock.
+    // Cancellation: dropping a guard (a cancelled removal) releases the lock. A child another
+    // test forks shares the lock's descriptor until it execs, so the release can trail the drop.
     drop(held);
-    let again = RemovalLock::acquire(&real.join("wt"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let again = loop {
+        let again = RemovalLock::acquire(&real.join("wt"))?;
+        if again.is_some() || Instant::now() >= deadline {
+            break again;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
     assert!(again.is_some(), "a dropped guard releases the lock");
     drop(again);
 
@@ -1652,6 +1669,8 @@ impl SrtTree {
             ("tmp", root.join("tmp")),
             ("darwin_temp", root.join("darwin-temp")),
             ("darwin_cache", root.join("darwin-cache")),
+            // The passwd account home, distinct from HOME: the operator root comes from it.
+            ("operator_home", root.join("operator-home")),
             ("run_root", gobby_home.join("run/sandbox").join(SRT_RUN_ID)),
             (
                 "srt_socket",
@@ -1742,6 +1761,11 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         workspace: PathBuf::from(srt_text(&filled, "workspace")?),
         home: tree.path("home"),
         gobby_home: tree.path("gobby_home"),
+        operator_bootstrap: Some(
+            tree.path("operator_home")
+                .join(".gobby")
+                .join("bootstrap.yaml"),
+        ),
         env: serde_json::from_value(filled["env"].clone())?,
         provider_executable: Some(PathBuf::from(srt_text(&filled, "provider_executable")?)),
         daemon_port: u16::try_from(filled["daemon_port"].as_u64().context("daemon_port")?)?,

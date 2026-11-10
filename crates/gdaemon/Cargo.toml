@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.143"
+version = "0.4.149"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -54,6 +54,10 @@ uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+nix = { version = "0.29", default-features = false, features = ["user"] }
+
+[target.'cfg(not(unix))'.dependencies]
+dirs = "6"
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1"] }

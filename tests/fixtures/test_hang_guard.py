@@ -6,14 +6,19 @@ process, and the inner run must not load this suite's conftest or database.
 
 from __future__ import annotations
 
+import atexit
+import faulthandler
 import gc
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import cast
 
 import pytest
+
+from tests.fixtures import hang_guard
 
 pytestmark = pytest.mark.integration
 
@@ -213,6 +218,39 @@ def test_slow_cleanup_stack_after_the_pass_summary_is_not_a_hang(
     assert "1 passed" in output
     assert result.returncode == 0
     assert "Timeout" not in output
+
+
+@pytest.mark.unit
+def test_exit_watchdog_freezes_the_session_heap_before_it_arms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Finalization garbage-collects every live object once the process exits, and
+    # that work is what overran the watchdog. The freeze must come before the timer
+    # arms so the exit passes skip the session's objects, not after.
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(gc, "freeze", lambda: calls.append(("freeze",)))
+    monkeypatch.setattr(
+        faulthandler,
+        "dump_traceback_later",
+        lambda seconds, *, exit, file: calls.append(("arm", seconds, exit, file)),
+    )
+    # Keep the atexit re-arm out of this process's real exit.
+    monkeypatch.setattr(atexit, "register", lambda fn, *args: calls.append(("atexit", fn, *args)))
+    read: list[str] = []
+
+    class _Config:
+        def getini(self, name: str) -> str:
+            read.append(name)
+            return "600"
+
+    hang_guard.pytest_unconfigure(cast(pytest.Config, _Config()))
+
+    assert read == ["teardown_watchdog_timeout"]
+    assert calls == [
+        ("freeze",),
+        ("arm", 600.0, True, 2),
+        ("atexit", hang_guard._arm_exit_watchdog, 600.0),
+    ]
 
 
 def test_import_heap_is_frozen_before_tests_run() -> None:

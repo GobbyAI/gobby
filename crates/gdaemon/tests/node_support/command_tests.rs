@@ -1327,7 +1327,16 @@ async fn launch_rollback_keeps_a_tree_another_remover_holds() -> Result<()> {
         "a busy rollback keeps the record queued for retry"
     );
     drop(held);
-    workspace::retry_removals(&fixture.launch.agents).await?;
+    // A child another test forks shares the lock's descriptor until it execs, so the release
+    // can trail the drop; a busy retry keeps the record, as the next pass would.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        workspace::retry_removals(&fixture.launch.agents).await?;
+        if !tree.exists() || tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     assert!(!tree.exists(), "the retry removes the rolled-back tree");
     assert!(
         !persisted_state(&fixture.launch.agents.home)?
@@ -1452,10 +1461,14 @@ async fn unread_acceptance_times_out_and_cancels_the_run() -> Result<()> {
     use tokio_tungstenite::tungstenite::Message;
 
     let fixture = CommandsFixture::new(true).await?;
+    // Transfer the request before the idle clock can expire under scheduler load.
+    // Only the duplex is active here; resume real time before waiting on state I/O.
+    tokio::time::pause();
     let mut socket = serve_duplex_for(&fixture, 16, Duration::from_secs(1)).await;
     socket
         .send(Message::Text(fixture.spawn("spawn").to_string().into()))
         .await?;
+    tokio::time::resume();
     // The peer stays connected but never reads, so the send outlives the idle bound.
     assert_unprepared_cancel(&fixture).await?;
     drop(socket);

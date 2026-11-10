@@ -256,10 +256,9 @@ async def test_unverified_compact_submit_keeps_the_attempt_without_retyping(
     schedule.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_codex_rollout_compact_completes_wait_without_postcompact_hook(
-    tmp_path: Path,
-) -> None:
+async def _codex_boundary_wait(
+    tmp_path: Path, timeout_seconds: float
+) -> tuple[str | None, list[str]]:
     import asyncio
 
     rollout = tmp_path / "rollout.jsonl"
@@ -282,10 +281,28 @@ async def test_codex_rollout_compact_completes_wait_without_postcompact_hook(
         _ComposerPane(),
         None,
         None,
-        timeout_seconds=0.1,
+        timeout_seconds=timeout_seconds,
         codex_cursor=cursor,
         on_codex_boundary=receive_boundary,
     )
+    return result, calls
+
+
+@pytest.mark.asyncio
+async def test_codex_rollout_compact_completes_wait_without_postcompact_hook(
+    tmp_path: Path,
+) -> None:
+    result, calls = await _codex_boundary_wait(tmp_path, timeout_seconds=0.1)
+
+    assert result is None
+    assert calls == ["compacted"]
+
+
+@pytest.mark.asyncio
+async def test_codex_boundary_observed_past_deadline_is_not_a_timeout(tmp_path: Path) -> None:
+    # A zero budget is spent before the deadline check. The boundary this pass observes must
+    # still complete the wait: its set is queued before the thread hop resumes the loop.
+    result, calls = await _codex_boundary_wait(tmp_path, timeout_seconds=0)
 
     assert result is None
     assert calls == ["compacted"]

@@ -264,6 +264,7 @@ pub fn run_lifecycle_action(
     let daemon_url = require_daemon_url(request.daemon_url.as_deref(), action)?;
     let url = build_lifecycle_url(daemon_url, action, &request.project_id)?;
     let token = read_api_key().context("failed to read API key")?;
+    let bearer = gobby_core::grant::presentation_bearer(grant, &token)?;
     let client = reqwest::blocking::Client::builder()
         .timeout(request.timeouts.for_action(action))
         .build()
@@ -272,7 +273,7 @@ pub fn run_lifecycle_action(
     let mut request_builder = client
         .post(url.clone())
         .header("Accept", "application/json")
-        .header(AUTHORIZATION_HEADER, authorization_bearer(&token));
+        .header(AUTHORIZATION_HEADER, authorization_bearer(&bearer));
     if let Some(grant) = grant {
         let header = gobby_core::grant::encode_grant_header(grant)
             .map_err(|error| anyhow::anyhow!("grant header encode failed: {error}"))?;

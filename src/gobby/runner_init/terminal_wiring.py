@@ -78,6 +78,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         bind_wake_write_services(None, None)
         bind_composer_coordinator(None)
         runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)
+        runner.wake_dispatcher.set_terminal_runtime_registry(runner.terminal_runtime_registry)
         if runner.agent_runner is not None:
             runner.agent_runner.terminal_manager = runner.terminal_manager
             runner.agent_runner.terminal_runtime_registry = runner.terminal_runtime_registry
@@ -140,6 +141,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
     bind_composer_coordinator(runner.write_coordinator)
     runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)
+    runner.wake_dispatcher.set_terminal_runtime_registry(runner.terminal_runtime_registry)
     runner.wake_dispatcher.set_lease_registry(runner.lease_registry)
     runner.lease_registry.set_focus_observer(runner.wake_dispatcher.release_focus_hold)
     runner.terminal_services = TerminalServices(

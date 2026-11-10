@@ -22,6 +22,13 @@ from gobby.storage import schema_contract
 _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
 
+@pytest.fixture(autouse=True)
+def isolated_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.cli.installers.fleet_service.install_fleet_service", lambda path: False
+    )
+
+
 def test_ensure_gdaemon_wraps_unbumped_workspace_release_refusal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -205,10 +212,19 @@ def test_run_daemon_setup_provisions_gdaemon_before_database_init(
 
     monkeypatch.setattr(runtime, "runtime_hub_database", database)
     _stub_non_schema_setup(monkeypatch, tmp_path)
+    from gobby.cli.installers import fleet_service
+
+    def supervise(path: Path) -> bool:
+        assert path == tmp_path
+        events.append("watcher-sampled")
+        return True
+
+    monkeypatch.setattr(fleet_service, "install_fleet_service", supervise)
 
     install_setup.run_daemon_setup(tmp_path, configure_ide_settings=False)
 
     assert events[:2] == ["gdaemon", "database"]
+    assert events[-1] == "watcher-sampled"
 
 
 def test_run_daemon_setup_fails_before_database_when_gdaemon_install_fails(

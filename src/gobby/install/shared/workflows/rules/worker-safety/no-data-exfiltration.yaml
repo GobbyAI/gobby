@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 tags: [worker-safety, enforcement, gobby]
 
 # Closes the exfiltration half of the prompt-injection taint path (gobby-#17671):
@@ -55,5 +55,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\.gobby/bootstrap\\.ya?ml|\\.ssh/|\\.aws/credentials|\\.netrc\\b|\\.config/gh/hosts\\.ya?ml|\\.npmrc\\b|\\.pypirc\\b"
-        reason: "Referencing local credential stores (bootstrap.yaml, .ssh, .aws, .netrc, gh hosts, .npmrc, .pypirc) is not allowed."
+        command_pattern: "\\.gobby/(?:bootstrap\\.ya?ml|\\.?capability_signing_key(?:-[^/\\s]*)?)|\\.ssh/|\\.aws/credentials|\\.netrc\\b|\\.config/gh/hosts\\.ya?ml|\\.npmrc\\b|\\.pypirc\\b"
+        reason: "Referencing local credential stores (bootstrap.yaml, capability_signing_key, .ssh, .aws, .netrc, gh hosts, .npmrc, .pypirc) is not allowed."

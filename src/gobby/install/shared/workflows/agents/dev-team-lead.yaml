@@ -9,7 +9,7 @@ capabilities:
 - write_own_step_phase
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "7.0.0"
+version: "7.1.0"
 tags:
 - gobby
 - seat
@@ -58,6 +58,7 @@ task_attestation_writes:
 - validation
 - closing
 - disposition
+- handoff-continuation-e2e
 task_attestation_scope:
   own_claim_only: true
 prompts:
@@ -373,3 +374,8 @@ task_attestation_kinds:
     - approved
     - rejected
     guidance: Explain the no-work close reason and any replacement reference.
+  handoff-continuation-e2e:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Record the handoff-continuation e2e run on the exact full candidate SHA, with a git reference to that SHA; approved only when every case passed.
