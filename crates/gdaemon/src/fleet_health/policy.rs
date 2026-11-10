@@ -26,11 +26,6 @@ pub struct Thresholds {
     /// fseventsd CPU over this with no rustc running on consecutive samples makes the state degraded.
     pub fseventsd_cpu_degraded_percent: f64,
     pub fseventsd_consecutive_samples: usize,
-    /// Seats admitted per ramp window while healthy.
-    pub max_new_seats: u32,
-    /// Length of the trailing ramp window. Every admission inside it counts, and a
-    /// non-healthy sample does not reset it.
-    pub ramp_window_seconds: i64,
 }
 
 impl Default for Thresholds {
@@ -46,8 +41,6 @@ impl Default for Thresholds {
             memory_free_degraded_percent: 15.0,
             fseventsd_cpu_degraded_percent: 50.0,
             fseventsd_consecutive_samples: 3,
-            max_new_seats: 3,
-            ramp_window_seconds: 900,
         }
     }
 }
@@ -92,14 +85,12 @@ impl Thresholds {
                 self.severe_unstable_window_seconds,
             ),
             ("window_seconds", self.window_seconds),
-            ("ramp_window_seconds", self.ramp_window_seconds),
         ] {
             if value <= 0 {
                 return Err(format!("{name} must be positive"));
             }
         }
         for (name, value) in [
-            ("max_new_seats", u64::from(self.max_new_seats)),
             (
                 "load_consecutive_samples",
                 self.load_consecutive_samples as u64,

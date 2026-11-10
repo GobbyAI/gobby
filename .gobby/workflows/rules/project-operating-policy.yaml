@@ -1,4 +1,4 @@
-version: "1.13.0"
+version: "2.1.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -263,7 +263,7 @@ rules:
               "src/gobby/cli/build_sweep.py",
               "src/gobby/terminals/native_env_policy.py"
             ],
-            "fleet_health": {"probe_degraded_ms": 1000, "probe_unstable_ms": 3000, "severe_unstable_window_seconds": 120, "window_seconds": 300, "warning_lines_degraded": 10, "load_per_core_degraded": 2.5, "load_consecutive_samples": 2, "memory_free_degraded_percent": 15.0, "fseventsd_cpu_degraded_percent": 50.0, "fseventsd_consecutive_samples": 3, "max_new_seats": 3, "ramp_window_seconds": 900},
+            "fleet_health": {"probe_degraded_ms": 1000, "probe_unstable_ms": 3000, "severe_unstable_window_seconds": 120, "window_seconds": 300, "warning_lines_degraded": 10, "load_per_core_degraded": 2.5, "load_consecutive_samples": 2, "memory_free_degraded_percent": 15.0, "fseventsd_cpu_degraded_percent": 50.0, "fseventsd_consecutive_samples": 3},
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–06:30 America/Chicago daily",
             "operator_timezone": "America/Chicago",
@@ -318,6 +318,7 @@ rules:
           - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other definitions follow their runbook push policy.
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
+          - Test runs on a shared host: run `uv sync` once per checkout, then `uv run --no-sync pytest ...`, because a plain `uv run` waits silently on the shared sync lock. A seat that can't write the checkout's `target/` sets CARGO_TARGET_DIR to its own writable target and builds gdaemon there once before running tests that need it. A run that prints nothing is waiting on a lock or a build, so don't count it as a hang or a failure.
           - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
           - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-user label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.

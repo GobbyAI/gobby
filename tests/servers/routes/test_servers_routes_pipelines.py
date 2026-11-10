@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.fleet_health import FleetAdmissionRefusal, spawn_refusal
+from gobby.fleet_health import FleetAdmissionRefusal
 from gobby.fleet_health.gate import FLEET_UNHEALTHY
 from gobby.servers.routes.pipelines import _batch_load_cron_info, create_pipelines_router
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
@@ -487,25 +487,6 @@ class TestFleetRefusalBoundary:
         detail = response.json()["detail"]
         assert detail["error_code"] == "fleet_unhealthy"
         assert detail["fleet"]["state"] == expected_state
-        execution_manager.create_execution.assert_not_called()
-
-    @pytest.mark.parametrize("background", [True, False], ids=["detached", "foreground"])
-    def test_a_capped_ramp_returns_the_typed_fleet_result(
-        self, client: TestClient, mock_server: MagicMock, background: bool
-    ) -> None:
-        write_fleet_state(state="healthy", max_new_seats=1)
-        assert spawn_refusal() is None
-        execution_manager = _attach_real_executor(mock_server)
-
-        response = client.post(
-            "/api/pipelines/run",
-            json={"name": "fixture-pipeline", "project_id": "proj-1", "background": background},
-        )
-
-        assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert detail["error_code"] == "fleet_ramp_capped"
-        assert detail["fleet"]["state"] == "healthy"
         execution_manager.create_execution.assert_not_called()
 
 

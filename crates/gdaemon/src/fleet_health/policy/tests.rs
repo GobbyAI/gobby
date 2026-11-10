@@ -15,8 +15,6 @@ fn defaults_match_the_build_thresholds() {
     assert_eq!(defaults.memory_free_degraded_percent, 15.0);
     assert_eq!(defaults.fseventsd_cpu_degraded_percent, 50.0);
     assert_eq!(defaults.fseventsd_consecutive_samples, 3);
-    assert_eq!(defaults.max_new_seats, 3);
-    assert_eq!(defaults.ramp_window_seconds, 900);
 }
 
 #[test]
@@ -28,27 +26,27 @@ fn empty_block_takes_every_default() {
 #[test]
 fn partial_block_overrides_only_its_keys() {
     let parsed = Thresholds::from_fleet_health(&json!({
-        "max_new_seats": 5,
+        "warning_lines_degraded": 5,
         "memory_free_degraded_percent": 20.0
     }))
     .expect("partial block parses");
-    assert_eq!(parsed.max_new_seats, 5);
+    assert_eq!(parsed.warning_lines_degraded, 5);
     assert_eq!(parsed.memory_free_degraded_percent, 20.0);
-    assert_eq!(parsed.ramp_window_seconds, 900);
+    assert_eq!(parsed.window_seconds, 300);
     assert_eq!(parsed.probe_unstable_ms, 3_000);
 }
 
 #[test]
 fn unknown_key_is_rejected() {
-    let error = Thresholds::from_fleet_health(&json!({"max_new_seat": 5}))
+    let error = Thresholds::from_fleet_health(&json!({"window_second": 5}))
         .expect_err("misspelled key must fail");
-    assert!(error.contains("max_new_seat"), "{error}");
+    assert!(error.contains("window_second"), "{error}");
 }
 
 #[test]
 fn non_object_block_is_rejected() {
     assert!(Thresholds::from_fleet_health(&json!(3)).is_err());
-    assert!(Thresholds::from_fleet_health(&json!(["max_new_seats"])).is_err());
+    assert!(Thresholds::from_fleet_health(&json!(["window_seconds"])).is_err());
 }
 
 #[test]
@@ -58,8 +56,6 @@ fn out_of_range_values_are_rejected() {
         json!({"memory_free_degraded_percent": 150.0}),
         json!({"fseventsd_cpu_degraded_percent": -1.0}),
         json!({"load_per_core_degraded": 0.0}),
-        json!({"max_new_seats": 0}),
-        json!({"ramp_window_seconds": 0}),
         json!({"window_seconds": 0}),
         json!({"load_consecutive_samples": 0}),
         json!({"fseventsd_consecutive_samples": 0}),
