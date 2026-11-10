@@ -21,6 +21,17 @@ from gobby.terminals.runtime import TerminalSpawnRequest
 pytestmark = pytest.mark.unit
 
 AGY_DENIED = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS")
+# Every agent CLI loses the inherited Cargo wrapper and incremental keys.
+UNSET_CARGO_KEYS = [
+    "-u",
+    "CARGO_INCREMENTAL",
+    "-u",
+    "RUSTC_WRAPPER",
+    "-u",
+    "SCCACHE_DIR",
+    "-u",
+    "SCCACHE_SERVER_UDS",
+]
 UNSET_AGY_DENIED = [
     "/usr/bin/env",
     "-u",
@@ -29,6 +40,7 @@ UNSET_AGY_DENIED = [
     "GOOGLE_API_KEY",
     "-u",
     "GOOGLE_APPLICATION_CREDENTIALS",
+    *UNSET_CARGO_KEYS,
     "--",
 ]
 SRT_PREFIX = [
@@ -46,6 +58,20 @@ REPORT_PID_AND_DENIED_KEYS = (
     "for k in GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS; "
     'do printenv "$k" || echo absent; done'
 )
+
+
+PREFIXED_KEYS = ("SCCACHE_FOO", "SCCACHE_BASEDIRS", "SCCACHE_CACHE_SIZE")
+REPORT_PREFIXED_KEYS = (
+    'printf "%s\\n" "${SCCACHE_FOO-absent}" "${SCCACHE_BASEDIRS-absent}" '
+    '"${SCCACHE_CACHE_SIZE-absent}"'
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_sccache_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exact argv specs assume the daemon env carries no SCCACHE_* key; a developer shell may.
+    for key in [key for key in os.environ if key.startswith("SCCACHE_")]:
+        monkeypatch.delenv(key)
 
 
 class _RecordingClient:
@@ -156,7 +182,7 @@ async def test_passthrough_fills_the_inferred_cli_without_overriding_the_caller(
 
     argv, env = await _spawn(["/opt/bin/codex", "--full-auto"], env=caller_env)
 
-    assert argv == ["/opt/bin/codex", "--full-auto"], "a CLI without denied keys keeps argv"
+    assert argv == ["/usr/bin/env", *UNSET_CARGO_KEYS, "--", "/opt/bin/codex", "--full-auto"]
     assert env["OPENAI_BASE_URL"] == "https://ambient.invalid/v1"
     assert env["OPENAI_API_KEY"] == "dummy-caller-openai"
 
@@ -211,3 +237,24 @@ async def test_managed_spawn_scrubs_overlay_and_native_host_token() -> None:
     pid_line, token_line = stdout.splitlines()
     assert int(pid_line) == proc.pid
     assert token_line == "absent"
+
+
+@pytest.mark.asyncio
+async def test_native_spawn_drops_sccache_keys_by_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Host-only keys come from the daemon env the gterm host inherits; launch keys ride the spawn.
+    host_keys = {key: f"dummy-host-{key.lower()}" for key in PREFIXED_KEYS}
+    launch_keys = {key: f"dummy-launch-{key.lower()}" for key in PREFIXED_KEYS}
+    for key, value in host_keys.items():
+        monkeypatch.setenv(key, value)
+
+    argv, env = await _spawn(
+        ["/bin/sh", "-c", REPORT_PREFIXED_KEYS], env=launch_keys, auth_cli="codex"
+    )
+
+    assert not set(PREFIXED_KEYS) & set(env)
+    host_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **host_keys, **env}
+    proc = subprocess.Popen(argv, env=host_env, stdout=subprocess.PIPE, text=True)
+    stdout, _ = proc.communicate(timeout=10)
+
+    assert proc.returncode == 0
+    assert stdout.splitlines() == ["absent"] * len(PREFIXED_KEYS)

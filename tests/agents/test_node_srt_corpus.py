@@ -41,6 +41,7 @@ from gobby.agents.sandbox_policy import (
     sensitive_write_roots,
 )
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
+from gobby.agents.srt_runtime import retained_launch_write_paths
 from gobby.agents.srt_settings import render_srt_settings
 from gobby.utils import local_token
 from gobby.utils.project_context import get_project_sandbox_config
@@ -443,7 +444,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     effective = spawned.model_copy(
         update={
             "extra_write_paths": [
-                *spawned.extra_write_paths,
+                *retained_launch_write_paths(spawned.extra_write_paths, env, workspace),
                 *(str(path) for path in run_paths.writable),
                 str(run_paths.cargo_home),
                 str(run_paths.cargo_target),

@@ -1,8 +1,6 @@
-mod common;
-
 use std::time::Duration;
 
-use common::{Hub, terminal};
+use super::common::{Hub, terminal};
 use gobby_terminals::host::{EpochAuthority, HostOptions, HostSupervisor};
 use gobby_terminals::reconcile::{self, Effects, Observation, Options, ProcessStatus};
 use gobby_terminals::repository::{self, Backend, Ownership, State, Terminal};

@@ -1,6 +1,6 @@
 //! Compare mode: the per-method policy, the compare log and `gdaemon compare-report`.
 
-mod common;
+use super::common;
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;

@@ -3,7 +3,7 @@
 //! Every test drives `Route::handle` with the JSON envelope the HTTP route
 //! carries, so the wire format and the typed replies are pinned together.
 
-mod common;
+use super::common;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};

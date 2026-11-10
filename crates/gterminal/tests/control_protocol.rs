@@ -2,8 +2,7 @@
 
 #![cfg(unix)]
 
-mod embed_support;
-mod host_support;
+use crate::{embed_support, host_support};
 
 use host_support::{
     candidate_script, committed_pane, connect, control, gterm_bin, held_probe, host_upgrade,

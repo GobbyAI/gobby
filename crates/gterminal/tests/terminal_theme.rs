@@ -5,17 +5,15 @@
 
 #![cfg(all(unix, feature = "vt-engine"))]
 
-mod host_support;
-
+use crate::host_support::{
+    connect, hello_control, recv_json, rpc, send_json, spawn_host, temp_socket_dir, wait_socket,
+    wait_until, write_token, HostProc, CONTROL_SOCKET, FRAMES_SOCKET,
+};
 use gobby_terminal::protocol::{
     read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_FRAME_SIZE,
     PROTOCOL_VERSION,
 };
 use gobby_terminal::terminal_theme::{RgbColor, ThemeDeclaration};
-use host_support::{
-    connect, hello_control, recv_json, rpc, send_json, spawn_host, temp_socket_dir, wait_socket,
-    wait_until, write_token, HostProc, CONTROL_SOCKET, FRAMES_SOCKET,
-};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::os::unix::net::UnixStream;

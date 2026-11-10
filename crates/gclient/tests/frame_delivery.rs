@@ -5,7 +5,7 @@
 //! proxy transport locally no matter where `--daemon-url` points. These tests
 //! pin the three selections against the recorded `terminal_attach` traffic.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use gobby_client::daemon::{Daemon, LiveDaemon};
 use gobby_client::{FrameDelivery, Workspace};

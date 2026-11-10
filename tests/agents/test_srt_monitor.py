@@ -81,7 +81,12 @@ class MonitorHarness:
         self.events.close()
 
     def launch(
-        self, suffix: str, *, descendant: bool = False, orphan: bool = False
+        self,
+        suffix: str,
+        *,
+        descendant: bool = False,
+        orphan: bool = False,
+        preflight: bool = False,
     ) -> subprocess.Popen[str]:
         settings = self.root / f"{suffix}.settings.json"
         settings.write_text("{}")
@@ -127,6 +132,7 @@ class MonitorHarness:
                 str(settings),
                 "--violations",
                 str(self.root / f"{suffix}.jsonl"),
+                *(["--preflight"] if preflight else []),
                 "--",
                 str(self.node),
                 "-e",
@@ -266,6 +272,26 @@ def monitor_harness(
             monitor.wait(timeout=5)
 
 
+def test_preflight_does_not_reuse_the_provider_monitor_run_key(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    suffix = "_retained_SBX"
+    retained = harness.root / f"{suffix.strip('_')}.srt-backlog.jsonl"
+    # A previous preflight can retain an unacknowledged event after its runner exits.
+    # A new preflight must not claim that provider key or overwrite the evidence.
+    evidence = json.dumps({"monitorBacklog": {"runKey": suffix.strip("_")}}) + "\n"
+    retained.write_text(evidence)
+    (harness.root / f"{suffix}.jsonl").touch(mode=0o600)
+
+    runner = harness.launch(suffix, preflight=True)
+    stdout, stderr = runner.communicate(timeout=30)
+
+    assert runner.returncode == 0, (stdout, stderr)
+    assert stdout.strip().startswith("v")
+    assert retained.read_text() == evidence
+
+
 def test_monitor_fixture_log_exits_when_monitor_is_killed(
     monitor_harness: MonitorHarness,
 ) -> None:
@@ -359,8 +385,9 @@ def test_isolated_restart_reaper_preserves_monitor_and_subscription(
 import asyncio, hashlib, json, os, socket, subprocess, sys, tempfile
 from dataclasses import replace
 from pathlib import Path
-from gobby.agents import srt_monitor
+from gobby.agents import srt_monitor, srt_runtime
 from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+from tests.agents.srt_probe import ready_node_probes
 root, node, runner = map(Path, sys.argv[1:])
 temporary = tempfile.TemporaryDirectory(prefix='sr-', dir=root.parent)
 directory = Path(temporary.name)
@@ -368,6 +395,11 @@ srt_monitor.srt_mux_tmpdir = lambda: directory
 srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
+srt_runtime.srt_install_root = lambda: root
+with ready_node_probes():
+    paths = srt_monitor.verified_monitor_paths()
+assert paths is not None
+srt_monitor.verified_monitor_paths = lambda: paths
 path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ)
 broker = srt_monitor._children[-1]
 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -424,11 +456,12 @@ import asyncio, hashlib, json, logging, os, socket, subprocess, sys, tempfile
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from gobby.agents import srt_monitor
+from gobby.agents import srt_monitor, srt_runtime
 from gobby.runner_lifecycle_processes import (
     _preserved_agent_terminal_pids,
     _reap_remaining_child_processes,
 )
+from tests.agents.srt_probe import ready_node_probes
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
 root, node, runner = map(Path, sys.argv[1:])
 temporary = tempfile.TemporaryDirectory(prefix='sr-', dir=root.parent)
@@ -437,6 +470,11 @@ srt_monitor.srt_mux_tmpdir = lambda: directory
 srt_monitor.existing_srt_mux_tmpdir = lambda: directory
 srt_monitor.get_gobby_home = lambda: root
 srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
+srt_runtime.srt_install_root = lambda: root
+with ready_node_probes():
+    paths = srt_monitor.verified_monitor_paths()
+assert paths is not None
+srt_monitor.verified_monitor_paths = lambda: paths
 
 
 async def main() -> None:
@@ -639,6 +677,12 @@ async def main() -> None:
         os.environ['PATH'] = str(shim_dir) + os.pathsep + os.environ['PATH']
     await asyncio.to_thread(srt_monitor.ensure_srt_monitor, node=node, runner=runner, env=os.environ)
     broker = srt_monitor._children[-1]
+    if preserve:
+        # Cold Node setup belongs outside the bounded child-enumeration operation.
+        with ready_node_probes():
+            paths = srt_monitor.verified_monitor_paths()
+        assert paths is not None
+        srt_monitor.verified_monitor_paths = lambda: paths
     noise = subprocess.Popen([str(node), '-e', 'setInterval(() => {}, 1000)'])
     try:
         if mode in {'registry-missing', 'shim-node'}:
@@ -754,6 +798,7 @@ from gobby.agents import srt_runtime, srt_socket_paths
 from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
 
 home, mode = Path(sys.argv[1]), sys.argv[2]
+os.environ['GOBBY_HOME'] = str(home)
 blocker = home / 'blocker'
 blocker.write_text('a file, so the socket root cannot exist beneath it')
 root = blocker / 'srt-sock' if mode == 'blocked' else home / 'srt-sock'
@@ -784,15 +829,10 @@ asyncio.run(main())
 
 
 @pytest.mark.parametrize("mode", ["blocked", "absent"])
-def test_restart_reap_survives_an_unusable_socket_root_without_creating_it(
+def test_restart_reap_preserves_unverified_children_without_creating_socket_root(
     tmp_path: Path, mode: str
 ) -> None:
-    """An unusable socket root must not abort the reap before its kill loop, nor be created.
-
-    The logged abort was an OSError from ensuring the shared root, raised inside the preserve
-    selection that runs before any child is terminated. Selection only reads the root, so an
-    absent root stays absent.
-    """
+    """Unverifiable paths defer children for inspection and leave the socket root untouched."""
     result = subprocess.run(
         [sys.executable, "-c", _UNUSABLE_ROOT_REAP_PROGRAM, str(tmp_path), mode],
         capture_output=True,
@@ -802,7 +842,8 @@ def test_restart_reap_survives_an_unusable_socket_root_without_creating_it(
     )
     assert result.returncode == 0, result.stderr
     assert "Child process reap failed" not in result.stderr, result.stderr
-    assert result.stdout.strip() == "noise reaped=True root-created=False", result.stdout
+    assert result.stdout.strip() == "noise reaped=False root-created=False", result.stdout
+    assert list((tmp_path / "run" / "deferred-child-processes").glob("*.txt"))
 
 
 _SPOOF_PROGRAM = r"""
@@ -1130,6 +1171,8 @@ def test_registration_deadline_fails_closed_before_provider_launch(
     harness = monitor_harness
     (harness.root / "ps-delay").write_text("1")
     runner = harness.launch("_deadline_SBX")
+    # Measure the protocol after cold Node startup reaches the fixture's module entry.
+    _wait_path(harness.root / f"{runner.pid}.pid")
     stdout, stderr = runner.communicate(timeout=5)
     assert runner.returncode == 1, (stdout, stderr)
     assert any(

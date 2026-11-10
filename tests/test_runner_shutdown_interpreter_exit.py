@@ -74,6 +74,7 @@ _SCRIPT = textwrap.dedent(
         runner = SimpleNamespace(
             bootstrap_config=BootstrapConfig(),
             _shutdown_intent=ShutdownIntent.STOP,
+            _drain_terminals_on_shutdown=True,
             agent_runner=None,
             http_server=SimpleNamespace(
                 services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),

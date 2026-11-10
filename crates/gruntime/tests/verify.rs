@@ -6,15 +6,13 @@
 //! same `grant_signing_secret` over the same canonical payload, and the check skips
 //! `postgres` on recompute, so a natively issued reply stands in for Python's.
 
-mod common;
-
-use anyhow::{Result, bail, ensure};
-use axum::http::StatusCode;
-use axum::http::request::Parts;
-use common::{
+use super::common::{
     CONFIG_REVISION, EPOCH, SECRET, TestDb, call, daemon_home, database_case, family,
     handshake_request, json_body, vector_case,
 };
+use anyhow::{Result, bail, ensure};
+use axum::http::StatusCode;
+use axum::http::request::Parts;
 use gobby_core::grant::presentation::sign_grant;
 use gobby_core::grant::{GrantBundle, PrincipalKind, QdrantCapability, deployment_token};
 use gobby_core::route_family::{ProxiedCheck, RouteFamily};

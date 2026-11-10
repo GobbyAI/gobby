@@ -1,9 +1,7 @@
-mod stub_daemon;
-
+use crate::stub_daemon::{Response, StubDaemon};
 use gobby_mcp::daemon::{Dialer, RequestOptions};
 use serde_json::json;
 use std::fs;
-use stub_daemon::{Response, StubDaemon};
 
 /// Run `test` as a managed run: these tests cover the machine-key wire contract, which
 /// an unspawned client never uses. Unspawned behavior is covered in `session_binding`.

@@ -35,6 +35,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/cli/auth_login.py::login (line 348)`; blocked on Rust CLI dispatcher for `gobby auth login`. Owner: #21568 Remaining route families. #21555 API keys/node registration delivered the key/login contract; this registered CLI callback remains Python."
   },
+  "CLI gobby build-sweep": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/build_sweep.py::build_sweep (line 23)`; blocked on Rust CLI dispatcher for `gobby build-sweep`. Owner: #21568 Remaining route families."
+  },
   "CLI gobby cutover": {
     "status": "proxied",
     "note": "Python `src/gobby/cli/cutover.py::cutover (line 288)`; blocked on Rust CLI dispatcher for `gobby cutover`. Owner: #21568 Remaining route families."
@@ -223,6 +227,14 @@
     "status": "proxied",
     "note": "Python `src/gobby/cli/tokens.py::audit_tokens (line 123)`; blocked on Rust CLI dispatcher for `gobby tokens audit`. Owner: #21568 Remaining route families."
   },
+  "CLI gobby tokens ledger": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/tokens.py::token_ledger (line 508)`; blocked on Rust CLI dispatcher for `gobby tokens ledger`. Owner: #21568 Remaining route families."
+  },
+  "CLI gobby tokens quota": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/tokens.py::token_quota (line 585)`; blocked on Rust CLI dispatcher for `gobby tokens quota`. Owner: #21568 Remaining route families."
+  },
   "CLI gobby tokens stats": {
     "status": "proxied",
     "note": "Python `src/gobby/cli/tokens.py::token_stats (line 230)`; blocked on Rust CLI dispatcher for `gobby tokens stats`. Owner: #21568 Remaining route families."
@@ -282,6 +294,10 @@
   "HTTP GET /api/admin/usage": {
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/admin/_usage.py::register_usage_routes.<locals>.get_usage (line 19)`; blocked on native Rust handler for `HTTP GET /api/admin/usage`. Owner: #21568 Remaining route families."
+  },
+  "HTTP GET /api/admin/usage/ledger": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/admin/_usage.py::register_usage_routes.<locals>.get_usage_ledger (line 33)`; blocked on native Rust handler for `HTTP GET /api/admin/usage/ledger`. Owner: #21568 Remaining route families."
   },
   "HTTP GET /api/auth/keys": {
     "status": "proxied",

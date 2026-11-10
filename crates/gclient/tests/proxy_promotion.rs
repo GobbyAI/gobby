@@ -6,7 +6,7 @@
 //! tests drive the real live loop against a real frame socket, so every attach
 //! and detach is visible on the mock daemon and every key on the host.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::io;
 use std::sync::{Arc, Mutex};

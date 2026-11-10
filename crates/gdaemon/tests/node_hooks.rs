@@ -7,12 +7,9 @@ use std::{fs, path::Path, process::Command, time::SystemTime};
 use tempfile::TempDir;
 use time::{Duration, OffsetDateTime};
 
-#[path = "node_support/mod.rs"]
-mod node_support;
-
+use super::node_support::{NODE_KEY, NodeHome, fake_hub::FakeHub};
 use axum::http::{Method, StatusCode};
 use gobby_daemon::nodes::hooks::receipts::{release_receipt, sweep_receipts};
-use node_support::{NODE_KEY, NodeHome, fake_hub::FakeHub};
 
 const RECEIPTS: &str = "/api/nodes/receipts";
 const ACK_ID: &str = "n-1730000000000-ack-envelope";

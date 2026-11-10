@@ -2,31 +2,38 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-from pathlib import Path
+from collections.abc import Iterable
 
-# macOS sun_path holds 104 bytes including the terminator; Linux allows 107.
-_SOCKET_PATH_LIMIT = 103
+# Agent launches remove these at exec. Cargo reads any set CARGO_INCREMENTAL, blank
+# included, as incremental off, and launch hosts inherit the daemon environment, so a
+# blank override is not enough. Agent builds are plain incremental builds with no
+# compiler wrapper.
+REMOVED_CARGO_ENV_KEYS = (
+    "CARGO_INCREMENTAL",
+    "RUSTC_WRAPPER",
+    "SCCACHE_DIR",
+    "SCCACHE_SERVER_UDS",
+)
+# sccache reads every SCCACHE_* setting (SCCACHE_BASEDIRS, SCCACHE_CACHE_SIZE, ...), so a
+# named list alone leaves some behind. Every key with a removed prefix goes, whatever its name.
+REMOVED_CARGO_ENV_PREFIXES = ("SCCACHE_",)
 
 
-def cargo_environment(cache_dir: Path, socket: Path | None) -> dict[str, str]:
-    """Return the sccache and Cargo job-limit variables for one launch.
+def removed_cargo_env_keys(*environments: Iterable[str]) -> tuple[str, ...]:
+    """Return the keys an agent exec removes from the given key sets.
 
-    Without sccache or a usable socket, the sccache variables are blank rather than
-    absent: launch callers merge this over an inherited environment, and an absent
-    key would keep a value from another trust domain. Cargo treats an empty
-    RUSTC_WRAPPER as no wrapper.
+    The named keys come first, in REMOVED_CARGO_ENV_KEYS order. Each prefixed key found in
+    any set follows, sorted and de-duplicated.
     """
-    # Keep the PATH spelling: a resolved Homebrew Cellar path breaks on upgrade.
-    wrapper = shutil.which("sccache")
-    if wrapper is None or socket is None or len(os.fsencode(socket)) > _SOCKET_PATH_LIMIT:
-        wrapper, cache, server = "", "", ""
-    else:
-        cache, server = str(cache_dir), str(socket)
-    return {
-        "CARGO_BUILD_JOBS": "4",
-        "RUSTC_WRAPPER": wrapper,
-        "SCCACHE_DIR": cache,
-        "SCCACHE_SERVER_UDS": server,
+    prefixed = {
+        key
+        for keys in environments
+        for key in keys
+        if key.startswith(REMOVED_CARGO_ENV_PREFIXES) and key not in REMOVED_CARGO_ENV_KEYS
     }
+    return (*REMOVED_CARGO_ENV_KEYS, *sorted(prefixed))
+
+
+def cargo_environment() -> dict[str, str]:
+    """Return the Cargo variables one agent launch sets."""
+    return {"CARGO_BUILD_JOBS": "4"}

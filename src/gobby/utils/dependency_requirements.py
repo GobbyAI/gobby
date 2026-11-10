@@ -27,6 +27,8 @@ NODE_MIN_VERSION = "22.12.0"
 DOCKER_COMPOSE_MIN_VERSION = "2.7.0"
 STARTING_GRACE_SECONDS = 120.0
 PROBE_RETRY_DELAY_SECONDS = 0.5
+# Bound for the first exec of a newly seen executable; see _warm_first_exec.
+FIRST_EXEC_WARMUP_SECONDS = 120.0
 
 _VERSION_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])v?(?P<numeric>\d+(?:\.\d+){1,3})"
@@ -78,7 +80,7 @@ SRT_RELEASE = SrtRelease(
         "GHB350OgPbM3+FubE5WVRtSA=="
     ),
     lockfile_sha256="efd7a3220b4dcf538f4cca60cbdae040969a11047f144e7640fdbdff8fdeb175",
-    runner_sha256="d9f8cfa8618d0274265f39623600a88d0c973242dbe8e9d004759c82b8956920",
+    runner_sha256="ad2fb1b187988edc7be9758d365d0043041b2563f14f61f5e18c36e69bea564e",
     http_proxy_sha256="65791250862bef4b4c1370fb905f4af8411a4977963bbf3ca8aaf37d173a0c0c",
     mux_proxy_sha256="0a47d7841cd0c934734a2d65ad9094eec967481f59ac64381636a4a420b41755",
     macos_profile_sha256="72155d55576e39c1a6dc6bd19e8c786adfc548a468567c665c2bff6e9164f716",
@@ -345,6 +347,8 @@ def required_dependency_errors(report: DependencyReport) -> list[str]:
 
 # The last healthy Node.js probe, keyed by the resolved executable's file identity.
 _healthy_node: tuple[tuple[str, int, int, int, int], DependencyStatus] | None = None
+# Executable identities whose first exec has completed under FIRST_EXEC_WARMUP_SECONDS.
+_warmed_executables: set[tuple[str, int, int, int, int]] = set()
 
 
 def _executable_identity(executable: str) -> tuple[str, int, int, int, int] | None:
@@ -359,6 +363,31 @@ def _executable_identity(executable: str) -> tuple[str, int, int, int, int] | No
     return (str(path), metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
 
 
+def _warm_first_exec(identity: tuple[str, int, int, int, int]) -> None:
+    """Pay a new executable's first exec under a long bound, before any timed probe.
+
+    A freshly written or replaced binary can stall its first exec on this host for tens of
+    seconds. In measurement, 3 of 300 first execs ran 50 to 60 seconds, against about 0.15
+    seconds typical, and the version probe's 10 second bound would count that stall as a
+    failure. Warm-up runs once per executable identity, so restage, install, verification,
+    and a node upgrade all pay the first exec here. A warm-up that cannot complete leaves
+    the timed probe to report the failure.
+    """
+    if identity in _warmed_executables:
+        return
+    try:
+        spawn.run(
+            [identity[0], "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=FIRST_EXEC_WARMUP_SECONDS,
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return
+    _warmed_executables.add(identity)
+
+
 def node_dependency_status() -> DependencyStatus:
     """Return the shared Node.js runtime contract used by managed SRT.
 
@@ -371,6 +400,8 @@ def node_dependency_status() -> DependencyStatus:
     identity = _executable_identity("node")
     if identity is not None and _healthy_node is not None and _healthy_node[0] == identity:
         return _healthy_node[1]
+    if identity is not None:
+        _warm_first_exec(identity)
     status = _command_status(
         name="Node.js",
         executable="node",

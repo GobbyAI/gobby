@@ -2,7 +2,18 @@
   "cases": [
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "claude",
           "--session-id",
@@ -138,6 +149,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -156,7 +168,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "claude",
           "--resume",
@@ -270,6 +293,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -288,7 +312,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "codex",
           "--model",
@@ -463,6 +498,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -484,7 +520,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "codex",
           "resume",
@@ -641,6 +688,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -662,7 +710,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "codex",
           "--oss",
@@ -826,6 +885,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -847,7 +907,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "grok",
           "--always-approve",
@@ -952,6 +1023,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -970,7 +1042,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "grok",
           "--always-approve",
@@ -1067,6 +1150,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1085,7 +1169,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "grok",
           "--always-approve",
@@ -1179,6 +1274,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1197,7 +1293,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "exec",
@@ -1302,6 +1409,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1320,7 +1428,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "exec",
@@ -1414,6 +1533,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1432,7 +1552,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "--model",
@@ -1525,6 +1656,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1543,7 +1675,18 @@
     },
     {
       "expected": {
-        "argv_prefix": [],
+        "argv_prefix": [
+          "/usr/bin/env",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
+          "--"
+        ],
         "command": [
           "droid",
           "--resume",
@@ -1638,6 +1781,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1664,6 +1808,14 @@
           "GOOGLE_API_KEY",
           "-u",
           "GOOGLE_APPLICATION_CREDENTIALS",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
           "--"
         ],
         "command": [
@@ -1767,6 +1919,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,
@@ -1793,6 +1946,14 @@
           "GOOGLE_API_KEY",
           "-u",
           "GOOGLE_APPLICATION_CREDENTIALS",
+          "-u",
+          "CARGO_INCREMENTAL",
+          "-u",
+          "RUSTC_WRAPPER",
+          "-u",
+          "SCCACHE_DIR",
+          "-u",
+          "SCCACHE_SERVER_UDS",
           "--"
         ],
         "command": [
@@ -1885,6 +2046,7 @@
           },
           "session_id": "session-launch-corpus",
           "source_root": "/gobby-launch-fixture/source",
+          "build_root": "<gobby_home>/cache",
           "task_id": null,
           "terminal_id": "terminal-launch-corpus",
           "timeout_seconds": 600,

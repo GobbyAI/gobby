@@ -5,7 +5,7 @@
 #![cfg(unix)]
 
 mod handover_support;
-mod host_support;
+use crate::host_support;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};

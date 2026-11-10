@@ -33,11 +33,62 @@ async def test_restart_preservation_checks_monitor_creation_identity(
 
     processes = _install_fake_psutil(monkeypatch)
     monkeypatch.setattr(srt_monitor, "live_monitor_identities", lambda: {WORKER_PID: started})
+    monkeypatch.setattr(
+        srt_monitor, "verified_monitor_paths", lambda: ("/test/node", "/test/runner.mjs")
+    )
+
+    def no_pinned_monitors(
+        _children: list[FakeProcess], _node: str, _runner: str
+    ) -> dict[int, float]:
+        return {}
+
+    monkeypatch.setattr(srt_monitor, "pinned_monitor_identities", no_pinned_monitors)
     await runner_lifecycle_processes._reap_remaining_child_processes(
         preserve_agents=True,
         preserve_srt_monitor=True,
     )
     assert processes[WORKER_PID].terminated is (started != float(WORKER_PID))
+
+
+@pytest.mark.asyncio
+async def test_reap_leaves_children_when_monitor_paths_cannot_be_verified(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    processes = _install_fake_psutil(monkeypatch)
+    monkeypatch.setattr(srt_monitor, "live_monitor_identities", lambda: {})
+    monkeypatch.setattr(srt_monitor, "verified_monitor_paths", lambda: None)
+    caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+
+    await runner_lifecycle_processes._reap_remaining_child_processes(
+        preserve_agents=True,
+        preserve_srt_monitor=True,
+    )
+
+    for pid in (HOST_PID, SHELL_PID, WORKER_PID):
+        process = processes[pid]
+        assert not process.terminated
+        assert f"pid={pid} " in caplog.text
+    assert "monitor paths" in caplog.text
+    assert "left unreaped" in caplog.text
+    records = list((tmp_path / "run" / "deferred-child-processes").glob("*.txt"))
+    assert len(records) == 1
+    record = records[0]
+    assert record.stat().st_mode & 0o777 == 0o600
+    text = record.read_text()
+    for pid in (HOST_PID, SHELL_PID, WORKER_PID):
+        assert f"pid={pid} " in text
+    assert "cmdline=" in text
+    assert str(record) in caplog.text
+    await runner_lifecycle_processes._reap_remaining_child_processes(
+        preserve_agents=True, preserve_srt_monitor=True
+    )
+    assert len(list(record.parent.glob("*.txt"))) == 2
+    assert record.read_text() == text
+
+    # Explicit non-preserving cleanup while this parent still owns the children.
+    await runner_lifecycle_processes._reap_remaining_child_processes()
+    assert all(processes[pid].terminated for pid in (HOST_PID, SHELL_PID, WORKER_PID))
 
 
 @pytest.mark.asyncio

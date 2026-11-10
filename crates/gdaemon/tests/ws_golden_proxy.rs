@@ -1,6 +1,6 @@
 //! The terminal WS golden corpus replays through the front door byte for byte.
 
-mod common;
+use super::common;
 
 use std::path::PathBuf;
 

@@ -1,6 +1,6 @@
 //! 3.3.1 subscribe-first attention handshake.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use gobby_client::app::run_loop::{ReconnectAttempt, ReconnectSupervisor};
 use gobby_client::daemon::{Daemon, DaemonEvent, LiveDaemon};

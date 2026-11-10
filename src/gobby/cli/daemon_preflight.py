@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from gobby.config.agent_build import validate_build_root
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_set_coherence import BinarySetCoherenceError, probe_set_member_identity
 from gobby.paths import get_install_dir
@@ -82,6 +83,11 @@ def restart_start_refusal(
         return refusal
 
     config = runtime.read_only_operational_config()
+    # The runtime value is what the next start loads, so it is what gets proven here.
+    try:
+        validate_build_root(config.agent_build.build_root)
+    except ValueError as exc:
+        return f"agent_build.build_root is invalid: {exc}"
     if config.agent_sandbox.enabled or config.web_chat_sandbox.enabled:
         from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
         from gobby.cli.install_setup_srt import restage_srt_runner

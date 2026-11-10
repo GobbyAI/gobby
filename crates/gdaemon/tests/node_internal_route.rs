@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-mod common;
+use super::common;
 
 use anyhow::{Context, Result};
 use axum::{

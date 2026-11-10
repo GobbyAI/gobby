@@ -1,6 +1,6 @@
 //! 3.3.5 select → spawn → attach → terminate against scripted endpoints.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};

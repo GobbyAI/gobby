@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from gobby.agents.build_root import agent_build_root
 from gobby.agents.cargo_target import sandbox_checkout_cargo_target_dir
 from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, sandbox_agent_cache_dir
 from gobby.agents.credential_inventory import denied_ambient_keys
@@ -875,13 +876,19 @@ def sandbox_cache_path(path: Path) -> str:
 
     Every sandboxed run may write the shared Cargo home and its checkout's
     target, so one run can leave a link at either for the next run's grant to
-    follow. Only links above the cache root, which no run can write, may resolve.
+    follow. The Cargo home sits under the Gobby cache and the targets under the
+    agent build root, so each path is anchored at the directory above its own
+    sandbox cache. Only links above that anchor, which no run can write, may
+    resolve. The configured build root is canonical, so its anchor holds no link.
     """
-    shared = sandbox_agent_cache_dir()
-    expected = str(Path(canonical_path(shared.parent)) / path.relative_to(shared.parent))
+    build_caches = agent_build_root() / "sandbox"
+    shared = build_caches if path.is_relative_to(build_caches) else sandbox_agent_cache_dir()
+    anchor = shared.parent
+    expected = str(Path(canonical_path(anchor)) / path.relative_to(anchor))
     if canonical_path(path) != expected:
         raise PermissionError(
-            f"Sandbox cache path {path} resolves outside the sandbox cache {shared}; remove it"
+            f"Sandbox cache path {path} resolves outside the sandbox cache anchored at "
+            f"{anchor}; remove it"
         )
     return expected
 
