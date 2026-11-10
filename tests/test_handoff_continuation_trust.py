@@ -155,3 +155,22 @@ def test_a_provider_without_a_read_only_trust_check_is_refused(tmp_path: Path) -
 
     with pytest.raises(ProofRefused):
         require_provider_trust("grok", tmp_path / "folder", home=tmp_path)
+
+
+def test_the_proof_folder_is_removed_with_its_read_only_runtime_tree(tmp_path: Path) -> None:
+    # The isolated daemon's HOME lives inside the folder and installs its sandbox runtime
+    # read-only; a silent partial removal left the folder behind and broke the next case.
+    from tests.e2e.handoff_continuation_trust import remove_project_folder
+
+    folder = tmp_path / "project"
+    runtime = folder / ".gobby-home" / "tools" / "srt" / "0.0.79"
+    runtime.mkdir(parents=True)
+    (runtime / "cli.js").write_text("x")
+    (runtime / "cli.js").chmod(0o444)
+    runtime.chmod(0o555)
+    runtime.parent.chmod(0o555)
+
+    remove_project_folder(folder)
+
+    assert not folder.exists()
+    remove_project_folder(folder)
