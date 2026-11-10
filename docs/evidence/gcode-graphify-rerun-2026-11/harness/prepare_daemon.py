@@ -53,16 +53,24 @@ def embedding_readiness(api_base: str, model: str) -> None:
         raise EvidenceError(f"embedding provider at {url} does not list model {model!r}")
 
 
+# The only ambient names a harness child inherits (plus every LC_* locale name). Everything
+# else is dropped: credentials, agent sockets, proxies, and interpreter or tool controls.
+AMBIENT_ALLOWLIST = frozenset({"LANG", "TERM", "TMPDIR"})
+
+
 def isolated_environment(root: Path, ambient: dict[str, str]) -> dict[str, str]:
+    """Build a child environment from an allowlist, never from the operator's ambient set."""
     result = {
         name: value
         for name, value in ambient.items()
-        if not name.startswith(("GOBBY_", "OTEL_"))
-        and not name.endswith("_API_KEY")
-        and name not in {"DATABASE_URL", "PGPASSWORD", "REDISCLI_AUTH", "PYTHONPATH"}
+        if name in AMBIENT_ALLOWLIST or name.startswith("LC_")
     }
+    home = root / "home"
+    if root.is_dir():
+        home.mkdir(mode=0o700, exist_ok=True)
     result.update(
         {
+            "HOME": str(home),
             "GOBBY_HOME": str(root / "gobby-home"),
             "GOBBY_NATIVE_BIN_DIR": str(root / "gobby-home/bin"),
             "GOBBY_TEST_PROTECT": "1",

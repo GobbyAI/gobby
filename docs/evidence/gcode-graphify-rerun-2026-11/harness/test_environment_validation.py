@@ -520,7 +520,13 @@ def test_recorded_gcode_version_is_the_archived_pin(
     probed: list[list[str]] = []
 
     def fake_probe(
-        root: Path, attempt: str, label: str, argv: list[str], cwd: Path, env: Any = None
+        root: Path,
+        attempt: str,
+        label: str,
+        argv: list[str],
+        cwd: Path,
+        env: Any = None,
+        wrap: Any = None,
     ) -> dict[str, Any]:
         probed.append(argv)
         return {"argv": argv, "cwd": str(cwd), "exit_code": 0, "log": {"label": label}}
@@ -530,6 +536,9 @@ def test_recorded_gcode_version_is_the_archived_pin(
 
     monkeypatch.setattr(record_installations, "DEFAULT_RUNTIME_ROOT", tmp_path)
     monkeypatch.setattr(record_installations, "assert_owned_runtime", lambda *_args: None)
+    monkeypatch.setattr(
+        record_installations, "third_party_sandbox", lambda *_args: (lambda argv: argv, {})
+    )
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/uv")
     monkeypatch.setattr(record_installations, "probe", fake_probe)
     monkeypatch.setattr(record_installations, "_pypi_version", lambda *_args: "0.9.103")

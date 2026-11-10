@@ -61,7 +61,36 @@ Pre-steps, in this order, before step 1. They clear the stopped attempt `rerun26
      the manifest and refuses any list other than `project_entries()`;
    - asserts zero `code_indexed_file_states` rows for each of the 54 workspace projects.
 4. `launch_daemon.py --owner-session <session> --attempt <id>`, under the SRT sandbox. It first checks the gobby modules and the gobby package under "Gobby modules checked before step 4". It launches the supervised path, `gobby-home/bin/gdaemon serve`, with `GOBBY_BACKEND_COMMAND` set to `tools/gobby/venv/bin/python -m gobby.runner --config <bootstrap>`, so gdaemon runs the backend. The step records the launch in `active-launches.json`, then polls `GET http://127.0.0.1:<daemon_port>/api/health` (120 probes, one second apart). It passes only when the daemon answers HTTP 200 with JSON `status` `"ok"` and the wrapper is still alive. HTTP 200 with `status` `"degraded"` is a failure: the probe keeps polling until the budget runs out, then the step refuses and names the degraded components (`degraded_services`, and `hook_runtime <state>` when the hook runtime is incompatible). A failed launch stops its srt wrapper group and keeps its records (`receipts/daemon-launch-<attempt>.json`, `receipts/active-launches.json`, `logs/install/daemon-<attempt>.log`). Its error carries the note `cleanup unproven`, because gdaemon starts its backend in a process group the harness cannot observe. Any kept record blocks every later launch, whatever its attempt name, before the port probe runs. The refusal names every kept record, the recorded process group (the srt wrapper's), and the clear command: confirm with `ps -axo pid,pgid,comm` that no gdaemon or backend process remains, then `rm -- <every named record>`. The backend's process group is not recorded.
-5. `record_installations.py --owner-session <session> --attempt <id>`.
+5. `record_installations.py --owner-session <session> --attempt <id>`. It runs Graphify's own
+   code (`graphify --version`) only under SRT. The policy is C0's, plus no network (no domains,
+   no local binding, no Unix sockets). Writes are allowed only to `tmp/install-probe-<attempt>`,
+   which is also the probe's `TMPDIR`. The policy is
+   `srt/install-probe-settings-<attempt>.json` and the violation log is
+   `logs/install/probe-violations-<attempt>.jsonl`. When the pinned SRT install is missing or
+   fails verification, the step refuses before any probe runs. The probe receipt records
+   `sandboxed: true`, and an earlier receipt recorded without the sandbox is refused, which
+   needs a new attempt. The `uv pip check`, `uv pip freeze`, `gcode --version` and
+   `gcode contract` probes run first-party tools that read Graphify's metadata without
+   executing it, so they run unwrapped with the isolated environment.
+
+Every harness child gets its environment from `isolated_environment`, which is an allowlist.
+It keeps only `LANG`, `LC_*`, `TERM` and `TMPDIR` from the ambient environment. It then sets
+`HOME` to the runtime root's `home/` directory, `GOBBY_HOME`, `GOBBY_NATIVE_BIN_DIR`,
+`GOBBY_TEST_PROTECT`, `PYTHONDONTWRITEBYTECODE` and a fixed `PATH`. Ambient credentials,
+agent sockets, proxies and interpreter or tool controls such as `PYTHONSTARTUP` and
+`UV_CACHE_DIR` never reach a child.
+
+The build and install lane is separate: step 1's `cargo build` and step 3's
+`tools/graphify/venv` and `tools/gobby/venv` builds. It runs outside SRT because it needs
+network access to PyPI and crates.io and writes the uv and cargo caches. It installs only
+pinned inputs: `graphifyy==0.9.103`, `uv sync --frozen` from the pinned Gobby source, and
+`cargo build --locked`. The uv builds use the allowlisted environment, so no operator
+credential reaches uv, and with the isolated `HOME` uv keeps its cache and managed Python
+under the runtime root. The step-1 `cargo build` builds the in-tree probe example from the
+pinned candidate blob and runs with the operator's environment, because it needs the
+operator's rustup toolchain. Building a package can still run that package's own build
+hooks, so a pin change needs review before it runs. Graphify's code runs outside SRT only
+inside this lane's `uv pip install`.
 6. `launch_services.py observe --owner-session <session> --attempt <id>` writes the after-snapshot
    if absent. It fails unless the containers are healthy and the daemon is alive and healthy at its
    `/api/health` route.

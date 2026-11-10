@@ -47,10 +47,38 @@ def test_child_clears_managed_identity_and_shared_datastores(tmp_path: Path) -> 
         "OPENAI_API_KEY",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
     }.intersection(child)
-    assert child["HOME"] == ambient["HOME"]
-    assert child["CODEX_HOME"] == ambient["CODEX_HOME"]
+    assert child["HOME"] == str(tmp_path / "home")
+    assert (tmp_path / "home").is_dir()
+    assert "CODEX_HOME" not in child
     assert child["PATH"].split(":") == [str(tmp_path / "tools/gobby/venv/bin"), "/usr/bin", "/bin"]
     assert ambient["GOBBY_HOME"] == "/live"
+
+
+def test_child_inherits_only_allowlisted_ambient_names(tmp_path: Path) -> None:
+    unexpected = {
+        "AWS_SECRET_ACCESS_KEY": "synthetic-aws",
+        "GH_TOKEN": "synthetic-gh",
+        "SSH_AUTH_SOCK": "/tmp/synthetic-agent.sock",
+        "HTTPS_PROXY": "http://synthetic-proxy:3128",
+        "PYTHONSTARTUP": "/tmp/synthetic-startup.py",
+        "UV_CACHE_DIR": "/tmp/synthetic-uv-cache",
+        "FOO_TOKEN": "synthetic-foo",
+    }
+    allowed = {"LANG": "en_US.UTF-8", "LC_ALL": "C", "TERM": "xterm", "TMPDIR": "/tmp/x"}
+    child = isolated_environment(tmp_path, {**unexpected, **allowed, "HOME": "/Users/operator"})
+    assert not set(unexpected).intersection(child)
+    assert not any(value in child.values() for value in unexpected.values())
+    assert {name: child[name] for name in allowed} == allowed
+    assert child["HOME"] == str(tmp_path / "home")
+    harness_keys = {
+        "HOME",
+        "GOBBY_HOME",
+        "GOBBY_NATIVE_BIN_DIR",
+        "GOBBY_TEST_PROTECT",
+        "PYTHONDONTWRITEBYTECODE",
+        "PATH",
+    }
+    assert set(child) == set(allowed) | harness_keys
 
 
 def test_preparation_receipts_preserve_each_revision_and_resume(tmp_path: Path) -> None:

@@ -12,13 +12,15 @@ import json
 import os
 import shutil
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from c0 import GRAPHIFY_INTERPRETER, c0_policy
+from launch_daemon import MONITOR_SOCKET_ENV, resolve_srt_runner, srt_wrapped_argv
 from prepare_daemon import isolated_environment
-from provision_environment import DEFAULT_RUNTIME_ROOT, GOBBY_SHA
+from provision_environment import DEFAULT_RUNTIME_ROOT, GOBBY_SHA, _write_json
 from runtime_boundary import (
     EvidenceError,
     assert_owned_runtime,
@@ -35,6 +37,52 @@ from validate_environment import (
     validate_graphify_receipt,
 )
 
+Wrapper = Callable[[list[str]], list[str]]
+
+
+def third_party_probe_policy(root: Path, home: Path, scratch: Path) -> dict[str, Any]:
+    """C0's SRT policy with no network and one writable scratch directory.
+
+    Graphify is third-party code, so its probes get no sockets and may write only `scratch`;
+    the rest of the runtime root (and the interpreter base C0 adds) is read-only.
+    """
+    policy = c0_policy(root, home, root / GRAPHIFY_INTERPRETER)
+    policy["network"] = {
+        "allowedDomains": [],
+        "deniedDomains": [],
+        "strictAllowlist": True,
+        "allowLocalBinding": False,
+        "allowUnixSockets": [],
+        "allowAllUnixSockets": False,
+    }
+    policy["filesystem"]["allowWrite"] = [str(scratch)]
+    return policy
+
+
+def third_party_sandbox(root: Path, attempt: str) -> tuple[Wrapper, dict[str, str]]:
+    """Return the SRT wrapper and environment for third-party probes, or refuse.
+
+    `resolve_srt_runner` verifies the pinned SRT install and raises when it is missing or
+    unverifiable, so no third-party probe ever runs unsandboxed.
+    """
+    srt = resolve_srt_runner(root, f"install-{attempt}")
+    scratch = root / f"tmp/install-probe-{attempt}"
+    scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+    policy = root / f"srt/install-probe-settings-{attempt}.json"
+    violations = root / f"logs/install/probe-violations-{attempt}.jsonl"
+    policy.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _write_json(policy, third_party_probe_policy(root, Path.home(), scratch), mode=0o600)
+    violations.touch(mode=0o600, exist_ok=True)
+    env = {"TMPDIR": str(scratch)}
+    if srt.monitor_socket is not None:
+        env[MONITOR_SOCKET_ENV] = srt.monitor_socket
+        env["GOBBY_SRT_RUN_KEY"] = f"install-{attempt}"
+
+    def wrap(argv: list[str]) -> list[str]:
+        return srt_wrapped_argv(argv, policy=policy, violations=violations, srt=srt)
+
+    return wrap, env
+
 
 def probe(
     root: Path,
@@ -43,6 +91,7 @@ def probe(
     argv: list[str],
     cwd: Path,
     env: Mapping[str, str] | None = None,
+    wrap: Wrapper | None = None,
 ) -> dict[str, Any]:
     receipt = root / f"receipts/probe-{label}-{attempt}.json"
     if receipt.exists():
@@ -50,6 +99,10 @@ def probe(
         require(
             check["argv"] == argv and check["cwd"] == str(cwd),
             "check failed: check['argv'] == argv and check['cwd'] == str(cwd)",
+        )
+        require(
+            check.get("sandboxed", False) == (wrap is not None),
+            f"{label} receipt was recorded without the required sandbox; use a new attempt",
         )
         verify_file_record(root, check["log"])
         require(
@@ -61,7 +114,7 @@ def probe(
     with log.open("x") as output:
         os.chmod(log, 0o600)
         result = subprocess.run(
-            argv,
+            wrap(argv) if wrap is not None else argv,
             cwd=cwd,
             env={**isolated_environment(root, dict(os.environ)), **(env or {})},
             stdout=output,
@@ -74,6 +127,7 @@ def probe(
         "started_at": started,
         "ended_at": datetime.now(UTC).isoformat(),
         "exit_code": result.returncode,
+        "sandboxed": wrap is not None,
         "log": file_record(root, log),
     }
     write_once(receipt, json.dumps(check, indent=2) + "\n", 0o600)
@@ -99,13 +153,18 @@ def main() -> int:
     assert_owned_runtime(root, args.owner_session)
     uv = shutil.which("uv")
     require(uv, "check failed: uv")
-    graphify_python = str(root / "tools/graphify/venv/bin/python")
+    graphify_python = str(root / GRAPHIFY_INTERPRETER)
+    # Graphify's own code runs only under SRT. The uv and gcode probes below run first-party
+    # tools that read Graphify's metadata without executing it.
+    wrap, sandbox_env = third_party_sandbox(root, args.attempt)
     version = probe(
         root,
         args.attempt,
         "graphify-version",
         [str(root / GRAPHIFY_ENTRYPOINT), "--version"],
         root,
+        env=sandbox_env,
+        wrap=wrap,
     )
     dependencies = probe(
         root,

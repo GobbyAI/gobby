@@ -423,6 +423,7 @@ def init_runtime(root: Path, source_repo: Path, gobby_repo: Path, owner_session:
         "corpora",
         "gobby-home/files",
         "gobby-home/logs",
+        "home",
         "isolation",
         "logs/install",
         "manifests/corpora",
