@@ -11,7 +11,9 @@ windows. `limit`, `offset`, `returned_count`, and `total_count` all count
 rendered groups; the response's `limit` is the effective value after the
 200-group cap, so `offset = total_count - limit` with that `limit` reads the last page. `full_content` is accepted but unused: message bodies are always full.
 It is not a compact-view switch, and `truncated=false` does not mean every
-message in the session was returned.
+message in the session was returned. Rendered groups are not provider calls: for
+per-call token usage, totals or spend, use `gobby-metrics:get_usage_ledger`
+instead of counting messages.
 
 Search requires a nonblank query and positive limit. Each call scans a bounded
 number of rendered messages, oldest first within a session; multi-session search
@@ -42,6 +44,6 @@ assuming a raw file or summary exists.
 
 Guide: [Reading session data](../../../../../../../../docs/guides/sessions.md#reading-session-data).
 
-_Version: 1.0.0_
+_Version: 1.0.1_
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-11-10_

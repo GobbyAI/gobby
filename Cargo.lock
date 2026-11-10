@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.109"
+version = "1.9.111"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-core"
-version = "0.10.25"
+version = "0.10.26"
 dependencies = [
  "anyhow",
  "axum",
@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.73"
+version = "0.9.74"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "anyhow",
  "clap",

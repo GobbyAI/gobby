@@ -6,6 +6,7 @@ pub(crate) mod index;
 pub(crate) mod indexed_paths;
 pub(crate) mod init;
 pub(crate) mod pin;
+pub(crate) mod receipt;
 pub(crate) mod repair;
 pub(crate) mod scope;
 pub(crate) mod search;

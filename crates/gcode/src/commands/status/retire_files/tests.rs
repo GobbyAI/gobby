@@ -1,5 +1,6 @@
 use super::*;
 use manifest::{ContentVersion, RetiredFile};
+use std::fs;
 
 #[cfg(gcode_postgres_tests)]
 #[path = "tests/serial_db.rs"]

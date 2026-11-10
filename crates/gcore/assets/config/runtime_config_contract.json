@@ -1830,6 +1830,17 @@
     },
     {
       "activation": "live",
+      "default": false,
+      "description": "Apply the nightly vector reconcile with the digest it observed; false runs a dry run that records counts only",
+      "key": "code_index.nightly_reconcile_apply",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 1,
       "description": "Maximum concurrent nightly repair commands",
       "key": "code_index.nightly_repair_concurrency",

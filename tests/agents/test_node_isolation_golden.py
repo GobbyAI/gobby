@@ -36,7 +36,7 @@ def _write_isolated_hooks(workspace: Path) -> bytes:
     hooks_path = workspace / ".factory" / "hooks" / "hooks.json"
     hooks_path.parent.mkdir(parents=True)
     hooks_path.write_bytes(EXISTING.read_bytes())
-    isolation_repair._write_droid_isolation_hooks(hooks_path)
+    isolation_repair._write_droid_isolation_hooks(workspace, hooks_path)
     return hooks_path.read_bytes()
 
 

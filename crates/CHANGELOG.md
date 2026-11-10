@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   communities by id, label, or member path.
 - **Report section** — `gcode graph report` adds an `## Import communities`
   section.
+- **`gcode vector reconcile`** — a read-only dry-run inventory of code-symbol
+  vectors against PostgreSQL. It scrolls Qdrant point identities, reads
+  PostgreSQL with a read-only connection, and reports orphan vectors, synced
+  files missing vectors, and an inventory digest. It deletes nothing and takes
+  no project lock. Version: `1.9.105`.
 
 #### gobby-core
 
@@ -91,6 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gobby: codewiki refresh request failed` on every commit; rerun
   `gobby install` (or hand-edit the hook's Gobby section) to refresh them.
   Version: `1.6.1`.
+- **gcode savings reporting** — outline, symbol, symbol-at, and batch reads no
+  longer POST savings records to `/api/admin/savings/record`. The daemon serves
+  no handler for that route, so each read sent a request whose result was
+  discarded. Those reads also stop failing when the daemon URL cannot be
+  resolved, and the stale grant entry for the route is removed from the daemon.
+  Version: `1.9.104`.
+- **`gcode vector cleanup-orphans`** — removed (breaking for anything scripting
+  it). Use `gcode vector reconcile` to inventory orphan code-symbol vectors; it
+  deletes nothing. Version: `1.9.105`.
 
 ### Changed
 

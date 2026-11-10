@@ -280,7 +280,7 @@ def test_authenticate_resolves_caller_user(
                 "X-Gobby-Runtime-Grant": front_door_grant,
             },
             method="POST",
-            path="/api/admin/savings/record",
+            path="/api/llm/vision/extract",
         )
     )
     assert grant_front_door.allowed is True
@@ -298,7 +298,7 @@ def test_authenticate_resolves_caller_user(
                 "X-Gobby-Runtime-Grant": session_grant,
             },
             method="POST",
-            path="/api/admin/savings/record",
+            path="/api/llm/vision/extract",
         )
     )
     assert (unbound.allowed, unbound.code) == (False, "forged_identity")
@@ -337,7 +337,7 @@ def test_authenticate_resolves_caller_user(
                 "X-Gobby-Runtime-Grant": cookie_grant,
             },
             method="POST",
-            path="/api/admin/savings/record",
+            path="/api/llm/vision/extract",
         )
     )
     assert grant_cookie.allowed is True

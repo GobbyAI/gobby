@@ -11,6 +11,7 @@ from gobby.code_index._storage.projection_cleanup import (
 )
 from gobby.code_index._storage.projects import CodeIndexProjectStorageMixin
 from gobby.code_index._storage.prune_dirty import CodeIndexPruneStorageMixin
+from gobby.code_index._storage.reconcile_receipts import CodeIndexReconcileReceiptStorageMixin
 from gobby.code_index._storage.relations import CodeIndexRelationStorageMixin
 from gobby.code_index._storage.summaries import CodeIndexSummaryStorageMixin
 from gobby.code_index._storage.symbols import CodeIndexSymbolStorageMixin
@@ -24,6 +25,7 @@ class CodeIndexStorage(
     CodeIndexProjectStorageMixin,
     CodeIndexProjectionCleanupStorageMixin,
     CodeIndexPruneStorageMixin,
+    CodeIndexReconcileReceiptStorageMixin,
     CodeIndexSummaryStorageMixin,
     CodeIndexCommunityStorageMixin,
     CodeIndexContentStorageMixin,

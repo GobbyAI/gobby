@@ -617,6 +617,21 @@
     {
       "surface": "mcp",
       "server": "gobby-worktrees",
+      "tool": "set_worktree_note",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_notes.py",
+        "symbol": "set_worktree_note"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
       "tool": "delete_worktree",
       "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
       "implementation": {

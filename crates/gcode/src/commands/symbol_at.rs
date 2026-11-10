@@ -10,7 +10,7 @@ use crate::{
     index::{hasher, import_resolution::ImportResolutionContext, parser},
     models::Symbol,
     output::{self, Format},
-    savings, visibility,
+    visibility,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,8 +75,6 @@ pub(crate) struct SymbolAtResult {
     pub(crate) symbol: Symbol,
     pub(crate) snippet: String,
     lookup: SymbolAtLookup,
-    source_len: usize,
-    symbol_bytes: usize,
 }
 
 /// Result-returning symbol-at beneath [`run`]'s print layer, so callers and
@@ -125,13 +123,11 @@ pub(crate) fn symbol_at_repo(
     )
     .ok_or_else(|| anyhow!("No visible symbols found for file: {requested_file}"))?;
     let lookup = lookup_for_selection(requested_file, &request, &selected);
-    let (snippet, symbol_bytes) = symbol_source(&source, selected.symbol);
+    let snippet = symbol_source(&source, selected.symbol);
     Ok(SymbolAtResult {
         symbol: selected.symbol.clone(),
         snippet,
         lookup,
-        source_len: source.len(),
-        symbol_bytes,
     })
 }
 
@@ -170,16 +166,6 @@ pub fn run(
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let result = symbol_at_repo(ctx, &mut conn, cwd, location, line)?;
-
-    if result.symbol_bytes > 0 && result.source_len > result.symbol_bytes {
-        let url = gobby_core::daemon_url::daemon_url()?;
-        savings::report_savings(
-            &url,
-            result.source_len,
-            result.symbol_bytes,
-            ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
-        );
-    }
 
     if let Some(diagnostic) = fallback_diagnostic(&result.symbol, &result.lookup, ctx.quiet) {
         eprintln!("{diagnostic}");
@@ -438,11 +424,10 @@ fn lookup_for_selection(
     }
 }
 
-fn symbol_source(source: &[u8], symbol: &Symbol) -> (String, usize) {
+fn symbol_source(source: &[u8], symbol: &Symbol) -> String {
     let end = symbol.byte_end.min(source.len());
     let start = symbol.byte_start.min(end);
-    let bytes = &source[start..end];
-    (String::from_utf8_lossy(bytes).to_string(), bytes.len())
+    String::from_utf8_lossy(&source[start..end]).to_string()
 }
 
 fn symbol_at_json_value(

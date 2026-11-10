@@ -89,7 +89,9 @@ fn test_context(qdrant: Option<QdrantConfig>) -> Context {
     }
 }
 
-fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<String>>) {
+pub(crate) fn spawn_http_responses(
+    responses: Vec<(u16, Value)>,
+) -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     listener
         .set_nonblocking(true)

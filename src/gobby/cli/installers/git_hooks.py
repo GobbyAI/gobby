@@ -32,8 +32,11 @@ _CODE_INDEX_REINDEX_BODY = r"""
 if [ -n "$CHANGED_FILES" ]; then
     GCODE="${GOBBY_HOME:-$HOME/.gobby}/bin/gcode"
     if [ -x "$GCODE" ]; then
+        # Waits for a busy index lock instead of skipping: a skipped run exits 3 and
+        # nothing retries it. The wait runs in the background, so the commit never blocks,
+        # and it is capped at 300 s so waiters from successive commits cannot pile up.
         (
-            echo "$CHANGED_FILES" | sed 's/^/--files=/' | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1
+            echo "$CHANGED_FILES" | sed 's/^/--files=/' | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1
         ) &
     fi
 fi

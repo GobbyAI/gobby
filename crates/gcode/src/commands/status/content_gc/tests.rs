@@ -1,8 +1,14 @@
 use super::*;
+use std::io::Write as _;
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
+use crate::config::QdrantConfig;
 use crate::index::hasher;
+use crate::vector::code_symbols::tests::{accept_with_timeout, read_http_request};
 
 // Commits every change under `root` with a fixed identity and no hooks.
 fn commit_fixture(root: &Path) {
@@ -43,7 +49,7 @@ mod serial_db {
     use crate::index::api;
 
     fn candidate_versions(database_url: &str, project_id: &str) -> Vec<(String, String)> {
-        discover_content_gc(database_url, 17, Some(project_id))
+        discover_content_gc(&test_context(database_url, project_id), 17)
             .expect("discover GC candidates")
             .into_iter()
             .map(|candidate| (candidate.file_path, candidate.content_hash))
@@ -150,6 +156,172 @@ mod serial_db {
             candidate_hashes(&database_url, &failing_id),
             Vec::<String>::new(),
             "unreadable history retains every candidate of its root",
+        );
+    }
+
+    fn candidate_versions_in(context: &Context) -> Vec<(String, String)> {
+        discover_content_gc(context, 17)
+            .expect("discover GC candidates")
+            .into_iter()
+            .map(|candidate| (candidate.file_path, candidate.content_hash))
+            .collect()
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn excluded_path_is_collected_despite_history() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-excluded-history");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        std::fs::create_dir_all(root.path().join("generated")).expect("create excluded directory");
+        std::fs::write(root.path().join("generated/out.rs"), "generated\n")
+            .expect("write excluded file");
+        commit_fixture(root.path());
+        seed_project(&mut conn, &project_id, root.path());
+        seed_primary_checkout(&mut conn, &project_id, root.path());
+        let held = hasher::content_hash(b"generated\n");
+        seed_content_version(&mut conn, &project_id, "generated/out.rs", &held, 60, true);
+
+        assert_eq!(
+            candidate_versions(&database_url, &project_id),
+            Vec::<(String, String)>::new(),
+            "history protects the version while no exclude applies",
+        );
+        let mut context = test_context(&database_url, &project_id);
+        context.indexing.extra_excludes = vec!["generated".to_string()];
+        assert_eq!(
+            candidate_versions_in(&context),
+            vec![("generated/out.rs".to_string(), held)],
+            "an excluded path is collected even though history holds it at that path",
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn missing_path_keeps_history_protection() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-missing-history");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        std::fs::create_dir_all(root.path().join("src")).expect("create history directory");
+        std::fs::write(root.path().join("src/kept.rs"), "kept\n").expect("write history file");
+        commit_fixture(root.path());
+        std::fs::remove_file(root.path().join("src/kept.rs")).expect("delete committed file");
+        seed_project(&mut conn, &project_id, root.path());
+        seed_primary_checkout(&mut conn, &project_id, root.path());
+        let kept = hasher::content_hash(b"kept\n");
+        seed_content_version(&mut conn, &project_id, "src/kept.rs", &kept, 60, true);
+
+        assert_eq!(
+            candidate_versions(&database_url, &project_id),
+            Vec::<(String, String)>::new(),
+            "a deleted path that passes the lexical filters stays eligible, so history protects it",
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn gone_root_retains_every_candidate() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-gone-root");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let scratch = tempfile::tempdir().expect("create scratch directory");
+        let gone_root = scratch.path().join("gone-root");
+        seed_project(&mut conn, &project_id, &gone_root);
+        seed_primary_checkout(&mut conn, &project_id, &gone_root);
+        seed_content_version(&mut conn, &project_id, "src/lib.rs", "gone-lib", 60, true);
+        seed_content_version(
+            &mut conn,
+            &project_id,
+            "generated/out.rs",
+            "gone-generated",
+            60,
+            true,
+        );
+        seed_content_version(
+            &mut conn,
+            &project_id,
+            ".cache/state.json",
+            "gone-cache",
+            60,
+            true,
+        );
+        let mut context = test_context(&database_url, &project_id);
+        context.indexing.extra_excludes = vec!["generated".to_string()];
+
+        assert_eq!(
+            candidate_versions_in(&context),
+            Vec::<(String, String)>::new(),
+            "a root whose checkout is gone retains every candidate, eligible or not",
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn history_failure_still_collects_ineligible_candidates() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-history-ineligible");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        // An existing directory that is not a checkout: git cannot read its history.
+        let plain = tempfile::tempdir().expect("create plain directory");
+        std::fs::create_dir_all(plain.path().join("generated")).expect("create excluded directory");
+        std::fs::create_dir_all(plain.path().join("src")).expect("create source directory");
+        std::fs::write(plain.path().join("generated/out.rs"), "generated\n")
+            .expect("write excluded file");
+        std::fs::write(plain.path().join("src/lib.rs"), "lib\n").expect("write eligible file");
+        seed_project(&mut conn, &project_id, plain.path());
+        seed_primary_checkout(&mut conn, &project_id, plain.path());
+        let excluded = hasher::content_hash(b"generated\n");
+        let eligible = hasher::content_hash(b"lib\n");
+        seed_content_version(
+            &mut conn,
+            &project_id,
+            "generated/out.rs",
+            &excluded,
+            60,
+            true,
+        );
+        seed_content_version(&mut conn, &project_id, "src/lib.rs", &eligible, 60, true);
+        let mut context = test_context(&database_url, &project_id);
+        context.indexing.extra_excludes = vec!["generated".to_string()];
+
+        assert_eq!(
+            candidate_versions_in(&context),
+            vec![("generated/out.rs".to_string(), excluded)],
+            "unreadable history retains eligible candidates; an ineligible one is collected without a history lookup",
         );
     }
 
@@ -272,7 +444,7 @@ mod serial_db {
             "gc-hash-keep",
         );
 
-        let discovered = discover_content_gc(&database_url, 17, Some(&project_id))
+        let discovered = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert_eq!(
             discovered
@@ -346,7 +518,7 @@ mod serial_db {
         );
         seed_symbol(&mut conn, &project_id, "src/lib.rs", "gc-hash-fail");
 
-        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+        let candidates = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 1);
         assert!(!candidates[0].symbol_ids.is_empty());
@@ -451,7 +623,7 @@ mod serial_db {
         );
         seed_call(&mut conn, &project_id, "src/calls.rs", "gc-hash-calls");
 
-        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+        let candidates = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 4);
         for file_path in ["src/imports.rs", "src/calls.rs"] {
@@ -579,7 +751,7 @@ mod serial_db {
             60,
             true,
         );
-        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+        let candidates = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 1);
 
@@ -621,7 +793,7 @@ mod serial_db {
             seed_content_version(&mut conn, &project_id, "src/lib.rs", content_hash, 60, true);
             seed_symbol(&mut conn, &project_id, "src/lib.rs", content_hash);
         }
-        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+        let candidates = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 2);
         assert!(candidates.iter().all(|candidate| candidate.has_graph_facts));
@@ -692,7 +864,7 @@ mod serial_db {
         for content_hash in ["gc-hash-progress-a", "gc-hash-progress-b"] {
             seed_content_version(&mut conn, &project_id, "src/lib.rs", content_hash, 60, true);
         }
-        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+        let candidates = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 2);
 
@@ -716,7 +888,7 @@ mod serial_db {
         assert_eq!(totals.deleted_versions, 1);
         assert_eq!(totals.deferred_versions, 1);
 
-        let remaining = discover_content_gc(&database_url, 17, Some(&project_id))
+        let remaining = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("rediscover GC candidates");
         assert_eq!(
             remaining.len(),
@@ -746,7 +918,7 @@ mod serial_db {
         .expect("rerun finishes the backlog");
         assert_eq!(totals.deleted_versions, 1);
         assert!(
-            discover_content_gc(&database_url, 17, Some(&project_id))
+            discover_content_gc(&test_context(&database_url, &project_id), 17)
                 .expect("final discovery")
                 .is_empty()
         );
@@ -778,7 +950,7 @@ mod serial_db {
         );
         seed_inheritance(&mut conn, &project_id, "src/heritage.rs", "gc-hash-inherit");
 
-        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+        let candidates = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         let candidate = candidates
             .iter()
@@ -824,7 +996,7 @@ mod serial_db {
             "gc-hash-pinned",
         );
 
-        let discovered = discover_content_gc(&database_url, 17, Some(&project_id))
+        let discovered = discover_content_gc(&test_context(&database_url, &project_id), 17)
             .expect("discover GC candidates");
         assert!(
             discovered.is_empty(),
@@ -877,7 +1049,7 @@ mod serial_db {
         assert_eq!(scoped_totals.failed_versions, 0);
         assert_eq!(content_row_count(&mut conn, &pinned_id), 1);
         assert!(
-            discover_content_gc(&principal.database_url, 17, Some(&project_id))
+            discover_content_gc(&test_context(&principal.database_url, &project_id), 17)
                 .expect("discover GC candidates as the scoped principal")
                 .is_empty(),
             "a version another overlay pins is never a candidate for the scoped principal",
@@ -1044,7 +1216,7 @@ mod serial_db {
         // delete on code_indexed_file_states_content_fkey.
         let principal = ScopedPrincipal::issue(&mut conn, &database_url, &project_id);
         assert!(
-            discover_content_gc(&principal.database_url, 17, Some(&project_id))
+            discover_content_gc(&test_context(&principal.database_url, &project_id), 17)
                 .expect("discover GC candidates as the scoped principal")
                 .is_empty(),
             "content another machine references is never a candidate for the scoped principal",
@@ -1527,7 +1699,7 @@ mod serial_db {
     }
 
     fn candidate_hashes(database_url: &str, project_id: &str) -> Vec<String> {
-        discover_content_gc(database_url, 17, Some(project_id))
+        discover_content_gc(&test_context(database_url, project_id), 17)
             .expect("discover GC candidates")
             .into_iter()
             .map(|candidate| candidate.content_hash)
@@ -1560,6 +1732,113 @@ mod serial_db {
             grant_ai: None,
             index_scope: crate::config::ProjectIndexScope::Single,
         }
+    }
+
+    /// Answers one Qdrant request with success and returns the raw request it received.
+    fn serve_qdrant_delete(listener: &TcpListener) -> String {
+        let mut stream =
+            accept_with_timeout(listener, Duration::from_secs(30)).expect("qdrant delete request");
+        let request = read_http_request(&mut stream);
+        let body = r#"{"result":{"operation_id":1,"status":"completed"},"status":"ok"}"#;
+        write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("respond to qdrant");
+        request
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn collected_version_deletes_its_qdrant_symbol_points() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-qdrant");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        let expired_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "gc-hash-old",
+            60,
+            true,
+        );
+        seed_symbol(&mut conn, &project_id, "src/lib.rs", "gc-hash-old");
+
+        let mut discovered = discover_content_gc(&test_context(&database_url, &project_id), 17)
+            .expect("discover GC candidates");
+        let [candidate] = discovered.as_mut_slice() else {
+            panic!("expected one collectable version, got {}", discovered.len());
+        };
+        assert_eq!(candidate.id, expired_id);
+        assert_eq!(
+            candidate.symbol_ids.len(),
+            1,
+            "the collected version must carry its symbol point"
+        );
+        // No FalkorDB is configured here; this test pins the Qdrant deletion only.
+        candidate.has_graph_facts = false;
+        let symbol_ids = candidate.symbol_ids.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind qdrant service");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking qdrant service");
+        let url = format!("http://{}", listener.local_addr().expect("service address"));
+        let service = thread::spawn(move || serve_qdrant_delete(&listener));
+        let qdrant_context = |project_id: &str| {
+            let mut ctx = test_context(&database_url, project_id);
+            ctx.qdrant = Some(QdrantConfig {
+                url: Some(url.clone()),
+                api_key: None,
+            });
+            ctx
+        };
+        let totals = prune_content_versions_with(
+            &qdrant_context(&project_id),
+            &discovered,
+            || false,
+            |project_id| Ok(qdrant_context(project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .expect("prune content versions");
+        assert_eq!(
+            (
+                totals.deleted_versions,
+                totals.failed_versions,
+                totals.skipped_versions,
+                totals.busy_projects,
+            ),
+            (1, 0, 0, 0),
+            "the collected version is deleted"
+        );
+        let request = service.join().expect("qdrant service thread");
+
+        assert!(
+            request.starts_with("POST ") && request.contains("/points/delete"),
+            "collecting the version must delete its Qdrant points: {request}"
+        );
+        let (_, body) = request
+            .split_once("\r\n\r\n")
+            .expect("request has a header end");
+        let body: serde_json::Value = serde_json::from_str(body).expect("delete body is JSON");
+        assert_eq!(
+            body["points"],
+            serde_json::json!(symbol_ids),
+            "content GC must delete exactly the collected version's symbol points"
+        );
+        assert_eq!(content_row_count(&mut conn, &expired_id), 0);
     }
 
     fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {

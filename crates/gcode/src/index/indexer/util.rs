@@ -173,6 +173,25 @@ pub(super) fn relative_path(path: &Path, root: &Path) -> anyhow::Result<String> 
     ))
 }
 
+/// Storage paths of explicit files, mapped as the scan maps them: a present file by its
+/// canonical path under `root`, an absent one by its requested path.
+pub(crate) fn explicit_file_storage_paths(
+    root: &Path,
+    files: &[std::path::PathBuf],
+) -> Vec<String> {
+    files
+        .iter()
+        .map(|file| {
+            let abs = if file.is_absolute() {
+                file.clone()
+            } else {
+                root.join(file)
+            };
+            relative_path(&abs, root).unwrap_or_else(|_| requested_relative_path(root, file))
+        })
+        .collect()
+}
+
 pub(super) fn epoch_secs_str() -> String {
     use std::time::SystemTime;
     let secs = SystemTime::now()

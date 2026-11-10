@@ -305,6 +305,26 @@ pub fn mark_vector_sync_attempted(
     .transpose()
 }
 
+/// Symbol ids the hub still holds for one file across every content version. A vector
+/// point whose id is absent here is an orphan and may be deleted.
+pub fn file_symbol_ids(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<Vec<String>> {
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        "SELECT id::text AS id
+         FROM code_symbols
+         WHERE project_id = $1 AND file_path = $2
+         ORDER BY id",
+        &[&project_id, &file_path],
+    )?;
+    rows.into_iter()
+        .map(|row| row.try_get("id").map_err(Into::into))
+        .collect()
+}
+
 pub fn mark_vectors_synced(
     conn: &mut impl GenericClient,
     project_id: &str,

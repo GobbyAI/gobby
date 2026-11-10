@@ -41,7 +41,7 @@ class GrantRoute:
     method: str
     route: str
     effectful: bool
-    required: RequiredCapability | None
+    required: RequiredCapability
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +167,6 @@ _GRANT_ROUTES: tuple[GrantRoute, ...] = (
             ),
         ),
     ),
-    GrantRoute("POST", "/api/admin/savings/record", True, None),
 )
 
 _OPERATOR_EFFECTFUL_ROUTES = frozenset(

@@ -87,6 +87,9 @@ fn service() -> (String, Sender<()>, thread::JoinHandle<Vec<String>>) {
                         json!({"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]})
                     } else if line.starts_with("PUT ") && line.contains("/points") {
                         json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok"})
+                    } else if line.starts_with("POST ") && line.contains("/points/count") {
+                        // The sync's stale-point prune counts the project's points; none are stale.
+                        json!({"result": {"count": 0}})
                     } else {
                         panic!("unexpected test request: {line}");
                     };
