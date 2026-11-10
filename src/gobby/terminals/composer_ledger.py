@@ -77,7 +77,9 @@ WriteKind = Literal["text", "key", "paste", "input"]
 STATE_VERSION = 1
 _HUMAN_ORIGINS = frozenset({"operator", "attention"})
 _INTERRUPT_KEYS = frozenset({"escape", "ctrl_c"})
-_CURSOR_KEYS = frozenset({"up", "down", "left", "right"})
+# The reason a composer read gives when its only human input moved the cursor or sent control
+# keys: the draft holds no typed text, so an idle empty pane frame can confirm it empty.
+CURSOR_DRAFT_REASON = "cursor"
 # Terminal replies are answers the viewer gives to the program's own queries (cursor
 # position, device attributes, DSR, DECRPM, kitty flags, DCS, OSC). They edit nothing,
 # so a composer holding only replies stays empty.
@@ -90,6 +92,38 @@ _INPUT_CONTROLS = re.compile(
     rf"{_TERMINAL_REPLIES}|"
     r"(?P<cursor>\x1b\[[\d;]*[ABCD]|\x1bO[ABCD])"
 )
+
+
+def _moves_cursor(payload: str) -> bool:
+    return any(match.group("cursor") is not None for match in _INPUT_CONTROLS.finditer(payload))
+
+
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+# Named keys that add no text: submits, interrupts, cursor and erase keys, and screen clears.
+_UNTYPED_KEYS = frozenset(
+    {
+        "enter",
+        "kpenter",
+        "escape",
+        "ctrl_c",
+        "ctrl_k",
+        "ctrl_l",
+        "ctrl_u",
+        "backspace",
+        "delete",
+        "up",
+        "down",
+        "left",
+        "right",
+    }
+)
+
+
+def _types_text(kind: WriteKind, payload: str, text: str) -> bool:
+    """Whether a human write can put typed text in the composer; control-only input cannot."""
+    if kind == "key":
+        return payload not in _UNTYPED_KEYS
+    return bool(_CONTROL_CHARS.sub("", text))
 
 
 @dataclass(frozen=True)
@@ -114,6 +148,7 @@ class LedgerRead:
 class _Entry:
     clean_seq: int
     human_seq: int = 0
+    typed_seq: int = 0
     unsafe: str | None = None
     unsafe_seq: int = 0
     flagged_seq: int = 0
@@ -158,6 +193,27 @@ class ComposerLedger:
         with self._lock:
             self._entries[terminal_id] = _Entry(clean_seq=self._next())
 
+    def cursor_mark(self, terminal_id: str) -> int | None:
+        """The human input mark of a cursor-only draft; ``None`` for any other composer state.
+
+        The mark is the draft's last human input. Input after it moves the mark, so a
+        confirmation taken against an older mark cannot clear text the frame never showed.
+        """
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            if entry is None or not _cursor_only(entry):
+                return None
+            return entry.human_seq
+
+    def confirm_empty(self, terminal_id: str, mark: int) -> bool:
+        """Clear the cursor-only draft ``mark`` names, once an idle empty frame confirmed it."""
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            if entry is None or entry.human_seq != mark or not _cursor_only(entry):
+                return False
+            entry.clean_seq = self._next()
+            return True
+
     def record_spawn(self, terminal_id: str, epoch: str) -> None:
         """A terminal committed on host ``epoch`` starts with an empty composer.
 
@@ -189,16 +245,16 @@ class ComposerLedger:
                 return
             entry = self._entries.get(event.terminal_id)
             if entry is not None:
-                if (
-                    not event.submit
-                    and event.interrupt is None
-                    and (
-                        event.effect == "control"
-                        or (event.effect == "cursor" and entry.pending_seq <= entry.clean_seq)
-                    )
-                ):
+                # A viewer report (focus, mouse, reply) edits nothing; every other host
+                # input may edit the composer, so it drafts it.
+                if not event.submit and event.interrupt is None and event.effect == "control":
                     return
-                self._human(entry, submit=event.submit, interrupt=event.interrupt is not None)
+                self._human(
+                    entry,
+                    submit=event.submit,
+                    interrupt=event.interrupt is not None,
+                    typed=event.effect == "edit",
+                )
 
     def observe_write(
         self,
@@ -225,28 +281,19 @@ class ComposerLedger:
                     )
                 )
                 is_interrupt = kind == "key" and payload in _INTERRUPT_KEYS
-                has_text = not (kind == "key" and payload in _CURSOR_KEYS) and (
-                    (kind == "paste" and bool(payload)) or "\x1b[200~" in payload or bool(text)
-                )
-                # History recall or cursor movement invalidates a held payload's
-                # exact text, so a retry cannot safely submit it with bare Enter.
-                edits_held = entry.pending_seq > entry.clean_seq and (
-                    (kind == "key" and payload in _CURSOR_KEYS)
-                    or (
-                        kind == "input"
-                        and any(
-                            match.group("cursor") is not None
-                            for match in _INPUT_CONTROLS.finditer(payload)
-                        )
+                # A viewer report (focus, mouse, reply) edits nothing and never comes from a
+                # person, so a pane click cannot block every wake. Any other human input
+                # fails closed: a cursor key recalls history and control-only input may
+                # delete or rewrite the composer, so it stays a draft until a submit or
+                # drain confirms it empty.
+                viewer_report = kind == "input" and not text and not _moves_cursor(payload)
+                if is_submit or is_interrupt or not viewer_report:
+                    self._human(
+                        entry,
+                        submit=is_submit,
+                        interrupt=is_interrupt,
+                        typed=_types_text(kind, payload, text),
                     )
-                )
-                if not (is_submit or is_interrupt or has_text or edits_held):
-                    return
-                self._human(
-                    entry,
-                    submit=is_submit,
-                    interrupt=is_interrupt,
-                )
                 return
             seq = self._next()
             if kind == "key":
@@ -456,8 +503,10 @@ class ComposerLedger:
         self._input_changed.notify_all()
         return self._seq
 
-    def _human(self, entry: _Entry, *, submit: bool | None, interrupt: bool) -> None:
+    def _human(self, entry: _Entry, *, submit: bool | None, interrupt: bool, typed: bool) -> None:
         seq = self._next()
+        if typed:
+            entry.typed_seq = seq
         if entry.wait_clean:
             entry.dialog_seq = seq
             entry.dialog_interrupt = entry.dialog_interrupt or interrupt
@@ -490,6 +539,11 @@ def _close_wait(entry: _Entry, outcome: WaitOutcome) -> bool:
             entry.unsafe, entry.unsafe_seq = "interrupt", entry.dialog_seq
     entry.wait_clean, entry.dialog_seq, entry.dialog_interrupt = None, 0, False
     return True
+
+
+def _cursor_only(entry: _Entry) -> bool:
+    """A draft that no typed text has reached since the composer was last clean."""
+    return _read(entry).state == "draft" and entry.typed_seq <= entry.clean_seq
 
 
 def _read(entry: _Entry) -> LedgerRead:
@@ -525,14 +579,27 @@ def bind_composer_ledger(ledger: ComposerLedger | None) -> None:
 def read_composer(terminal_id: str) -> ComposerRead:
     """The bound ledger's composer read; blocked, untracked and unbound read ``unknown``.
 
-    A blocked or untracked entry carries its block reason; an unbound ledger has none.
+    A blocked or untracked entry carries its block reason; an unbound ledger has none. A
+    cursor-only draft reads ``draft`` with the cursor reason, which a wake may probe.
     """
     if _bound is None:
         return ComposerRead("unknown")
     read = _bound.read(terminal_id)
     if read.state == "blocked":
         return ComposerRead("unknown", reason=read.reason)
+    if read.state == "draft" and _bound.cursor_mark(terminal_id) is not None:
+        return ComposerRead("draft", reason=CURSOR_DRAFT_REASON)
     return ComposerRead(read.state, read.pending)
+
+
+def cursor_draft_mark(terminal_id: str) -> int | None:
+    """The bound ledger's cursor-only draft mark; ``None`` when unbound or not cursor-only."""
+    return None if _bound is None else _bound.cursor_mark(terminal_id)
+
+
+def confirm_cursor_draft(terminal_id: str, mark: int) -> bool:
+    """Clear the bound ledger's cursor-only draft ``mark`` names; whether it cleared."""
+    return _bound is not None and _bound.confirm_empty(terminal_id, mark)
 
 
 def composer_drain_keys(terminal_id: str, cli_source: str | None) -> tuple[NamedKey, ...]:

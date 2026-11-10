@@ -27,11 +27,22 @@ ActivityProbe = Callable[[Any, Any | None], Awaitable[TerminalActivity]]
 COMPOSER_OCCUPIED = "composer_occupied"
 COMPOSER_UNCONFIRMED = "composer_unconfirmed"
 PANE_FOCUSED = "pane_focused"
+# send_keys target refusals (_terminal_send_keys_gate) that a wake may retry: the pane
+# may go idle, or become readable. Bare-shell, credential and no-terminal refusals stay final.
+TARGET_COMPOSER_NOT_IDLE = "send_keys_composer_not_idle"
+TARGET_UNCONFIRMED = "send_keys_target_unconfirmed"
 
 # Skips that must be retried rather than treated as a final outcome: the durable
 # message is persisted and the composer may clear on a later probe.
 RETRYABLE_WAKE_SKIPS = frozenset(
-    {"session_active", COMPOSER_OCCUPIED, COMPOSER_UNCONFIRMED, PANE_FOCUSED}
+    {
+        "session_active",
+        COMPOSER_OCCUPIED,
+        COMPOSER_UNCONFIRMED,
+        PANE_FOCUSED,
+        TARGET_COMPOSER_NOT_IDLE,
+        TARGET_UNCONFIRMED,
+    }
 )
 # Skips from wake_state_failure for a recipient outside the live statuses. The durable
 # message stays queued until that session resumes; no live wake is pending.

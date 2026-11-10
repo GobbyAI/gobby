@@ -557,6 +557,11 @@ def _spawn_agent(
             "task_id": task_id,
             "agent_name": "default",
             "provider": "claude",
+            # The default agent has no model by design; an unpinned spawn of it is refused.
+            # claude-sonnet-5-5 is the Claude model id that project_policy agent_model_defaults
+            # and the triage and recovery-steward definitions run on.
+            "model": "claude-sonnet-5-5",
+            "reasoning_effort": "medium",
             "checkout_mode": checkout_mode,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts
@@ -1671,36 +1676,6 @@ while True:
             draft = ""
     draw()
 """
-
-
-@pytest.fixture(scope="session")
-def tree_gclient() -> Path:
-    """Build ``gclient`` from this tree; the installed one may predate the change."""
-    repo = Path(__file__).resolve().parents[2]
-    build = subprocess.run(
-        ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=2400.0,
-    )
-    if build.returncode != 0:
-        pytest.fail(f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}")
-    metadata = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=600.0,
-    )
-    if metadata.returncode != 0:
-        pytest.fail(f"cargo metadata failed:\n{metadata.stderr}")
-    binary = Path(str(json.loads(metadata.stdout)["target_directory"])) / "debug" / "gclient"
-    if not binary.is_file():
-        pytest.fail(f"cargo build left no gclient at {binary}")
-    return binary
 
 
 @pytest.mark.asyncio

@@ -151,11 +151,17 @@ def live_runtime_pane(
     session_id: str,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
+    terminal: Any | None = None,
 ) -> RuntimePaneIO | None:
-    """PaneIO over the session's live terminals row, or None when it has none."""
+    """PaneIO over a terminals row, or None when it has none.
+
+    ``terminal`` is a row the caller already resolved. A context-bound unbound row has no
+    session binding, so the session lookup cannot find it.
+    """
     if terminal_manager is None or terminal_runtime_registry is None:
         return None
-    terminal = terminal_manager.get_live_for_session(session_id)
+    if terminal is None:
+        terminal = terminal_manager.get_live_for_session(session_id)
     if terminal is None:
         return None
     runtime = resolve_terminal_runtime(terminal_runtime_registry, terminal, terminal_manager.db)
