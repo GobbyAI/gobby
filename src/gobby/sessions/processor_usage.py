@@ -16,6 +16,7 @@ from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, Processo
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import (
     TokenEvent,
@@ -195,6 +196,7 @@ class ProcessorUsageMixin:
                 context_window=event_context_window,
                 event_at=event_at,
                 metadata=metadata,
+                api_calls=api_call_count(source, msg),
             )
             latest_event_at = event_at
             # Turn-boundary usage sums every model call in the turn: it is accounting,

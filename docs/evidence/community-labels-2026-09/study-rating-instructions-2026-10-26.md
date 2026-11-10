@@ -1,5 +1,9 @@
 # P3.4 fallback operator preparation and blind ratings
 
+2026-11-05 selection: Josh selected this no-decisions fallback on the gobby corpus
+alone, with C1 removed, and the rule-1 bar at zero G regressions. Results,
+ship rule and artifacts: `label-quality.md` and `study-2026-11/` in this folder.
+
 Retained as an inactive fallback for task #22604. Josh selected completing
 item 4 first on 2026-10-26, followed by the full D/G/J and carry study.
 Do not execute this fallback package under that selection. These commands

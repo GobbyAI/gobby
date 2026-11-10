@@ -4981,6 +4981,10 @@
       "definition": "bigint|int8|NO|0|NEVER"
     },
     {
+      "name": "token_event_retention_totals.message_key",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
       "name": "token_event_retention_totals.output_tokens",
       "definition": "bigint|int8|NO|0|NEVER"
     },
@@ -6999,10 +7003,6 @@
       "definition": "UNIQUE (skill_id, path)"
     },
     {
-      "name": "skills.idx_skills_name_project_source",
-      "definition": "UNIQUE NULLS NOT DISTINCT (name, project_id, source)"
-    },
-    {
       "name": "skills.skills_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7404,7 +7404,7 @@
     },
     {
       "name": "token_event_retention_totals.token_event_retention_totals_pkey",
-      "definition": "PRIMARY KEY (session_id)"
+      "definition": "PRIMARY KEY (session_id, message_key)"
     },
     {
       "name": "token_event_retention_totals.token_event_retention_totals_session_id_fkey",
@@ -8900,7 +8900,7 @@
     },
     {
       "name": "idx_skills_name_project_source",
-      "definition": "CREATE UNIQUE INDEX idx_skills_name_project_source ON $schema.skills USING btree (name, project_id, source) NULLS NOT DISTINCT"
+      "definition": "CREATE UNIQUE INDEX idx_skills_name_project_source ON $schema.skills USING btree (name, project_id, source) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
     },
     {
       "name": "idx_skills_project_id",
@@ -9480,7 +9480,7 @@
     },
     {
       "name": "token_event_retention_totals_pkey",
-      "definition": "CREATE UNIQUE INDEX token_event_retention_totals_pkey ON $schema.token_event_retention_totals USING btree (session_id)"
+      "definition": "CREATE UNIQUE INDEX token_event_retention_totals_pkey ON $schema.token_event_retention_totals USING btree (session_id, message_key)"
     },
     {
       "name": "token_events_pkey",

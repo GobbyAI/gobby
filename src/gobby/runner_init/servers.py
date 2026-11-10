@@ -28,6 +28,7 @@ from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
+from gobby.providers.quota_alerts import build_operator_alert_sink
 from gobby.runner_backend import backend_bind, front_door_secret
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
@@ -139,6 +140,10 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.database,
         machine_id=machine_id,
         run_db=run_db,
+        alert_sink=build_operator_alert_sink(
+            manager=lambda: runner.communications_manager,
+            config=lambda: runner.config_runtime.capture().snapshot.active.communications,
+        ),
     )
 
     def tool_proxy_getter() -> object | None:
@@ -375,6 +380,7 @@ def init_servers(runner: GobbyRunner) -> None:
         if runner.message_processor:
             runner.message_processor.websocket_server = runner.websocket_server
             runner.message_processor.session_manager = runner.session_manager
+            runner.message_processor.provider_capacity_service = provider_capacity_service
 
         from gobby.runner_broadcasting import (
             setup_agent_event_broadcasting,

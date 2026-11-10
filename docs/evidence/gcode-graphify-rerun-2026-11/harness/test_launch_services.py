@@ -1,0 +1,186 @@
+"""Pure checks for the owned Docker setup: owner binding, step skipping, and zero-row gating."""
+
+from __future__ import annotations
+
+import errno
+import json
+import socket
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import launch_daemon
+import launch_services
+import pytest
+from launch_services import assert_no_indexed_rows, prepare, start_services, step_complete
+from provision_environment import COMPOSE_PROJECT, CONTAINERS
+from runtime_boundary import EvidenceError, write_once
+
+HARNESS = Path(__file__).parent
+
+
+def test_a_port_already_in_use_is_named_in_the_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        monkeypatch.setattr(launch_services, "PORTS", {"probe": port})
+        monkeypatch.setattr(launch_services, "docker", lambda *_args: "")
+        with pytest.raises(EvidenceError, match=rf"port {port} is already in use"):
+            launch_services.check_fresh()
+    finally:
+        listener.close()
+
+
+class _PermissionDeniedSocket:
+    def __enter__(self) -> _PermissionDeniedSocket:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def bind(self, _address: tuple[str, int]) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+
+def test_a_permission_error_on_bind_keeps_its_own_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(launch_services, "PORTS", {"probe": 40123})
+    monkeypatch.setattr(launch_services, "docker", lambda *_args: "")
+    monkeypatch.setattr(socket, "socket", _PermissionDeniedSocket)
+    with pytest.raises(PermissionError, match="Permission denied"):
+        launch_services.check_fresh()
+
+
+def test_step_three_modules_load_no_gobby_at_import() -> None:
+    # A fresh interpreter, because this process already holds the epic tree's gobby.
+    script = (
+        "import importlib, sys\n"
+        "for name in ('launch_services', 'prepare_daemon', 'prepare_identity'):\n"
+        "    importlib.import_module(name)\n"
+        "print(sorted(m for m in sys.modules if m == 'gobby' or m.startswith('gobby.')))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script], cwd=HARNESS, capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"
+
+
+def test_prepare_rejects_a_foreign_owner_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_once(
+        tmp_path / "ownership.json",
+        json.dumps({"runtime_root": str(tmp_path), "owner_task": "#21942"}),
+        0o600,
+    )
+
+    def unreachable(*args: str) -> str:
+        pytest.fail("docker was reached before the owner-task check")
+
+    monkeypatch.setattr("launch_services.docker", unreachable)
+    with pytest.raises(EvidenceError, match="owner task"):
+        prepare(tmp_path)
+
+
+def test_step_is_skipped_only_when_its_receipt_verifies(tmp_path: Path) -> None:
+    receipt = tmp_path / "receipts" / "services.json"
+    assert step_complete(receipt, lambda: None) is False
+    write_once(receipt, "{}\n", 0o600)
+    assert step_complete(receipt, lambda: None) is True
+
+    def changed() -> None:
+        raise EvidenceError("artifact hash changed")
+
+    with pytest.raises(EvidenceError, match="artifact hash changed"):
+        step_complete(receipt, changed)
+
+
+def _observable_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "runtime"
+    (root / "gobby-home").mkdir(parents=True)
+    (root / "gobby-home/bootstrap.yaml").write_text("daemon_port: 59480\n")
+    after = root / "isolation/external-state.after.json"
+    after.parent.mkdir(parents=True)
+    after.write_text("{}")
+    monkeypatch.setattr(launch_services, "record_services", lambda root, image_ids: True)
+    monkeypatch.setattr(launch_services, "copy_attempt_violations", lambda *args, **kwargs: None)
+    return root
+
+
+def test_observe_refuses_when_the_daemon_is_not_alive_and_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _observable_root(tmp_path, monkeypatch)
+    probed: list[str] = []
+
+    def unhealthy(url: str) -> str:
+        probed.append(url)
+        return "no answer"
+
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", unhealthy)
+
+    with pytest.raises(EvidenceError, match="daemon is not alive and healthy"):
+        launch_services.observe(root, {}, "attempt-1")
+
+    assert probed == ["http://127.0.0.1:59480/api/health"]
+
+
+def test_observe_passes_when_the_containers_and_the_daemon_are_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _observable_root(tmp_path, monkeypatch)
+    probed: list[str] = []
+
+    def healthy(url: str) -> None:
+        probed.append(url)
+
+    monkeypatch.setattr(launch_daemon, "daemon_health_failure", healthy)
+
+    launch_services.observe(root, {}, "attempt-1")
+
+    assert probed == ["http://127.0.0.1:59480/api/health"]
+
+
+def test_every_project_must_hold_zero_indexed_rows() -> None:
+    assert_no_indexed_rows({"graphify-C0": 0, "gcode-C0": 0})
+    with pytest.raises(EvidenceError, match="gcode-C1"):
+        assert_no_indexed_rows({"graphify-C0": 0, "gcode-C1": 2})
+
+
+def test_start_records_services_without_writing_the_after_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for directory in ("config", "receipts", "logs/install", "isolation"):
+        (tmp_path / directory).mkdir(parents=True)
+    (tmp_path / "config/compose.yaml").write_text("services: {}\n")
+    (tmp_path / "receipts/compose.rendered.json").write_text("{}\n")
+    image_ids = {service: f"sha256:{service}" for service in CONTAINERS}
+
+    def fake_docker(*args: str) -> str:
+        if args[0] == "inspect":
+            service = next(item for item, name in CONTAINERS.items() if name == args[1])
+            container = {
+                "Id": f"id-{service}",
+                "Image": image_ids[service],
+                "State": {"Health": {"Status": "healthy"}},
+            }
+            return json.dumps([container])
+        labels = {"com.docker.compose.project": COMPOSE_PROJECT}
+        if args[0] == "network":
+            return json.dumps([{"Id": "net-id", "Labels": labels}])
+        if args[0] == "volume":
+            return json.dumps([{"Labels": labels}])
+        raise AssertionError(f"unexpected docker call: {args}")
+
+    def compose_up(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("launch_services.docker", fake_docker)
+    monkeypatch.setattr("launch_services.subprocess.run", compose_up)
+    monkeypatch.setattr("launch_services.validate_container", lambda *args: None)
+    monkeypatch.setattr("launch_services.external_state_snapshot", lambda source: {})
+    start_services(tmp_path, ["compose"], image_ids)
+    assert (tmp_path / "receipts/services.json").exists()
+    assert not (tmp_path / "isolation/external-state.after.json").exists()

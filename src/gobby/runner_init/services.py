@@ -16,6 +16,7 @@ from gobby.ai import (
 )
 from gobby.ai.embedding_switch import CompletedSwitchRecord
 from gobby.ai.embeddings import EmbeddingService
+from gobby.app_context import get_app_context
 from gobby.config.embedding_keys import (
     EMBEDDING_API_KEY_SECRET_NAME,
     EMBEDDING_SWITCH_COMPLETED_KEY,
@@ -510,6 +511,9 @@ def _build_message_processor(
         processor.session_manager = runner.session_manager
         processor.websocket_server = getattr(runner, "websocket_server", None)
         processor.communications_manager = getattr(runner, "communications_manager", None)
+        processor.provider_capacity_service = getattr(
+            get_app_context(), "provider_capacity_service", None
+        )
         http_server = getattr(runner, "http_server", None)
         hook_manager = getattr(http_server, "_hook_manager", None)
         if hook_manager is not None:

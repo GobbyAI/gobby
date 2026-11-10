@@ -1440,10 +1440,9 @@ async fn python_seed_matches_python_steps() -> Result<()> {
         "a failed sync leaves repair running"
     );
 
-    // A sync past its timeout is abandoned, not awaited.
+    // A sync past its timeout is abandoned, not awaited. The sync would run 60 s and the 200 ms
+    // timeout fires first; the 30 s bound leaves headroom for repair's other steps under load.
     let workspace = python_workspace(&source, &home, "timeout", true, true)?;
-    // The fake sync outlives the bound by a wide margin, so an awaited sync cannot pass. The bound
-    // covers the whole repair, which slows under load, so it is not the 200 ms seed timeout itself.
     let (uv_bin, uv_log) = fake_uv(&root.path().join("uv-timeout"), &cache, "sleep 60")?;
     let env = RepairEnv {
         uv: Some(uv_bin.as_path()),
@@ -1460,6 +1459,48 @@ async fn python_seed_matches_python_steps() -> Result<()> {
     assert!(
         workspace.join(".mcp.json").is_file(),
         "a timed-out sync leaves repair running"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn timed_out_sync_leaves_no_child_running() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let cache = root.path().join("uv-cache");
+    fs::create_dir_all(&cache)?;
+
+    // The sync starts a child that outlives uv, then blocks past the seed timeout.
+    let child_pid = root.path().join("sync-child.pid");
+    let body = format!("sleep 60 &\necho $! > '{}'\nwait", child_pid.display());
+    let workspace = python_workspace(&source, &home, "orphan", true, true)?;
+    let (uv, _log) = fake_uv(&root.path().join("uv-orphan"), &cache, &body)?;
+    let env = RepairEnv {
+        uv: Some(uv.as_path()),
+        seed_timeout: Duration::from_secs(2),
+        ..repair_env(&home, &hooks_dir, &claude_json)
+    };
+    repair::repair(&source, &workspace, "codex", &env).await?;
+
+    let pid: libc::pid_t = fs::read_to_string(&child_pid)
+        .context("the sync never started its child")?
+        .trim()
+        .parse()?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process_alive(pid) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let alive = process_alive(pid);
+    if alive {
+        // SAFETY: the pid is the test's own `sleep`, so killing it cannot hit another process.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    assert!(
+        !alive,
+        "a timed-out sync leaves no child running (pid {pid})"
     );
     Ok(())
 }

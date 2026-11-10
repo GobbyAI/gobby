@@ -22,6 +22,7 @@ class CommunicationsConfig(BaseModel):
     webhook_base_url: str = ""
     channel_defaults: ChannelDefaults = Field(default_factory=ChannelDefaults)
     auto_create_sessions: bool = True
+    operator_alert_channel: str = ""
 
     @field_validator("webhook_base_url")
     @classmethod

@@ -222,6 +222,11 @@ def create_lifespan(
             )
             logger.debug("Session coordinator connected to agent lifecycle monitor")
 
+        if server.services.agent_lifecycle_monitor is not None:
+            server.services.agent_lifecycle_monitor.set_provider_capacity_service(
+                server.services.provider_capacity_service
+            )
+
         if (
             hasattr(app.state, "hook_manager")
             and hasattr(app.state.hook_manager, "_session_coordinator")
@@ -293,6 +298,7 @@ def create_lifespan(
                     else None
                 ),
                 max_reprompt_attempts=config.tmux.max_reprompt_attempts if config else None,
+                provider_capacity_service=server.services.provider_capacity_service,
             )
             app.state.interactive_attention_monitor = monitor
             await monitor.start()
