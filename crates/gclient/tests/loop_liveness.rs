@@ -13,7 +13,7 @@
 //! number of yields. A reply the mock wrote (`MockDaemon::replies`) is not
 //! that proof: it says the reply left the mock, not that the loop applied it.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 #[path = "loop_liveness/lifecycle.rs"]
 mod lifecycle;
@@ -21,8 +21,7 @@ mod lifecycle;
 #[path = "loop_liveness/writer_leases.rs"]
 mod writer_leases;
 
-#[path = "mock_daemon/draw.rs"]
-mod draw;
+use super::draw;
 use draw::DrawRecorder;
 
 use std::io;

@@ -1,11 +1,6 @@
 //! `gmcp` starts a stopped local daemon once, at launch, through the recorded start command.
 
-#[allow(
-    dead_code,
-    reason = "shared stub; startup probes are checked by method and path only"
-)]
-mod stub_daemon;
-
+use crate::stub_daemon::{Response, StubDaemon};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
@@ -15,7 +10,6 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use stub_daemon::{Response, StubDaemon};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 

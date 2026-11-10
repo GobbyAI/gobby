@@ -6,7 +6,7 @@
 //! pair secret and the supervisor tokens are synthetic; no daemon, database or
 //! credential is involved.
 
-mod common;
+use super::common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

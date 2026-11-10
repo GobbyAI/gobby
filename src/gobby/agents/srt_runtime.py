@@ -541,6 +541,18 @@ def inherit_run_socket_root(db: HubDatabase, session_id: str, predecessor_id: st
         variables.merge_variables(session_id, {SRT_RUN_SOCKET_ROOT_VARIABLE: root})
 
 
+def retained_launch_write_paths(
+    extra_write_paths: list[str], env: Mapping[str, str], workspace: Path
+) -> list[str]:
+    """Drop the spawn-level grants that the run's own cache paths supersede at launch."""
+    superseded_writes = previous_run_write_paths(env)
+    return [
+        path
+        for path in extra_write_paths
+        if canonical_path(path, base=workspace) not in superseded_writes
+    ]
+
+
 async def prepare_sandbox_launch(
     *,
     config: SandboxConfig,
@@ -618,7 +630,7 @@ async def prepare_sandbox_launch(
             "prepare_sandbox_run_paths",
             run_paths_started,
         )
-    run_environment = run_paths.environment(provider, run_sockets=run_sockets)
+    run_environment = run_paths.environment(provider)
     home_writes: tuple[str, ...] = ()
     home_denies: tuple[str, ...] = ()
     if config.backend == "srt" and provider == "grok":
@@ -637,12 +649,9 @@ async def prepare_sandbox_launch(
         await asyncio.to_thread(shutil.copyfile, prompt_file, run_prompt)
         await asyncio.to_thread(run_prompt.chmod, 0o600)
         run_environment["GOBBY_PROMPT_FILE"] = str(run_prompt)
-    superseded_writes = previous_run_write_paths(env)
-    retained_writes = [
-        path
-        for path in config.extra_write_paths
-        if canonical_path(path, base=Path(workspace_path)) not in superseded_writes
-    ]
+    retained_writes = retained_launch_write_paths(
+        config.extra_write_paths, env, Path(workspace_path)
+    )
     effective_config = config.model_copy(
         update={
             "extra_write_paths": [

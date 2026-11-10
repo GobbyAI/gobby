@@ -7,7 +7,7 @@
 //! unknown arguments fails the exit-code assertion instead of parking as a
 //! live host on the caller's `~/.gobby`.
 
-mod host_support;
+use crate::host_support;
 
 use std::path::Path;
 use std::process::{Command, Output};

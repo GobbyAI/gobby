@@ -4,7 +4,7 @@
 //! grant, take, or reply from the daemon or the host's control socket gates a
 //! key (#25653). A key it cannot deliver says so instead of being dropped.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::sync::Arc;
 use std::time::Duration;

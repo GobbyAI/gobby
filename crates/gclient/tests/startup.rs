@@ -1,6 +1,6 @@
 //! 3.5 gclient starts independently of the Python CLI.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_client::app::run_live_loop;

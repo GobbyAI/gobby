@@ -15,6 +15,7 @@ from typing import Any, cast
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 
+from gobby.config.agent_build import AGENT_BUILD_ROOT_KEY, validate_build_root
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
     AI_EMBEDDING_CONFIG_KEY_SET,
@@ -410,6 +411,13 @@ class ConfigMutations:
                 spec = self._resolve(key)
                 self._authorize(spec, key, allow_internal=allow_internal)
                 validated = self._validate_value(spec, key, value)
+                if key == AGENT_BUILD_ROOT_KEY:
+                    # Refuse here, so a bad root never saves and then refuses the next start.
+                    assert isinstance(validated, str)
+                    try:
+                        validate_build_root(validated)
+                    except ValueError as exc:
+                        raise ConfigValidationError(str(exc), key=key) from exc
                 if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                     self._validate_reference(key, validated)
                     assert isinstance(validated, str)

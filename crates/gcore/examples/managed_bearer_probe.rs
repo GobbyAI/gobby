@@ -22,7 +22,9 @@ fn main() -> anyhow::Result<()> {
     let mut mode = None;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
-        let value = args.next().with_context(|| format!("{flag} needs a value"))?;
+        let value = args
+            .next()
+            .with_context(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
             "--home" => home = Some(PathBuf::from(value)),
             "--cache" => cache = Some(PathBuf::from(value)),
@@ -40,9 +42,15 @@ fn main() -> anyhow::Result<()> {
     match mode.as_str() {
         "valid" => {}
         "tampered" => {
-            let first = grant.signature.chars().next().context("grant has no signature")?;
+            let first = grant
+                .signature
+                .chars()
+                .next()
+                .context("grant has no signature")?;
             let flipped = if first == 'A' { 'B' } else { 'A' };
-            grant.signature.replace_range(..first.len_utf8(), &flipped.to_string());
+            grant
+                .signature
+                .replace_range(..first.len_utf8(), &flipped.to_string());
         }
         other => bail!("unknown mode {other}"),
     }

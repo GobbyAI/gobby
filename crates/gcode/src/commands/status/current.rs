@@ -61,8 +61,11 @@ pub fn collect(conn: &mut postgres::Client, ctx: &Context) -> anyhow::Result<Sta
 
 /// Renders the JSON status object, without a trailing newline.
 pub fn render_json(report: &StatusReport) -> anyhow::Result<String> {
-    // Going through a Value sorts every key, which is the order the CLI has always printed.
-    Ok(serde_json::to_string(&serde_json::to_value(report)?)?)
+    // Keys print sorted at every depth, the order the CLI has always printed. Sorting
+    // explicitly keeps that order when Cargo unifies serde_json's `preserve_order` in.
+    let mut value = serde_json::to_value(report)?;
+    value.sort_all_objects();
+    Ok(value.to_string())
 }
 
 /// Renders the text status, without a trailing newline.

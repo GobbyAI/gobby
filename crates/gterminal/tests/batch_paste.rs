@@ -2,13 +2,11 @@
 
 #![cfg(all(unix, feature = "vt-engine"))]
 
-mod host_support;
-
-use base64::Engine;
-use host_support::{
-    committed_pane, control, pane_text, rpc, spawn_host, temp_socket_dir, wait_socket,
-    wait_until_host, write_token, CONTROL_SOCKET,
+use crate::host_support::{
+    committed_pane, control, pane_text, rpc, spawn_host, temp_socket_dir, wait_socket, wait_until_host,
+    write_token, CONTROL_SOCKET,
 };
+use base64::Engine;
 use serde_json::json;
 
 #[test]

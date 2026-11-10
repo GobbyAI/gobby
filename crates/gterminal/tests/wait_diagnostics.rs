@@ -1,7 +1,7 @@
 //! #25733 criterion 2: a timed-out host-state wait names the host's pid, log tail
 //! and probe state in its panic, not only the condition text.
 
-mod host_support;
+use crate::host_support;
 
 use std::time::Duration;
 

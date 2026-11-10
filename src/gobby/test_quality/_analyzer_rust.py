@@ -231,9 +231,8 @@ def _rust_has_assertion_like_check(test: _RustTest) -> bool:
 
 
 def _rust_returns_result(signature: str) -> bool:
-    return "->" in signature and bool(
-        re.search(r"\bResult\s*(?:<|$)|::Result\s*(?:<|$)", signature)
-    )
+    # Any type named `...Result` counts, so aliases such as `TestResult` match too.
+    return "->" in signature and bool(re.search(r"\b\w*Result\s*(?:<|$)", signature))
 
 
 def _rust_uses_question_mark(body: str) -> bool:

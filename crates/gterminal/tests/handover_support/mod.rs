@@ -25,12 +25,12 @@ use gobby_terminal::terminal_theme::{TerminalTheme, ThemeDeclaration};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::host_support::{
+use super::host_support::{
     connect, hello_control, rpc, write_token, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
 };
 
 /// The ignored test that runs [`run_helper`].
-pub const HELPER_TEST: &str = "handover_helper";
+pub const HELPER_TEST: &str = "host_handover::handover_helper";
 pub const TOKEN: &str = "handover-token";
 const SPEC_ENV: &str = "GTERM_HANDOVER_HELPER_SPEC";
 /// Restore wait (#25733). Fallback restores took 3.8 to 5.7 s typically, with peaks of

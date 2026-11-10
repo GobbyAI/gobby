@@ -44,6 +44,8 @@ pub struct PolicyInputs {
     pub workspace: PathBuf,
     pub home: PathBuf,
     pub gobby_home: PathBuf,
+    /// The configured build-output root, canonical. Cargo target folders live under it.
+    pub build_root: PathBuf,
     /// Additional credential roots resolved by the trusted hub, never by the seat environment.
     pub credential_authority_roots: Vec<PathBuf>,
     /// The operator account's bootstrap credential, from the passwd entry (see
@@ -52,6 +54,9 @@ pub struct PolicyInputs {
     pub operator_bootstrap: Option<PathBuf>,
     pub env: BTreeMap<String, String>,
     pub provider_executable: Option<PathBuf>,
+    /// Whether the launch is granted its run tmp as a Unix socket root. Native spawns and
+    /// resumes grant it, as the Python spawn path does.
+    pub allow_run_unix_sockets: bool,
     pub daemon_port: u16,
     pub websocket_port: u16,
     pub run_id: String,
@@ -131,7 +136,7 @@ pub(super) fn compile_policy(
         "CARGO_TARGET_DIR".to_string(),
         caches::agent_cargo_target_dir(inputs),
     );
-    let spawned = caches::spawn_grants(config, &project, &mut env, inputs);
+    let spawned = caches::spawn_grants(config, &project, &mut env, inputs)?;
     let layout = caches::run_layout(inputs, &env)?;
     if inputs.prewarm_pre_commit_store {
         prewarm::prewarm(
@@ -144,6 +149,11 @@ pub(super) fn compile_policy(
     }
 
     let mut effective = spawned;
+    // The run tmp is granted as a Unix socket root wherever `srt_runtime.py` grants it.
+    let (socket_root, cargo_env) = caches::native_cargo_grants(inputs, &layout);
+    if let Some(root) = socket_root.filter(|root| !effective.allow_unix_sockets.contains(root)) {
+        effective.allow_unix_sockets.push(root);
+    }
     let run_grants = layout
         .writable()
         .into_iter()
@@ -153,8 +163,7 @@ pub(super) fn compile_policy(
             paths::text(&layout.cargo_target),
         ]);
     effective.extra_write_paths = paths::dedupe(
-        effective
-            .extra_write_paths
+        caches::retained_launch_write_paths(effective.extra_write_paths, &env, inputs)
             .into_iter()
             .chain(run_grants)
             .chain(home_writes.iter().cloned()),
@@ -168,6 +177,7 @@ pub(super) fn compile_policy(
 
     let mut policy_env = env;
     policy_env.extend(layout.environment(&inputs.provider));
+    policy_env.extend(cargo_env);
     let resolved = paths::compute(&effective, inputs, &policy_env, &workspace_scope)?;
     Ok(CompiledPolicy {
         resolved,

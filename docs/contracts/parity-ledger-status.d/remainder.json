@@ -319,6 +319,10 @@
     "status": "proxied",
     "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:102` to Rust feedback/review and metrics MCP services."
   },
+  "MCP gobby-metrics:get_usage_ledger": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:365` to Rust feedback/review and metrics MCP services."
+  },
   "MCP gobby-metrics:get_usage_report": {
     "status": "proxied",
     "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:332` to Rust feedback/review and metrics MCP services."

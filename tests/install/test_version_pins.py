@@ -70,8 +70,15 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.110"),
         # gcode: nightly vector reconcile receipts, the apply switch and the reconcile migration changed in #23584 under installed 1.9.110.
         ("gcode", "1.9.111"),
+        # gcode, gdaemon, ghook: gcore and the native build-root sandbox launch changed in #25825 under installed 1.9.111, 0.4.151, 0.9.74.
+        ("gcode", "1.9.112"),
         ("gdaemon", "0.4.113"),
+        ("gdaemon", "0.4.152"),
+        # gclient, gterm: the outage toast and the one-suite test layout changed in #25825 under 0.1.122, 0.1.28.
+        ("gclient", "0.1.123"),
+        ("gterm", "0.1.29"),
         ("ghook", "0.9.52"),
+        ("ghook", "0.9.75"),
     ],
 )
 def test_changed_source_floors_cover_their_patch_bumps(bin_name: str, minimum: str) -> None:

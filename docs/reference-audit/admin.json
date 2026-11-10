@@ -1271,7 +1271,7 @@
     {
       "id": "native-client",
       "kind": "test",
-      "command": "cargo test -p gobby-client --test startup --test keymap --test persist --test client_loop --test frame_delivery --test parity --quiet",
+      "command": "cargo test -p gobby-client --test suite --quiet -- startup:: keymap:: persist:: client_loop:: frame_delivery:: parity::",
       "result": "209 passed, 1 ignored across six suites in 7.23s; mock daemons and temporary fixtures; no installed binary promotion."
     },
     {

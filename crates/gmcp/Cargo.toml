@@ -1,6 +1,6 @@
 [package]
 name = "gobby-mcp"
-version = "0.1.40"
+version = "0.1.41"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -8,6 +8,7 @@ description = "Native MCP wrapper transport for the Gobby daemon"
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
+autotests = false
 
 [lib]
 path = "src/lib.rs"
@@ -36,3 +37,6 @@ socket2 = "0.6"
 
 [lints]
 workspace = true
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

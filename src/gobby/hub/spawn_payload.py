@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.build_root import agent_build_root
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_credentials import credential_roots
@@ -149,6 +150,7 @@ def build_spawn_payload(
         sandbox=Sandbox.model_validate(sandbox_config.model_dump(mode="json")),
         timeout_seconds=int(timeout),
         source_root=request["project_path"],
+        build_root=str(agent_build_root()),
         credential_authority_roots=[str(path.resolve()) for path in credential_roots()],
         workspace=_workspace(db, run, request, body, resume_existing=resume_existing),
         agent_name=request.get("agent_lookup_name") or (body.name if body is not None else None),

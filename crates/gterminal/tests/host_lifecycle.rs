@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-mod host_support;
+use crate::host_support;
 
 use host_support::{
     connect, recv_json, send_json, socket_mode, spawn_host, temp_socket_dir, wait_exit,

@@ -27,9 +27,10 @@ starves waiting for expansion.
 - **Wiki fan-outs (Lane C, P2 and P3): per-agent worktrees.** The five-leaf
   parallel groups run as `gobby-agents` spawns with worktree isolation —
   parallelism without the dispatcher in the loop.
-- **Add sccache before P2/P3 fan out.** No shared Rust build cache exists
-  today (no `CARGO_TARGET_DIR`/sccache config anywhere in the repo), so
-  concurrent worktrees each pay a full cold workspace build.
+- **Expect one cold build per worktree.** Concurrent worktrees each pay a full
+  cold workspace build once; agent builds then stay incremental in their own
+  build root. sccache was measured and dropped (#25825): 0 of 416
+  cross-checkout cache hits.
 
 ---
 

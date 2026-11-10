@@ -1,9 +1,6 @@
 //! #24378: checkout registration is triggered by the real forwarded hook path.
 
-#[path = "fake_hub.rs"]
-pub(super) mod fake_hub;
-#[path = "node_home.rs"]
-pub(super) mod node_home;
+pub(super) use crate::node_support::{fake_hub, node_home};
 
 use anyhow::Result;
 use axum::{

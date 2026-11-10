@@ -29,7 +29,7 @@ tmutil listlocalsnapshots /
 |---|---|---|
 | Build roots (Gobby agent caches, project `target/`) | `du -sh ~/.gobby/cache/* <project>/target 2>/dev/null` | Usually the largest; see `rust-worktree-builds.md` |
 | Orphaned build roots | Compare root names with `git worktree list` and `~/.gobby/worktrees/` | Safe once the tree is gone and nothing builds there |
-| sccache | `du -sh <SCCACHE_DIR>` | Size-capped by `SCCACHE_CACHE_SIZE` |
+| Leftover compiler cache | `du -sh ~/.gobby/cache/sccache 2>/dev/null` | Agent builds no longer use sccache; regenerable once no `sccache` process runs |
 | Worktrees | `du -sh ~/.gobby/worktrees/*` | Never delete one with unlanded work |
 | Container VM image | `docker system df` | Grows; shrink by pruning inside, see Step 3 |
 | Package caches | `uv cache dir`, `~/.cargo/registry`, `~/Library/Caches` | Regenerable |
@@ -67,5 +67,5 @@ measured size and the `df` delta afterwards.
 | `uv cache clean` hangs | A running `uv run` holds the lock | Wait for it, or clean when idle |
 | Docker image stays large after prune | Docker Desktop does not auto-shrink | Use its reclaim option, or OrbStack |
 
-_Version: 1.0.0_
-_Last verified: 2026-11-06_
+_Version: 1.0.1_
+_Last verified: 2026-11-07_

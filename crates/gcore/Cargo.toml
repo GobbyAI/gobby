@@ -1,6 +1,6 @@
 [package]
 name = "gobby-core"
-version = "0.10.27"
+version = "0.10.28"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -10,6 +10,7 @@ repository = "https://github.com/GobbyAI/gobby"
 homepage = "https://gobby.ai"
 keywords = ["gobby", "cli"]
 categories = ["development-tools"]
+autotests = false
 
 [features]
 default = []
@@ -76,3 +77,14 @@ axum = { version = "0.8", default-features = false, optional = true }
 tempfile = "3"
 serial_test = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+[[test]]
+name = "suite"
+path = "tests/suite.rs"
+
+[[test]]
+name = "catalog_manifest_freshness"
+path = "tests/catalog_manifest_freshness.rs"
+
+[[test]]
+name = "schema_contract"
+path = "tests/schema_contract.rs"

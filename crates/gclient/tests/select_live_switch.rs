@@ -2,7 +2,7 @@
 //! and pane, while another window's focus-hint persistence leaves it alone
 //! (#23265).
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use std::fs;
 use std::process::{Command, Output};

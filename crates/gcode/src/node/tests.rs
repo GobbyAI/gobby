@@ -131,8 +131,10 @@ fn status_render_matches_the_cli_output() -> anyhow::Result<()> {
     )?;
 
     let health = bm25_health::verify(&mut conn);
-    // The CLI renders code_index through a Value, so its keys come out sorted.
-    let health_json = serde_json::to_string(&serde_json::to_value(&health)?)?;
+    // The CLI prints code_index with its keys sorted at every depth.
+    let mut health_value = serde_json::to_value(&health)?;
+    health_value.sort_all_objects();
+    let health_json = health_value.to_string();
     let health_text = health.render_text();
     let short_id = &project_id[..8];
 
@@ -461,7 +463,9 @@ fn status_render_matches_the_cli_output_for_an_overlay() -> anyhow::Result<()> {
 
     let health = bm25_health::verify(&mut conn);
     // Zero tombstones are omitted, so the overlay block carries only its four identities.
-    let health_json = serde_json::to_string(&serde_json::to_value(&health)?)?;
+    let mut health_value = serde_json::to_value(&health)?;
+    health_value.sort_all_objects();
+    let health_json = health_value.to_string();
     let health_text = health.render_text();
     let expected_json = format!(
         r#"{{"code_index":{health_json},"id":"{overlay_id}","index_duration_ms":1500,"indexer_version":"1.9.70","overlay":{{"overlay_project_id":"{overlay_id}","overlay_root":"{overlay_root}","parent_project_id":"{parent_id}","parent_root":"{parent_root}"}},"root_path":"{overlay_root}","total_files":1,"total_symbols":3}}"#

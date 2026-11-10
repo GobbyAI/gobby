@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from gobby.agents.cargo_environment import REMOVED_CARGO_ENV_KEYS
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.agents.sandbox_cargo import sandbox_cargo_environment
 
@@ -481,14 +482,12 @@ def test_real_cargo_stale_checkout_and_incremental_rebuild(tmp_path: Path) -> No
         "CARGO_TARGET_DIR": str(target),
         "CARGO_BUILD_JOBS": "3",
         "TMPDIR": str(temp),
-        # The unsandboxed baseline must not inherit the caller's sccache wrapper: its
-        # socket path can exceed the limit under this long tmp path. Blank, as the launch
-        # environment does, so the cache directory is never the caller's.
-        "RUSTC_WRAPPER": "",
-        "SCCACHE_DIR": "",
-        "SCCACHE_SERVER_UDS": "",
     }
     env.pop("CARGO_BUILD_TARGET_DIR", None)
+    # The unsandboxed baseline builds as an agent launch does: without the caller's
+    # compiler wrapper or incremental override.
+    for key in REMOVED_CARGO_ENV_KEYS:
+        env.pop(key, None)
     args = ["test", "--offline", "--manifest-path"]
     old_first = subprocess.run(
         [cargo, *args, str(first_manifest)],

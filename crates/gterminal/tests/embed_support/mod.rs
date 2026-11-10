@@ -14,7 +14,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-pub use crate::host_support::HostProc;
+pub use super::host_support::HostProc;
 
 pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
@@ -95,7 +95,7 @@ pub fn start_tmux() -> TmuxPane {
 }
 
 pub fn start_tmux_sized(cols: u16, rows: u16) -> TmuxPane {
-    let dir = crate::host_support::temp_socket_dir();
+    let dir = super::host_support::temp_socket_dir();
     let socket = dir.path().join("tmux.sock");
     let session = format!("gobby-{}", std::process::id());
     let status = Command::new("tmux")
@@ -154,7 +154,7 @@ pub fn spawn_host_with_env_removed(extra: &[&str], removed: &[&str]) -> HostProc
 }
 
 pub fn spawn_host_with_env(extra: &[&str], env: &[(&str, &str)], removed: &[&str]) -> HostProc {
-    let dir = crate::host_support::temp_socket_dir();
+    let dir = super::host_support::temp_socket_dir();
     let token_path = dir.path().join("gterm-control.token");
     std::fs::write(&token_path, "control-token").unwrap();
     #[cfg(unix)]
@@ -171,7 +171,7 @@ pub fn spawn_host_with_env(extra: &[&str], env: &[(&str, &str)], removed: &[&str
     .unwrap();
     let mut args = vec!["--tmux-poll-interval-ms", "50"];
     args.extend_from_slice(extra);
-    let mut host = crate::host_support::spawn_host_with_env(dir.path(), &args, env, removed);
+    let mut host = super::host_support::spawn_host_with_env(dir.path(), &args, env, removed);
     host.own_socket_dir(dir);
     wait_socket(&host.socket_dir().join(CONTROL_SOCKET));
     wait_socket(&host.socket_dir().join(FRAMES_SOCKET));
@@ -179,7 +179,7 @@ pub fn spawn_host_with_env(extra: &[&str], env: &[(&str, &str)], removed: &[&str
 }
 
 pub fn wait_socket(path: &Path) {
-    crate::host_support::wait_socket(path);
+    super::host_support::wait_socket(path);
 }
 
 pub fn hello_msg(identity: Option<TmuxClientIdentity>) -> ClientMessage {

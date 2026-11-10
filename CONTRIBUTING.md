@@ -101,6 +101,76 @@ uv run mypy src/
 - Reference any related issues
 - Ensure CI passes before requesting review
 
+## Building Gobby
+
+Agent Cargo builds share one build root. A workspace crate that has not changed compiles
+once and is reused by later builds that use the same target directory.
+
+### Plain incremental builds
+
+Agent Cargo builds are plain incremental builds with no compiler wrapper. Each agent
+launch sets `CARGO_BUILD_JOBS=4` and removes `CARGO_INCREMENTAL`, `RUSTC_WRAPPER`
+and every `SCCACHE_*` variable from the provider's environment, so Cargo's default,
+incremental on, applies. Removing them matters: Cargo reads any set
+`CARGO_INCREMENTAL`, blank included, as incremental off.
+
+Agent builds do not use sccache. Measured on this repository, cross-checkout sccache hits
+were 0 of 416 Rust compiles, and 0 of 27 with `SCCACHE_BASEDIRS` on sccache 0.19.0:
+sccache keys each Rust compile on its target folder path, and Cargo hashes path packages
+by their workspace path. sccache also needs `CARGO_INCREMENTAL=0`, and with it an edit
+loop took 480 s against 67 s for a plain incremental build.
+
+### Debug info
+
+The dev profile sets `debug = "line-tables-only"`. Backtraces keep file and line, and
+the build writes less debug info. To inspect local variables in a debugger, build with
+`CARGO_PROFILE_DEV_DEBUG=2`.
+
+### Build root and sweep
+
+Agent build folders live under the build root. It defaults to `~/.gobby/cache`. To put
+them on another volume, set `agent_build.build_root` to an absolute, canonical, existing
+directory that is not `/` or your home directory, for example:
+
+```bash
+gclient config set agent_build.build_root /Volumes/GobbyBuild
+```
+
+The key is restart-required. The daemon reads it at startup, and an invalid value refuses
+the next start.
+
+A dedicated volume is not known to help. One ordered pair of `cargo build -p gobby-code`
+runs took 1432 s with the target on a dedicated APFS volume and 388 s on the boot volume,
+with similar file-watcher CPU per second. The volume run had higher host load, and the
+runs were 15 minutes apart, so the pair shows no benefit and no causal slowdown either.
+
+`gobby build-sweep` lists build folders that no registered checkout, worktree or clone
+owns. For live trees, each debug/release profile has an 8 GiB budget for hashed test
+executables: above that budget, the oldest test executables are trimmed until it is met.
+An executable written in the last 24 hours is always kept. This is a size-threshold
+clean, so a later test run may relink a trimmed executable. Ordinary binaries, data files
+and unhashed names are preserved. The command is a dry run by default; `--apply` performs
+the cleanup, and `--json` prints machine-readable output. It never follows symlinks and
+reports an empty legacy `cache/cargo-target` without removing it.
+
+### One test program per crate
+
+Each Rust crate builds one integration test program, `suite`, from its `tests/` files.
+Cargo test auto-discovery is off. To add an integration test file, add a
+`#[path = "<name>.rs"] mod <name>;` entry to that crate's `tests/suite.rs`. Shared helpers
+in `tests/common/mod.rs` are declared once in `suite.rs`; test files reach them through
+`super::common`, because a second `mod common;` compiles a second copy. Filter by
+the binary name, for example
+`cargo nextest run -p gobby-terminal --test suite -E 'binary(suite) & test(/^build_env::/)'`.
+The `schema_contract`, `catalog_manifest_freshness` and `projection_stale` programs stay
+separate because CI filters name them.
+
+Run these tests with `cargo nextest`, never bare `cargo test`. Nextest runs each test in
+its own process, so tests merged into one program do not share process state. Bare
+`cargo test` runs a program's tests as threads of one process, which is why the merge is
+only safe under nextest. `.config/nextest.toml` also routes database-backed tests into a
+serial group, and bare `cargo test` bypasses that group.
+
 ## Testing
 
 The full test suite runs pre-push. During development, run specific tests rather than the full suite:

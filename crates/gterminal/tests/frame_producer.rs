@@ -1,6 +1,6 @@
 //! Drive a live PTY through the frame-producer API with no ratatui::Frame.
 
-mod host_support;
+use crate::host_support;
 
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;

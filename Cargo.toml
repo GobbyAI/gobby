@@ -29,6 +29,11 @@ opt-level = 3
 [profile.release.package.gobby-hooks]
 opt-level = "z"
 
+# Line tables keep each panic's file and line and drop the variable and type
+# records that make a debug build's artifacts large. Test builds inherit this.
+[profile.dev]
+debug = "line-tables-only"
+
 # Every gterm host start hashes its own binary to pin it; unoptimized SHA-256
 # over a debug gterm adds seconds to each host integration test.
 [profile.dev.package.sha2]
