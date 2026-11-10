@@ -81,6 +81,8 @@ def provider_environment(
         GOBBY_PROJECT_ID=_PROJECT,
         GOBBY_NATIVE_BIN_DIR=str(native_bin),
         GOBBY_CONFIG=str(config),
+        # The admission pins provider bytes; a seat must not self-update mid-proof.
+        DISABLE_AUTOUPDATER="1",
     )
     env["PATH"] = f"{native_bin}{os.pathsep}{env.get('PATH', '/usr/bin:/bin')}"
     return env

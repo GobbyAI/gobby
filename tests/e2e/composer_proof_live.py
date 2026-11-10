@@ -647,7 +647,10 @@ class LiveProof:
             )
             if outcome.get("success") is not True:
                 raise ProofRefused("owned proof termination unconfirmed")
-        row = await self.validate(seat)
+        # An exited row releases its session binding, so read it back without validate().
+        row = await self.terminal(seat.surface.terminal_id)
+        if row.get("session_id") not in (None, seat.surface.session_id):
+            raise ProofRefused("terminated proof binding changed")
         if row.get("state") != "exited":
             raise ProofRefused("owned proof termination has no exited readback")
         if recorded is None:
