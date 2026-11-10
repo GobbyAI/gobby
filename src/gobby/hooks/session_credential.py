@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from gobby.adapters.capabilities import get_provider_capabilities
+from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.utils.local_token import issue_session_api_token
@@ -12,6 +14,22 @@ from gobby.utils.local_token import issue_session_api_token
 logger = logging.getLogger(__name__)
 
 SESSION_CREDENTIAL_FIELD = "_gobby_session_credential"
+
+
+def is_session_start_hook(source: object, hook_type: object) -> bool:
+    """Return whether `hook_type` is `source`'s own spelling of SessionStart.
+
+    Each provider names the hook its own way (Claude ``session-start``, Codex and Droid
+    ``SessionStart``, Grok either), so the provider's capability registry decides. An
+    unknown source or hook is not a start.
+    """
+    if not isinstance(source, str) or not isinstance(hook_type, str):
+        return False
+    try:
+        capability = get_provider_capabilities(source).get_hook(hook_type)
+    except ValueError:
+        return False
+    return capability is not None and capability.event_type == HookEventType.SESSION_START
 
 
 def mint_session_credential(

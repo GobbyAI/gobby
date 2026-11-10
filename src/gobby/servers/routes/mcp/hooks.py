@@ -42,7 +42,6 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
-from gobby.hooks.hook_types import HookType
 from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
@@ -55,7 +54,11 @@ from gobby.hooks.runtime_compat import (
     envelope_has_hook_response_capability,
 )
 from gobby.hooks.session_claimant import SessionStartClaim
-from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD, mint_session_credential
+from gobby.hooks.session_credential import (
+    SESSION_CREDENTIAL_FIELD,
+    is_session_start_hook,
+    mint_session_credential,
+)
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
     StartupClaimPreflightTimeout,
@@ -202,7 +205,7 @@ def _attach_session_credential(
     agent token never reaches this branch, and a run-bound start already holds its own
     token. A daemon-internal replay and a start without proof mint nothing.
     """
-    if not proven or payload.get("hook_type") != HookType.SESSION_START.value:
+    if not proven or not is_session_start_hook(payload.get("source"), payload.get("hook_type")):
         return response
     if request.headers.get(AGENT_RUN_ID_HEADER):
         return response
