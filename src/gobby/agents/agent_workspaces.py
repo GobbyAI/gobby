@@ -35,6 +35,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git, parse_porcelain_v1_z
 from gobby.utils.spawn import run
+from gobby.workflows.agent_models import holds_capability
 
 if TYPE_CHECKING:
     from gobby.agents.team_admission_records import TeamBinding
@@ -791,7 +792,7 @@ def grant_seat_workspace_paths(
             else None
         )
         body = row.definition_json if row is not None else {}
-        if "promote_workspace_binaries" in body.get("capabilities", []):
+        if holds_capability(body.get("capabilities", []), "promote_workspace_binaries"):
             granted.append(str(get_gobby_home() / "bin"))
         if body.get("read_all_agent_workspaces") is True:
             reads = [str(workspaces_root())]

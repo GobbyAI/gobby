@@ -144,7 +144,7 @@ async def resolve_seat_resume(
         allow_retype=(
             agent_body is not None
             and agent_body.enabled
-            and "accept_resume_retype" in agent_body.capabilities
+            and agent_body.holds("accept_resume_retype")
         ),
         live_host_epoch=live_host_epoch,
     )

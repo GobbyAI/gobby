@@ -166,7 +166,7 @@ async def spawn_remote_route(
                 allow_retype=(
                     request.agent_body is not None
                     and request.agent_body.enabled
-                    and "accept_resume_retype" in request.agent_body.capabilities
+                    and request.agent_body.holds("accept_resume_retype")
                 ),
             )
         except ValueError as exc:

@@ -4577,6 +4577,10 @@ async def test_ended_target_falls_back_to_live_assistant(
         "gobby.communications.operator_routing.session_has_capability",
         has_grant,
     )
+    monkeypatch.setattr(
+        "gobby.communications.operator_routing.session_declares_capability",
+        has_grant,
+    )
     store = make_store([channel])
     store.get_channel.return_value = channel
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)

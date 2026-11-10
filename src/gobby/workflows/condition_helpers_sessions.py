@@ -402,9 +402,7 @@ def network_override_allowed(session_manager: SessionManager | None, caller_ref:
         )
     resolved = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
     return (
-        resolved is not None
-        and resolved[1].enabled
-        and "override_spawn_network" in resolved[0].capabilities
+        resolved is not None and resolved[1].enabled and resolved[0].holds("override_spawn_network")
     )
 
 

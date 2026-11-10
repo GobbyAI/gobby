@@ -487,7 +487,7 @@ def create_spawn_agent_registry(
                 reserved_run_id=reserved_run_id,
                 target=SeatTarget(
                     main_checkout=agent_body is not None
-                    and "team_main_checkout" in agent_body.capabilities,
+                    and agent_body.declares("team_main_checkout"),
                     task_id=task_id,
                     checkout_mode=checkout_mode,
                     branch_name=branch_name,
