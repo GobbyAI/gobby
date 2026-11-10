@@ -27,7 +27,7 @@ import httpx
 import pytest
 
 from tests.e2e import handoff_continuation_fixture as _handoff
-from tests.e2e import handoff_continuation_trust as _trust
+from tests.e2e import handoff_continuation_project as _project
 from tests.e2e.composer_proof import ProofRefused
 from tests.e2e.composer_proof_live import LiveProof, Seat
 from tests.e2e.conftest import daemon_auth_headers
@@ -39,8 +39,8 @@ from tests.e2e.handoff_continuation_runner import adopt
 handoff_admission = _handoff.handoff_admission
 provider_environment = _handoff.provider_environment
 handoff_fixture = _handoff.handoff_fixture
-# The operator-trusted fixed folder under ~/.gobby replaces the temporary project folder.
-e2e_project_dir = _trust.e2e_project_dir
+# The fixed folder under ~/.gobby replaces the temporary project folder.
+e2e_project_dir = _project.e2e_project_dir
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
 _BOUND_SECONDS = 240.0

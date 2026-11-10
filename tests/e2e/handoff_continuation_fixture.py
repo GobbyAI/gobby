@@ -48,7 +48,6 @@ from tests.e2e.handoff_continuation_admission import (
 )
 from tests.e2e.handoff_continuation_barrier import HandoffBarrier
 from tests.e2e.handoff_continuation_launch import seat_environment
-from tests.e2e.handoff_continuation_trust import require_provider_trust
 from tests.e2e.test_terminal_client_stack import _open_control
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
@@ -173,9 +172,8 @@ async def handoff_fixture(
     clean = False
     try:
         readback = await asyncio.to_thread(binary_readback, spec, env, provider_environment)
-        # The real CLI needs workspace trust or it waits at its trust prompt. The proof never
-        # writes the operator's provider config; it reads the fixed folder's trust and refuses.
-        require_provider_trust(provider, e2e_project_dir, home=Path.home())
+        # The proof never reads or writes provider trust. A CLI that stops at a trust prompt
+        # fails its case naturally, with the transcript as evidence.
         (e2e_project_dir / "AGENTS.md").write_text(
             "Disposable handoff acceptance seat. Follow the launch prompt. Never edit files, "
             "run shell commands, spawn agents or contact other sessions.\n"

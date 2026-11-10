@@ -25,7 +25,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1941,18 +1941,49 @@ def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
 # --- MCP Client Helpers ---
 
 
+def _session_bound_headers(gobby_home: Path, session: Mapping[str, Any]) -> dict[str, str]:
+    """Headers a session's own caller sends: its session-bound bearer and selectors.
+
+    The machine bearer may not select a session (#25855). A SessionStart hands its
+    caller a token bound to that one session; this mints the same token with the
+    isolated daemon's signing key so a test acts as the session it names.
+    """
+    from gobby.utils.local_token import issue_session_api_token, read_managed_signing_key
+
+    signing_key = read_managed_signing_key(gobby_home / "bootstrap.yaml")
+    if signing_key is None:
+        raise RuntimeError(f"Daemon signing key is missing beside {gobby_home / 'bootstrap.yaml'}")
+    session_id = str(session["id"])
+    project_id = str(session["project_id"])
+    machine_id = session.get("machine_id")
+    token = issue_session_api_token(
+        signing_key,
+        session_id=session_id,
+        project_id=project_id,
+        machine_id=str(machine_id) if machine_id else None,
+    )
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Session-Id": session_id,
+        "X-Gobby-Project-Id": project_id,
+        "X-Gobby-Caller-Project-Id": project_id,
+    }
+
+
 class MCPTestClient:
     """Helper for testing MCP proxy functionality.
 
-    Set ``session_id`` to have the client send ``X-Gobby-Session-Id`` on tool
-    calls. The daemon's MCP execution endpoint populates the SessionContext
-    ContextVar from this header, which tools like ``gobby-tasks.create_task``
-    now require (session_id was removed from their argument schemas). Set
-    ``agent_run_id`` when the session belongs to an active agent run.
+    Set ``session_id`` to have the client act as that session on tool calls. The
+    daemon's MCP execution endpoint populates the SessionContext ContextVar from
+    the session selector, which tools like ``gobby-tasks.create_task`` require.
+    With ``gobby_home`` the client presents a credential bound to the session, as
+    the session's own caller does; the machine bearer alone may not select one.
+    Set ``agent_run_id`` when the session belongs to an active agent run.
     """
 
-    def __init__(self, daemon_url: str, token: str):
+    def __init__(self, daemon_url: str, token: str, gobby_home: Path | None = None):
         self.daemon_url = daemon_url
+        self.gobby_home = gobby_home
         self.client = httpx.Client(
             base_url=daemon_url,
             headers={"Authorization": f"Bearer {token}"},
@@ -1960,14 +1991,26 @@ class MCPTestClient:
         )
         self.session_id: str | None = None
         self.agent_run_id: str | None = None
+        self._bound: tuple[str, dict[str, str]] | None = None
 
     def close(self) -> None:
         """Close the HTTP client."""
         self.client.close()
 
+    def _bound_headers(self, session_id: str) -> dict[str, str]:
+        if self._bound is None or self._bound[0] != session_id:
+            assert self.gobby_home is not None
+            response = self.client.get(f"/api/sessions/{session_id}")
+            response.raise_for_status()
+            session = cast(dict[str, Any], response.json()["session"])
+            self._bound = (session_id, _session_bound_headers(self.gobby_home, session))
+        return dict(self._bound[1])
+
     def _session_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.session_id:
+        if self.session_id and self.gobby_home is not None and not self.agent_run_id:
+            headers.update(self._bound_headers(self.session_id))
+        elif self.session_id:
             headers["X-Gobby-Session-Id"] = self.session_id
         if self.agent_run_id:
             headers[AGENT_RUN_ID_HEADER] = self.agent_run_id
@@ -2049,6 +2092,7 @@ def mcp_client(daemon_instance: DaemonInstance) -> Generator[MCPTestClient]:
     client = MCPTestClient(
         daemon_instance.http_url,
         daemon_token(daemon_instance.gobby_home),
+        gobby_home=daemon_instance.gobby_home,
     )
     yield client
     client.close()

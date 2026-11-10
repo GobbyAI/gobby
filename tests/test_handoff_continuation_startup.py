@@ -78,7 +78,6 @@ async def failed_start(
         harness, "prepare_daemon_env", lambda **kwargs: {"GOBBY_NATIVE_BIN_DIR": str(native)}
     )
     monkeypatch.setattr(harness, "binary_readback", lambda *args: [])
-    monkeypatch.setattr(harness, "require_provider_trust", lambda *args, **kwargs: None)
     monkeypatch.setattr(tempfile, "mkdtemp", lambda **kwargs: str(root))
     monkeypatch.setattr(ProofTrace, "start", AsyncMock())
     monkeypatch.setattr(ProofTrace, "close", AsyncMock())
