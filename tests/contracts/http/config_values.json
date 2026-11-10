@@ -279,6 +279,7 @@
         "communications": {
           "auto_create_sessions": true,
           "enabled": false,
+          "operator_alert_channel": "",
           "webhook_base_url": "",
           "channel_defaults": {
             "burst": 5,
@@ -1432,6 +1433,7 @@
         "communications": {
           "auto_create_sessions": true,
           "enabled": false,
+          "operator_alert_channel": "",
           "webhook_base_url": "",
           "channel_defaults": {
             "burst": 5,

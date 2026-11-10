@@ -292,6 +292,7 @@ class ProcessorLifecycleMixin:
         self._transcript_file_state.pop(session_id, None)
         self._stats.pop(session_id, None)
         self._stats_hydration_skipped.discard(session_id)
+        self._subagent_cursors.pop(session_id, None)
         self._byte_offsets.pop(session_id, None)
         self._message_indices.pop(session_id, None)
         self._index_appenders.pop(session_id, None)
@@ -301,6 +302,7 @@ class ProcessorLifecycleMixin:
         self._mirror_eligible_ids.pop(session_id, None)
         self._mirror_eligible_lines.pop(session_id, None)
         self._pending_turn_completions.pop(session_id, None)
+        self._quota_caught_up.discard(session_id)
         if was_registered:
             logger.debug("Unregistered session %s", session_id)
 
@@ -335,6 +337,9 @@ class ProcessorLifecycleMixin:
         except OSError:
             self._mirror_start_offsets[session_id] = 0
         self._stats_hydration_skipped.discard(session_id)
+        # Subagent files are independent of the parent's offsets; a replaced parent
+        # rereads them from offset 0, and their message ids dedupe the rows.
+        self._subagent_cursors.pop(session_id, None)
         await asyncio.to_thread(discard_index_sidecar, transcript_path)
 
         if self.session_manager:

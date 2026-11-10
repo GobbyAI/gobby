@@ -735,6 +735,24 @@ class CodexTranscriptParser(BaseTranscriptParser):
             or payload.get("modelId")
         )
 
+        raw_id = payload.get("message_id") or payload.get("id")
+        total_usage = info.get("total_token_usage") if isinstance(info, dict) else None
+        if not raw_id and isinstance(total_usage, dict):
+            # A repeated cumulative total names the same model call, so key the row by it.
+            cumulative = (
+                _parse_int_token(total_usage.get("total_tokens")),
+                _parse_int_token(total_usage.get("input_tokens") or total_usage.get("inputTokens")),
+                _parse_int_token(
+                    total_usage.get("cached_input_tokens")
+                    or total_usage.get("cachedInputTokens")
+                    or 0
+                ),
+                _parse_int_token(
+                    total_usage.get("output_tokens") or total_usage.get("outputTokens")
+                ),
+            )
+            raw_id = f"{self.session_id or 'codex'}:codex:" + ":".join(map(str, cumulative))
+
         return ParsedMessage(
             index=index,
             role="assistant",
@@ -747,7 +765,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             raw_json=data,
             usage=usage,
             model=str(model) if model else None,
-            message_id=self._message_id_for(index, payload.get("message_id") or payload.get("id")),
+            message_id=self._message_id_for(index, raw_id),
             context_used_tokens=context_used_tokens,
         )
 

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.session_coordinator import SessionCoordinator
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.agents import (
         AgentRun,
         AgentRunTerminalReason,
@@ -236,6 +237,10 @@ class AgentLifecycleMonitor:
     def set_session_coordinator(self, coordinator: SessionCoordinator) -> None:
         """Inject session coordinator after construction (avoids circular init ordering)."""
         self._session_coordinator = coordinator
+
+    def set_provider_capacity_service(self, service: ProviderCapacityService | None) -> None:
+        """Forward the shared capacity service to the idle handler's spawned-run observation."""
+        self._idle_check_handler.set_provider_capacity_service(service)
 
     def set_reconciliation_callback(
         self,

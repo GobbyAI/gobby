@@ -423,3 +423,58 @@ def test_managed_browser_refuses_foreign_project_paths(
         link = client.post("/api/auth/sign-in-link", headers=managed_headers).json()["url"]
         assert client.get(link, follow_redirects=False).status_code == 303
         assert client.request(method, path, json={}).status_code == 403
+
+
+def test_managed_browser_reads_only_its_own_project_usage_ledger(
+    sign_in_server: HTTPServer, hub_db: HubDatabase, managed_headers: dict[str, str]
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.token_events import TokenEvent, TokenEventStore
+
+    own_project = managed_headers["X-Gobby-Project-Id"]
+    own_session = managed_headers["X-Gobby-Session-Id"]
+    foreign = LocalProjectManager(hub_db).create("foreign-ledger-project")
+    foreign_session = (
+        SessionManager(hub_db)
+        .register(
+            external_id="foreign-ledger-session",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            source="claude",
+            project_id=foreign.id,
+        )
+        .id
+    )
+    foreign_task = LocalTaskManager(hub_db).create_task(foreign.id, "Foreign ledger task")
+    store = TokenEventStore(hub_db)
+    for session_id, project_id, message_id in (
+        (foreign_session, foreign.id, "foreign-msg"),
+        (own_session, own_project, "own-msg"),
+    ):
+        store.record(
+            TokenEvent(
+                session_id=session_id,
+                project_id=project_id,
+                message_id=message_id,
+                source="claude",
+                origin="transcript",
+                model=None,
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+                event_at=datetime(2026, 10, 20, 10, 1, tzinfo=UTC),
+                api_calls=1,
+            )
+        )
+
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        link = client.post("/api/auth/sign-in-link", headers=managed_headers).json()["url"]
+        assert client.get(link, follow_redirects=False).status_code == 303
+        for params in ({"session_id": foreign_session}, {"task_id": foreign_task.id}):
+            response = client.get("/api/admin/usage/ledger", params=params)
+            assert response.status_code == 403, response.text
+        own = client.get("/api/admin/usage/ledger", params={"session_id": own_session})
+        assert own.status_code == 200, own.text
+        assert own.json()["totals"]["rows"] == 1

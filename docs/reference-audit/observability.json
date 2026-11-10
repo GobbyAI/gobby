@@ -225,6 +225,22 @@
     {
       "surface": "mcp",
       "server": "gobby-metrics",
+      "tool": "get_usage_ledger",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_usage_ledger"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
       "tool": "reset_metrics",
       "audience": "agent",
       "reference": "src/gobby/install/shared/skills/gobby/references/observability/retention.md",
@@ -334,6 +350,21 @@
     {
       "surface": "http",
       "method": "GET",
+      "route": "/api/admin/usage/ledger",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_usage.py",
+        "symbol": "register_usage_routes.get_usage_ledger"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
       "route": "/api/admin/tokens/timeseries",
       "audience": "operator/client",
       "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
@@ -431,6 +462,36 @@
       "implementation": {
         "path": "src/gobby/cli/tokens.py",
         "symbol": "token_stats"
+      },
+      "verification": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tokens ledger",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tokens.py",
+        "symbol": "token_ledger"
+      },
+      "verification": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tokens quota",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tokens.py",
+        "symbol": "token_quota"
       },
       "verification": [
         "source",

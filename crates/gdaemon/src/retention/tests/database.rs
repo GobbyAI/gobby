@@ -39,7 +39,8 @@ impl Fixture {
              CREATE TABLE sessions (id uuid PRIMARY KEY); \
              INSERT INTO sessions VALUES ('{SESSION}'); \
              CREATE TABLE token_events (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
-             session_id uuid NOT NULL REFERENCES sessions(id), event_at timestamptz NOT NULL, \
+             session_id uuid NOT NULL REFERENCES sessions(id), message_id text, \
+             event_at timestamptz NOT NULL, \
              input_tokens integer NOT NULL, output_tokens integer NOT NULL, \
              cache_creation_tokens integer NOT NULL, cache_read_tokens integer NOT NULL);"
             ))
@@ -47,6 +48,11 @@ impl Fixture {
         admin
             .batch_execute(include_str!(
                 "../../../../gcore/assets/schema/migrations/465_token_event_retention.sql"
+            ))
+            .await?;
+        admin
+            .batch_execute(include_str!(
+                "../../../../gcore/assets/schema/migrations/493_token_event_per_key_archive.sql"
             ))
             .await?;
         admin
@@ -96,7 +102,10 @@ impl Fixture {
         let row = self
             .admin
             .query_one(
-                "SELECT input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens \
+                "SELECT COALESCE(SUM(input_tokens), 0)::bigint, \
+             COALESCE(SUM(output_tokens), 0)::bigint, \
+             COALESCE(SUM(cache_creation_tokens), 0)::bigint, \
+             COALESCE(SUM(cache_read_tokens), 0)::bigint \
              FROM token_event_retention_totals WHERE session_id=$1::text::uuid",
                 &[&SESSION],
             )
@@ -107,6 +116,30 @@ impl Fixture {
             row.try_get(2)?,
             row.try_get(3)?,
         ))
+    }
+
+    /// Per-key archive rows as (message_key, input, output, cache_creation, cache_read).
+    async fn key_totals(&self) -> Result<Vec<(String, i64, i64, i64, i64)>> {
+        let rows = self
+            .admin
+            .query(
+                "SELECT message_key, input_tokens, output_tokens, cache_creation_tokens, \
+             cache_read_tokens FROM token_event_retention_totals \
+             WHERE session_id=$1::text::uuid ORDER BY message_key",
+                &[&SESSION],
+            )
+            .await?;
+        let mut keyed = Vec::with_capacity(rows.len());
+        for row in rows {
+            keyed.push((
+                row.try_get(0)?,
+                row.try_get(1)?,
+                row.try_get(2)?,
+                row.try_get(3)?,
+                row.try_get(4)?,
+            ));
+        }
+        Ok(keyed)
     }
 }
 
@@ -320,5 +353,65 @@ async fn serial_db_owner_contention_empty_cycle_and_drop_release() -> Result<()>
         }
     })
     .await??;
+    Ok(())
+}
+
+/// One archive row per (session, message key); events without a key share the "" row.
+#[tokio::test]
+async fn serial_db_archive_keeps_one_row_per_message_key() -> Result<()> {
+    let Some(db) = Fixture::new().await? else {
+        return Ok(());
+    };
+    db.admin
+        .execute(
+            "INSERT INTO token_events \
+         (session_id,message_id,event_at,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens) \
+         SELECT $1::text::uuid, key, $2::text::timestamptz - INTERVAL '1 day', n,1,1,1 \
+         FROM (VALUES ('m1', 10), ('m1', 20), ('m2', 5), (NULL, 7)) AS v(key, n)",
+            &[&SESSION, &CUTOFF],
+        )
+        .await?;
+    let session = db.pool.dedicated_session().await?;
+    assert_eq!(prune_batch(&session, CUTOFF).await?, 4);
+    assert_eq!(db.raw_count().await?, 0);
+    assert_eq!(
+        db.key_totals().await?,
+        vec![
+            (String::new(), 7, 1, 1, 1),
+            ("m1".to_owned(), 30, 2, 2, 2),
+            ("m2".to_owned(), 5, 1, 1, 1),
+        ]
+    );
+    assert_eq!(db.totals().await?, (42, 4, 4, 4));
+    Ok(())
+}
+
+/// A later prune of an already archived key adds to that key's row, not a new one.
+#[tokio::test]
+async fn serial_db_archive_accumulates_each_key_across_prunes() -> Result<()> {
+    let Some(db) = Fixture::new().await? else {
+        return Ok(());
+    };
+    db.admin
+        .execute(
+            "INSERT INTO token_events \
+         (session_id,message_id,event_at,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens) \
+         SELECT $1::text::uuid, 'm1', $2::text::timestamptz - INTERVAL '1 day', 10,1,1,1",
+            &[&SESSION, &CUTOFF],
+        )
+        .await?;
+    let session = db.pool.dedicated_session().await?;
+    assert_eq!(prune_batch(&session, CUTOFF).await?, 1);
+    db.admin
+        .execute(
+            "INSERT INTO token_events \
+         (session_id,message_id,event_at,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens) \
+         SELECT $1::text::uuid, 'm1', $2::text::timestamptz - INTERVAL '2 day', 3,2,3,4",
+            &[&SESSION, &CUTOFF],
+        )
+        .await?;
+    assert_eq!(prune_batch(&session, CUTOFF).await?, 1);
+    assert_eq!(db.key_totals().await?, vec![("m1".to_owned(), 13, 3, 4, 5)]);
+    assert_eq!(db.totals().await?, (13, 3, 4, 5));
     Ok(())
 }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -30,6 +30,7 @@ class ProviderCapacityRecord:
     reason: str | None
     source_version: str
     age_seconds: float
+    details: dict[str, object] = field(default_factory=dict)
 
 
 class ProviderCapacityStorage:
@@ -49,9 +50,15 @@ class ProviderCapacityStorage:
         windows: Sequence[Mapping[str, object]],
         reason: str | None,
         source_version: str,
-    ) -> None:
-        """Replace one machine/provider row with its latest successful observation."""
-        self._db.execute(
+        details: Mapping[str, object],
+        expected_observed_at: datetime | None,
+    ) -> bool:
+        """Write one row only if its revision still equals ``expected_observed_at``.
+
+        ``None`` means the row must not exist yet. Returns False when a concurrent writer moved
+        the revision, so the caller can reload, remerge, and retry.
+        """
+        cursor = self._db.execute(
             """
             INSERT INTO provider_capacity_snapshots (
                 machine_id,
@@ -60,14 +67,17 @@ class ProviderCapacityStorage:
                 observed_at,
                 windows,
                 reason,
-                source_version
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                source_version,
+                details
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (machine_id, provider) DO UPDATE SET
                 state = excluded.state,
                 observed_at = excluded.observed_at,
                 windows = excluded.windows,
                 reason = excluded.reason,
-                source_version = excluded.source_version
+                source_version = excluded.source_version,
+                details = excluded.details
+            WHERE provider_capacity_snapshots.observed_at = %s
             """,
             (
                 self.machine_id,
@@ -77,14 +87,18 @@ class ProviderCapacityStorage:
                 Jsonb([dict(window) for window in windows]),
                 reason,
                 source_version,
+                Jsonb(dict(details)),
+                expected_observed_at,
             ),
         )
+        return cursor.rowcount == 1
 
     def get(self, provider: str) -> ProviderCapacityRecord | None:
         """Read one latest observation with its age at the current storage clock."""
         row = self._db.fetchone(
             """
-            SELECT machine_id, provider, state, observed_at, windows, reason, source_version
+            SELECT
+                machine_id, provider, state, observed_at, windows, reason, source_version, details
             FROM provider_capacity_snapshots
             WHERE machine_id = %s AND provider = %s
             """,
@@ -110,7 +124,19 @@ class ProviderCapacityStorage:
             reason=None if row["reason"] is None else str(row["reason"]),
             source_version=source_version,
             age_seconds=max(0.0, (self._clock() - observed_at).total_seconds()),
+            details=_decode_details(row["details"]),
         )
+
+
+def _decode_details(value: object) -> dict[str, object]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError("provider capacity details contain invalid JSON") from error
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise TypeError("provider capacity details must be a JSON object")
+    return dict(value)
 
 
 def _decode_windows(value: object) -> tuple[dict[str, object], ...]:

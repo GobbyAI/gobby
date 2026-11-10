@@ -355,4 +355,5 @@ class TestProviderCapacityTool:
             "windows": [],
             "reason": "provider capacity service unavailable",
             "source_version": None,
+            "details": {},
         }

@@ -48,7 +48,7 @@ def register_message_tools(
     @registry.tool(
         name="get_session_messages",
         read_only=True,
-        description="Get messages for a session. Returns rendered messages with content blocks. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
+        description="Get messages for a session. Returns rendered messages with content blocks, paged by rendered group. Per-call usage and totals come from gobby-metrics:get_usage_ledger. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     # Entry point for get_session_messages tool
     async def get_session_messages(

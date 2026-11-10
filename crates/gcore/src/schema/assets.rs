@@ -496,9 +496,15 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 493,
-        filename: "493_code_index_reconcile_receipts.sql",
+        filename: "493_token_event_per_key_archive.sql",
+        checksum: "a91fb9ab01e17ef35047ec9282f1dbe66af7e67f9c7cb86db19e0b8339634679",
+        sql: include_str!("../../assets/schema/migrations/493_token_event_per_key_archive.sql"),
+    },
+    EmbeddedMigration {
+        version: 494,
+        filename: "494_code_index_reconcile_receipts.sql",
         checksum: "f450128071ac171b519d75b47c94770023288ef49d901b2d6cbb5887a83c65b6",
-        sql: include_str!("../../assets/schema/migrations/493_code_index_reconcile_receipts.sql"),
+        sql: include_str!("../../assets/schema/migrations/494_code_index_reconcile_receipts.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

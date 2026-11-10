@@ -1670,6 +1670,7 @@ class CLIEventSimulator:
         tool_name: str,
         tool_input: dict[str, Any] | None = None,
         source: str = "claude",
+        machine_id: str = "21000000-0000-4000-8000-000000000002",
     ) -> dict[str, Any]:
         """Simulate tool use hook event via /hooks/execute endpoint."""
         payload = {
@@ -1677,6 +1678,7 @@ class CLIEventSimulator:
             "source": source,
             "input_data": {
                 "session_id": session_id,
+                "machine_id": machine_id,
                 "tool_name": tool_name,
                 "tool_input": tool_input or {},
             },
