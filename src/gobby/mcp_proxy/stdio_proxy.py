@@ -42,9 +42,13 @@ from gobby.mcp_proxy.wait_tools import (
     WAIT_TOOL_NAMES,
 )
 from gobby.utils.daemon_client import MCP_TOOL_CALL_TIMEOUT_SECONDS
-from gobby.utils.local_token import daemon_auth_headers
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, daemon_auth_headers
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
+from gobby.utils.session_credential_record import (
+    SessionCredentialRecord,
+    bound_session_credential,
+)
 
 
 class CheckDaemonHealth(Protocol):
@@ -81,6 +85,30 @@ _BRIDGE_READY_RETRYABLE_ERROR_CODES = frozenset(
 
 _CAPABILITY_EXPIRED_ERROR_CODE = "capability_expired"
 _REHANDSHAKE_TIMEOUT_SECONDS = 10.0
+_SESSION_CREDENTIAL_UNBOUND_ERROR_CODE = "session_credential_unbound"
+# Any of these names a managed run, which speaks through its own agent identity. Every other
+# proxy is an unspawned CLI and speaks only through the session credential bound to it.
+_MANAGED_EXECUTION_ENV_NAMES = (
+    "GOBBY_AGENT_RUN_ID",
+    GOBBY_AGENT_API_TOKEN_ENV,
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+)
+
+
+def _managed_execution() -> bool:
+    return any(os.environ.get(name, "").strip() for name in _MANAGED_EXECUTION_ENV_NAMES)
+
+
+def _session_credential_unbound_result() -> dict[str, Any]:
+    """Typed refusal for an unspawned CLI whose session has no bound credential."""
+    return {
+        "success": False,
+        "error_code": _SESSION_CREDENTIAL_UNBOUND_ERROR_CODE,
+        "error": (
+            "no session credential is bound to this CLI process; the session's SessionStart "
+            "hook must run from this CLI before its MCP tools can act"
+        ),
+    }
 
 
 def _response_error_code(response: httpx.Response) -> str | None:
@@ -152,7 +180,9 @@ class DaemonProxy:
         self._terminal_context_header = serialize_terminal_context(terminal_context)
         self._has_tmux_identity = bool(terminal_context.get("tmux_pane"))
         self._last_health_ok_at = 0.0
-        self._auth_headers = daemon_auth_headers()
+        # An unspawned CLI never reads the machine key: its session speaks through its bound record.
+        self._managed = _managed_execution()
+        self._auth_headers: dict[str, str] = daemon_auth_headers() if self._managed else {}
         self._client: httpx.AsyncClient | None = None
         self._tool_timeouts: dict[str, float] | None = None
         self._tool_timeouts_lock = asyncio.Lock()
@@ -291,8 +321,17 @@ class DaemonProxy:
         effective_project_id = project_id or self._project_id
         caller_project_id = self._project_id
         managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")
+        bound: SessionCredentialRecord | None = None
+        if not self._managed:
+            # The session's SessionStart bound a credential to this CLI process; without it the
+            # request is refused before any byte leaves for the daemon.
+            bound = bound_session_credential()
+            if bound is None:
+                return _session_credential_unbound_result()
         effective_session_id: str | None
-        if self._environment_session_id:
+        if bound is not None:
+            effective_session_id = bound.session_id
+        elif self._environment_session_id:
             # sessions.id. Spawned/autonomous/managed runs export this; a
             # body ref like "#42" cannot change caller identity.
             effective_session_id = self._environment_session_id
@@ -318,7 +357,10 @@ class DaemonProxy:
             client = self._get_client()
             if os.environ.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"):
                 self._auth_headers = daemon_auth_headers()
-            request_headers = {**headers, **self._auth_headers}
+            auth_headers = (
+                self._auth_headers if bound is None else {"Authorization": f"Bearer {bound.token}"}
+            )
+            request_headers = {**headers, **auth_headers}
             request_kwargs: dict[str, Any] = {
                 "json": json,
                 "headers": request_headers,
@@ -331,7 +373,8 @@ class DaemonProxy:
                 f"{self.base_url}{path}",
                 **request_kwargs,
             )
-            if resp.status_code == 401:
+            if resp.status_code == 401 and bound is None:
+                # Only a managed run renews its identity; a bound session's refusal is final.
                 self._auth_headers = daemon_auth_headers()
                 retry_headers = {**headers, **self._auth_headers}
                 request_kwargs["headers"] = retry_headers

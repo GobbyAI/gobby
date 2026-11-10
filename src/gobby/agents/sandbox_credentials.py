@@ -4,7 +4,12 @@ from pathlib import Path
 
 from gobby.paths import get_gobby_home
 from gobby.utils.break_glass import break_glass_path, break_glass_staging_path
+from gobby.utils.capability_signing_key import (
+    CAPABILITY_SIGNING_KEY_FILENAME,
+    capability_signing_key_staging_path,
+)
 from gobby.utils.local_token import daemon_bootstrap_path, operator_bootstrap_path
+from gobby.utils.session_credential_record import STORE_DIR as SESSION_CREDENTIAL_STORE_DIR
 
 
 def credential_roots() -> list[Path]:
@@ -12,25 +17,32 @@ def credential_roots() -> list[Path]:
 
     The operator's canonical bootstrap is denied too: a daemon started under a GOBBY_HOME override
     keeps its bound file elsewhere, and the canonical file is still the operator's credential.
+    The capability signing key (beside the bound bootstrap, with its staging directory) can forge
+    any session token, and the session-credentials store holds live session tokens. A sandboxed
+    seat presents its own run token, so it needs neither.
     """
     home = get_gobby_home()
+    bound = daemon_bootstrap_path()
     roots = [
         home / "bootstrap.yaml",
         home / ".secret_kek",
         home / "grants",
         home / "tools" / "srt",
-        daemon_bootstrap_path(),
+        bound,
         break_glass_path(),
         break_glass_staging_path(),
+        home / SESSION_CREDENTIAL_STORE_DIR,
     ]
+    for key in (
+        home / CAPABILITY_SIGNING_KEY_FILENAME,
+        bound.with_name(CAPABILITY_SIGNING_KEY_FILENAME),
+    ):
+        for path in (key, capability_signing_key_staging_path(key)):
+            if path not in roots:
+                roots.append(path)
     canonical = operator_bootstrap_path()
-    if canonical is None:
-        # Without the passwd home the operator's real bootstrap cannot be denied, so no
-        # sandbox may launch with a credential list that silently lacks it.
-        raise RuntimeError(
-            "the operator's passwd home is unknown; refusing to build sandbox credential roots"
-        )
-    roots.append(canonical)
+    if canonical is not None:
+        roots.append(canonical)
     return roots
 
 

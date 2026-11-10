@@ -16,6 +16,13 @@ pub enum Intent {
     RestartTerminals,
 }
 
+/// A decoded marker that this backend generation has not applied yet.
+struct Fresh {
+    digest: [u8; 32],
+    restart: bool,
+    intent: Intent,
+}
+
 pub struct IntentMarker {
     path: PathBuf,
     before_spawn: Option<Vec<u8>>,
@@ -37,7 +44,28 @@ impl IntentMarker {
         Ok(())
     }
 
+    /// The fresh, unapplied intent a live backend has announced. Observing it does not consume it.
+    pub async fn pending(&self, now: f64) -> io::Result<Option<Intent>> {
+        Ok(self.fresh(now).await?.map(|marker| marker.intent))
+    }
+
     pub async fn after_exit(&mut self, now: f64) -> io::Result<Option<Intent>> {
+        let Some(marker) = self.fresh(now).await? else {
+            return Ok(None);
+        };
+        self.consumed.insert(marker.digest);
+        if !marker.restart {
+            match tokio::fs::remove_file(&self.path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(Some(marker.intent))
+    }
+
+    /// Decodes the marker when it is fresh and not yet applied to this backend generation.
+    async fn fresh(&self, now: f64) -> io::Result<Option<Fresh>> {
         let Some(bytes) = self.read().await? else {
             return Ok(None);
         };
@@ -66,15 +94,7 @@ impl IntentMarker {
         if !now.is_finite() || !(0.0..120.0).contains(&age) {
             return Ok(None);
         }
-        self.consumed.insert(digest);
         let restart = record.get("intent").and_then(Value::as_str) == Some("restart");
-        if !restart {
-            match tokio::fs::remove_file(&self.path).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-        }
         let drain = record
             .get("details")
             .and_then(|details| details.get("drain_terminals"))
@@ -89,11 +109,16 @@ impl IntentMarker {
                 .and_then(Value::as_str)
                 != Some("supervisor");
         // Python treats maintenance and unknown intents as a stop for this owner.
-        Ok(Some(match (restart_backend, drain) {
+        let intent = match (restart_backend, drain) {
             (false, false) => Intent::Stop,
             (true, false) => Intent::Restart,
             (false, true) => Intent::StopTerminals,
             (true, true) => Intent::RestartTerminals,
+        };
+        Ok(Some(Fresh {
+            digest,
+            restart,
+            intent,
         }))
     }
 

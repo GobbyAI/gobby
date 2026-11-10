@@ -19,6 +19,7 @@ use gobby_client::theme::{Theme, ThemeKind};
 use gobby_client::ui::chrome::{Chrome, RowState, WorkspaceView};
 use gobby_client::ui::sidebar::machine_rows;
 use gobby_client::ui::status::{state_dot, state_label};
+use gobby_client::ui::status_segments::agent_counts;
 use tokio::time::Instant;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
@@ -499,6 +500,49 @@ fn epic_tree_shows_its_live_lead_past_a_dead_previous_lead() {
     let current = with_lifecycle(task_lead("current"), "completed");
     let model = build_model(&epic_rows(), &[previous, current], &[]);
     assert_eq!(epic_tree_state(&model), RowState::Blank);
+}
+
+#[test]
+fn counters_exclude_superseded_leads_but_keep_dead_worktree_assignments() {
+    for lifecycle in ["running", "completed"] {
+        let previous = dead(task_lead("previous"));
+        let current = with_lifecycle(task_lead("current"), lifecycle);
+        let assigned = dead(task_lead("assigned"));
+        let mut rows = epic_rows();
+        rows.sessions.get_mut(PROJECT).unwrap().push(SessionRow {
+            id: "s-assigned".to_string(),
+            worktree_id: Some("w-epic".to_string()),
+            ..Default::default()
+        });
+        let model = build_model(&rows, &[previous, current, assigned], &[]);
+        let view = DaemonView {
+            model: &model,
+            reachable: true,
+        };
+        let machine = machine_rows(&view, &Chrome::dark())
+            .into_iter()
+            .find(|row| row.id == LOCAL_MACHINE)
+            .unwrap();
+        assert_eq!(model.projects[0].no_live, 1, "{lifecycle}: project");
+        assert_eq!(machine.no_live, 1, "{lifecycle}: machine");
+        assert_eq!(agent_counts(&view).no_live, 1, "{lifecycle}: status");
+    }
+}
+
+#[test]
+fn superseded_lead_does_not_leave_no_live_on_an_unassigned_rollup() {
+    let previous = dead(task_lead("previous"));
+    let current = with_lifecycle(task_lead("current"), "completed");
+    let model = build_model(&epic_rows(), &[previous, current], &[]);
+    let view = DaemonView {
+        model: &model,
+        reachable: true,
+    };
+    assert_eq!(epic_tree_state(&model), RowState::Blank);
+    assert_eq!(model.projects[0].state, RowState::Blank);
+    assert_eq!(model.projects[0].no_live, 0);
+    assert_eq!(local_machine_state(&model, true), RowState::Blank);
+    assert_eq!(agent_counts(&view).no_live, 0);
 }
 
 /// Every lead of the tree dead: the tree is no live.

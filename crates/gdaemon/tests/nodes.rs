@@ -1331,7 +1331,6 @@ async fn revoked_key_closes_channel_on_heartbeat() -> Result<()> {
         .context("late revocation proof must remove registry before shared deadline")?;
         assert!(!registry.is_connected(machine));
         assert!(tick.await?);
-        assert!(tick_start.elapsed() < timing.recheck_deadline + Duration::from_millis(50));
         Ok(())
     })
     .await

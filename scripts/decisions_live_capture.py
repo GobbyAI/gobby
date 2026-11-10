@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import hashlib
 import json
 import math
 import sys
@@ -16,9 +18,8 @@ from typing import Any
 
 import httpx
 
+from gobby.ai import decisions
 from gobby.ai.decisions import (
-    BoxImage,
-    BoxQuestion,
     ChoiceQuestion,
     DecisionService,
     DecisionsUnavailable,
@@ -27,13 +28,14 @@ from gobby.ai.decisions import (
 from gobby.ai.decisions_wire import _SUM_TOLERANCE, _score_abs_tolerance
 from gobby.config.ai import (
     DECISION_KINDS,
+    AIConfig,
     DecisionEndpointConfig,
     DecisionKind,
     DecisionOverrides,
     DecisionsConfig,
 )
-from gobby.llm.base import VisionInputError
-from gobby.llm.image_payloads import prepare_image_data
+from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.tools.decisions import create_decisions_registry
 
 PRIVACY = {"zdr": True, "data_collection": "deny"}
 _STATE = {"description": "A red square is centered on a white background."}
@@ -381,30 +383,40 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
                 result_score = await service.score("live_capture", _STATE, {"clarity": question})
                 record["result"] = asdict(result_score)
             else:
-                record["questions"] = {
+                path = args.box_image.resolve()
+                data = path.read_bytes()
+                redactions.append(base64.b64encode(data).decode("ascii"))
+                record["image_sha256"] = hashlib.sha256(data).hexdigest()
+                questions = {
                     "square": {
                         "type": "box",
                         "instructions": "Locate the red square.",
-                        "image": "omitted",
+                        "image_path": str(path),
                     }
                 }
-                _, mime, encoded, _ = await prepare_image_data(str(args.box_image.resolve()))
-                redactions.append(encoded)
-                if mime not in ("image/png", "image/jpeg"):
-                    raise ValueError("Box capture requires PNG or JPEG")
-                image = BoxImage(
-                    mime_type="image/png" if mime == "image/png" else "image/jpeg",
-                    data_base64=encoded,
+                record["consumer"] = "gobby-decisions:evaluate"
+                record["questions"] = questions
+                registry = create_decisions_registry(
+                    lambda: DaemonConfig(ai=AIConfig(decisions=config))
                 )
-                result_box = await service.box(
-                    "live_capture",
-                    _STATE,
-                    {"square": BoxQuestion(instructions="Locate the red square.", image=image)},
-                )
-                record["result"] = asdict(result_box)
+                # The registered tool resolves its service from the cache, so this call's observed
+                # Box service is placed there and the prior cache is restored afterwards.
+                saved = decisions._service_cache
+                decisions._service_cache = (decisions._fingerprint(config), service)
+                try:
+                    record["tool_output"] = await registry.call(
+                        "evaluate", {"state": _STATE, "questions": questions}
+                    )
+                finally:
+                    decisions._service_cache = saved
+                if not record["tool_output"]["success"]:
+                    record["finding"] = {
+                        "reason": record["tool_output"]["reason"],
+                        "detail": record["tool_output"]["detail"],
+                    }
         except DecisionsUnavailable as error:
             record["finding"] = {"reason": error.reason, "detail": error.detail}
-        except (VisionInputError, ValueError, OSError) as error:
+        except (ValueError, OSError) as error:
             record["finding"] = {"reason": "image_input", "detail": str(error)}
         if record.get("finding", {}).get("reason") != "parse":
             record.pop("_raw_answers", None)

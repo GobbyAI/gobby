@@ -527,6 +527,7 @@ pub(super) fn apply_outage_grant(
     lease: u64,
     grant: io::Result<GrantOutcome>,
 ) {
+    let daemon_ready = workspace.daemon_ready();
     let Some(pane) = workspace.panes.get_mut(&pane_id) else {
         return;
     };
@@ -562,7 +563,11 @@ pub(super) fn apply_outage_grant(
         Err(_) if superseded => {}
         Err(_) => {
             pane.apply_host_grant(Some(false));
-            pane.status_message = Some(CONTROL_UNREACHABLE.to_string());
+            // A host control socket can fail while the daemon is still ready.
+            if !daemon_ready {
+                pane.status_message = Some(CONTROL_UNREACHABLE.to_string());
+            }
+            // A live pane never draws its status, so the dropped key is toasted too.
             chrome.notify(Toast::error(CONTROL_UNREACHABLE));
         }
     }

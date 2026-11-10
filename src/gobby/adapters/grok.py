@@ -18,8 +18,8 @@ from gobby.adapters.capabilities import (
     ContextChannel,
 )
 from gobby.adapters.degradation import (
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
-    truncate_context_for_adapter,
 )
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import (
@@ -207,7 +207,7 @@ class GrokAdapter(ACPHookAdapter):
             "continue": True,
             "hookSpecificOutput": {
                 "hookEventName": ("Stop" if canonical_hook == "stop" else "SubagentStop"),
-                "additionalContext": truncate_context_for_adapter(
+                "additionalContext": page_context_for_adapter(
                     response.context_contributors(),
                     provider=self.source,
                     hook_type=hook_type,

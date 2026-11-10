@@ -32,6 +32,7 @@ mod json_value;
 mod output;
 mod planned_shutdown;
 mod runtime;
+mod session_binding;
 mod source;
 mod statusline;
 mod terminal_context;

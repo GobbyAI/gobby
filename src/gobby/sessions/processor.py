@@ -16,16 +16,19 @@ from weakref import WeakValueDictionary
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
     from gobby.hooks.hook_manager import HookManager
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
 
 from gobby.sessions.context_usage import snapshot_from_token_usage, snapshot_from_window_metadata
 from gobby.sessions.message_stats import MessageStats
+from gobby.sessions.processor_ledger import ProcessorLedgerMixin
 from gobby.sessions.processor_lifecycle import ProcessorLifecycleMixin, TurnCompletion
 from gobby.sessions.processor_stats import ProcessorStatsMixin
 from gobby.sessions.processor_transcripts import ProcessorTranscriptMixin
 from gobby.sessions.processor_types import WebSocketServer
 from gobby.sessions.processor_usage import ProcessorUsageMixin
+from gobby.sessions.subagent_usage import SubagentCursor
 from gobby.sessions.transcript_index import TranscriptIndexAppender
 from gobby.sessions.transcript_renderer import RenderState
 from gobby.sessions.transcripts.base import TokenUsage, TranscriptParser
@@ -37,6 +40,7 @@ from gobby.telemetry.instruments import inc_counter
 
 class SessionMessageProcessor(
     ProcessorLifecycleMixin,
+    ProcessorLedgerMixin,
     ProcessorStatsMixin,
     ProcessorUsageMixin,
     ProcessorTranscriptMixin,
@@ -67,6 +71,10 @@ class SessionMessageProcessor(
         self._hook_manager: Any | None = hook_manager
         self._run_db = run_db or asyncio.to_thread
         self.communications_manager = communications_manager
+        # Shared quota sink; attached by server init and the rebuild activation.
+        self.provider_capacity_service: ProviderCapacityService | None = None
+        # Sessions whose last cursor-advancing pass ended at the transcript end (plan 4.3).
+        self._quota_caught_up: set[str] = set()
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}
@@ -96,6 +104,9 @@ class SessionMessageProcessor(
         # Incremental stat accumulators per session
         self._stats: dict[str, MessageStats] = {}
         self._stats_hydration_skipped: set[str] = set()
+
+        # Claude subagent read cursors: session_id -> {subagent path: cursor} (plan 2.2)
+        self._subagent_cursors: dict[str, dict[str, SubagentCursor]] = {}
 
         self._running = False
         self._stopped = False

@@ -22,11 +22,50 @@ def test_credential_roots_deny_the_canonical_operator_bootstrap_under_a_gobby_ho
     assert account / ".gobby" / "bootstrap.yaml" in credential_roots()
 
 
-def test_credential_roots_refuse_an_account_without_a_passwd_entry(
+def test_credential_roots_survive_an_account_without_a_passwd_entry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(local_token, "account_home", lambda: None)
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "override-home"))
 
-    with pytest.raises(RuntimeError, match="passwd home is unknown"):
-        credential_roots()
+    roots = credential_roots()
+
+    assert tmp_path / "override-home" / "bootstrap.yaml" in roots
+    assert all(isinstance(root, Path) for root in roots)
+
+
+def test_credential_roots_deny_the_capability_signing_key_and_its_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setattr(local_token, "account_home", lambda: None)
+
+    roots = credential_roots()
+
+    assert home / "capability_signing_key" in roots
+    assert home / ".capability_signing_key-staging" in roots
+
+
+def test_credential_roots_deny_the_key_beside_a_bound_daemon_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    monkeypatch.setattr(local_token, "account_home", lambda: None)
+    bound = tmp_path / "bound" / "bootstrap.yaml"
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", bound)
+
+    roots = credential_roots()
+
+    assert bound.with_name("capability_signing_key") in roots
+    assert bound.with_name(".capability_signing_key-staging") in roots
+
+
+def test_credential_roots_deny_the_session_credential_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setattr(local_token, "account_home", lambda: None)
+
+    assert home / "session-credentials" in credential_roots()

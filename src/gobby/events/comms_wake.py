@@ -1,4 +1,4 @@
-"""Shared composer replacement policy for authenticated operator communications."""
+"""Recognize authenticated operator communications for the wake focus hold."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ from gobby.storage.sessions import system_session_id
 
 
 def is_operator_comms_wake(message: InterSessionMessage) -> bool:
-    """Only trusted daemon ingress may authorize wiping a composer's leftover text."""
+    """Whether trusted daemon ingress sent this operator message.
+
+    Such a wake waits on a focused holder of its terminal but never replaces a composer:
+    a draft, held or unknown composer is withheld on every path (#25830 criterion 3).
+    """
     if message.from_session != system_session_id():
         return False
     try:

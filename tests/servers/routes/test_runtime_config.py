@@ -24,12 +24,12 @@ from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
 from gobby.servers.auth_service import AuthService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import (
-    derive_managed_signing_key,
     issue_agent_api_token,
     read_managed_api_token,
     verify_agent_api_token,
 )
 from gobby.utils.native_bin import resolve_native_bin
+from tests.fixtures.capability_tokens import daemon_signing_key
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
     FENCING_EPOCH,
@@ -132,12 +132,12 @@ def test_orphan_maintenance_config_transport(
     launch = materialize_managed_launch(
         grant,
         dest_dir=tmp_path / "maintenance",
-        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
+        signing_key=daemon_signing_key(tmp_path / "bootstrap.yaml"),
         deadline_seconds=30,
     )
     token = read_managed_api_token(launch.env)
     assert token is not None
-    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
+    claims = verify_agent_api_token(token, daemon_signing_key(tmp_path / "bootstrap.yaml"))
     assert claims is not None
     headers = {
         "Authorization": f"Bearer {token}",
@@ -191,7 +191,7 @@ def test_native_orphan_maintenance_config_fetch(
     launch = materialize_managed_launch(
         grant,
         dest_dir=tmp_path / "maintenance",
-        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
+        signing_key=daemon_signing_key(tmp_path / "bootstrap.yaml"),
         deadline_seconds=30,
     )
     config_statuses: list[int] = []
@@ -252,14 +252,16 @@ def test_grant_presenting_config_transport(tmp_path: Path) -> None:
         session_id=SESSION_ID,
     )
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        daemon_signing_key(tmp_path / "bootstrap.yaml"),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    agent_claims = verify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
+    agent_claims = verify_agent_api_token(
+        agent_token, daemon_signing_key(tmp_path / "bootstrap.yaml")
+    )
     assert agent_claims is not None
     agent_grant = handshake.issue_for_agent(
         agent_claims,

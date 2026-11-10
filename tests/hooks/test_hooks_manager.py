@@ -2894,6 +2894,8 @@ def test_held_auto_compaction_materializes_when_its_replay_settles(
         assert manager.handle(compaction).decision == "allow"
         assert "_platform_session_id" not in compaction.metadata
         activate.assert_not_called()
+        if event_type in _HELD_COMPACTION_EVENTS:
+            handler.assert_not_called()
 
         # Claude flushes the boundary after the held hook; the next main-thread event settles it.
         boundary = {"type": "system", "subtype": "compact_boundary", "uuid": external_id}

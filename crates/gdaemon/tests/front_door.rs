@@ -799,6 +799,7 @@ async fn unavailable_native_backend_reports_supervisor_state() {
             lease: None,
             lease_state: None,
             backend: receiver,
+            backend_wait: tokio::sync::watch::channel(None).1,
             write_token: Default::default(),
             terminal_route: Default::default(),
         }));
@@ -1922,6 +1923,7 @@ fn write_door(backend: SocketAddr, token: gobby_terminals::write_api::TokenSlot)
         lease: None,
         lease_state: None,
         backend: receiver,
+        backend_wait: tokio::sync::watch::channel(None).1,
         write_token: token,
         terminal_route: Default::default(),
     }));

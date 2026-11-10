@@ -278,6 +278,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
         "tmp": root / "tmp",
         "darwin_temp": root / "darwin-temp",
         "darwin_cache": root / "darwin-cache",
+        # The passwd account home. Distinct from HOME, so a root taken from HOME fails parity.
+        "operator_home": root / "operator-home",
     }
     named = {name: str(path) for name, path in layout.items()}
     named["run_root"] = str(root / "gobby-home" / "run" / "sandbox" / _RUN_ID)
@@ -350,6 +352,12 @@ def _pin_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> No
             monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
+
+
+def _pin_account_home(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -> None:
+    """Pin the passwd account home, so the operator bootstrap is a placeholder, not the host's."""
+    operator_home = Path(layout["operator_home"])
+    monkeypatch.setattr(local_token, "account_home", lambda: operator_home)
 
 
 def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
@@ -461,8 +469,7 @@ def _evaluate(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
-    # The canonical operator bootstrap follows the passwd home, so pin it to the fixture home.
-    monkeypatch.setattr(local_token, "account_home", lambda: Path(layout["home"]))
+    _pin_account_home(monkeypatch, layout)
     settings, env = _run_chain(inputs)
     return settings, env, layout
 
@@ -479,7 +486,7 @@ def _refusal(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
-    monkeypatch.setattr(local_token, "account_home", lambda: Path(layout["home"]))
+    _pin_account_home(monkeypatch, layout)
     try:
         _run_chain(inputs)
     except ValueError as exc:

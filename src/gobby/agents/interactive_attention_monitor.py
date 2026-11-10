@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
+from gobby.agents.provider_quota_monitor import ProviderQuotaMonitor
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.remote_runtime import resolve_terminal_runtime
+from gobby.providers.quota_signals import pane_generation
 from gobby.sessions.transcript_cursor import ClaudeTranscriptCursor
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
@@ -27,13 +30,13 @@ from gobby.utils.logging import ThrottledLogger
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
+    from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
-    from gobby.terminals.runtime import TerminalRuntimeRegistry
+    from gobby.storage.terminals import Terminal
+    from gobby.terminals.runtime import SnapshotResult, TerminalRuntimeRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,13 @@ class InteractiveAttentionMonitor:
         startup_ready: Callable[[], bool] | None = None,
         write_coordinator: WriteCoordinator | None = None,
         max_reprompt_attempts: int | None = None,
+        provider_capacity_service: ProviderCapacityService | None = None,
     ) -> None:
+        self._quota_monitor = (
+            None
+            if provider_capacity_service is None
+            else ProviderQuotaMonitor(provider_capacity_service, owner="interactive")
+        )
         self._poll_interval = poll_interval
         self._session_manager = session_manager
         self._attention_manager = attention_manager
@@ -160,10 +169,15 @@ class InteractiveAttentionMonitor:
         await self._check_attention_panes(active_agent_sessions=active_agent_sessions)
 
     async def _check_attention_panes(self, *, active_agent_sessions: set[str]) -> None:
-        """Report attention and recover confirmed capacity failures in placed seats."""
+        """Report attention and recover confirmed capacity failures in placed seats.
+
+        Quota observation runs whether or not attention is enabled: a missing attention
+        manager only removes the attention and recovery work from the same capture.
+        """
         manager = self._attention_manager
         session_manager = self._session_manager
-        if manager is None or session_manager is None:
+        quota = self._quota_monitor
+        if session_manager is None or (manager is None and quota is None):
             return
 
         try:
@@ -178,21 +192,24 @@ class InteractiveAttentionMonitor:
         active_interactive_ids = {session.id for session in sessions}
         if self._capacity_recovery is not None:
             self._capacity_recovery.prune(active_interactive_ids - active_agent_sessions)
-        for attention in await asyncio.to_thread(manager.list_blocked):
-            if (
-                attention.run_id is None
-                and attention.session_id is not None
-                and attention.session_id not in active_interactive_ids
-            ):
-                await manager.transition_async(
-                    asyncio.to_thread,
-                    attention.entry_id,
-                    state=None,
-                    expected_attention_id=attention.attention_id,
-                    expected_fingerprint=attention.fingerprint,
-                )
+        if manager is not None:
+            for attention in await asyncio.to_thread(manager.list_blocked):
+                if (
+                    attention.run_id is None
+                    and attention.session_id is not None
+                    and attention.session_id not in active_interactive_ids
+                ):
+                    await manager.transition_async(
+                        asyncio.to_thread,
+                        attention.entry_id,
+                        state=None,
+                        expected_attention_id=attention.attention_id,
+                        expected_fingerprint=attention.fingerprint,
+                    )
 
         native_unavailable = False
+        live_generations: dict[str, set[str]] = {}
+        lookups_complete = True
         for session in sessions:
             if session.id in active_agent_sessions:
                 continue
@@ -210,11 +227,16 @@ class InteractiveAttentionMonitor:
                 if row is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
+                if quota is not None and session.source:
+                    # Every live placed terminal counts, including one whose capture fails.
+                    live_generations.setdefault(session.source, set()).add(pane_generation(row))
                 local_native = row.backend == "native" and is_local_machine(row.machine_id)
                 if local_native and native_unavailable:
+                    self._rebaseline_quota(row)
                     continue
                 runtime = resolve_terminal_runtime(self._registry, row, self._session_manager.db)
                 snapshot = await runtime.snapshot(row, 15)
+                await self._observe_quota(session, row, snapshot)
                 pane_output = snapshot.text
                 if (
                     pane_output is not None
@@ -223,6 +245,8 @@ class InteractiveAttentionMonitor:
                 ):
                     continue
             except TimeoutError as exc:
+                lookups_complete = lookups_complete and row is not None
+                self._rebaseline_quota(row)
                 logger.debug(
                     "InteractiveAttentionMonitor: interactive terminal capture timed out",
                     extra={
@@ -234,6 +258,8 @@ class InteractiveAttentionMonitor:
                 )
                 continue
             except HostUnavailableError:
+                lookups_complete = lookups_complete and row is not None
+                self._rebaseline_quota(row)
                 if row is not None and row.backend == "native":
                     native_unavailable = True
                     _host_outage_log(
@@ -249,13 +275,15 @@ class InteractiveAttentionMonitor:
                 )
                 continue
             except Exception:
+                lookups_complete = lookups_complete and row is not None
+                self._rebaseline_quota(row)
                 logger.warning(
                     "InteractiveAttentionMonitor: failed to capture terminal for session %s",
                     session.id,
                     exc_info=True,
                 )
                 continue
-            if pane_output is None:
+            if pane_output is None or manager is None:
                 continue
             await self._settle_local_command(session, str(row.id))
             await self._sync_interactive_attention(
@@ -263,6 +291,41 @@ class InteractiveAttentionMonitor:
                 session.source or "",
                 pane_output,
                 terminal_id=str(row.id),
+            )
+        if quota is not None and lookups_complete:
+            # A failed lookup leaves liveness unknown, so this pass retires nothing.
+            try:
+                await quota.retire_dead(live_generations)
+            except Exception:
+                logger.warning("Failed to retire interactive pane quota generations", exc_info=True)
+
+    def _rebaseline_quota(self, row: Terminal | None) -> None:
+        """An outage or failed capture ends the terminal's baseline; the next capture starts fresh."""
+        if self._quota_monitor is not None and row is not None:
+            self._quota_monitor.rebaseline(row)
+
+    async def _observe_quota(
+        self, session: Session, row: Terminal, snapshot: SnapshotResult
+    ) -> None:
+        """Feed one owned capture to the shared sink; an observation failure gates nothing."""
+        quota = self._quota_monitor
+        if quota is None or not session.source:
+            return
+        if snapshot.text is None:
+            quota.rebaseline(row)
+            return
+        try:
+            await quota.observe_capture(
+                provider=session.source,
+                terminal=row,
+                snapshot=snapshot,
+                detected_at=datetime.now(UTC),
+            )
+        except Exception:
+            logger.warning(
+                "InteractiveAttentionMonitor: failed to observe pane quota hints for session %s",
+                session.id,
+                exc_info=True,
             )
 
     async def _settle_local_command(self, session: Session, terminal_id: str) -> None:

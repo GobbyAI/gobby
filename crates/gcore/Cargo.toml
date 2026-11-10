@@ -1,6 +1,6 @@
 [package]
 name = "gobby-core"
-version = "0.10.22"
+version = "0.10.26"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -31,6 +31,7 @@ full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics",
 anyhow = "1"
 crc32fast = "1"
 dirs = "6"
+libc = "0.2"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "v5"] }
 serde = { version = "1", features = ["derive"] }

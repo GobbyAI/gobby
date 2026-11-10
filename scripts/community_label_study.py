@@ -42,7 +42,6 @@ from gobby.config.code_index import CodeIndexConfig
 SEED = 22604
 CORPORA = {
     "gobby": "d45545c5-ded5-4335-b115-0245752edacf",
-    "C1": "c8e071af-e1f7-434f-b3c0-f31a1b1299c9",
 }
 SHEET_COLUMNS = ["item_id", "members", "name", "accuracy (0-2)", "findability (0-2)"]
 type Arm = Literal["D", "G", "J", "carry"]
@@ -593,8 +592,9 @@ def _score(args: argparse.Namespace) -> None:
                 arms[arm_identity] = ratings[item]
         if entry.carry_outcome in {"kept", "regenerated"}:
             carry_population.append((ratings[item][0] == 2, entry.carry_outcome == "kept"))
-    if len(run.main) != 30:
-        raise ValueError("Scoring requires all 30 main communities")
+    main_total = sum(len(ids) for ids in run.samples.values())
+    if not main_total or len(run.main) != main_total:
+        raise ValueError(f"Scoring requires all {main_total} main communities")
     lift_a: list[int] = []
     lift_f: list[int] = []
     admitted: list[float] = []
@@ -631,7 +631,7 @@ def _score(args: argparse.Namespace) -> None:
         "gate_precision": gate_precision,
         "gate_recall": gate_recall,
         "confidence_separation": mean(admitted) - mean(rejected) if admitted and rejected else None,
-        "schema_rejection_rate": schema_rejections / 30,
+        "schema_rejection_rate": schema_rejections / main_total,
         "decision_cost_usd": _cost(Path(args.capture), run) if not run.no_decisions else 0,
         "carry_precision": carry_precision,
         "carry_recall": carry_recall,
@@ -658,7 +658,7 @@ def _score(args: argparse.Namespace) -> None:
         for value in [metrics[name]]
     }
     gate_passed = all(passed[name] for name in list(thresholds)[:8])
-    rule = 1 if g_regressions <= 1 else (2 if gate_passed and not run.no_decisions else 3)
+    rule = 1 if g_regressions <= 0 else (2 if gate_passed and not run.no_decisions else 3)
     config: dict[str, str] = {"code_index.community_label.enabled": str(rule != 3).lower()}
     for consumer, enabled in (
         ("community_label", rule == 2),
@@ -679,7 +679,7 @@ def _score(args: argparse.Namespace) -> None:
     lines = [
         "## Study results",
         "",
-        f"Ship rule: {rule}. G regressions: {g_regressions}/30.",
+        f"Ship rule: {rule}. G regressions: {g_regressions}/{main_total}.",
         "",
         "| Metric | Value | Bar | Result |",
         "| --- | ---: | ---: | --- |",

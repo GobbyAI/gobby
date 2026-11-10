@@ -32,7 +32,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.engine.core import RuleEngine
@@ -238,17 +238,19 @@ def boundary(
     token = "boundary-operator-token"
     if request.param == "agent":
         token = issue_agent_api_token(
-            derive_managed_signing_key(token),
+            cast(bytes, server.auth_service.managed_signing_key()),
             agent_run_id=run.id,
             session_id=session.id,
             project_id=project_id,
         )
     headers = {
         "Authorization": f"Bearer {token}",
-        "X-Gobby-Session-Id": session.id,
         "X-Gobby-Project-Id": project_id,
-        "X-Gobby-Agent-Run-Id": run.id,
     }
+    if request.param == "agent":
+        # Only a managed agent names its own session and run. The operator's terminal
+        # presents the machine key with no session selector.
+        headers |= {"X-Gobby-Session-Id": session.id, "X-Gobby-Agent-Run-Id": run.id}
     if request.param == "operator":
         headers.update(
             {
@@ -282,38 +284,23 @@ def boundary(
 
 @pytest.mark.parametrize("boundary", ["operator"], indirect=True)
 @pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
-def test_programmatic_calls_skip_rules_and_preserve_attribution(
+def test_machine_key_naming_a_session_is_refused_before_the_programmatic_path(
     boundary: Boundary, route: str
 ) -> None:
-    before = boundary.variables.get_variables(boundary.session_id)
-    result = boundary.call(route, {"value": "hello"})
-    assert result["success"] is True
-    assert result["result"] == {"value": "hello", "session_id": boundary.session_id}
-    assert boundary.target.calls[0]["context"] == boundary.session_id
-    assert boundary.target.calls[0]["project"]["id"] == boundary.project_id
-    assert boundary.variables.get_variables(boundary.session_id) == before
-    metric = boundary.metrics.record_call.call_args.kwargs
-    assert metric["session_id"] == boundary.session_id
-    assert metric["project_id"] == boundary.project_id
-    assert metric["success"] is True
-
-    blocked = boundary.call(route, {"value": "hello"}, bridge=True)
-    assert blocked["success"] is False
-    assert blocked["error_code"] == "TOOL_BLOCKED"
-    assert "Fetch the echo schema" in blocked["error"]
-    assert len(boundary.target.calls) == 1
-    schema = boundary.client.post(
-        "/api/mcp/tools/schema",
-        headers=boundary.headers | BRIDGE_HEADERS,
-        json={"server_name": SERVER, "tool_name": "echo"},
+    # The machine key names no session, even through the front door. The call is refused
+    # before rules, attribution or the target, so nothing runs as that session.
+    body: Any = {"value": "hello"}
+    if route == "/api/mcp/tools/call":
+        body = {"server_name": SERVER, "tool_name": "echo", "arguments": body}
+    response = boundary.client.post(
+        route,
+        json=body,
+        headers=boundary.headers | {"X-Gobby-Session-Id": boundary.session_id},
     )
-    assert schema.status_code == 200
-    assert schema.json()["inputSchema"]["required"] == ["value", "session_id"]
-    allowed = boundary.call(route, {"value": "hello"}, bridge=True)
-    assert allowed["success"] is True
-    state = boundary.variables.get_variables(boundary.session_id)
-    assert state["saw_before_tool"] is True
-    assert state["saw_after_tool"] is True
+    assert response.status_code == 403
+    assert response.json()["code"] == "session_requires_bound_credential"
+    assert boundary.target.calls == []
+    boundary.metrics.record_call.assert_not_called()
 
 
 @pytest.mark.parametrize("boundary", ["agent"], indirect=True)
@@ -549,17 +536,24 @@ def test_proxy_unavailable_refuses_agent_but_preserves_operator_fallback(
 
 @pytest.mark.parametrize("boundary", ["operator"], indirect=True)
 @pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
-def test_programmatic_errors_and_discovery_leave_agent_state_untouched(
+def test_machine_key_session_calls_leave_agent_state_untouched(
     boundary: Boundary, route: str
 ) -> None:
+    # A machine-key call that names a session is refused before the target runs. Discovery
+    # without a session selector still answers, and the named session's state is unchanged.
     initial = boundary.variables.get_variables(boundary.session_id)
     boundary.target.failing = True
-    failed = boundary.call(route, {"value": "hello"})
-    assert failed["success"] is False
-    assert "target failed" in failed["error"]
-    invalid = boundary.call(route, {})
-    assert invalid["error_code"] == "INVALID_ARGUMENTS"
-    assert invalid["schema"]["required"] == ["value", "session_id"]
+    body: Any = {"value": "hello", "session_id": boundary.session_id}
+    if route == "/api/mcp/tools/call":
+        body = {"server_name": SERVER, "tool_name": "echo", "arguments": body}
+    refused = boundary.client.post(
+        route,
+        json=body,
+        headers=boundary.headers | {"X-Gobby-Session-Id": boundary.session_id},
+    )
+    assert refused.status_code == 403
+    assert refused.json()["code"] == "session_requires_bound_credential"
+    assert boundary.target.calls == []
     schema = boundary.client.post(
         "/api/mcp/tools/schema",
         headers=boundary.headers,
@@ -569,32 +563,6 @@ def test_programmatic_errors_and_discovery_leave_agent_state_untouched(
     listed = boundary.client.get(f"/api/mcp/{SERVER}/tools", headers=boundary.headers)
     assert listed.status_code == 200
     assert boundary.variables.get_variables(boundary.session_id) == initial
-
-    schema = boundary.client.post(
-        "/api/mcp/tools/schema",
-        headers=boundary.headers | BRIDGE_HEADERS,
-        json={"server_name": SERVER, "tool_name": "echo"},
-    )
-    assert schema.status_code == 200
-    agent_failure = boundary.call(route, {"value": "hello"}, bridge=True)
-    assert agent_failure["success"] is False
-    state = boundary.variables.get_variables(boundary.session_id)
-    assert len(state["open_tool_errors"]) == 1
-    # Same target identity: a programmatic success must not clear an agent's error.
-    boundary.target.failing = False
-    assert boundary.call(route, {"value": "hello"})["success"] is True
-    invalid = boundary.call(route, {})
-    assert invalid["error_code"] == "INVALID_ARGUMENTS"
-    assert invalid["schema"]["required"] == ["value", "session_id"]
-    schema = boundary.client.post(
-        "/api/mcp/tools/schema",
-        headers=boundary.headers,
-        json={"server_name": SERVER, "tool_name": "echo"},
-    )
-    assert schema.status_code == 200
-    listed = boundary.client.get(f"/api/mcp/{SERVER}/tools", headers=boundary.headers)
-    assert listed.status_code == 200
-    assert boundary.variables.get_variables(boundary.session_id) == state
 
 
 @pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])

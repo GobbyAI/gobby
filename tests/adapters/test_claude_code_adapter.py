@@ -9,10 +9,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from unittest.mock import MagicMock
-from uuid import uuid4
 
 import pytest
 
@@ -22,18 +20,7 @@ from gobby.adapters.claude_contract import (
     CLAUDE_HOOK_EVENT_NAME_MAP,
     CLAUDE_NATIVE_HOOK_NAMES,
 )
-from gobby.adapters.degradation import CARRIED_CONTEXT_VARIABLE
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.receipt_effects import (
-    apply_acknowledged_receipt,
-    take_worker_staging,
-    worker_staging_scope,
-)
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.machines import LocalMachineManager
-from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
-from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -533,7 +520,7 @@ class TestTranslateToHookEvent:
                 {
                     "session_id": "sess-expand",
                     "expansion_type": "skill",
-                    "command_name": "review",
+                    "command_name": "fixture-command",
                     "command_args": "--strict",
                     "command_source": "project",
                     "prompt": "Expanded prompt",
@@ -1018,26 +1005,22 @@ class TestTranslateFromHookResponse:
         assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
 
-    def test_provider_referenced_overflow_is_omitted_not_prefix_sliced(
+    def test_oversized_response_context_without_a_queue_raises_and_ships_nothing(
         self,
     ) -> None:
-        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
         adapter = ClaudeCodeAdapter()
         unique_head = "UNIQUE_CLAUDE_OVERFLOW_7f3a9c"
-        context = unique_head + ("x" * 10_001)
-        assert len(context) > 10_000
+        context = unique_head + "\n\n" + ("x" * 99 + "\n\n") * 100
         response = HookResponse(decision="allow", context=context)
 
-        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        # No session identity means no queue: the overflow raises before anything ships.
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        assert raised.value.labels == ["response.context (page 1/2)", "response.context (page 2/2)"]
 
-        additional_context = result["hookSpecificOutput"]["additionalContext"]
-        assert unique_head not in additional_context
-        assert "[truncated]" not in additional_context
-        assert "omitted contributors=[response.context]" in additional_context
-        assert len(additional_context) <= ADDITIONAL_CONTEXT_LIMIT
-
-    def test_session_start_context_ships_as_separate_contributors(self) -> None:
+    def test_session_start_overflow_without_a_queue_raises_and_names_what_waits(self) -> None:
         from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 
         adapter = ClaudeCodeAdapter()
@@ -1051,14 +1034,21 @@ class TestTranslateFromHookResponse:
             ("rule:oversized", "r" * ADDITIONAL_CONTEXT_LIMIT),
         )
 
-        result = adapter.translate_from_hook_response(response, hook_type="session-start")
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
-        assert result["hookSpecificOutput"]["additionalContext"] == "\n\n".join(
-            [banner, parent, claimed, "omitted contributors=[rule:oversized]"]
-        )
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            adapter.translate_from_hook_response(response, hook_type="session-start")
+        assert raised.value.labels == [
+            "system_message",
+            "parent_session",
+            "claimed_tasks",
+            "rule:oversized",
+        ]
 
-    def test_spawned_agent_first_prompt_12169_drops_only_agent_prompt(self) -> None:
-        # Measured composition of the dropped plan-adversary-taskless-old first prompt:
+    def test_spawned_agent_first_prompt_12169_without_a_queue_raises_and_names_what_waits(
+        self,
+    ) -> None:
+        # Measured composition of the first prompt that used to drop its agent prompt:
         # agent prompt 10580 + five rule-emitted parts 1579 + 5 separators = 12169.
         adapter = ClaudeCodeAdapter()
         rule_parts = [
@@ -1070,36 +1060,46 @@ class TestTranslateFromHookResponse:
         ]
         response = HookResponse(decision="allow")
         response.add_context(*rule_parts)
-        response.add_context(("agent_prompt", "p" * 10_580), prepend=True)
+        agent_prompt = ("p" * 99 + "\n\n") * 104 + "p" * 76
+        response.add_context(("agent_prompt", agent_prompt), prepend=True)
         assert len(response.context or "") == 12_169
 
-        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
-        assert result["hookSpecificOutput"]["additionalContext"] == "\n\n".join(
-            [*(text for _, text in rule_parts), "omitted contributors=[agent_prompt]"]
-        )
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        assert raised.value.labels == [
+            "agent_prompt (page 1/2)",
+            "agent_prompt (page 2/2)",
+            "skill:gobby:references/skills/loading.md",
+            "skill:gobby:references/memory/overview.md",
+            "skill:brevity",
+            "skill:restraint",
+            "mcp:gobby-skills/list_hubs",
+        ]
 
-    def test_seat_first_prompt_keeps_agent_prompt_over_larger_rules(self) -> None:
-        # Measured Orchestrator first prompt (14,185 chars): the agent prompt was dropped.
+    def test_seat_first_prompt_without_a_queue_raises_and_names_what_waits(self) -> None:
+        # Measured oversized seat first prompt (14,185 chars). Without a queue nothing ships:
+        # every part of this delivery is named as withheld, from the agent prompt onward.
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow")
         response.add_context(
             ("rule:fixture-seat-context", "s" * 2_166),
-            ("rule:project-operating-policy", "o" * 4_094),
+            ("rule:fixture-policy", "o" * 4_094),
             ("mcp:gobby-memory/surface_memories", "m" * 1_628),
         )
         response.add_context(("agent_prompt", "p" * 5_914), prepend=True)
 
-        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        from gobby.adapters.degradation import ContextQueueUnavailableError
 
-        assert result["hookSpecificOutput"]["additionalContext"] == "\n\n".join(
-            [
-                "p" * 5_914,
-                "s" * 2_166,
-                "m" * 1_628,
-                "omitted contributors=[rule:project-operating-policy]",
-            ]
-        )
+        with pytest.raises(ContextQueueUnavailableError) as raised:
+            adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        assert raised.value.labels == [
+            "agent_prompt",
+            "rule:fixture-seat-context",
+            "rule:fixture-policy",
+            "mcp:gobby-memory/surface_memories",
+        ]
 
     def test_context_injection_session_start(self) -> None:
         adapter = ClaudeCodeAdapter()
@@ -1545,173 +1545,3 @@ class TestHandleNative:
         result = adapter.handle_native(native, mock_hook_manager)
         assert result["hookSpecificOutput"]["hookEventName"] == "Notification"
         assert "some notification context" in result["hookSpecificOutput"]["additionalContext"]
-
-
-def _deliver(adapter: ClaudeCodeAdapter, db: HubDatabase, response: HookResponse) -> str:
-    """Translate one prompt delivery and acknowledge its receipt."""
-    with worker_staging_scope():
-        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
-        staged = take_worker_staging()
-    apply_acknowledged_receipt(
-        SimpleNamespace(staged_payload=staged), variable_manager=SessionVariableManager(db)
-    )
-    return str(result["hookSpecificOutput"]["additionalContext"])
-
-
-def test_parts_dropped_for_space_ship_first_on_the_next_delivery(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    machine = "21000000-0000-4000-8000-000000000002"
-    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
-    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
-    session_id = (
-        SessionManager(temp_db)
-        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
-        .id
-    )
-    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
-    variables = SessionVariableManager(temp_db)
-
-    first = HookResponse(decision="allow", metadata={"session_id": session_id})
-    first.add_context(("rule:policy", "o" * 4_000), ("rule:oversized", "x" * 10_000))
-    first.add_context(("agent_prompt", "p" * 6_000), prepend=True)
-    shipped = _deliver(adapter, temp_db, first)
-
-    assert "p" * 6_000 in shipped
-    assert "o" * 4_000 not in shipped
-    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
-    assert carried == [["rule:policy", "o" * 4_000]]
-
-    second = HookResponse(decision="allow", metadata={"session_id": session_id})
-    second.add_context(("rule:reminder", "be brief"))
-    shipped = _deliver(adapter, temp_db, second)
-
-    assert shipped.startswith("o" * 4_000 + "\n\n")
-    assert "be brief" in shipped
-    assert variables.get_variables(session_id).get(CARRIED_CONTEXT_VARIABLE) is None
-
-
-def test_a_fresh_part_sharing_a_carried_label_drops_largest_first(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    machine = "21000000-0000-4000-8000-000000000003"
-    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
-    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
-    session_id = (
-        SessionManager(temp_db)
-        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
-        .id
-    )
-    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
-    variables = SessionVariableManager(temp_db)
-    variables.merge_variables(
-        session_id, {CARRIED_CONTEXT_VARIABLE: [["rule:policy", "o" * 4_000]]}
-    )
-
-    fresh = HookResponse(decision="allow", metadata={"session_id": session_id})
-    fresh.add_context(("rule:policy", "n" * 5_000), ("rule:small", "s" * 1_000))
-    shipped = _deliver(adapter, temp_db, fresh)
-
-    assert shipped.startswith("o" * 4_000 + "\n\n")
-    assert "s" * 1_000 in shipped
-    assert "n" * 5_000 not in shipped
-    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
-    assert carried == [["rule:policy", "n" * 5_000]]
-
-
-def _carry_session(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, machine: str
-) -> tuple[ClaudeCodeAdapter, SessionVariableManager, str]:
-    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
-    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
-    session_id = (
-        SessionManager(temp_db)
-        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
-        .id
-    )
-    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
-    return adapter, SessionVariableManager(temp_db), session_id
-
-
-@pytest.mark.parametrize(
-    "dropped",
-    [[("rule:near_cap", "c" * 9_700)], [("rule:policy", "o" * 5_000), ("rule:small", "s" * 4_000)]],
-)
-def test_dropped_parts_within_one_delivery_are_carried(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, dropped: list[tuple[str, str]]
-) -> None:
-    adapter, variables, session_id = _carry_session(
-        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000004"
-    )
-
-    response = HookResponse(decision="allow", metadata={"session_id": session_id})
-    response.add_context(*dropped)
-    response.add_context(("agent_prompt", "p" * 6_000), prepend=True)
-    shipped = _deliver(adapter, temp_db, response)
-
-    assert "p" * 6_000 in shipped
-    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
-    assert carried == [[label, text] for label, text in dropped]
-
-
-def test_the_carry_keeps_already_carried_parts_within_one_delivery(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    adapter, variables, session_id = _carry_session(
-        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000005"
-    )
-    variables.merge_variables(
-        session_id,
-        {CARRIED_CONTEXT_VARIABLE: [["rule:old", "o" * 6_000], ["rule:older", "d" * 5_000]]},
-    )
-
-    response = HookResponse(decision="allow", metadata={"session_id": session_id})
-    response.add_context(("rule:new", "n" * 4_000))
-    shipped = _deliver(adapter, temp_db, response)
-
-    assert shipped.startswith("d" * 5_000 + "\n\n")
-    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
-    assert carried == [["rule:old", "o" * 6_000]]
-
-
-def test_the_carry_renders_whole_on_the_next_delivery(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    adapter, variables, session_id = _carry_session(
-        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000007"
-    )
-
-    first = HookResponse(decision="allow", metadata={"session_id": session_id})
-    first.add_context(("rule:policy", "o" * 5_950), ("rule:common", "c" * 4_000))
-    first.add_context(("agent_prompt", "p" * 6_000), prepend=True)
-    _deliver(adapter, temp_db, first)
-
-    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
-    assert carried == [["rule:policy", "o" * 5_950]]
-
-    second = HookResponse(decision="allow", metadata={"session_id": session_id})
-    second.add_context(("rule:reminder", "r" * 1_000))
-    shipped = _deliver(adapter, temp_db, second)
-
-    assert shipped == "o" * 5_950 + "\n\n" + "r" * 1_000
-    assert variables.get_variables(session_id).get(CARRIED_CONTEXT_VARIABLE) is None
-
-
-def test_a_part_reinjected_every_turn_is_carried_once(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    adapter, variables, session_id = _carry_session(
-        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000006"
-    )
-
-    shipped: list[str] = []
-    for turn in range(5):
-        response = HookResponse(decision="allow", metadata={"session_id": session_id})
-        response.add_context(("rule:policy", "o" * 6_000), ("rule:common", "c" * 5_000))
-        if turn == 0:
-            response.add_context(("agent_prompt", "p" * 6_000), prepend=True)
-        shipped.append(_deliver(adapter, temp_db, response))
-        assert len(variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]) == 1
-
-    assert any("o" * 6_000 in text for text in shipped)
-    assert any("c" * 5_000 in text for text in shipped)

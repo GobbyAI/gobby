@@ -238,6 +238,13 @@ def _todo_state_tool_use_id(session_id: str | None, todos: list[Any]) -> str:
     return f"droid-todo-state-{digest}"
 
 
+def _message_id_for(session_id: str | None, index: int, raw_id: Any) -> str:
+    """Return the record's transcript id. A record without one keys by its line index."""
+    if isinstance(raw_id, str) and raw_id.strip():
+        return raw_id
+    return f"{session_id or 'droid'}:droid:{index}"
+
+
 class DroidTranscriptParser(BaseTranscriptParser):
     """Parse Factory Droid v0.106.0+ JSONL transcripts."""
 
@@ -314,8 +321,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         """Expand one decoded Droid record into zero or more ParsedMessage records."""
         timestamp_raw = record.get("timestamp")
         timestamp = _parse_timestamp(timestamp_raw if isinstance(timestamp_raw, str) else None)
-        message_id_raw = record.get("id")
-        message_id = message_id_raw if isinstance(message_id_raw, str) else None
+        message_id = _message_id_for(self.session_id, index, record.get("id"))
         record_type = record.get("type")
         if record_type == "session_start":
             # /compress carries the parent's cumulative sidecar totals into this file.

@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
+from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
@@ -113,8 +114,6 @@ def git_repo_with_origin(
     WorktreeGitManager.create_worktree fetches from origin, so we need
     to set up a bare repo as origin for the test.
     """
-    gobby_dir = e2e_project_dir / ".gobby"
-
     # Create a bare repo to serve as "origin"
     origin_path = tmp_path_factory.mktemp("origin")
     subprocess.run(
@@ -203,9 +202,8 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    # The isolated checkout is already bound to the E2E project (its marker and seeded
-    # registration), so the test registers against that project rather than a second one.
-    project_id = "00000000-0000-0000-0000-000000000e2e"
+    # Reuse the checkout marker's identity, which the daemon fixture already registered.
+    project_id = read_project_id(e2e_project_dir)
     project_name = e2e_project_dir.name
     cli_events.register_test_project(
         project_id=project_id,
@@ -214,9 +212,22 @@ def git_repo_with_origin(
     )
     wait_for_project_registration(daemon_instance, project_id)
 
-    # Write project.json with the created project's ID
-    project_json = gobby_dir / "project.json"
-    project_json.write_text(json.dumps({"id": project_id, "name": project_name}))
+    # Overlay pinning requires an indexed parent on the daemon's machine.
+    # Use the same isolated binary set, home and bootstrap database as the daemon.
+    subprocess.run(
+        [
+            str(Path(daemon_instance.env[NATIVE_BIN_DIR_ENV]) / native_bin_name("gcode")),
+            "--project",
+            str(e2e_project_dir),
+            "index",
+        ],
+        cwd=str(e2e_project_dir),
+        env=daemon_instance.env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
 
     return e2e_project_dir
 

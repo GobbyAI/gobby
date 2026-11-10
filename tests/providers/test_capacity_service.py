@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from gobby.providers.capacity_service import ProviderCapacityService
+from gobby.providers.quota_observations import decode_quota_details
+from gobby.providers.quota_signals import normalize_reporter_snapshot
 from gobby.providers.usage import (
     ProviderUsageSnapshot,
     TransientUsageRefreshError,
@@ -71,8 +73,13 @@ class _Storage:
         windows: Sequence[Mapping[str, object]],
         reason: str | None,
         source_version: str,
-    ) -> None:
+        details: Mapping[str, object],
+        expected_observed_at: datetime | None,
+    ) -> bool:
         self.upsert_calls += 1
+        current = self.records.get(provider)
+        if (None if current is None else current.observed_at) != expected_observed_at:
+            return False
         self.records[provider] = ProviderCapacityRecord(
             machine_id=self.machine_id,
             provider=provider,
@@ -82,7 +89,9 @@ class _Storage:
             reason=reason,
             source_version=source_version,
             age_seconds=max(0.0, (self._clock() - observed_at).total_seconds()),
+            details=dict(details),
         )
+        return True
 
     def get(self, provider: str) -> ProviderCapacityRecord | None:
         record = self.records.get(provider)
@@ -97,6 +106,7 @@ class _Storage:
             reason=record.reason,
             source_version=record.source_version,
             age_seconds=max(0.0, (self._clock() - record.observed_at).total_seconds()),
+            details=record.details,
         )
 
 
@@ -186,14 +196,13 @@ async def test_fresh_persisted_snapshot_survives_service_restart_without_probe()
 async def test_transient_failure_keeps_prior_windows_as_stale() -> None:
     now = _OBSERVED_AT + timedelta(seconds=61)
     storage = _Storage(lambda: now)
-    storage.upsert(
-        provider="agy",
-        state="available",
-        observed_at=_OBSERVED_AT,
-        windows=tuple(window.to_dict() for window in _snapshot(remaining_fraction=0.7).windows),
-        reason=None,
-        source_version="1.1.18",
+    seeder = ProviderCapacityService(
+        storage,
+        reporters={},
+        support_resolvers={},
+        clock=lambda: now,
     )
+    await seeder.observe(normalize_reporter_snapshot(_snapshot(remaining_fraction=0.7)))
     reporter = _Reporter(TransientUsageRefreshError("agy", "timeout", "timed out after 15 seconds"))
     service = ProviderCapacityService(
         storage,
@@ -287,8 +296,9 @@ async def test_provider_without_reporter_is_unknown() -> None:
         "state": "unknown",
         "observed_at": None,
         "windows": [],
-        "reason": "no usage reporter",
+        "reason": "no claude quota observation",
         "source_version": None,
+        "details": {},
     }
 
 
@@ -363,3 +373,184 @@ async def test_concurrent_failure_joins_one_refresh_task(code: str) -> None:
     assert first_result.reason == f"{code} reason"
     assert reporter.calls == 1
     assert storage.upsert_calls == 0
+
+
+class _MovableClock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+_REPORTER_T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+
+
+def _agy_reporter_snapshot(
+    *, at: datetime, windows: Sequence[tuple[str, float, str]]
+) -> ProviderUsageSnapshot:
+    """Build a successful AGY reporter snapshot from (label, used, resets_at) percent windows."""
+    return ProviderUsageSnapshot(
+        provider="agy",
+        observed_at=at,
+        supported=True,
+        windows=tuple(
+            UsageWindow(label=label, used=used, limit=100.0, unit="percent", resets_at=resets_at)
+            for label, used, resets_at in windows
+        ),
+        raw={},
+    )
+
+
+def _stored_details(storage: _Storage) -> Mapping[str, object]:
+    record = storage.get("agy")
+    assert record is not None
+    return record.details
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_reporter_omitted_window_keeps_its_clock() -> None:
+    clock = _MovableClock(_REPORTER_T0)
+    storage = _Storage(clock)
+    service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
+    five = ("five_hour", 10.0, "2026-11-02T17:00:00Z")
+    seven = ("seven_day", 20.0, "2026-11-09T12:00:00Z")
+    sonnet = ("sonnet", 5.0, "2026-11-09T12:00:00Z")
+    await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(at=_REPORTER_T0, windows=(five, seven, sonnet))
+        )
+    )
+
+    clock.now = _REPORTER_T0 + timedelta(minutes=17)
+    snapshot = await service.observe(
+        normalize_reporter_snapshot(_agy_reporter_snapshot(at=clock.now, windows=(five, seven)))
+    )
+
+    components, _ = decode_quota_details(_stored_details(storage))
+    sonnet_components = [c for c in components.values() if c.limit_id == "sonnet"]
+    assert [c.source_observed_at for c in sonnet_components] == [_REPORTER_T0]
+    assert snapshot.state == "stale"
+    assert {window.label for window in snapshot.windows} == {"five_hour", "seven_day"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_reporter_earlier_reset_is_rejected() -> None:
+    clock = _MovableClock(_REPORTER_T0)
+    storage = _Storage(clock)
+    service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
+    await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(
+                at=_REPORTER_T0, windows=(("five_hour", 10.0, "2026-11-02T17:00:00Z"),)
+            )
+        )
+    )
+
+    clock.now = _REPORTER_T0 + timedelta(minutes=2)
+    await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(
+                at=clock.now, windows=(("five_hour", 10.0, "2026-11-02T16:00:00Z"),)
+            )
+        )
+    )
+
+    components, _ = decode_quota_details(_stored_details(storage))
+    (five,) = components.values()
+    assert five.resets_at == datetime(2026, 11, 2, 17, 0, tzinfo=UTC)
+    assert five.source_observed_at == _REPORTER_T0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_same_reset_positive_reading_does_not_clear_exhaustion() -> None:
+    clock = _MovableClock(_REPORTER_T0)
+    storage = _Storage(clock)
+    service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
+    await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(
+                at=_REPORTER_T0, windows=(("five_hour", 100.0, "2026-11-02T17:00:00Z"),)
+            )
+        )
+    )
+
+    clock.now = _REPORTER_T0 + timedelta(minutes=1)
+    snapshot = await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(
+                at=clock.now, windows=(("five_hour", 20.0, "2026-11-02T17:00:00Z"),)
+            )
+        )
+    )
+
+    assert snapshot.state == "exhausted"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_later_reset_recovers_exhaustion() -> None:
+    clock = _MovableClock(_REPORTER_T0)
+    storage = _Storage(clock)
+    service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
+    await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(
+                at=_REPORTER_T0, windows=(("five_hour", 100.0, "2026-11-02T17:00:00Z"),)
+            )
+        )
+    )
+
+    clock.now = _REPORTER_T0 + timedelta(minutes=1)
+    snapshot = await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(
+                at=clock.now, windows=(("five_hour", 20.0, "2026-11-02T22:00:00Z"),)
+            )
+        )
+    )
+
+    assert snapshot.state == "available"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_snapshot_details_carry_component_metadata() -> None:
+    clock = _MovableClock(_REPORTER_T0)
+    storage = _Storage(clock)
+    service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
+    five = ("five_hour", 10.0, "2026-11-02T17:00:00Z")
+    seven = ("seven_day", 20.0, "2026-11-09T12:00:00Z")
+    sonnet = ("sonnet", 5.0, "2026-11-09T12:00:00Z")
+    await service.observe(
+        normalize_reporter_snapshot(
+            _agy_reporter_snapshot(at=_REPORTER_T0, windows=(five, seven, sonnet))
+        )
+    )
+
+    clock.now = _REPORTER_T0 + timedelta(minutes=17)
+    await service.observe(
+        normalize_reporter_snapshot(_agy_reporter_snapshot(at=clock.now, windows=(five, seven)))
+    )
+    snapshot = await service.get("agy")
+
+    entries = snapshot.details["components"]
+    assert isinstance(entries, dict)
+    by_limit = {entry["limit_id"]: entry for entry in entries.values()}
+    assert set(by_limit["sonnet"]) == {
+        "limit_id",
+        "scope",
+        "state",
+        "fresh",
+        "stale_reason",
+        "source_observed_at",
+        "resets_at",
+    }
+    assert by_limit["sonnet"]["fresh"] is False
+    assert by_limit["sonnet"]["stale_reason"] == "source_older_than_900s"
+    assert by_limit["five_hour"]["fresh"] is True
+    assert by_limit["five_hour"]["stale_reason"] is None
+    assert snapshot.to_dict()["details"] == snapshot.details

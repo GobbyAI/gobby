@@ -13,6 +13,13 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 ROOT_ENV = "GOBBY_E2E_EXTERNAL_WRITE_ROOT"
 LOG_ENV = "GOBBY_E2E_EXTERNAL_WRITE_LOG"
+# The one E2E-owned subtree of the real ~/.gobby: fixed, operator-trusted proof folders
+# (the handoff proof's project, #25771) live here. No production daemon writes it.
+E2E_OWNED_SUBTREE = "e2e"
+
+
+def is_e2e_owned(relative: str) -> bool:
+    return relative == E2E_OWNED_SUBTREE or relative.startswith(f"{E2E_OWNED_SUBTREE}/")
 
 
 @dataclass(eq=False)
@@ -100,6 +107,8 @@ def _audit(event: str, args: tuple[object, ...]) -> None:
             if not resolved.is_relative_to(observer.root):
                 continue
             relative = resolved.relative_to(observer.root).as_posix()
+            if is_e2e_owned(relative):
+                continue
             observer.writes.append(f"pid={os.getpid()} {event}: ~/.gobby/{relative}")
             if observer.log is not None:
                 with observer.log.open("a") as stream:

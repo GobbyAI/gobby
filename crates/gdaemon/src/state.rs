@@ -5,7 +5,7 @@
 
 use crate::{
     front_door::relay::HubRelay,
-    lease::{ActiveDaemonLease, LeaseState},
+    lease::{ActiveDaemonLease, LeaseState, NamedLock},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
         pid_file::{PidFileClaim, claim_from_environment},
@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, PoisonError, RwLock},
     time::Duration,
 };
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 
 /// Enrollment and hub destination for a node's front door.
 pub struct NodeServices {
@@ -122,9 +122,11 @@ impl NodeServices {
 /// The HTTP layer sees a projection, while the supervisor owns the PID claim.
 pub struct RuntimeState {
     pub mode: RunMode,
-    pub lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+    pub lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
     pub lease_state: Option<watch::Receiver<LeaseState>>,
     pub backend: watch::Receiver<BackendStatus>,
+    /// The supervisor's current wait reason (a lease-lock holder or the backend's exit).
+    pub backend_wait: watch::Receiver<Option<String>>,
     /// The supervisor's write token slot, which native WebSocket binds present.
     pub write_token: TokenSlot,
     /// The terminal write route's services, published while the native runtime runs.
@@ -154,7 +156,7 @@ impl RuntimeState {
         let token = gobby_core::grant::deployment_token(home);
         let lease = ActiveDaemonLease::new(pool, &machine, &token, bootstrap.mode)?;
         let lease_state = Some(lease.subscribe());
-        let lease = Some(Arc::new(Mutex::new(lease)));
+        let lease = Some(Arc::new(NamedLock::new(lease)));
         let mut config = BackendConfig::from_environment(home)?;
         config.front_door_secret = Some(secret.to_owned());
         // The route serve.rs latched from this bootstrap; the backend refuses a
@@ -174,6 +176,7 @@ impl RuntimeState {
             lease,
             lease_state,
             backend: supervisor.subscribe(),
+            backend_wait: supervisor.subscribe_wait(),
             write_token,
             terminal_route: Default::default(),
         });
@@ -193,7 +196,12 @@ impl RuntimeState {
                 return Ok(());
             }
             if let Some(lease) = &self.lease {
-                let acquired = match lease.lock().await.try_acquire().await {
+                let acquired = match lease
+                    .lock_as("startup lease acquisition")
+                    .await
+                    .try_acquire()
+                    .await
+                {
                     Ok(acquired) => acquired,
                     Err(error) => {
                         eprintln!("gdaemon lease acquisition: {error:#}");

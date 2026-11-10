@@ -101,6 +101,7 @@ _SCRIPT = textwrap.dedent(
             return None
 
         print("shutdown-started", flush=True)
+        # Inject a cold-import delay here, after all startup work and before the clock.
         await runner_lifecycle_shutdown.shutdown_daemon_services(
             runner,
             server,
@@ -145,15 +146,46 @@ def _wait_for_shutdown_start(
         time.sleep(0.1)
 
 
-def test_interpreter_exits_after_deadline_overrun_with_live_pool_worker(tmp_path: Path) -> None:
+@pytest.mark.parametrize("slow_cold_import", [False, True], ids=["normal", "slow-cold-import"])
+def test_interpreter_exits_after_deadline_overrun_with_live_pool_worker(
+    tmp_path: Path, slow_cold_import: bool
+) -> None:
     env = {**os.environ, "GOBBY_HOME": str(tmp_path / "gobby-home")}
+    script = _SCRIPT
+    if slow_cold_import:
+        # A loaded host can spend the entire fallback budget importing the initialization
+        # facade. Teardown must not initialize serving leases that never existed.
+        injection = textwrap.indent(
+            textwrap.dedent(
+                """
+                import builtins
+                import time
+                from gobby.shutdown_budget import DEADLINE_CHILD_REAP_BUDGET_SECONDS
+
+                original_import = builtins.__import__
+
+                def delayed_import(name, *args, **kwargs):
+                    if name == "gobby.runner_init.embedding_lease" and name not in sys.modules:
+                        started = time.monotonic()
+                        time.sleep(DEADLINE_CHILD_REAP_BUDGET_SECONDS)
+                        print(f"cold-import-delay={time.monotonic() - started:.3f}s", flush=True)
+                    return original_import(name, *args, **kwargs)
+
+                builtins.__import__ = delayed_import
+                print("cold-import-guard-installed", flush=True)
+                """
+            ),
+            "    ",
+        )
+        script = script.replace(
+            "    # Inject a cold-import delay here, after all startup work and before the clock.",
+            injection,
+        )
     stdout_path = tmp_path / "stdout.log"
     stderr_path = tmp_path / "stderr.log"
     with stdout_path.open("w", encoding="utf-8") as out:
         with stderr_path.open("w", encoding="utf-8") as err:
-            proc = subprocess.Popen(
-                [sys.executable, "-c", _SCRIPT], stdout=out, stderr=err, env=env
-            )
+            proc = subprocess.Popen([sys.executable, "-c", script], stdout=out, stderr=err, env=env)
             try:
                 _wait_for_shutdown_start(proc, stdout_path, stderr_path)
                 started = time.monotonic()
@@ -174,3 +206,31 @@ def test_interpreter_exits_after_deadline_overrun_with_live_pool_worker(tmp_path
     assert proc.returncode == 0, stderr_path.read_text(encoding="utf-8")[-2000:]
     assert "reaped" in output
     assert elapsed < EXIT_BOUND_SECONDS
+    if slow_cold_import:
+        assert "cold-import-guard-installed" in output
+        assert "cold-import-delay=" not in output
+
+
+def test_shutdown_disposes_loaded_leases_before_stopping_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.runner_background_services import shutdown_background_services
+    from gobby.runner_init import embedding_lease
+    from gobby.tasks import transcript_evidence_pool
+
+    stopped: list[str] = []
+
+    def dispose_leases() -> None:
+        stopped.append("leases")
+
+    def shutdown_pool() -> None:
+        stopped.append("pool")
+
+    monkeypatch.setattr(embedding_lease, "dispose_active_embedding_leases", dispose_leases)
+    monkeypatch.setattr(
+        transcript_evidence_pool, "shutdown_transcript_evidence_pool", shutdown_pool
+    )
+
+    shutdown_background_services()
+
+    assert stopped == ["leases", "pool"]

@@ -3,8 +3,8 @@
 Every tool executes through the WebSocket server's shared ``WorkspaceOps``, so changes
 publish to subscribed clients and pane writes carry the ``send_keys`` policy. The actor
 comes from the request, never from arguments: a session context acts as that session,
-the operator's local token acts as the operator. Managed callers may only read
-workspace inventories through their authenticated session; pane I/O and writes are refused.
+the operator's local token acts as the operator. Agent-run callers may only read
+workspace inventories through their authenticated session; their pane I/O and writes are refused.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from gobby.terminals.operator_lane import run_on_operator_lane, run_on_workspace
 from gobby.terminals.workspace_contract import WorkspaceOpError, storage_errors
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.datetime import to_json_safe
-from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.local_token import SESSION_TOKEN_KIND, AgentApiTokenClaims
 from gobby.utils.session_context import get_request_principal, get_session_context
 
 type OpsResolver = Callable[[], WorkspaceOps | None]
@@ -42,7 +42,8 @@ _NODE = "Optional `node` (ref, hostname, label, or id) resolves refs on that mac
 async def current_actor(*, allow_managed_read: bool = False) -> str:
     """Return ``session:<id>`` or ``operator`` for this request, refusing any other caller.
 
-    Managed tokens need a matching session and an inventory-only operation. Writes,
+    A session's own credential acts as that session, and only for the session it names.
+    Agent-run tokens need a matching session and an inventory-only operation. Their writes,
     pane I/O, and an unseeded principal (no request in scope) remain refused.
     """
     try:
@@ -51,10 +52,10 @@ async def current_actor(*, allow_managed_read: bool = False) -> str:
         principal = False
     context = get_session_context()
     if (
-        allow_managed_read
-        and isinstance(principal, AgentApiTokenClaims)
+        isinstance(principal, AgentApiTokenClaims)
         and context is not None
         and context.session_id == principal.session_id
+        and (allow_managed_read or principal.kind == SESSION_TOKEN_KIND)
     ):
         return f"{SESSION_ACTOR_PREFIX}{context.session_id}"
     if principal is not None:

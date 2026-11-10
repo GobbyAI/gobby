@@ -96,7 +96,8 @@ impl Gmcp {
             .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
             .env_remove("GOBBY_MANAGED_EXECUTION_ID")
             .env_remove("GOBBY_AGENT_API_TOKEN")
-            .env_remove("GOBBY_AGENT_RUN_ID")
+            // A managed run: these tests cover the machine-key wire contract.
+            .env("GOBBY_AGENT_RUN_ID", "run")
             .env_remove("GOBBY_SESSION_ID")
             .env_remove("GOBBY_PROJECT_ID")
             // A test runner inside tmux would otherwise pin caller identity to its pane.

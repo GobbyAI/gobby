@@ -9,7 +9,7 @@ Record an idle baseline in the host profile before any experiment:
 
 ```bash
 uptime
-ps -Aceo pcpu,comm -r | head -15
+ps -Ao pid,pcpu,pmem,ucomm -r | head -15
 macmon pipe -s 5 -i 1000 2>/dev/null | tail -1
 memory_pressure | tail -1
 df -h
@@ -63,5 +63,5 @@ measure and report.
 - Store each run's results in your workspace with the date and command, and add the
   baseline to the host profile.
 
-_Version: 1.0.1_
-_Last verified: 2026-11-07_
+_Version: 1.0.3_
+_Last verified: 2026-11-10_

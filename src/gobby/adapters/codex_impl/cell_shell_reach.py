@@ -193,3 +193,27 @@ def may_type_input(arguments: Any, owned_session: str | None = None) -> bool:
     typing.
     """
     return _may_run(arguments, frozenset({"exec_command"}), owned_session)
+
+
+def _blank_session_write(match: re.Match[str], session_id: str) -> str:
+    """Replace the literal write to ``session_id`` with a call that types nothing."""
+    body = match.group(1)
+    if _LITERAL_OBJECT_RE.fullmatch(body) is None:
+        return match.group(0)
+    sessions = [value.strip('"') for value in _SESSION_PAIR_RE.findall(body)]
+    return "tools.idle_poll()" if sessions == [session_id] else match.group(0)
+
+
+def sole_typed_session(
+    arguments: Any, session_id: str | None, owned_session: str | None = None
+) -> str | None:
+    """Return ``session_id`` when its literal write is the cell's only code that can type.
+
+    A failed write to that session then typed nothing, so its latch may release. Any other
+    typing code, a computed write or a computed chars value included, keeps the session
+    unproven and returns None.
+    """
+    if session_id is None or not isinstance(arguments, str):
+        return session_id
+    blanked = _INERT_POLL_RE.sub(lambda call: _blank_session_write(call, session_id), arguments)
+    return None if may_type_input(blanked, owned_session) else session_id

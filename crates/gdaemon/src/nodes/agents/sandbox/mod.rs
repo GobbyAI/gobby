@@ -7,6 +7,7 @@ pub mod external_roots;
 mod grant_glob;
 mod grok_home;
 mod monitor;
+mod operator_account;
 mod paths;
 mod prewarm;
 mod ps_shim;
@@ -15,6 +16,8 @@ mod settings;
 mod tables;
 mod verify;
 mod workspace_scope;
+
+pub use operator_account::operator_bootstrap_path;
 
 use crate::node_commands::{Sandbox, SandboxBackend};
 use anyhow::{Result, bail};
@@ -43,6 +46,10 @@ pub struct PolicyInputs {
     pub gobby_home: PathBuf,
     /// The configured build-output root, canonical. Cargo target folders live under it.
     pub build_root: PathBuf,
+    /// The operator account's bootstrap credential, from the passwd entry (see
+    /// `operator_bootstrap_path`). `None` when the account has no passwd entry. The policy denies
+    /// it whatever HOME or GOBBY_HOME name, so the environment never supplies it.
+    pub operator_bootstrap: Option<PathBuf>,
     pub env: BTreeMap<String, String>,
     pub provider_executable: Option<PathBuf>,
     /// Whether the launch is granted its run tmp as a Unix socket root. Native spawns and
@@ -56,9 +63,6 @@ pub struct PolicyInputs {
     pub platform: String,
     /// Trusted host-resolved Darwin temp/cache roots; absent means query confstr.
     pub darwin_user_dirs: Option<[PathBuf; 2]>,
-    /// Trusted host-resolved passwd home; absent means query getpwuid. The operator's
-    /// canonical bootstrap lives under it, whatever HOME and GOBBY_HOME say.
-    pub account_home: Option<PathBuf>,
     /// The seat's definition, its session sequence number, and its epic sequence number
     /// when it shares an epic folder. They name the workspace folders the spawn grants
     /// (#25148); an absent value grants nothing for that folder.
