@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from gobby.agents import srt_monitor
+from gobby.agents.cargo_environment import REMOVED_CARGO_ENV_KEYS
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.srt_runtime import (
@@ -374,12 +375,26 @@ def test_reviewer_rust_compare(
     cargo_home = Path(environment["CARGO_HOME"])
     source_home = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))
     (cargo_home / "registry").symlink_to(source_home / "registry", target_is_directory=True)
-    environment.update(CARGO_BUILD_JOBS="3", CARGO_NET_OFFLINE="true", RUSTC_WRAPPER="")
+    environment.update(CARGO_BUILD_JOBS="3", CARGO_NET_OFFLINE="true")
+    # Agent exec removes the caller's compiler wrapper and incremental override.
+    for key in REMOVED_CARGO_ENV_KEYS:
+        environment.pop(key, None)
     result = _run(
         launch,
         workspace,
         environment,
-        ["cargo", "nextest", "run", "--offline", "-p", "gobby-daemon", "--test", "compare"],
+        [
+            "cargo",
+            "nextest",
+            "run",
+            "--offline",
+            "-p",
+            "gobby-daemon",
+            "--test",
+            "suite",
+            "-E",
+            "test(/^compare::/)",
+        ],
         timeout=1100,
     )
     assert result.returncode == 0, result.stderr[-20000:]

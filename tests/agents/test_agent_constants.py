@@ -291,6 +291,16 @@ class TestGetTerminalEnvVars:
         assert _HASH_SUFFIX_RE.fullmatch(result_path.parts[-1])
         assert result_path.parts[-1] == _expected_cache_leaf("sess-child-one", "sess/child:one")
 
+    @pytest.mark.parametrize("session_id", ["", "///"])
+    def test_uv_cache_dir_refuses_a_session_id_with_no_safe_characters(
+        self, monkeypatch: pytest.MonkeyPatch, session_id: str
+    ) -> None:
+        """A missing session id must not resolve to a directory every such session shares."""
+        monkeypatch.setattr("gobby.agents.constants.tempfile.gettempdir", lambda: "/tmp/test-tmp")
+
+        with pytest.raises(ValueError, match="session id"):
+            get_agent_uv_cache_dir(session_id)
+
     def test_cargo_home_is_shared_across_sessions(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

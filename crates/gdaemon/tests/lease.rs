@@ -9,7 +9,7 @@ use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
 #[path = "common/hub_lock.rs"]
-mod hub_lock;
+pub(super) mod hub_lock;
 
 struct TestDb {
     admin: Client,
@@ -225,6 +225,93 @@ impl TestDb {
     }
 }
 
+/// Lease and lifecycle fixtures in every worktree share this key on the one test hub.
+/// A timed-out wait is cancelled server-side, because a backend waiting on a lock never
+/// notices its client closing and would stay queued ahead of later runs. The error then
+/// names each holder; fixture sessions carry their host process ID in application_name.
+pub(crate) async fn lock_fixture_key(admin: &Client, bound: Duration) -> Result<()> {
+    let wait = admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)");
+    tokio::pin!(wait);
+    if let Ok(locked) = timeout(bound, &mut wait).await {
+        locked?;
+        return Ok(());
+    }
+    admin.cancel_token().cancel_query(NoTls).await?;
+    // Await the wait's own outcome so the cancel cannot land on the next statement.
+    if wait.await.is_ok() {
+        return Ok(());
+    }
+    let holders = admin
+        .query(
+            "SELECT a.pid, a.application_name, a.backend_start::text, a.state, \
+             left(a.query, 80) FROM pg_locks l JOIN pg_stat_activity a USING (pid) \
+             WHERE l.locktype = 'advisory' AND l.granted AND l.objid = 1 AND l.objsubid = 2 \
+             AND l.classid = hashtext('gdaemon-lease-tests')::oid \
+             AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(format!(
+                "pid={} application_name={:?} backend_start={} state={:?} query={:?}",
+                row.try_get::<_, i32>(0)?,
+                row.try_get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.try_get::<_, Option<String>>(2)?.unwrap_or_default(),
+                row.try_get::<_, Option<String>>(3)?.unwrap_or_default(),
+                row.try_get::<_, Option<String>>(4)?.unwrap_or_default(),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    anyhow::bail!(
+        "lease fixture key still held after {bound:?}; holders: [{}]",
+        holders.join("; ")
+    )
+}
+
+#[tokio::test]
+async fn fixture_key_timeout_names_the_holder_and_leaves_no_waiter() -> Result<()> {
+    database_case(async |db| {
+        // database_case holds the key on db.admin, so a second session must time out.
+        let holder: i32 = db
+            .admin
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await?
+            .try_get(0)?;
+        let url = std::env::var("DATABASE_URL")?;
+        let (waiter, connection) = url
+            .parse::<tokio_postgres::Config>()?
+            .connect(NoTls)
+            .await?;
+        let driver = tokio::spawn(connection);
+        let waiter_pid: i32 = waiter
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await?
+            .try_get(0)?;
+        let error = lock_fixture_key(&waiter, Duration::from_millis(200))
+            .await
+            .expect_err("the key is held by this case's fixture");
+        let message = format!("{error:#}");
+        assert!(message.contains(&format!("pid={holder} ")), "{message}");
+        let fixture = format!("gdaemon-lease-fixture:{}", std::process::id());
+        assert!(message.contains(&fixture), "{message}");
+        // A backend waiting on a lock never notices its client closing, so a timed-out
+        // wait must be cancelled or it stays queued ahead of every later run.
+        let queued: bool = db
+            .admin
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted)",
+                &[&waiter_pid],
+            )
+            .await?
+            .try_get(0)?;
+        assert!(!queued, "timed-out waiter {waiter_pid} is still queued");
+        driver.abort();
+        Ok(())
+    })
+    .await
+}
+
 // Each nextest case is a separate process. A second advisory namespace serializes
 // these tests across processes while the production lock stays database-wide.
 async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<()> {
@@ -232,7 +319,7 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
         eprintln!("DATABASE_URL unset; skipping isolated PostgreSQL lease test");
         return Ok(());
     };
-    let config: tokio_postgres::Config = url.parse()?;
+    let mut config: tokio_postgres::Config = url.parse()?;
     ensure!(
         config.get_dbname() == Some("gobby_test")
             && config.get_hosts() == [tokio_postgres::config::Host::Tcp("127.0.0.1".into())]
@@ -240,16 +327,13 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
             && std::env::var("GOBBY_TEST_PROTECT").as_deref() == Ok("1"),
         "lease tests require the protected isolated test hub"
     );
+    config.application_name(format!("gdaemon-lease-fixture:{}", std::process::id()));
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
     // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
     // waiter queues behind whole test bodies from those runs. The bound must outlast several
     // of them, so it is a hang guard, not a fairness budget.
-    timeout(
-        Duration::from_secs(300),
-        admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
-    )
-    .await??;
+    lock_fixture_key(&admin, Duration::from_secs(300)).await?;
     // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
     let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lease_{}", Uuid::new_v4().simple());

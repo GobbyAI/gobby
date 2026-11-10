@@ -158,7 +158,7 @@ fn panic_is_logged_with_the_registrant_name() -> Result<()> {
     let output = std::process::Command::new(std::env::current_exe()?)
         .args([
             "--exact",
-            "panicking_job_runs_again_and_leaves_siblings_running",
+            "heartbeat::panicking_job_runs_again_and_leaves_siblings_running",
             "--nocapture",
         ])
         .output()?;

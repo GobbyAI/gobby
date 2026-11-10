@@ -101,7 +101,7 @@ verification: build in temporary output/cache directories, retain the compiler
 runtime member, and force-load all members through Apple's linker:
 
 ```sh
-cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+cargo nextest run -p gobby-terminal --test suite -E 'test(build_env::darwin_nonsimd_archive_links_every_member)'
 ```
 
 ## 0004 honor the run TMPDIR in libsystem_override

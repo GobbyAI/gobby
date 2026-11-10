@@ -2,8 +2,7 @@
 
 #![cfg(unix)]
 
-mod embed_support;
-mod host_support;
+use crate::embed_support;
 
 use embed_support::{
     attach, connect_frames, crate_src, gclient_views, list_terminals, read_msg, read_msg_timeout,

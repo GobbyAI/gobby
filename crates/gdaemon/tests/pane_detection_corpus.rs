@@ -302,40 +302,42 @@ fn observe_detector(manifests: &ManifestSet, case: &Value) -> Value {
     }
 }
 
-fn assert_detector_cases(prefix: &str) {
+/// Checks every corpus case under `prefix` against the Python expectation and
+/// returns how many ran, so each test pins its share of the corpus.
+fn assert_detector_cases(prefix: &str) -> usize {
     let manifests = bundled_manifests();
     let cases = detector_cases(prefix);
-    assert!(!cases.is_empty(), "corpus has {prefix} cases");
-    for case in cases {
+    for case in &cases {
         let id = case["id"].as_str().expect("case id");
         assert_eq!(
-            observe_detector(&manifests, &case),
+            observe_detector(&manifests, case),
             case["expect"],
             "case {id}"
         );
     }
+    cases.len()
 }
 
 #[test]
 fn prompt_detector_matches_python() {
-    assert_detector_cases("prompt.");
+    assert_eq!(assert_detector_cases("prompt."), 37);
 }
 
 #[test]
 fn idle_detector_matches_python() {
-    assert_detector_cases("idle.");
+    assert_eq!(assert_detector_cases("idle."), 22);
 }
 
 #[test]
 fn stall_and_attention_match_python() {
-    assert_detector_cases("stall.");
-    assert_detector_cases("attention.");
+    assert_eq!(assert_detector_cases("stall."), 8);
+    assert_eq!(assert_detector_cases("attention."), 8);
 }
 
 #[test]
 fn loop_and_quota_match_python() {
-    assert_detector_cases("loop.");
-    assert_detector_cases("quota.");
+    assert_eq!(assert_detector_cases("loop."), 3);
+    assert_eq!(assert_detector_cases("quota."), 5);
 }
 
 /// Python's `int()` reads a Unicode digit in an option number, so `1\u{661}.` is option 11.

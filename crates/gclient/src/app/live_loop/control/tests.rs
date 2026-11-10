@@ -4,7 +4,7 @@ use gobby_terminal::protocol::{
 use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
-use super::{flush_attached_input, send_live_input, CLOSING_NATIVE_INPUT};
+use super::{flush_attached_input, send_live_input, CLOSING_NATIVE_INPUT, DAEMON_DOWN_INPUT};
 use crate::app::{Backend, Pane, PaneId, Workspace};
 use crate::daemon::{Generation, LiveDaemon};
 use crate::frame_source::{AttachLocator, PaneFrameSource, Transport, UnixSocketFrameSource};
@@ -241,4 +241,58 @@ async fn a_key_typed_into_a_closing_native_pane_never_reaches_the_daemon() {
         1,
         "the refused key is shown"
     );
+}
+
+/// A key typed into a tmux pane while the daemon is away is dropped. The
+/// pane's status note is drawn only for a pane with no frame, so a pane that
+/// was live before the outage shows the drop only through the toast.
+#[tokio::test]
+async fn a_key_typed_into_a_tmux_pane_during_an_outage_is_reported_not_sent() {
+    for paste in [false, true] {
+        let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+            .expect("unconnected daemon handle");
+        let mut workspace = Workspace::live(daemon);
+        workspace.daemon_ready = false;
+        workspace.panes.insert(
+            PaneId(1),
+            Pane::new(PaneId(1), "terminal-1", Backend::Tmux, "epoch-1"),
+        );
+        let mut jobs = LoopJobs::new(&workspace);
+        let mut chrome = Chrome::dark();
+
+        send_live_input(
+            &mut workspace,
+            &mut chrome,
+            &mut jobs,
+            PaneId(1),
+            b"x",
+            paste,
+        )
+        .expect("a refused key is not an error");
+
+        let pane = workspace.pane(PaneId(1));
+        assert_eq!(
+            pane.status_message(),
+            Some(DAEMON_DOWN_INPUT),
+            "paste={paste}: the key took the outage refusal"
+        );
+        assert_eq!(
+            pane.client_write_seq, 0,
+            "paste={paste}: no write was issued"
+        );
+        assert!(
+            pane.writer.is_none(),
+            "paste={paste}: no writer took the key"
+        );
+        let titles: Vec<&str> = chrome
+            .alert_log
+            .iter()
+            .map(|toast| toast.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [DAEMON_DOWN_INPUT],
+            "paste={paste}: the dropped key is shown"
+        );
+    }
 }

@@ -154,7 +154,10 @@ async def test_spawn_records_the_launch_socket_root_on_the_child_session(
     monkeypatch.setattr(spawn_executor_providers, "record_run_socket_root", record)
 
     result = await spawn_executor_providers._prepare_provider_sandbox(
-        request, spawn_context, "codex", {}
+        request,
+        spawn_context,
+        "codex",
+        {"GOBBY_SESSION_ID": spawn_context.session_id},
     )
 
     assert result is launch

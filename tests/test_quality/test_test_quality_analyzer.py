@@ -914,6 +914,48 @@ fn test_non_propagation_question_marks() -> Result<(), Error> {
     ]
 
 
+def test_rust_result_alias_return_counts_like_result(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "sample_test.rs"
+    path.write_text(
+        """
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[test]
+fn test_result_try() -> Result<(), Error> {
+    load()?;
+    Ok(())
+}
+
+#[test]
+fn test_alias_try() -> TestResult {
+    load()?;
+    Ok(())
+}
+
+#[test]
+fn test_path_alias_try() -> io::Result<()> {
+    load()?;
+    Ok(())
+}
+
+#[test]
+fn test_alias_without_try() -> TestResult {
+    Ok(())
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 4
+    assert [issue.test_name for issue in report.issues if issue.issue_code == "NO_ASSERTION"] == [
+        "test_alias_without_try",
+    ]
+
+
 def test_rust_problem_patterns_are_reported(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()

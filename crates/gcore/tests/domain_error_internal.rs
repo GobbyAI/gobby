@@ -54,6 +54,7 @@ fn assert_internal_carries_no_driver_text(err: &DomainError) {
 fn internal_from_source_drops_caller_detail() {
     let err = DomainError::internal(driver_failure()).with_detail(driver_detail());
 
+    assert_eq!(err.message(), "an internal error occurred");
     assert_internal_carries_no_driver_text(&err);
 }
 
@@ -62,5 +63,6 @@ fn internal_class_ignores_detail_on_caller_message() {
     let err = DomainError::new(DomainErrorClass::Internal, "an internal error occurred")
         .with_detail(driver_detail());
 
+    assert_eq!(err.class(), DomainErrorClass::Internal);
     assert_internal_carries_no_driver_text(&err);
 }

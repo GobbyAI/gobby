@@ -2,8 +2,7 @@
 
 #[path = "node_support/checkout_tests.rs"]
 mod checkout_tests;
-#[path = "node_support/fake_gterm.rs"]
-mod fake_gterm;
+use super::node_support::fake_gterm;
 #[path = "node_support/fd_constructor_tests.rs"]
 mod fd_constructor_tests;
 #[path = "node_support/fd_hygiene.rs"]
@@ -1769,6 +1768,8 @@ impl SrtTree {
         for name in ["home", "gobby_home", "bin", "tmp", "workspace", "main"] {
             fs::create_dir_all(self.path(name))?;
         }
+        // The node refuses a build root it cannot find, so the default cache exists first.
+        fs::create_dir_all(self.path("gobby_home").join("cache"))?;
         for relative in srt_entries(inputs, "home_tree")? {
             let relative = relative
                 .as_str()
@@ -1804,6 +1805,8 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         workspace: PathBuf::from(srt_text(&filled, "workspace")?),
         home: tree.path("home"),
         gobby_home: tree.path("gobby_home"),
+        // The default build root, the gobby cache, which the corpus oracle expects.
+        build_root: tree.path("gobby_home").join("cache"),
         credential_authority_roots: serde_json::from_value(
             filled
                 .get("credential_authority_roots")
@@ -1817,6 +1820,9 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         ),
         env: serde_json::from_value(filled["env"].clone())?,
         provider_executable: Some(PathBuf::from(srt_text(&filled, "provider_executable")?)),
+        // The corpus oracle runs without the socket grant, as the Python oracle does when it
+        // passes no socket.
+        allow_run_unix_sockets: false,
         daemon_port: u16::try_from(filled["daemon_port"].as_u64().context("daemon_port")?)?,
         websocket_port: u16::try_from(
             filled["websocket_port"]
@@ -3272,7 +3278,7 @@ esac
         let output = std::process::Command::new(std::env::current_exe()?)
             .args([
                 "--exact",
-                "chokepoint_monitor_restart_helper",
+                "node_agents::chokepoint_monitor_restart_helper",
                 "--nocapture",
             ])
             .env("GOBBY_TEST_MONITOR_RESTART_CASE", &case_dir)

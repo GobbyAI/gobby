@@ -2,15 +2,18 @@
 
 The gterm host hands every child the environment it inherited from the daemon that
 started it, and its spawn env is set-only, so a key the CLI must never see is
-removed by ``/usr/bin/env -u``. env execs the program in place, so the pane pid
-stays the provider.
+removed by ``/usr/bin/env -u``. Agent CLIs also lose the inherited Cargo wrapper,
+incremental and sccache keys, so their builds stay plain incremental builds. env execs
+the program in place, so the pane pid stays the provider.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from gobby.agents.cargo_environment import removed_cargo_env_keys
 from gobby.agents.credential_inventory import CLI_DENIED_AMBIENT_KEYS, denied_ambient_keys
 from gobby.agents.spawners.auth_env import CLI_ENV_ALLOWLIST, terminal_env_passthrough
 
@@ -47,7 +50,8 @@ def apply_native_env_policy(
     if cli:
         for key, value in terminal_env_passthrough(cli).items():
             spawn_env.setdefault(key, value)
-        denied = denied_ambient_keys(cli)
+        # Launch-provided keys and the daemon's inherited env both carry the prefixed keys.
+        denied = (*denied_ambient_keys(cli), *removed_cargo_env_keys(spawn_env, os.environ))
     for key in denied:
         spawn_env.pop(key, None)
     for key in _BLANKED_KEYS:

@@ -10,11 +10,9 @@ from pathlib import Path
 from gobby.agents.cargo_environment import cargo_environment
 from gobby.agents.constants import (
     CARGO_HOME,
-    CARGO_TARGET_DIR,
     GOBBY_SESSION_ID,
     UV_CACHE_DIR,
     ensure_agent_cargo_home_dir,
-    ensure_agent_sccache_dir,
     ensure_agent_uv_cache_dir,
     get_agent_session_cache_dir,
 )
@@ -92,16 +90,27 @@ def build_spawn_cache_env(session_id: str) -> dict[str, str]:
     """Return env values for shared spawned-agent cache and tool paths."""
     env = {entry.env_var: entry.ensure_path(session_id) for entry in SPAWN_CACHE_POLICY}
     env[PATH_ENV_VAR] = merge_spawn_path(os.environ.get(PATH_ENV_VAR))
-    # Kept out of SPAWN_CACHE_POLICY: sandboxed spawns turn that policy into write grants.
-    # The socket sits beside the cache to stay within the socket path limit.
-    sccache_dir = ensure_agent_sccache_dir()
-    env.update(cargo_environment(sccache_dir, sccache_dir.with_name("sccache.sock")))
+    env.update(cargo_environment())
     return env
+
+
+def _sandbox_session_id(env_vars: dict[str, str]) -> str:
+    """Return the spawn's session id, refusing a sandboxed spawn that has none.
+
+    Every session-scoped cache derives from this id, so a missing one refuses the spawn
+    instead of sharing a fallback directory across sessions.
+    """
+    session_id = env_vars.get(GOBBY_SESSION_ID, "")
+    if not session_id:
+        raise ValueError(
+            f"Sandboxed spawn has no {GOBBY_SESSION_ID}; refusing a shared cache directory"
+        )
+    return session_id
 
 
 def apply_spawn_cache_policy(env_vars: dict[str, str]) -> None:
     """Materialize missing cache/tool env vars in an existing spawn env."""
-    session_id = env_vars.get(GOBBY_SESSION_ID) or "unknown-session"
+    session_id = _sandbox_session_id(env_vars)
     for entry in SPAWN_CACHE_POLICY:
         if not env_vars.get(entry.env_var):
             env_vars[entry.env_var] = entry.ensure_path(session_id)
@@ -158,18 +167,22 @@ def sandbox_config_for_spawn(
 
 def _apply_sandbox_cache_policy(env_vars: dict[str, str]) -> None:
     """Materialize per-run toolchain cache redirects for sandboxed spawns."""
-    session_id = env_vars.get(GOBBY_SESSION_ID) or "unknown-session"
+    session_id = _sandbox_session_id(env_vars)
     for entry in SANDBOX_CACHE_POLICY:
         if not env_vars.get(entry.env_var):
             env_vars[entry.env_var] = entry.ensure_path(session_id)
 
 
 def sandbox_write_paths(env_vars: dict[str, str]) -> list[str]:
-    """Return concrete paths that a sandboxed spawned agent must be able to use."""
-    paths = [
-        env_vars.get(env_var, "") for env_var in (*SPAWN_CACHE_ENV_VARS, *SANDBOX_CACHE_ENV_VARS)
-    ]
-    paths.append(env_vars.get(CARGO_TARGET_DIR, ""))
+    """Return concrete paths that a sandboxed spawned agent must be able to use.
+
+    The session uv cache is never granted: unsandboxed agents install into it. The sandboxed
+    uv cache is the run's own, granted with the run's writable directories. The spawn env's
+    CARGO_HOME and CARGO_TARGET_DIR belong to the unsandboxed trust domain, so they are never
+    granted either: the run's own cargo home and target replace them, as
+    ``previous_run_write_paths`` supersedes them at launch.
+    """
+    paths = [env_vars.get(env_var, "") for env_var in SANDBOX_CACHE_ENV_VARS]
     paths.append(hook_inbox_dir())
     return _dedupe(paths)
 

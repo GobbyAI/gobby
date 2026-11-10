@@ -70,8 +70,15 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.110"),
         # gcode: nightly vector reconcile receipts, the apply switch and the reconcile migration changed in #23584 under installed 1.9.110.
         ("gcode", "1.9.111"),
+        # gcode, gdaemon, ghook: gcore and the native build-root sandbox launch changed in #25825 under installed 1.9.111, 0.4.151, 0.9.74.
+        ("gcode", "1.9.112"),
         ("gdaemon", "0.4.113"),
+        ("gdaemon", "0.4.152"),
+        # gclient, gterm: the outage toast and the one-suite test layout changed in #25825 under 0.1.122, 0.1.28.
+        ("gclient", "0.1.123"),
+        ("gterm", "0.1.29"),
         ("ghook", "0.9.52"),
+        ("ghook", "0.9.75"),
         # #25710: gcore's embedded catalog manifest changed, so every shipped binary whose
         # closure reaches gobby-core gets a forward patch bump under its installed version.
         ("gmcp", "0.1.35"),
@@ -79,6 +86,13 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gcode", "1.9.106"),
         ("gdaemon", "0.4.138"),
         ("ghook", "0.9.70"),
+        # #25662: migration 495 changed gcore's embedded schema assets, so every shipped binary
+        # whose closure reaches gobby-core gets a forward patch bump above the 0.5.0 tip.
+        ("gcode", "1.9.113"),
+        ("gdaemon", "0.4.153"),
+        ("ghook", "0.9.76"),
+        ("gclient", "0.1.124"),
+        ("gmcp", "0.1.41"),
     ],
 )
 def test_changed_source_floors_cover_their_patch_bumps(bin_name: str, minimum: str) -> None:

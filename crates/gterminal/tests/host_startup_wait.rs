@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-mod host_support;
+use crate::host_support;
 
 use host_support::{temp_socket_dir, wait_socket_with, CONTROL_SOCKET};
 use std::cell::{Cell, RefCell};

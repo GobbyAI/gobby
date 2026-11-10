@@ -1,5 +1,3 @@
-mod common;
-
 use gobby_terminals::leases::{Backend, Error, Registry, Requester, Viewer, WriteAdmit};
 use uuid::Uuid;
 

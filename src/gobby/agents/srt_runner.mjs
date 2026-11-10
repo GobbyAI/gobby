@@ -737,6 +737,9 @@ function rememberVerdict(verdicts, message, accepted) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
+  // Preflight and provider are separate consumers; retained preflight events
+  // must never reserve the provider's monitor identity.
+  const monitorRunKey = options.preflight ? `preflight-${randomUUID()}` : process.env.GOBBY_SRT_RUN_KEY
   // sandbox-runtime allocates its mux/TLS unix sockets under os.tmpdir(), and
   // the per-run managed-execution TMPDIR is too deep for sun_path (104 bytes
   // on macOS). Run the runner itself out of the short GOBBY_SRT_TMPDIR while
@@ -797,7 +800,7 @@ async function main() {
           cleanup = stopChild().catch(cleanupError => {
             monitorFailure = new Error(`fail-closed provider cleanup failed: ${cleanupError.message}`, { cause: cleanupError })
           })
-        })
+        }, monitorRunKey)
         const deliver = transport.deliver
         transport.deliver = message => {
           const store = SandboxManager.getSandboxViolationStore()

@@ -847,6 +847,9 @@ mod tests {
                 Value::String("[duration-ms]".to_string()),
             );
         }
+        // `to_value` key order follows serde_json's `preserve_order` feature, which Cargo
+        // unifies into gcode whenever one build includes a crate that enables it.
+        redacted.sort_all_objects();
 
         insta::assert_json_snapshot!("index_outcome", redacted);
     }

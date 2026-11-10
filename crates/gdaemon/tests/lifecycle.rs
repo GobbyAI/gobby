@@ -28,8 +28,7 @@ use tokio::{
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
-#[path = "common/hub_lock.rs"]
-mod hub_lock;
+use super::lease::hub_lock;
 
 /// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
 /// the test deadline.
@@ -129,7 +128,7 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
         eprintln!("DATABASE_URL unset; skipping isolated PostgreSQL lifecycle test");
         return Ok(());
     };
-    let config: tokio_postgres::Config = url.parse()?;
+    let mut config: tokio_postgres::Config = url.parse()?;
     ensure!(
         config.get_dbname() == Some("gobby_test")
             && config.get_hosts() == [tokio_postgres::config::Host::Tcp("127.0.0.1".into())]
@@ -137,16 +136,13 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
             && std::env::var("GOBBY_TEST_PROTECT").as_deref() == Ok("1"),
         "lifecycle tests require protected isolated test hub"
     );
+    config.application_name(format!("gdaemon-lifecycle-fixture:{}", std::process::id()));
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
     // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
     // waiter queues behind whole test bodies from those runs. The bound must outlast several
     // of them, so it is a hang guard, not a fairness budget.
-    timeout(
-        Duration::from_secs(300),
-        admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
-    )
-    .await??;
+    super::lease::lock_fixture_key(&admin, Duration::from_secs(300)).await?;
     // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
     let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lifecycle_{}", Uuid::new_v4().simple());

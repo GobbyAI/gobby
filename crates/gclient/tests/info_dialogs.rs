@@ -1,3 +1,4 @@
+use super::mock_daemon;
 use gobby_client::app::{
     apply_live_menu_action, build_menu, project_dialog_key, ContextMenuKind, MenuAction,
     ModalOutcome,
@@ -10,6 +11,7 @@ use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::Chrome;
 use gobby_client::ui::Mode;
 use gobby_client::Workspace;
+use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -18,8 +20,6 @@ use ratatui::style::Color;
 use ratatui::Terminal;
 use std::time::Duration;
 use tokio::sync::mpsc::unbounded_channel;
-mod mock_daemon;
-use mock_daemon::MockDaemon;
 
 fn about_chrome(kind: ThemeKind) -> Chrome {
     let mut chrome = Chrome::new(Theme::new(kind));

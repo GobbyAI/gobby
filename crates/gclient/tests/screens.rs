@@ -15,7 +15,7 @@
 //! terminal content never enters it and cannot make a golden flap.
 //!
 //! Regenerate with:
-//!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
+//!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test suite -E 'test(/^screens::/)'`
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::startup_stages::{ConnectionView, StageState, StartupStages};

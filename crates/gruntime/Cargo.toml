@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Workspace-private gdaemon route family for /api/runtime and /api/config"
+autotests = false
 
 [lib]
 name = "gobby_runtime"
@@ -39,3 +40,6 @@ tempfile = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 postgres = "0.19"
 tower-service = "0.3"
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

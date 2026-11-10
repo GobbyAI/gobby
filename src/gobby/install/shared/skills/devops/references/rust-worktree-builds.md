@@ -8,28 +8,34 @@ and file churn. Measure where the cost goes, then cut it at the source.
 Check the effective settings before measuring:
 
 ```bash
-for v in CARGO_TARGET_DIR CARGO_INCREMENTAL CARGO_BUILD_JOBS RUSTC_WRAPPER SCCACHE_DIR SCCACHE_CACHE_SIZE; do printf '%s=%s\n' "$v" "$(printenv "$v")"; done  # named, nonsecret only; never dump env
+for v in CARGO_TARGET_DIR CARGO_INCREMENTAL CARGO_BUILD_JOBS RUSTC_WRAPPER; do printf '%s=%s\n' "$v" "$(printenv "$v")"; done  # named, nonsecret only; never dump env
 cargo metadata --format-version 1 --no-deps | jq -r .target_directory
-sccache --show-stats 2>/dev/null | head -20
 ```
 
 Gobby launches agents with their own build roots under `~/.gobby/cache/` (sandboxed and
 unsandboxed trees differ) unless the project configures another root. The host profile
 records the current roots.
 
+Agent builds are plain incremental builds. Gobby sets `CARGO_BUILD_JOBS=4` and removes
+`CARGO_INCREMENTAL`, `RUSTC_WRAPPER` and every `SCCACHE_*` variable when it starts an
+agent CLI. Cargo treats any set `CARGO_INCREMENTAL`, blank included, as
+incremental off, so a value in a shell profile or daemon environment would slow every
+edit loop.
+
 ## What Costs The Most
 
 | Cost | How to see it | Lever |
 |---|---|---|
-| Rebuilding dependencies per tree | `sccache --show-stats` hit rate near zero | Enable sccache with `CARGO_INCREMENTAL=0`; incremental builds bypass sccache |
+| Rebuilding dependencies per tree | Clean build time of a new tree | Keep each tree's build root between builds; a compiler cache does not help across checkouts (sccache measured 0 of 416 cross-checkout hits) |
 | Debug info size | `du -sh <root>/debug/deps` | `[profile.dev] debug = "line-tables-only"`; panics keep file and line |
-| Incremental state | `du -sh <root>/debug/incremental` | Off for agent builds (above) |
+| Incremental state | `du -sh <root>/debug/incremental` | Keep it: it makes the edit loop fast; it goes when its build root goes |
 | Many test programs | `ls <root>/debug/deps \| grep -c -v '\.d$'` | One integration-test program per crate (nextest isolates each test in its own process) |
 | Stale executables | Old hashes in `deps/` | Prune executables no current build references |
 | Orphaned build roots | Roots whose worktree is gone | Sweep after verifying the tree no longer exists |
 
 Measure each before and after: folder sizes, executable counts, clean build time,
-sccache hits, and the security-service and file-watcher CPU during the build.
+rebuild time after a one-line edit, and the security-service and file-watcher CPU during
+the build.
 
 ## Shared Target Directory: When It Fits
 
@@ -38,11 +44,12 @@ one copy. Cargo's build lock serializes concurrent builds, which also caps load.
 
 It breaks when branches change a crate other crates depend on: a tree can read a
 peer's freshly built library and fail with "no method named X", or pass against the
-wrong version. For gate runs on such branches, give each tree its own target directory
-and share dependency builds through sccache instead.
+wrong version. For gate runs on such branches, give each tree its own target directory;
+each tree then builds its dependencies once, and incremental builds keep later builds
+cheap.
 
-On an agent fleet the lock serialization becomes a queue, so prefer per-tree roots plus
-sccache, and keep shared targets for a few leaf-only branches.
+On an agent fleet the lock serialization becomes a queue, so prefer per-tree roots with
+incremental builds, and keep shared targets for a few leaf-only branches.
 
 ## Build Volume (macOS)
 
@@ -68,5 +75,5 @@ Recommend it only when measurement shows file-watcher or indexer CPU during buil
   stale executables.
 - Every deletion needs the operator's approval; report sizes first.
 
-_Version: 1.0.2_
-_Last verified: 2026-11-06_
+_Version: 1.1.1_
+_Last verified: 2026-11-07_

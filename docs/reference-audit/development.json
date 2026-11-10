@@ -359,7 +359,7 @@
     {
       "id": "core-boundary",
       "kind": "test",
-      "command": "cargo test -p gobby-core --no-default-features --test public_boundary",
+      "command": "cargo test -p gobby-core --no-default-features --test suite public_boundary::",
       "result": "3 passed; current Cargo features and guide boundary text."
     },
     {
@@ -371,7 +371,7 @@
     {
       "id": "hook-contracts",
       "kind": "test",
-      "command": "cargo test -p gobby-hooks --test contract --test inbox_fallback --test cli_schema_identity",
+      "command": "cargo test -p gobby-hooks --test suite -- contract:: inbox_fallback:: cli_schema_identity::",
       "result": "48 passed in 3 suites (1.37s), isolated provider delivery/inbox fallback/schema fixtures."
     },
     {

@@ -476,6 +476,28 @@ async def test_already_unregistered_missing_checkout_cleans_merged_branch(
 
 
 @pytest.mark.asyncio
+async def test_missing_checkout_deletion_reaches_cargo_target_cleanup(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(repo, "branch", "-f", "main", "0.5.0")
+    shutil.rmtree(worktree.worktree_path)
+    _git(repo, "worktree", "remove", worktree.worktree_path)
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+    cleanup = MagicMock(return_value=None)
+
+    with patch("gobby.worktrees.deletion.cleanup_checkout_cargo_target_dir", cleanup):
+        result = await delete(worktree_id=worktree.id, merged_into="main")
+
+    assert result["success"] is True
+    cleanup.assert_called_once_with(Path(worktree.worktree_path), worktree.project_id)
+    storage.delete.assert_called_once_with(worktree.id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("branch_state", ["merged", "unmerged", "absent"])
 async def test_missing_pruned_checkout_preserves_unmerged_branch_without_explicit_target(
     landed_worktree: tuple[Path, Worktree],

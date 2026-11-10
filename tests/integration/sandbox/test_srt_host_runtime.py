@@ -7,6 +7,7 @@ import json
 import os
 import pty
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -281,6 +282,28 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
         ).returncode
         == 0
     )
+
+
+def test_srt_sandboxed_uv_run_bootstraps_from_the_run_cache(tmp_path: Path) -> None:
+    """With the session uv cache ungranted, a sandboxed `uv run` still bootstraps."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    uv = shutil.which("uv")
+    assert uv is not None, "uv must be on PATH for the sandboxed smoke"
+    launch = _prepare_launch(workspace, "uv-smoke")
+
+    result = subprocess.run(
+        _runner_argv(launch, [uv, "run", "--no-sync", "python", "-c", "print(1)"]),
+        cwd=workspace,
+        env={**os.environ, **launch.provider_env},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1"
 
 
 def test_srt_runner_preserves_tty_masks_credentials_and_forwards_terminal_signals(

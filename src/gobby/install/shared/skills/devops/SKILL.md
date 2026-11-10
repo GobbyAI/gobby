@@ -1,7 +1,7 @@
 ---
 name: devops
 description: "Host performance and build-infrastructure diagnostics for any machine running a Gobby agent fleet (macOS tools first, Linux equivalents noted). Attributes load (CPU, exec storms, security services), measures build churn and disk use, and checks local container services. Use when the host is hot or slow under agent load, builds stall, disk fills, or a container misbehaves."
-version: "1.0.0"
+version: "1.0.1"
 category: operations
 triggers: host load, high cpu, xprotect, syspolicyd, fseventsd, exec storm, eslogger, powermetrics, disk full, cargo target, sccache, build churn, docker, container, falkordb, qdrant, postgres container
 sources:
@@ -40,7 +40,7 @@ Load each with `get_skill_file(name="devops", path="references/<file>")`. Always
 | `host-profile.md` | Discovering and recording this machine |
 | `macos-performance-triage.md` | What is hot right now |
 | `exec-storms.md` | Security services hot together; naming the launcher |
-| `rust-worktree-builds.md` | Build roots, sccache, debug info, test programs, build volume |
+| `rust-worktree-builds.md` | Build roots, incremental builds, debug info, test programs, build volume |
 | `disk-usage.md` | APFS measurement and tiered cleanup |
 | `benchmark.md` | Baselines, A/B runs, the concurrent-agent ramp test |
 | `docker-local.md` | Local container resources, health and stale containers |

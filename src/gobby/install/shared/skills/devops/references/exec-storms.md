@@ -55,8 +55,8 @@ Reduce the event rate instead.
 | Generator | Fingerprint | Upstream fix |
 |---|---|---|
 | Hook binary per tool call (`ghook`) | One launch per agent action | Fewer concurrent agents, or a long-lived hook path |
-| Test executables | Many distinct paths under a build root's `deps/` | One test program per crate; reuse builds across trees (sccache) |
-| Build scripts and proc macros | `build-script-build`, many `rustc` | Shared caching; avoid rebuilding unchanged crates |
+| Test executables | Many distinct paths under a build root's `deps/` | One test program per crate; keep each tree's build root between builds |
+| Build scripts and proc macros | `build-script-build`, many `rustc` | Incremental builds in a kept build root; avoid rebuilding unchanged crates |
 | Agent CLIs launching `git`, `node`, `uv` | Repeated short-lived tools | Collapse duplicate sessions; cache status polls |
 | `uvx --from git+…` tools | Re-resolve a git source each launch | Install once with `uv tool install` |
 | `brew` auto-update loops | `portable-ruby`, Homebrew `bash` | `HOMEBREW_NO_AUTO_UPDATE=1`; remove the poller |
@@ -83,5 +83,5 @@ the quiet event stream) to the operator for IT or the vendor. Old versions liste
 Report the event rate, the top launchers with counts, the security services' CPU, and
 the upstream change that lowers the rate. Before and after numbers use the same window.
 
-_Version: 1.0.1_
-_Last verified: 2026-11-06_
+_Version: 1.1.0_
+_Last verified: 2026-11-07_

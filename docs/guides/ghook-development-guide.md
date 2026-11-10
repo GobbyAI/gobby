@@ -2,6 +2,8 @@
 
 Technical internals for developers and agents working in the ghook codebase.
 
+For incremental builds, the build root and test layout, see [Building Gobby](../../CONTRIBUTING.md#building-gobby).
+
 ## Architecture Overview
 
 ```text

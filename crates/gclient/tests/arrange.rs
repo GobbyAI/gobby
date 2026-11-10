@@ -1,7 +1,6 @@
-mod mock_daemon;
+use super::mock_daemon;
 
-#[path = "mock_daemon/draw.rs"]
-mod draw;
+use super::draw;
 
 use draw::DrawRecorder;
 use gobby_client::app::{

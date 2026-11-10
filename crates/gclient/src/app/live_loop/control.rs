@@ -185,7 +185,7 @@ pub(super) fn send_live_input(
         return send_live_write(workspace, jobs, pane_id, data, paste);
     }
     if !workspace.daemon_ready() {
-        refuse_during_outage(workspace, pane_id);
+        refuse_during_outage(workspace, chrome, pane_id);
         return Ok(());
     }
     if attaching(workspace.pane(pane_id)) {
@@ -195,11 +195,18 @@ pub(super) fn send_live_input(
 }
 
 /// Input typed while the daemon is away and the pane has no live host stream
-/// to type on. Nothing is sent, and the status says so (#24815).
-fn refuse_during_outage(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+/// to type on. Nothing is sent, and the status says so (#24815). The pane note
+/// is drawn only for a pane without a frame, so the toast is what a pane that
+/// was live before the outage shows.
+fn refuse_during_outage(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+) {
     if let Some(pane) = workspace.panes.get_mut(&pane_id) {
         pane.status_message = Some(DAEMON_DOWN_INPUT.to_string());
     }
+    chrome.notify(Toast::error(DAEMON_DOWN_INPUT));
 }
 
 /// Closes the pane's writer queue behind its accepted writes, or a barrier

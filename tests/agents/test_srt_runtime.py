@@ -36,6 +36,7 @@ from gobby.agents.srt_runtime import (
     SrtInstallation,
     SrtRuntimeError,
     prepare_sandbox_launch,
+    retained_launch_write_paths,
     verify_srt_installation,
     verify_srt_installation_for_launch,
 )
@@ -140,6 +141,19 @@ def test_previous_run_write_paths_anchors_relative_cargo_home_at_workspace(
 
     assert str((workspace / "relative-cargo-cache").resolve()) in superseded
     assert str((daemon_cwd / "relative-cargo-cache").resolve()) not in superseded
+
+
+def test_launch_drops_the_per_session_grants_the_run_cache_supersedes(tmp_path: Path) -> None:
+    session_go_cache = str(tmp_path / "gobby" / "go-cache" / "session-one")
+    hook_inbox = str(tmp_path / "gobby-home" / "hooks" / "inbox")
+
+    retained = retained_launch_write_paths(
+        [session_go_cache, hook_inbox],
+        {"GOCACHE": session_go_cache},
+        tmp_path,
+    )
+
+    assert retained == [hook_inbox]
 
 
 @pytest.mark.parametrize("provider", ["grok", "claude", "codex", "agy", "droid", None])
@@ -748,6 +762,14 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         preflights.append((launch, cwd, env))
 
     monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
+
+    # This policy unit uses a nonrepository workspace; real Git and its deadline
+    # are exercised by TestComputeSandboxPaths in test_sandbox.py.
+    async def no_git_metadata(path: Path) -> list[str]:
+        assert path == workspace.resolve()
+        return []
+
+    monkeypatch.setattr("gobby.agents.sandbox._git_metadata_write_paths", no_git_metadata)
     # #25069: the re-signed ps shim serves every SRT launch, not only Droid. Every
     # provider must get it readable and first on PATH so `ps -axo pid,ppid,etime,ucomm`
     # resolves inside the sandbox.

@@ -1,4 +1,4 @@
-mod mock_daemon;
+use super::mock_daemon;
 
 use gobby_client::app::{plan_arrange, ArrangeLayout};
 use mock_daemon::MockDaemon;
@@ -442,6 +442,7 @@ async fn wait_for_output_exit_codes_follow_reason() {
 /// composer. The normal 5s request deadline gave up mid-verification (#23730).
 #[tokio::test(flavor = "multi_thread")]
 async fn send_keys_enter_waits_for_the_daemons_verified_submit() {
+    // test-quality: allow SLEEP_IN_TEST -- timing behavior: a submitted send-keys outlasts the normal 5s REQUEST_DEADLINE (#23730); the daemon's reply is held 6s of wall time, since the client is a real CLI subprocess
     let daemon = MockDaemon::start("command-token").await;
     let seeded = daemon.seed_workspace(PROJECT, &[(&["terminal-a"], "first")]);
     let pane = seeded[0].1[0].clone();

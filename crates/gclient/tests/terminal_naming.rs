@@ -9,7 +9,7 @@
 //! session_name`, so it is `zsh` for one pane and `75`, `[tmux]` or a whole
 //! session banner for the next.
 
-mod mock_daemon;
+use super::mock_daemon;
 
 use gobby_client::daemon::{Daemon, LiveDaemon};
 use gobby_client::ui::chrome::{attention_label, Chrome, RowState};

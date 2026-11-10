@@ -5,12 +5,12 @@
 
 use super::{
     PolicyInputs,
-    paths::{canonical_paths, dedupe, expand_user, resolve_nonstrict, text},
+    paths::{dedupe, expand_user, resolve_nonstrict, text},
 };
-use crate::node_commands::Sandbox;
+use crate::node_commands::{Sandbox, SandboxBackend};
 use anyhow::{Result, anyhow, bail};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -73,10 +73,14 @@ fn temp_root(env: &BTreeMap<String, String>) -> PathBuf {
     PathBuf::from(non_empty(env, "TMPDIR").unwrap_or("/tmp"))
 }
 
-fn session_of(env: &BTreeMap<String, String>) -> String {
+/// The spawn's session id. A spawn without one is refused: a fallback directory would be
+/// shared by every such session.
+fn session_of(env: &BTreeMap<String, String>) -> Result<String> {
     non_empty(env, SESSION_ENV)
-        .unwrap_or("unknown-session")
-        .to_string()
+        .map(str::to_string)
+        .ok_or_else(|| {
+            anyhow!("sandboxed spawn has no {SESSION_ENV}; refusing a shared cache directory")
+        })
 }
 
 /// `_safe_component`: replace unsafe characters, trim dashes, and cap the length.
@@ -99,12 +103,17 @@ pub(super) fn safe_component(value: &str, limit: usize, fallback: &str) -> Strin
     }
 }
 
-/// `get_agent_session_cache_dir`: `<tmp>/gobby/<dir>/<safe session>-<digest>`.
-fn session_cache_dir(tmp: &Path, dir: &str, session: &str) -> PathBuf {
-    let prefix = safe_component(session, 80, "unknown-session");
-    tmp.join("gobby")
+/// `get_agent_session_cache_dir`: `<tmp>/gobby/<dir>/<safe session>-<digest>`. A session id with
+/// no safe characters is refused rather than mapped to a name every such session shares.
+fn session_cache_dir(tmp: &Path, dir: &str, session: &str) -> Result<PathBuf> {
+    let prefix = safe_component(session, 80, "");
+    if prefix.is_empty() {
+        bail!("Agent cache needs a session id with safe characters");
+    }
+    Ok(tmp
+        .join("gobby")
         .join(dir)
-        .join(format!("{prefix}-{}", super::hash16(session.as_bytes())))
+        .join(format!("{prefix}-{}", super::hash16(session.as_bytes()))))
 }
 
 fn shared_cargo_home(gobby: &Path) -> PathBuf {
@@ -146,13 +155,13 @@ fn merge_spawn_path(preferred: Option<&str>, inputs: &PolicyInputs) -> String {
 }
 
 /// `apply_spawn_cache_policy` and `_apply_sandbox_cache_policy`: fill each missing cache and PATH entry.
-fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) {
-    let session = session_of(env);
+fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) -> Result<()> {
+    let session = session_of(env)?;
     let tmp = temp_root(env);
     let defaults = [
         (
             UV_CACHE_DIR,
-            text(&session_cache_dir(&tmp, "uv-cache", &session)),
+            text(&session_cache_dir(&tmp, "uv-cache", &session)?),
         ),
         (CARGO_HOME, text(&shared_cargo_home(&inputs.gobby_home))),
     ];
@@ -167,20 +176,23 @@ fn fill_spawn_env(env: &mut BTreeMap<String, String>, inputs: &PolicyInputs) {
         if env.get(*name).is_none_or(String::is_empty) {
             env.insert(
                 name.to_string(),
-                text(&session_cache_dir(&tmp, dir, &session)),
+                text(&session_cache_dir(&tmp, dir, &session)?),
             );
         }
     }
+    Ok(())
 }
 
-/// `sandbox_write_paths`: the cache, Cargo target, and hook inbox paths a sandboxed run writes.
+/// `sandbox_write_paths`: the per-toolchain cache and hook inbox paths a sandboxed run writes. The
+/// session uv cache is never granted, because unsandboxed agents install into it; the run's own uv
+/// cache is granted with its writable directories. The spawn env's `CARGO_HOME` and
+/// `CARGO_TARGET_DIR` belong to the unsandboxed trust domain, so neither is granted here; the run's
+/// own cargo home and target are granted by `run_grants`.
 fn sandbox_write_paths(env: &BTreeMap<String, String>, inputs: &PolicyInputs) -> Vec<String> {
-    let mut paths: Vec<String> = [UV_CACHE_DIR, CARGO_HOME]
-        .into_iter()
-        .chain(SANDBOX_CACHE_POLICY.iter().map(|(name, _)| *name))
-        .map(|name| env.get(name).cloned().unwrap_or_default())
+    let mut paths: Vec<String> = SANDBOX_CACHE_POLICY
+        .iter()
+        .map(|(name, _)| env.get(*name).cloned().unwrap_or_default())
         .collect();
-    paths.push(env.get(CARGO_TARGET_DIR).cloned().unwrap_or_default());
     paths.push(text(
         &inputs.home.join(".gobby").join("hooks").join("inbox"),
     ));
@@ -255,12 +267,32 @@ pub(super) fn grant_declared_nextest(config: &mut Sandbox, source_root: &Path, p
 /// `ensure_agent_cargo_target_dir`: the unsandboxed agent target for this checkout.
 pub(super) fn agent_cargo_target_dir(inputs: &PolicyInputs) -> String {
     let project_root = inputs
-        .gobby_home
-        .join("cache")
+        .build_root
         .join("cargo-target-v2")
         .join(safe_component(&inputs.project_id, 80, "unknown-project"));
     let checkout = super::checkout_component(&inputs.workspace);
     text(&project_root.join(format!("{checkout}-agent")))
+}
+
+/// What a native launch gets for its builds: the run tmp as a Unix socket root where
+/// `srt_runtime.py` grants it (srt on darwin with the socket grant, #21752), and the Cargo
+/// variables.
+pub(super) fn native_cargo_grants(
+    inputs: &PolicyInputs,
+    layout: &RunLayout,
+) -> (Option<String>, BTreeMap<String, String>) {
+    let run_sockets = inputs.allow_run_unix_sockets
+        && inputs.sandbox.backend == SandboxBackend::Srt
+        && inputs.platform == "darwin";
+    let socket_root = run_sockets.then(|| text(&resolve_nonstrict(&layout.tmp)));
+    (socket_root, cargo_environment())
+}
+
+/// Mirrors `cargo_environment.cargo_environment`: agent builds are plain incremental builds,
+/// so a launch sets only the job limit. The provider env removes the wrapper and
+/// incremental keys at exec.
+pub(super) fn cargo_environment() -> BTreeMap<String, String> {
+    BTreeMap::from([("CARGO_BUILD_JOBS".to_string(), "4".to_string())])
 }
 
 /// The seat's workspace grant: `agent_workspaces.py::spawn_workspace_write_paths`, added
@@ -296,8 +328,8 @@ pub(super) fn spawn_grants(
     project: &[String],
     env: &mut BTreeMap<String, String>,
     inputs: &PolicyInputs,
-) -> Sandbox {
-    fill_spawn_env(env, inputs);
+) -> Result<Sandbox> {
+    fill_spawn_env(env, inputs)?;
     let mut extra = config.extra_write_paths.clone();
     for path in project
         .iter()
@@ -310,44 +342,32 @@ pub(super) fn spawn_grants(
     }
     config.extra_write_paths = extra;
     config.allow_package_registries = true;
-    config
+    Ok(config)
 }
 
-/// `previous_run_write_paths`: the canonical cache and Cargo paths the spawn env names. The
-/// run's own roots supersede them, and unsandboxed builds execute from the shared Cargo home
-/// and target, so a sandboxed run keeps no write grant on any of them. A relative value is
-/// anchored at the workspace, the same base the grants are canonicalized with.
-pub(super) fn superseded_write_paths(
+/// Mirror Python's launch filter: run-local caches replace the spawn env's grants.
+pub(super) fn retained_launch_write_paths(
+    grants: Vec<String>,
     env: &BTreeMap<String, String>,
     inputs: &PolicyInputs,
-) -> BTreeSet<String> {
-    let raws: Vec<&str> = RUN_CACHE_ENV_VARS
-        .iter()
-        .copied()
-        .chain([CARGO_HOME, CARGO_TARGET_DIR])
-        .filter_map(|name| non_empty(env, name))
-        .collect();
-    canonical_paths(raws, Some(inputs.workspace.as_path()), &inputs.home)
+) -> Vec<String> {
+    let superseded = super::paths::canonical_paths(
+        RUN_CACHE_ENV_VARS
+            .iter()
+            .copied()
+            .chain([CARGO_HOME, CARGO_TARGET_DIR])
+            .filter_map(|name| non_empty(env, name)),
+        Some(&inputs.workspace),
+        &inputs.home,
+    );
+    grants
         .into_iter()
+        .filter(|path| {
+            !super::paths::canonical_paths([path], Some(&inputs.workspace), &inputs.home)
+                .iter()
+                .any(|canonical| superseded.contains(canonical))
+        })
         .collect()
-}
-
-/// `srt_runtime`'s retained-writes step: drop each spawn write grant that the run supersedes,
-/// compared in the same canonical form as the superseded set.
-pub(super) fn retain_unsuperseded(
-    mut config: Sandbox,
-    superseded: &BTreeSet<String>,
-    inputs: &PolicyInputs,
-) -> Sandbox {
-    config.extra_write_paths.retain(|path| {
-        let canonical = canonical_paths(
-            [path.as_str()],
-            Some(inputs.workspace.as_path()),
-            &inputs.home,
-        );
-        !canonical.iter().any(|value| superseded.contains(value))
-    });
-    config
 }
 
 /// `sandbox_policy.py::secure_policy_directory`: the per-run policy directory.
@@ -387,6 +407,8 @@ pub(super) struct RunLayout {
     pub logs: PathBuf,
     pub cache: PathBuf,
     pub shared_cache: PathBuf,
+    /// The build root's `sandbox` folder. `cargo_target` must resolve under it.
+    pub build_sandbox: PathBuf,
     pub cargo_target: PathBuf,
 }
 
@@ -405,7 +427,8 @@ impl RunLayout {
         self.shared_cache.join("cargo-home")
     }
 
-    /// `SandboxRunPaths.environment`. Without a sccache socket, the sccache keys are blank.
+    /// `SandboxRunPaths.environment`. The Cargo job key comes from
+    /// [`cargo_environment`] and is merged over these values by the caller.
     pub(super) fn environment(&self, provider: &str) -> BTreeMap<String, String> {
         let mut values: BTreeMap<String, String> = RUN_CACHE_ENV_VARS
             .iter()
@@ -426,16 +449,52 @@ impl RunLayout {
         values.insert("TMPPREFIX".to_string(), text(&self.tmp.join("zsh")));
         values.insert("GOBBY_LOG_DIR".to_string(), text(&self.logs));
         values.insert("OCR_NO_UPDATE".to_string(), "1".to_string());
-        for (name, value) in [
-            ("CARGO_BUILD_JOBS", "4"),
-            ("RUSTC_WRAPPER", ""),
-            ("SCCACHE_DIR", ""),
-            ("SCCACHE_SERVER_UDS", ""),
-        ] {
-            values.insert(name.to_string(), value.to_string());
-        }
         values
     }
+}
+
+/// Validate the build root against this node's own filesystem.
+///
+/// The hub's validator cannot see this machine's volumes or links, so the node refuses a root
+/// that is not absolute, is missing (an unmounted volume must never be recreated on the boot
+/// disk), is a symbolic link, or is not spelled canonically. The canonical path is returned.
+fn node_build_root(raw: &Path) -> Result<PathBuf> {
+    if !raw.is_absolute() {
+        bail!(
+            "Agent build root {} is not absolute; the hub sends the canonical configured root",
+            raw.display()
+        );
+    }
+    let meta = match fs::symlink_metadata(raw) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
+            "Agent build root {} is missing on this node; its volume may be unmounted, and the node will not create it",
+            raw.display()
+        ),
+        Err(error) => {
+            return Err(anyhow!("stat agent build root {}: {error}", raw.display()));
+        }
+    };
+    if meta.file_type().is_symlink() {
+        bail!(
+            "Agent build root {} is a symbolic link; the node refuses to follow it",
+            raw.display()
+        );
+    }
+    if !meta.is_dir() {
+        bail!("Agent build root {} is not a directory", raw.display());
+    }
+    let canonical = raw
+        .canonicalize()
+        .map_err(|error| anyhow!("resolve agent build root {}: {error}", raw.display()))?;
+    if canonical != raw {
+        bail!(
+            "Agent build root {} is not canonical on this node; it resolves to {}",
+            raw.display(),
+            canonical.display()
+        );
+    }
+    Ok(canonical)
 }
 
 /// `prepare_sandbox_run_paths` without filesystem writes: the run root, its
@@ -445,6 +504,7 @@ pub(super) fn run_layout(
     inputs: &PolicyInputs,
     env: &BTreeMap<String, String>,
 ) -> Result<RunLayout> {
+    let build_root = node_build_root(&inputs.build_root)?;
     let gobby = inputs.gobby_home.as_path();
     let managed = resolve_nonstrict(&gobby.join("runtime").join("managed-executions"));
     let bootstrap_root = non_empty(env, "GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
@@ -458,11 +518,12 @@ pub(super) fn run_layout(
         None => secure_policy_directory(gobby, &inputs.run_id)?,
     };
     let shared_cache = gobby.join("cache").join("sandbox");
-    let cargo_target = shared_cache
+    let build_sandbox = build_root.join("sandbox");
+    let cargo_target = build_sandbox
         .join("cargo-target")
         .join(super::checkout_component(&inputs.workspace));
     check_cache_path(&shared_cache, &shared_cache.join("cargo-home"))?;
-    check_cache_path(&shared_cache, &cargo_target)?;
+    check_cache_path(&build_sandbox, &cargo_target)?;
     Ok(RunLayout {
         root: root.clone(),
         tmp: root.join("tmp"),
@@ -470,6 +531,7 @@ pub(super) fn run_layout(
         logs: root.join("logs"),
         cache: root.join("cache"),
         shared_cache,
+        build_sandbox,
         cargo_target,
     })
 }
@@ -477,8 +539,11 @@ pub(super) fn run_layout(
 /// Re-checks the cargo grants once `compile_policy` has rendered them, so a link
 /// swapped in during compilation is refused as one present at layout time would be.
 pub(super) fn recheck_cache_grants(layout: &RunLayout, write_paths: &[String]) -> Result<()> {
-    for path in [layout.cargo_home(), layout.cargo_target.clone()] {
-        check_cache_path(&layout.shared_cache, &path)?;
+    for (shared, path) in [
+        (&layout.shared_cache, layout.cargo_home()),
+        (&layout.build_sandbox, layout.cargo_target.clone()),
+    ] {
+        check_cache_path(shared, &path)?;
         if !write_paths.contains(&text(&resolve_nonstrict(&path))) {
             bail!(
                 "Sandbox cache grant {} resolved outside the sandbox cache",

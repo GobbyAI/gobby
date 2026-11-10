@@ -4,7 +4,7 @@
 
 #![cfg(unix)]
 
-mod host_support;
+use crate::host_support;
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
