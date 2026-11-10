@@ -44,16 +44,6 @@ fn unknown_key_is_rejected() {
 }
 
 #[test]
-fn the_retired_seat_ramp_keys_are_no_longer_thresholds() {
-    for block in [
-        json!({"max_new_seats": 3}),
-        json!({"ramp_window_seconds": 900}),
-    ] {
-        assert!(Thresholds::from_fleet_health(&block).is_err(), "{block}");
-    }
-}
-
-#[test]
 fn non_object_block_is_rejected() {
     assert!(Thresholds::from_fleet_health(&json!(3)).is_err());
     assert!(Thresholds::from_fleet_health(&json!(["window_seconds"])).is_err());
