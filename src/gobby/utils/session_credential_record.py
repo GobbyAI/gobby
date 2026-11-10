@@ -36,6 +36,11 @@ def cli_pid_key(pid: int) -> str:
     return f"cli-pid:{pid}"
 
 
+def session_ref_key(session_ref: str) -> str:
+    """Key of a seat's record under one of its own session refs (a shared-host seat)."""
+    return f"session-ref:{session_ref}"
+
+
 def record_path(home: Path, key: str) -> Path:
     return home / STORE_DIR / f"{uuid.uuid5(RECORD_NAMESPACE, key)}.json"
 
@@ -72,9 +77,18 @@ def stable_cli_pid() -> int | None:
         return None
 
 
-def bound_session_credential(home: Path | None = None) -> SessionCredentialRecord | None:
-    """Return the session credential bound to this process's CLI, or None when unbound."""
+def bound_session_credential(
+    home: Path | None = None, session_ref: str | None = None
+) -> SessionCredentialRecord | None:
+    """Return the session credential bound to this process's CLI, or None when unbound.
+
+    A CLI that attested itself keeps its record whatever ref a call names. Without one, a
+    seat on a shared host is found by the session ref its call names; the hook gate refuses
+    a call naming any session other than the caller's own.
+    """
+    root = home if home is not None else get_gobby_home()
     pid = stable_cli_pid()
-    if pid is None:
-        return None
-    return load_record(home if home is not None else get_gobby_home(), cli_pid_key(pid))
+    record = load_record(root, cli_pid_key(pid)) if pid is not None else None
+    if record is None and session_ref and session_ref.strip():
+        record = load_record(root, session_ref_key(session_ref.strip()))
+    return record

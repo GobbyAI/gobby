@@ -135,6 +135,106 @@ fn a_record_for_another_cli_process_is_not_read() {
 }
 
 #[test]
+fn session_ref_key_names_the_record_ghook_stores() {
+    assert_eq!(session_ref_key("#7"), "session-ref:#7");
+}
+
+#[test]
+fn without_a_cli_record_the_calls_own_session_ref_finds_its_record() {
+    let home = machine_key_home();
+    session_credential::store(home.path(), &[session_ref_key("#7")], &credential()).unwrap();
+
+    in_surroundings(home.path(), Surroundings::default(), || {
+        assert!(cli_binding().is_none());
+        let binding = binding_for(Some("#7")).expect("record stored for the ref");
+        assert_eq!(binding.session_id, SESSION_UUID);
+        assert!(binding_for(Some("#8")).is_none());
+        assert!(binding_for(Some("")).is_none());
+        assert!(binding_for(None).is_none());
+    });
+}
+
+#[test]
+fn a_cli_record_wins_over_the_ref_a_call_names() {
+    let home = machine_key_home();
+    store_for_this_cli(home.path());
+    let other = SessionCredential {
+        session_id: "33333333-3333-4333-8333-333333333333".into(),
+        ..credential()
+    };
+    session_credential::store(home.path(), &[session_ref_key("#8")], &other).unwrap();
+
+    in_surroundings(home.path(), Surroundings::default(), || {
+        let binding = binding_for(Some("#8")).expect("the CLI record");
+        assert_eq!(binding.session_id, SESSION_UUID);
+    });
+}
+
+#[test]
+fn a_managed_run_never_reads_a_ref_record() {
+    let home = machine_key_home();
+    session_credential::store(home.path(), &[session_ref_key("#7")], &credential()).unwrap();
+
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            run_id: Some("run-1"),
+            ..Surroundings::default()
+        },
+        || assert!(binding_for(Some("#7")).is_none()),
+    );
+}
+
+#[test]
+fn an_unspawned_request_naming_its_session_presents_that_ref_record() {
+    let home = machine_key_home();
+    session_credential::store(home.path(), &[session_ref_key("#7")], &credential()).unwrap();
+    let cwd = tempdir().unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let head = read_head(&mut stream);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+            .unwrap();
+        head
+    });
+
+    let url = format!("http://{addr}");
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            daemon_url: Some(url.as_str()),
+            ..Surroundings::default()
+        },
+        || {
+            let dialer = Dialer::with_context(cwd.path(), Map::new()).unwrap();
+            let options = RequestOptions {
+                session_id: Some("#7"),
+                ..RequestOptions::default()
+            };
+            assert_eq!(
+                dialer.request("GET", "/api/probe", None, options),
+                json!({})
+            );
+        },
+    );
+
+    let head = server.join().unwrap();
+    assert_eq!(
+        header_values(&head, "Authorization"),
+        vec![format!("Bearer {TOKEN}")]
+    );
+    assert_eq!(
+        header_values(&head, "X-Gobby-Session-Id"),
+        vec![SESSION_UUID]
+    );
+    assert!(!head.contains(MACHINE_KEY), "machine key must not be sent");
+}
+
+#[test]
 fn a_managed_run_has_no_cli_binding() {
     let home = machine_key_home();
     store_for_this_cli(home.path());

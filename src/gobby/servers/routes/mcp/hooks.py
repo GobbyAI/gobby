@@ -197,7 +197,7 @@ def _attach_session_credential(
     response: dict[str, Any],
     *,
     db: Any,
-    proven: bool,
+    claim: SessionStartClaim,
 ) -> dict[str, Any]:
     """Hand a machine-started session its own token after its hook is persisted.
 
@@ -205,7 +205,9 @@ def _attach_session_credential(
     agent token never reaches this branch, and a run-bound start already holds its own
     token. A daemon-internal replay and a start without proof mint nothing.
     """
-    if not proven or not is_session_start_hook(payload.get("source"), payload.get("hook_type")):
+    if not claim.proven or not is_session_start_hook(
+        payload.get("source"), payload.get("hook_type")
+    ):
         return response
     if request.headers.get(AGENT_RUN_ID_HEADER):
         return response
@@ -224,6 +226,7 @@ def _attach_session_credential(
             external_id=external_id,
             source=source,
             machine_id=identity.machine_id,
+            shared_host=claim.shared_host,
         )
     except Exception as exc:
         logger.warning("Session credential mint failed: %s", type(exc).__name__)
@@ -420,7 +423,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     payload,
                     response,
                     db=receipt_db,
-                    proven=session_claim.proven,
+                    claim=session_claim,
                 )
                 return receipt_guarded_response(response, db=receipt_db)
             if envelope_id:
@@ -442,7 +445,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 payload,
                 response,
                 db=receipt_db,
-                proven=session_claim.proven,
+                claim=session_claim,
             )
             return receipt_guarded_response(response, db=receipt_db)
 

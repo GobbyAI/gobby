@@ -65,12 +65,21 @@ pub fn caller_for(envelope: &Envelope) -> Caller {
     }
 }
 
+/// Store key for a shared-host seat's record under one of its own session refs. gmcp and
+/// the Python MCP proxy derive the same key from the session_id a call names.
+pub fn session_ref_key(session_ref: &str) -> String {
+    format!("session-ref:{session_ref}")
+}
+
 /// Keep the credential a SessionStart response carries; return the body without it.
 ///
 /// The record goes under the provider's session id and under the CLI process that
-/// owns this hook, which the MCP client derives from its own parent. A failed write
-/// is reported without the token.
+/// owns this hook, which the MCP client derives from its own parent. A shared-host
+/// credential goes under the session's own refs instead of the CLI process, because
+/// every seat on that host derives the same process. A failed write is reported
+/// without the token.
 pub fn remember_response_credential<'a>(envelope: &Envelope, body: &'a str) -> Cow<'a, str> {
+    let shared_host_refs = shared_host_refs(body);
     let (stripped, credential) = session_credential::extract(body);
     let Some(mut credential) = credential else {
         return stripped;
@@ -80,9 +89,35 @@ pub fn remember_response_credential<'a>(envelope: &Envelope, body: &'a str) -> C
     };
     credential.provider_session_id = provider_session_id.to_string();
     let mut keys = vec![session_credential::provider_key(provider_session_id)];
-    keys.extend(current_cli_pid().map(cli_pid_key));
+    match shared_host_refs {
+        Some(refs) => keys.extend(refs.iter().map(|reference| session_ref_key(reference))),
+        None => keys.extend(current_cli_pid().map(cli_pid_key)),
+    }
     store_credential(&keys, &credential);
     stripped
+}
+
+/// The session refs of a credential the daemon marked as minted for a shared host, or
+/// None for a CLI-attested credential.
+fn shared_host_refs(body: &str) -> Option<Vec<String>> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let field = value.get(session_credential::SESSION_CREDENTIAL_FIELD)?;
+    if field.get("shared_host").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let refs = field
+        .get("session_refs")
+        .and_then(Value::as_array)
+        .map(|refs| {
+            refs.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|reference| !reference.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(refs)
 }
 
 /// Keep a bound SessionStart's credential under this CLI as well.

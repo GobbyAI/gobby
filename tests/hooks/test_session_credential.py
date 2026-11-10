@@ -40,7 +40,12 @@ from gobby.utils.local_token import (
     derive_managed_signing_key,
     verify_agent_api_token,
 )
-from gobby.utils.session_credential_record import cli_pid_key, load_record, stable_cli_pid
+from gobby.utils.session_credential_record import (
+    cli_pid_key,
+    load_record,
+    session_ref_key,
+    stable_cli_pid,
+)
 from tests.fixtures.gdaemon_binary import checkout_debug_dir
 from tests.servers.conftest import authenticate_test_server
 
@@ -678,18 +683,33 @@ def _gmcp_lookup_pid(tree: Any) -> int | None:
         return stable_cli_pid()
 
 
-def test_codex_resume_under_the_shared_app_server_mints_nothing_and_says_why(
+def _expected_session_refs(
+    temp_db: HubDatabase, session_id: str, project: dict[str, Any]
+) -> set[str]:
+    row = temp_db.fetchone("SELECT seq_num, external_id FROM sessions WHERE id = %s", (session_id,))
+    assert row is not None and row["seq_num"] is not None
+    seq = row["seq_num"]
+    return {
+        session_id,
+        str(row["external_id"]),
+        f"#{seq}",
+        str(seq),
+        f"{project['name']}#{seq}",
+        f"{project['id']}#{seq}",
+    }
+
+
+def test_codex_resume_under_the_shared_app_server_mints_a_session_ref_credential(
     hook_route: HookRoute,
+    temp_db: HubDatabase,
     expired_codex_session: Any,
+    sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _machine_caller(hook_route)
     tree = _codex_shared_host_tree()
 
-    with (
-        _hook_socket_in(tree),
-        caplog.at_level("WARNING", logger="gobby.hooks.session_claimant"),
-    ):
+    with _hook_socket_in(tree), caplog.at_level("WARNING"):
         body = _post_session_start(
             hook_route,
             source="codex",
@@ -699,18 +719,53 @@ def test_codex_resume_under_the_shared_app_server_mints_nothing_and_says_why(
             terminal_context={"parent_pid": CODEX_SHARED_HOST_PID},
         )
 
-    assert SESSION_CREDENTIAL_FIELD not in body
-    warnings = [record.getMessage() for record in caplog.records]
-    # The synthetic tree is complete enough that the SessionStart handler itself ran cleanly.
-    assert not any("Event handler" in message for message in warnings), warnings
-    assert any(
-        CODEX_PROVIDER_SESSION in message
-        and "shared host" in message
-        and str(CODEX_SHARED_HOST_PID) in message
-        for message in warnings
-    ), warnings
-    # gmcp on the shared server would look under the server's pid, which no seat owns.
-    assert _gmcp_lookup_pid(tree) == CODEX_SHARED_HOST_PID
+    handler_errors = [m for m in caplog.messages if "Event handler" in m]
+    assert not handler_errors, handler_errors
+    credential = body[SESSION_CREDENTIAL_FIELD]
+    assert credential["session_id"] == expired_codex_session.id
+    # The shared host serves several seats, so the credential is keyed by this seat's own
+    # session refs, never by the host's pid.
+    assert credential["shared_host"] is True
+    assert set(credential["session_refs"]) == _expected_session_refs(
+        temp_db, expired_codex_session.id, sample_project
+    )
+    claims = verify_agent_api_token(credential["token"], SIGNING_KEY)
+    assert claims is not None
+    assert claims.session_id == expired_codex_session.id
+
+
+def test_codex_start_under_the_shared_app_server_does_not_refuse_its_live_seat(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    expired_codex_session: Any,
+) -> None:
+    _machine_caller(hook_route)
+    temp_db.execute(
+        "UPDATE sessions SET status = 'active' WHERE id = %s", (expired_codex_session.id,)
+    )
+
+    with _hook_socket_in(_codex_shared_host_tree()):
+        body = _post_session_start(
+            hook_route,
+            source="codex",
+            hook_type="SessionStart",
+            session_id=CODEX_PROVIDER_SESSION,
+            start_source="resume",
+        )
+
+    assert body[SESSION_CREDENTIAL_FIELD]["session_id"] == expired_codex_session.id
+    assert body[SESSION_CREDENTIAL_FIELD]["shared_host"] is True
+
+
+def test_a_cli_attested_credential_is_not_marked_shared(
+    hook_route: HookRoute, started_session: Any, cli_claimant: Claimant
+) -> None:
+    _machine_caller(hook_route)
+
+    credential = _post_session_start(hook_route)[SESSION_CREDENTIAL_FIELD]
+
+    assert "shared_host" not in credential
+    assert "session_refs" not in credential
 
 
 def test_codex_start_from_an_uninspectable_hook_parent_is_not_called_a_shared_host(
@@ -865,8 +920,18 @@ class _FrontDoor:
         self.server.server_close()
 
 
-def _gmcp_call(gmcp: Path, environment: dict[str, str], cwd: Path) -> dict[str, Any]:
+def _gmcp_call(
+    gmcp: Path, environment: dict[str, str], cwd: Path, session_id: str | None = None
+) -> dict[str, Any]:
     """Make one MCP tool call through the real gmcp binary and return its JSON-RPC reply."""
+    arguments: dict[str, Any] = {
+        "server_name": "example",
+        "tool_name": "echo",
+        "arguments": {"value": "bound"},
+        "preflight_enabled": False,
+    }
+    if session_id is not None:
+        arguments["session_id"] = session_id
     process = subprocess.Popen(
         [str(gmcp)],
         cwd=cwd,
@@ -919,15 +984,7 @@ def _gmcp_call(gmcp: Path, environment: dict[str, str], cwd: Path) -> dict[str, 
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": {
-                    "name": "call_tool",
-                    "arguments": {
-                        "server_name": "example",
-                        "tool_name": "echo",
-                        "arguments": {"value": "bound"},
-                        "preflight_enabled": False,
-                    },
-                },
+                "params": {"name": "call_tool", "arguments": arguments},
             }
         )
         return reply(2)
@@ -1024,6 +1081,107 @@ def test_codex_no_daemon_resume_credential_reaches_ghook_store_and_gmcp_lookup(
 
         # gmcp's real lookup finds it and presents it, not the machine key.
         reply = _gmcp_call(gmcp, environment, workspace)
+        assert reply.get("error") is None, reply
+        tool_calls = [
+            headers
+            for _, path, headers in front_door.requests
+            if path.startswith("/api/mcp/") and path != "/api/mcp/bridge/tool-timeouts"
+        ]
+        assert tool_calls, front_door.requests
+        assert tool_calls[-1]["authorization"] == f"Bearer {stored.token}"
+        assert tool_calls[-1]["x-gobby-session-id"] == expired_codex_session.id
+
+
+@pytest.mark.integration
+def test_codex_shared_host_credential_reaches_gmcp_only_through_the_seats_own_ref(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    expired_codex_session: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """End to end on real binaries under Codex's shared app-server.
+
+    This test process plays the shared app-server: the parent of the real ghook and the
+    real gmcp, as the managed daemon is for every seat it serves. ghook keeps the seat's
+    credential under its session refs and never under the host's pid. gmcp presents it only
+    for a call naming that seat's own session, and refuses a call that names none.
+    """
+    ghook = _checkout_binary("ghook")
+    gmcp = _checkout_binary("gmcp")
+    _machine_caller(hook_route)
+    host_pid = os.getpid()
+    gobby_home = tmp_path / "gobby-home"
+    gobby_home.mkdir()
+    (gobby_home / "machine_id").write_text(TEST_MACHINE_ID + "\n")
+    (gobby_home / "bootstrap.yaml").write_text("api_key: isolated-front-door-key\n")
+    workspace = tmp_path / "workspace"
+    (workspace / ".gobby").mkdir(parents=True)
+    (workspace / ".gobby" / "project.json").write_text(json.dumps({"id": sample_project["id"]}))
+    hook_started = threading.Event()
+    hook_pid: dict[str, int] = {}
+
+    def socket_owner(**_: Any) -> int:
+        assert hook_started.wait(timeout=20)
+        return hook_pid["pid"]
+
+    with _FrontDoor(hook_route) as front_door:
+        environment = _client_environment(gobby_home, tmp_path, front_door.url)
+        hook = subprocess.Popen(
+            [str(ghook), "--gobby-owned", "--cli=codex", "--type=SessionStart"],
+            cwd=workspace,
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        tree = _process_tree(
+            (host_pid, "codex", ["codex", "app-server", "--managed-daemon"], None),
+            (hook.pid, "ghook", ["ghook", "--cli=codex"], host_pid),
+        )
+        with (
+            patch("gobby.hooks.session_claimant._socket_owner", side_effect=socket_owner),
+            patch("gobby.hooks.session_claimant.psutil", tree),
+            patch("gobby.hooks.terminal_context.psutil", tree),
+        ):
+            hook_pid["pid"] = hook.pid
+            hook_started.set()
+            stdout, stderr = hook.communicate(
+                json.dumps(
+                    {
+                        "session_id": CODEX_PROVIDER_SESSION,
+                        "hook_event_name": "SessionStart",
+                        "source": "resume",
+                        "cwd": str(workspace),
+                    }
+                ).encode(),
+                timeout=60,
+            )
+
+        assert hook.returncode == 0, (stdout, stderr)
+        assert SESSION_CREDENTIAL_FIELD.encode() not in stdout
+        # Never under the shared host's pid, which every seat on the host derives.
+        assert load_record(gobby_home, cli_pid_key(host_pid)) is None
+        refs = _expected_session_refs(temp_db, expired_codex_session.id, sample_project)
+        for ref in refs:
+            stored = load_record(gobby_home, session_ref_key(ref))
+            assert stored is not None, ref
+            assert stored.session_id == expired_codex_session.id
+        seq = temp_db.fetchone(
+            "SELECT seq_num FROM sessions WHERE id = %s", (expired_codex_session.id,)
+        )
+        assert seq is not None
+        own_ref = f"#{seq['seq_num']}"
+        stored = load_record(gobby_home, session_ref_key(own_ref))
+        assert stored is not None
+
+        # A call naming no session finds no credential and is refused before it is sent.
+        refused = _gmcp_call(gmcp, environment, workspace)
+        assert "session_credential_unbound" in json.dumps(refused), refused
+        assert not [path for _, path, _ in front_door.requests if path.startswith("/api/mcp/")]
+
+        # A call naming the seat's own session presents that seat's credential.
+        reply = _gmcp_call(gmcp, environment, workspace, session_id=own_ref)
         assert reply.get("error") is None, reply
         tool_calls = [
             headers

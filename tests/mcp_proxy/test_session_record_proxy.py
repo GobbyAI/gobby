@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
-from gobby.utils.session_credential_record import STORE_DIR, cli_pid_key, record_path
+from gobby.utils.session_credential_record import (
+    STORE_DIR,
+    cli_pid_key,
+    record_path,
+    session_ref_key,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -95,6 +100,65 @@ async def test_unmanaged_request_without_a_record_refuses_before_any_request(
         result = await proxy._request("POST", "/api/mcp/tools/call", json={})
 
     assert result["success"] is False
+    assert result["error_code"] == "session_credential_unbound"
+    client.request.assert_not_awaited()
+    machine_key.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_request_without_a_cli_record_speaks_for_its_own_session_ref(
+    unmanaged: Path,
+) -> None:
+    """Under a shared host no record is kept per CLI; the call's own session ref finds it."""
+    _store_record(unmanaged, session_ref_key("#7"), {"token": TOKEN, "session_id": SESSION_ID})
+    client = _client(_response(200, {"success": True}))
+
+    with (
+        patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers") as machine_key,
+        patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
+    ):
+        proxy = DaemonProxy(60887)
+        result = await proxy._request("POST", "/api/mcp/tools/call", json={}, session_id="#7")
+
+    assert result == {"success": True}
+    headers = client.request.await_args.kwargs["headers"]
+    assert headers["Authorization"] == f"Bearer {TOKEN}"
+    assert headers["X-Gobby-Session-Id"] == SESSION_ID
+    machine_key.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_cli_record_wins_over_the_ref_a_call_names(unmanaged: Path) -> None:
+    """A CLI-attested seat keeps its own credential whatever session ref a call carries."""
+    _store_record(unmanaged, cli_pid_key(CLI_PID), {"token": TOKEN, "session_id": SESSION_ID})
+    _store_record(
+        unmanaged, session_ref_key("#8"), {"token": "other-token", "session_id": "other-session"}
+    )
+    client = _client(_response(200, {"success": True}))
+
+    with (
+        patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers"),
+        patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
+    ):
+        proxy = DaemonProxy(60887)
+        await proxy._request("POST", "/api/mcp/tools/call", json={}, session_id="#8")
+
+    headers = client.request.await_args.kwargs["headers"]
+    assert headers["Authorization"] == f"Bearer {TOKEN}"
+    assert headers["X-Gobby-Session-Id"] == SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_request_naming_a_ref_with_no_record_is_refused(unmanaged: Path) -> None:
+    client = _client()
+
+    with (
+        patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers") as machine_key,
+        patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
+    ):
+        proxy = DaemonProxy(60887)
+        result = await proxy._request("POST", "/api/mcp/tools/call", json={}, session_id="#9")
+
     assert result["error_code"] == "session_credential_unbound"
     client.request.assert_not_awaited()
     machine_key.assert_not_called()

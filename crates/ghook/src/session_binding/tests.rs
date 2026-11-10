@@ -236,6 +236,51 @@ fn record_count(home: &Path) -> usize {
 }
 
 #[test]
+fn a_shared_host_credential_is_stored_under_its_session_refs_and_never_the_cli() {
+    let home = machine_key_home();
+    let body = json!({
+        "continue": true,
+        SESSION_CREDENTIAL_FIELD: {
+            "token": TOKEN,
+            "session_id": SESSION_UUID,
+            "project_id": "22222222-2222-4222-8222-222222222222",
+            "shared_host": true,
+            "session_refs": [SESSION_UUID, "#7", "7", "gobby#7", "", 42]
+        }
+    })
+    .to_string();
+
+    isolated(home.path(), || {
+        let stripped = remember_response_credential(&envelope("sid-1", &[]), &body).into_owned();
+
+        let rest: Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(rest, json!({"continue": true}));
+        assert!(session_credential::bound_for_provider(home.path(), "sid-1").is_some());
+        for reference in [SESSION_UUID, "#7", "7", "gobby#7"] {
+            let stored = session_credential::load(home.path(), &session_ref_key(reference))
+                .unwrap_or_else(|| panic!("record stored under {reference}"));
+            assert_eq!(stored.token, TOKEN);
+            assert_eq!(stored.session_id, SESSION_UUID);
+        }
+        let cli = current_cli_pid().expect("the parent CLI process is readable");
+        assert!(
+            session_credential::load(home.path(), &cli_pid_key(cli)).is_none(),
+            "a shared host's pid is every seat's, so it never keys one seat's credential"
+        );
+        assert_eq!(
+            record_count(home.path()),
+            5,
+            "the provider key and one key per usable ref"
+        );
+    });
+}
+
+#[test]
+fn session_ref_key_names_the_record_gmcp_and_the_proxy_read() {
+    assert_eq!(session_ref_key("#7"), "session-ref:#7");
+}
+
+#[test]
 fn response_credential_is_stored_for_the_provider_and_cli_and_stripped() {
     let home = machine_key_home();
     let body = json!({

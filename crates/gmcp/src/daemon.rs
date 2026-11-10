@@ -206,7 +206,7 @@ impl Dialer {
         // An unspawned client sends only its own session's credential. Without one it
         // refuses locally, before any connection, so the machine key never travels for it.
         let managed = session_credential::is_managed_environment();
-        let binding = session_binding::cli_binding();
+        let binding = session_binding::binding_for(options.session_id);
         if !managed && binding.is_none() {
             return Ok(Answer::Final(unbound_refusal()));
         }
@@ -432,7 +432,7 @@ fn unbound_refusal() -> Value {
     json!({
         "success": false,
         "error_code": "session_credential_unbound",
-        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A Codex TUI attached to Codex's shared app-server daemon cannot be bound to one session: relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)",
+        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A seat on Codex's shared app-server is bound by its own session: pass your own session_id on the call",
     })
 }
 
