@@ -82,6 +82,24 @@ class _PendingLookup(NamedTuple):
     outer_call_id: str | None = None
 
 
+def _held_cell_refusal(chain: dict[str, Any]) -> str | None:
+    """Refuse while a typed latch's cell is live, naming each cell and the action that clears it."""
+    sticky = set(chain["sticky_unattributed"])
+    live = [entry for key in ("calls", "cells") for entry in chain[key].values()]
+    held = [entry for entry in live if entry["outer_call_id"] in sticky]
+    if not held:
+        return None
+    cells = sorted({entry["cell_id"] for entry in held if entry.get("cell_id")})
+    if not cells:
+        return "typed input reached an unmapped session; a pending cell is unattributed"
+    names = ", ".join(cells)
+    actions = " and ".join(f"wait on cell {cell} until it exits" for cell in cells)
+    return (
+        "typed input reached an unmapped session; a pending cell is unattributed "
+        f"(held by cell {names}): {actions}, or end it"
+    )
+
+
 def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
     """Read the rollout once and prove the pending call that launched ``command``."""
     parser = CodexTranscriptParser()
@@ -125,8 +143,9 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
-    # receipts must not poison a new command's cwd proof; unresolved calls and
-    # yielded cells can still launch it, so their overflow remains fail closed.
+    # receipts must not poison a new command's cwd proof; unresolved calls, yielded
+    # cells, and unattributed sessions that can still be typed into stay fail closed
+    # through pending_complete. The chain latches that overflow when it drops one.
     if not chain["pending_complete"] or chain["ambiguous_cells"]:
         return _PendingLookup(None, "pending calls overflowed or are ambiguous")
     pending = {
@@ -135,12 +154,17 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         for entry in chain[key].values()
         if entry.get("session_id") is None
     }
-    # Typed input reached a shell this chain could not attribute: its pending cell may run it.
-    sticky = set(chain["sticky_unattributed"])
-    if any(entry["outer_call_id"] in sticky for entry in pending.values()):
-        return _PendingLookup(
-            None, "typed input reached an unmapped session; a pending cell is unattributed"
-        )
+    # Typed input reached a shell this chain could not attribute: its latched cell may run it.
+    held = _held_cell_refusal(chain)
+    if held is not None:
+        return _PendingLookup(None, held)
+    # An open session whose launch command is unreadable can still take typed input and run
+    # it, so it blocks every proof. An attributed session names its command and stays out.
+    pending.update(
+        (entry["outer_call_id"], entry)
+        for entry in chain["sessions"].values()
+        if entry["literal_command"] is None
+    )
     invocations = [
         {**entry, "literal_command": call["cmd"], "workdir": call.get("workdir")}
         for entry in pending.values()
@@ -214,6 +238,8 @@ def _pending_shell_workdir(
         time.sleep(_PENDING_RECORD_RETRY_DELAY_SECONDS)
         lookup = _pending_shell_lookup(transcript_path, command)
     if lookup.workdir is None:
+        if correlation is not None:
+            correlation["refusal"] = lookup.refusal
         head, argc = _redacted_command_head(command)
         logger.warning(
             "cwd proof refused: %s (session=%s head=%s argc=%d)",
@@ -397,8 +423,10 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata: dict[str, Any] = {"_native_hook_type": hook_type}
-        if shell_correlation:
+        if "outer_call_id" in shell_correlation:
             metadata["_native_shell_outer_call_id"] = shell_correlation["outer_call_id"]
+        if "refusal" in shell_correlation:
+            metadata["_native_shell_cwd_refusal"] = shell_correlation["refusal"]
         if shell_cwd_unproven:
             # The launcher's cwd cannot vouch for a script in a computed workdir.
             # Keep it for session lookup, but classify without it for the read-only proof.

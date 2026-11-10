@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from gobby.claude_config import claude_config_home
 from gobby.hooks._normalization_metadata import _path_is_unresolved
 from gobby.hooks._path_scope import (
     _is_temp_path,
@@ -325,6 +327,50 @@ def temp_scratchpad_write(event_data: Mapping[str, Any] | None, tool_input: Any)
     )
 
 
+# A session transcript is a JSONL file under the Claude projects tree. The CLI appends its own
+# notice rows there, and a background call settles only on a notice row in its owner's
+# transcript. The gate names no owner, so it refuses every transcript: an agent's file tools
+# cannot forge a completion row for any call, its own included.
+# Residual, accepted (#25793): only the writer can forge a completion row for its own call,
+# by deliberately writing its own transcript through a channel the gate does not see. Such a
+# channel is an interpreter run from Bash, e.g. `python3 -c "open(...,'a')"`: the gate sees
+# only Edit, Write and redirected shell writes, so an interpreter can append a well-formed
+# row with a matching tool_use_id. Follow-up that closes it: the srt or native sandbox layer
+# denying other sessions' transcripts (option (a) probe; not built here).
+_TRANSCRIPT_ROOT = Path(".claude") / "projects"
+
+
+def _is_session_transcript(path: Path) -> bool:
+    # The volume may fold case (macOS), so the suffix and the roots compare case-insensitively.
+    # A case-only mismatch with a real root is refused too: fail closed on a case-sensitive volume.
+    if path.suffix.casefold() != ".jsonl":
+        return False
+    # Claude writes under its configured config home when CLAUDE_CONFIG_DIR is set, else ~/.claude.
+    target = str(path).casefold()
+    roots = (claude_config_home() / "projects", Path.home() / _TRANSCRIPT_ROOT)
+    return any(
+        target.startswith(prefix)
+        for root in roots
+        for prefix in (
+            str(root).casefold() + os.sep,
+            os.path.realpath(root).casefold() + os.sep,
+        )
+    )
+
+
+def session_transcript_write(event_data: Mapping[str, Any] | None, tool_input: Any) -> bool:
+    """True when a write's target is a session transcript (a .jsonl under the Claude config home).
+
+    The config home is CLAUDE_CONFIG_DIR when set, else ~/.claude; its projects tree is checked.
+    Any one transcript target is enough. The write is refused for every session, the writer's
+    own included; see the residual note above.
+    """
+    data = event_data or {}
+    if data.get("canonical_tool_kind") != "write":
+        return False
+    return any(_is_session_transcript(path) for path in _temp_write_targets(data))
+
+
 PATH_CONDITION_HELPERS: dict[str, Callable[..., Any]] = {
     "touches_docker_policy_path": touches_docker_policy_path,
     "write_paths_within": write_paths_within,
@@ -333,4 +379,5 @@ PATH_CONDITION_HELPERS: dict[str, Callable[..., Any]] = {
     "agent_workspace_write_violation": agent_workspace_write_violation,
     "temp_scratchpad_write": temp_scratchpad_write,
     "temp_write_admitted_dirs": temp_write_admitted_dirs,
+    "session_transcript_write": session_transcript_write,
 }

@@ -734,6 +734,61 @@ class TestMCPStepInPipelineExecute:
         assert mock_execution_manager.create_step_execution.call_args is not None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("inputs", "expected"),
+        [({}, "Default message."), ({"content": "Supplied message."}, "Supplied message.")],
+    )
+    async def test_string_input_default_and_override_reach_mcp_argument(
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_tool_proxy: AsyncMock,
+        inputs: dict[str, str],
+        expected: str,
+    ) -> None:
+        """An input's default fills an MCP argument, and a supplied value replaces it."""
+        from gobby.workflows.definitions import PipelineDefinition
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        pipeline = PipelineDefinition.model_validate(
+            {
+                "name": "input-content-mcp",
+                "inputs": {"content": {"type": "string", "default": "Default message."}},
+                "steps": [
+                    {
+                        "id": "send",
+                        "mcp": {
+                            "server": "gobby-agents",
+                            "tool": "send_message",
+                            "arguments": {
+                                "target": "session",
+                                "target_id": "session-1",
+                                "wake": True,
+                                "message_type": "message",
+                                "content": "${{ inputs.content }}",
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            tool_proxy_getter=lambda: mock_tool_proxy,
+            template_engine=TemplateEngine(),
+        )
+
+        await executor.execute(pipeline=pipeline, inputs=inputs, project_id="proj-123")
+
+        mock_tool_proxy.call_tool.assert_called_once()
+        arguments = mock_tool_proxy.call_tool.call_args.args[2]
+        assert arguments["content"] == expected
+
+    @pytest.mark.asyncio
     async def test_mcp_only_pipeline_calls_only_its_tools_and_never_reaches_the_llm(
         self,
         mock_db: MagicMock,
