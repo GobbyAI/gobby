@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 from gobby.utils.session_context import is_daemon_execution
-from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_models import AgentDefinitionBody, holds_capability
 from gobby.workflows.agent_resolver import (
     AgentResolutionError,
     resolve_agent_with_row,
@@ -61,7 +61,10 @@ def admits_sender(body: AgentDefinitionBody | None, sender_capabilities: Collect
         return False
     if not body.message_sender_capabilities:
         return True
-    return not set(sender_capabilities).isdisjoint(body.message_sender_capabilities)
+    return any(
+        holds_capability(sender_capabilities, required)
+        for required in body.message_sender_capabilities
+    )
 
 
 def recipient_admits(

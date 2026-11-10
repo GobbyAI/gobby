@@ -47,7 +47,7 @@ def _may_release_own_claim(
     return (
         task.project_id == caller.project_id
         and definition is not None
-        and "release_own_claim" in definition[0].capabilities
+        and definition[0].holds("release_own_claim")
         and task_scope_refusal(
             task, caller.id, definition[0].task_claim_scope, db=ctx.task_manager.db
         )
@@ -198,7 +198,7 @@ def _may_manage_claim(ctx: RegistryContext, caller: Session, task_id: str) -> bo
     if caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(ctx.task_manager.db, caller)
-    if definition is None or "manage_task_claims" not in definition[0].capabilities:
+    if definition is None or not definition[0].holds("manage_task_claims"):
         return False
     task = ctx.task_manager.get_task(task_id)
     return (

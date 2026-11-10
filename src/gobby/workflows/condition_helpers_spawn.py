@@ -5,7 +5,7 @@ from typing import Any
 
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
-from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_models import AgentDefinitionBody, capabilities_contain
 from gobby.workflows.agent_resolver import (
     resolve_agent,
     resolve_agent_with_row,
@@ -101,6 +101,8 @@ def spawn_capabilities_allowed(
     if not isinstance(target, str) or not target:
         return False
     capabilities = set(resolved[0].capabilities)
+    # Launch authority is an explicit grant; the wildcard passes containment instead, so a
+    # wildcard caller keeps spawning the default definition.
     launch_authority = authority_capability is not None and authority_capability in capabilities
     spawn_scope = resolved[0].spawnable_agents
     compare_capabilities = (not spawn_scope or "*" in spawn_scope) and not launch_authority
@@ -117,7 +119,7 @@ def spawn_capabilities_allowed(
         body = hop[0]
         if not body.admits_spawner(capabilities):
             return False
-        if compare_capabilities and not set(body.capabilities) <= capabilities:
+        if compare_capabilities and not capabilities_contain(capabilities, body.capabilities):
             return False
         if not body.fallback_agent:
             return True

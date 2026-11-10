@@ -43,7 +43,7 @@ def live_session_label_change_error(
         definition = session_agent_definition(ctx.task_manager.db, session)
         role = definition[0].name if definition else None
         if not is_operator_session(session, role) and not (
-            definition and "remove_security_review_label" in definition[0].capabilities
+            definition and definition[0].holds("remove_security_review_label")
         ):
             return "Removing security-review requires the operator or authorized policy owner."
     before = LIVE_SESSION_LABEL in set(previous_labels or ())

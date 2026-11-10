@@ -27,6 +27,36 @@ from gobby.workflows.definitions import WorkflowStep
 SPAWN_ANY_AGENT = "*"
 # The capability that lets a definition commit declared paths straight to the integration branch.
 DIRECT_INTEGRATION_COMMIT = "direct_integration_commit"
+# The capabilities value that grants every permission capability.
+ALL_CAPABILITIES = "*"
+# Exempts a definition from the review gates: implementer-authorship refusal at record time,
+# and the close/land review and security gates that test it in their YAML conditions.
+WAIVE_REVIEW_GATES = "waive_review_gates"
+# Capabilities that switch seat behavior on rather than permit an action. The wildcard never
+# turns them on; a definition that wants one names it.
+BEHAVIOR_CAPABILITIES = frozenset(
+    {
+        "auto_attach_operator_conversations",
+        "follow_relaunch",
+        "team_main_checkout",
+        "track_plan_consensus",
+    }
+)
+
+
+def holds_capability(capabilities: Iterable[str], capability: str) -> bool:
+    """Whether a declared capability list holds ``capability``, honoring the wildcard."""
+    held = set(capabilities)
+    return capability in held or (
+        ALL_CAPABILITIES in held and capability not in BEHAVIOR_CAPABILITIES
+    )
+
+
+def capabilities_contain(caller: Iterable[str], target: Iterable[str]) -> bool:
+    """Whether a caller's capabilities cover a target's; the wildcard covers every target."""
+    held = set(caller)
+    return ALL_CAPABILITIES in held or set(target) <= held
+
 
 SendMessageTarget = Literal["global", "project", "parent", "session", "agent"]
 
@@ -236,7 +266,10 @@ class AgentDefinitionBody(BaseModel):
     )
     capabilities: list[StrictStr] = Field(
         default_factory=list,
-        description="Permissions granted to this definition, independent of its name.",
+        description=(
+            "Permissions granted to this definition, independent of its name. ['*'] grants "
+            "every permission capability; behavior capabilities must still be named."
+        ),
     )
     direct_integration_commit_paths: list[StrictStr] = Field(
         default_factory=list,
@@ -379,6 +412,16 @@ class AgentDefinitionBody(BaseModel):
             return normalized
         raise ValueError("surfaces must be a string or list of strings")
 
+    @field_validator("capabilities")
+    @classmethod
+    def _all_capabilities_stands_alone(cls, value: list[str]) -> list[str]:
+        if ALL_CAPABILITIES in value and value != [ALL_CAPABILITIES]:
+            raise ValueError(
+                f"capabilities is [{ALL_CAPABILITIES!r}] for every permission capability, "
+                "or a list of capability names, never both"
+            )
+        return value
+
     @field_validator("spawnable_agents")
     @classmethod
     def _spawn_any_stands_alone(cls, value: list[str]) -> list[str]:
@@ -397,7 +440,12 @@ class AgentDefinitionBody(BaseModel):
         """Whether a caller holding ``capabilities`` may spawn this definition."""
         if not self.spawner_capabilities:
             return True
-        return not set(capabilities).isdisjoint(self.spawner_capabilities)
+        held = list(capabilities)
+        return any(holds_capability(held, required) for required in self.spawner_capabilities)
+
+    def holds(self, capability: str) -> bool:
+        """Whether this definition holds ``capability``, honoring the wildcard."""
+        return holds_capability(self.capabilities, capability)
 
     def covers_direct_integration_paths(self, paths: Sequence[str]) -> bool:
         """Whether this definition's direct-commit grant covers every path.
@@ -407,7 +455,7 @@ class AgentDefinitionBody(BaseModel):
         exactly the directories it means.
         """
         globs = self.direct_integration_commit_paths
-        if DIRECT_INTEGRATION_COMMIT not in self.capabilities or not globs or not paths:
+        if not self.holds(DIRECT_INTEGRATION_COMMIT) or not globs or not paths:
             return False
         return all(any(PurePosixPath(path).full_match(glob) for glob in globs) for path in paths)
 

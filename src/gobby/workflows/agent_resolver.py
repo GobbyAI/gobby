@@ -48,7 +48,7 @@ def session_has_capability(db: HubDatabase, session_id: str, capability: str) ->
     """Whether a known session's enabled definition grants this permission."""
     session = SessionManager(db).get(session_id)
     resolved = session_agent_definition(db, session) if session is not None else None
-    return resolved is not None and capability in resolved[0].capabilities
+    return resolved is not None and resolved[0].holds(capability)
 
 
 def session_declared_paths_cover(db: HubDatabase, session_id: str, paths: Sequence[str]) -> bool:
@@ -72,7 +72,7 @@ def session_has_capability_or_operator(db: HubDatabase, session_id: str, capabil
     if is_operator_session(session, role.get("_agent_type")):
         return True
     resolved = session_agent_definition(db, session)
-    return resolved is not None and capability in resolved[0].capabilities
+    return resolved is not None and resolved[0].holds(capability)
 
 
 class AgentResolutionError(Exception):
