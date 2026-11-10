@@ -1,4 +1,4 @@
-version: "1.2.0"
+version: "1.3.0"
 tags: [gobby, default, tool-hygiene]
 
 # Operator ruling, 2026-11-10: direct database writes are allowed for the seats whose
@@ -57,5 +57,5 @@ rules:
         # words elsewhere in the code pass. The executed code is also refused when a
         # string starts with a client name (os.system('psql ...'),
         # subprocess.run(['psql', ...])), since the client rule cannot see quoted text.
-        command_not_pattern: '^(?![\s\S]*(?:\bimport(?:[ \t]|\\\n)+(?:[\w.]+(?:(?:[ \t]|\\\n)+as(?:[ \t]|\\\n)+\w+)?(?:[ \t]|\\\n)*,(?:[ \t]|\\\n)*)*(?:psycopg|asyncpg)|\bfrom(?:[ \t]|\\\n)+(?:psycopg|asyncpg)|\b(?:__import__|import_module)\(\s*[bBrRuU]{0,2}[''"]{1,3}(?:psycopg|asyncpg)|[''"](?:[^''"\s]*/)?(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=[\s''"])))'
+        command_not_pattern: '^(?![\s\S]*(?:\bimport(?:[ \t]|\\\n)+(?:[\w.]+(?:(?:[ \t]|\\\n)+as(?:[ \t]|\\\n)+\w+)?(?:[ \t]|\\\n)*,(?:[ \t]|\\\n)*)*(?:psycopg|asyncpg)|\bfrom(?:[ \t]|\\\n)+(?:psycopg|asyncpg)|\b(?:__import__|import_module)\s*\(\s*[bBrRuUfF]{0,2}[''"]{1,3}(?:psycopg|asyncpg)|[''"](?:[^''"\s]*/)?(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=[\s''"])))'
         reason: *db_reason
