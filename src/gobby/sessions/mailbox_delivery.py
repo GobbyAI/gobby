@@ -179,12 +179,17 @@ async def dispatch_mailbox_wakes(
         decline_reason = item.get("decline_reason")
         if isinstance(decline_reason, str) and decline_reason:
             level = logging.DEBUG if decline_reason == "session_active" else logging.INFO
+            # A target gate refusal shares one code across several pane conditions;
+            # its reason is the only record of which one withheld the wake.
+            detail = item.get("reason")
+            suffix = f" ({detail})" if isinstance(detail, str) and detail else ""
             logger.log(
                 level,
-                "mailbox wake declined for session %s message %s: %s",
+                "mailbox wake declined for session %s message %s: %s%s",
                 session_id,
                 message.id,
                 decline_reason,
+                suffix,
             )
         correlated.append(item)
     return correlated
