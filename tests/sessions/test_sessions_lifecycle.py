@@ -302,6 +302,7 @@ class TestSessionLifecycleManager:
         manager.token_event_store = EmptyTokenEventStore()
         session = SimpleNamespace(
             source="claude",
+            created_at=None,
             project_id="proj-1",
             context_window=None,
             model=None,
@@ -331,7 +332,7 @@ class TestSessionLifecycleManager:
             encoding="utf-8",
         )
         manager.token_event_store = EmptyTokenEventStore()
-        manager.session_manager.get.return_value = SimpleNamespace(source="claude")
+        manager.session_manager.get.return_value = SimpleNamespace(source="claude", created_at=None)
         manager.session_manager.update_stats.side_effect = RuntimeError("bug")
 
         with pytest.raises(RuntimeError, match="bug"):
@@ -799,6 +800,7 @@ class TestSessionLifecycleManager:
         session_manager = cast(MagicMock, manager.session_manager)
         session_manager.get.return_value = SimpleNamespace(
             source="codex",
+            created_at=None,
             project_id="proj-1",
             context_window=None,
             model=None,
