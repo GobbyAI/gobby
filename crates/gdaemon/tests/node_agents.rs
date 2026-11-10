@@ -1394,6 +1394,8 @@ impl SrtTree {
             ("tmp", root.join("tmp")),
             ("darwin_temp", root.join("darwin-temp")),
             ("darwin_cache", root.join("darwin-cache")),
+            // The passwd account home, distinct from HOME: the operator root comes from it.
+            ("operator_home", root.join("operator-home")),
             ("run_root", gobby_home.join("run/sandbox").join(SRT_RUN_ID)),
             (
                 "srt_socket",
@@ -1484,6 +1486,11 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         workspace: PathBuf::from(srt_text(&filled, "workspace")?),
         home: tree.path("home"),
         gobby_home: tree.path("gobby_home"),
+        operator_bootstrap: Some(
+            tree.path("operator_home")
+                .join(".gobby")
+                .join("bootstrap.yaml"),
+        ),
         env: serde_json::from_value(filled["env"].clone())?,
         provider_executable: Some(PathBuf::from(srt_text(&filled, "provider_executable")?)),
         daemon_port: u16::try_from(filled["daemon_port"].as_u64().context("daemon_port")?)?,

@@ -19,16 +19,19 @@ from gobby.events.live_wake import (
     composer_occupied_result,
 )
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
+from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as gate
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.pane_io import live_runtime_pane
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, UnregisteredBackendError
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.events.wake_test_support import PendingWakeLedger, operator_comms_message
+from tests.terminal_scene import CLAUDE_IDLE
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -185,7 +188,12 @@ async def test_wake_requires_backend_registered_by_native_only_runner(
 @pytest.mark.asyncio
 async def test_native_context_id_wakes_through_unbound_terminal_row(
     managed_chain: ManagedChain,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The shared scene stubs the pane lookup for every test. This test restores the real one:
+    # the row is bound by context id only, so the pane must come from the resolved terminal.
+    monkeypatch.setattr(gate, "live_runtime_pane", live_runtime_pane)
+    managed_chain.native.snapshot_text = CLAUDE_IDLE
     managed_chain.row.session_id = None
     session_manager = _session_manager({"gobby_terminal_id": managed_chain.row.id})
     session_manager.get.return_value.project_id = managed_chain.row.project_id
@@ -194,6 +202,9 @@ async def test_native_context_id_wakes_through_unbound_terminal_row(
         ism_manager=MagicMock(),
         tmux_sender=_send_tmux_session_wake,
         terminal_manager=managed_chain.store,
+    )
+    dispatcher.set_terminal_runtime_registry(
+        runtime_registry(managed_chain.tmux, managed_chain.native)
     )
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -259,7 +270,7 @@ async def test_three_native_recipients_use_one_ordered_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection() -> None:
+async def test_batch_keeps_active_recipient_out_of_terminal_injection() -> None:
     paused_id = WAKE_SESSION_ID
     active_id = REPRO_SESSION_ID
     sessions = {
@@ -281,10 +292,11 @@ async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection(
     batch_sender = AsyncMock(
         return_value=[{"session_id": paused_id, "delivered": True, "method": "terminal"}]
     )
+    tmux_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=AsyncMock(),
+        tmux_sender=tmux_sender,
         native_batch_sender=batch_sender,
         terminal_manager=store,
     )
@@ -299,6 +311,9 @@ async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection(
     assert results[1]["delivered"] is False
     assert results[1]["method"] == "next_call_context"
     assert results[1]["skipped"] == "session_active"
+    # An active turn takes no typed input: the batch excludes it and the tmux path is never reached.
+    tmux_sender.assert_not_awaited()
+    assert all(target.session_id != active_id for target in targets)
 
 
 @pytest.mark.asyncio
@@ -729,22 +744,22 @@ async def test_managed_wake_is_withheld_while_the_composer_holds_a_draft() -> No
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
+async def test_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
     terminal_sender = AsyncMock()
     dispatcher = _managed_dispatcher(_draft, terminal_sender)
 
-    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
     terminal_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_urgent_wake_injects_an_empty_composer() -> None:
+async def test_wake_injects_an_empty_composer() -> None:
     terminal_sender = AsyncMock()
     dispatcher = _managed_dispatcher(_empty, terminal_sender)
 
-    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result["delivered"] is True
     terminal_sender.assert_awaited_once_with(
@@ -977,7 +992,7 @@ async def test_batch_wake_holds_a_focused_recipient_and_sends_the_rest() -> None
         assert [result["session_id"] for result in results] == session_ids
         assert results[0].get("skipped") == PANE_FOCUSED
         assert results[1]["delivered"] is True
-        assert dispatcher._focus_holds == {held_terminal: {held_id: "normal"}}
+        assert dispatcher._focus_holds == {held_terminal: {held_id}}
     finally:
         tasks = [
             *dispatcher._deferred_refreshes.values(),

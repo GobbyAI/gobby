@@ -1,4 +1,4 @@
-"""A terminal on another machine is read, stopped, woken and gated through its node, never locally."""
+"""A node terminal is read, stopped and gated through its node, and a wake never types into it."""
 
 from __future__ import annotations
 
@@ -14,27 +14,26 @@ import pytest
 from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.watchdog.composer_gate import composer_refuses_automation
 from gobby.events.live_wake import composer_occupied_result
-from gobby.events.wake import CONTINUE_WAKE_MESSAGE, NativeWakeTarget, WakeDispatcher
+from gobby.events.wake import WakeDispatcher
 from gobby.events.wake_batch import dispatch_live_wakes
 from gobby.hub import remote_cancel, remote_pane, remote_runtime, remote_terminal
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.node_commands import ReportAgent
 from gobby.hub.remote_runtime import RemoteTerminalRuntime
-from gobby.runner_init.orchestration import _send_remote_wake, _send_tmux_session_wake
+from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
-    Delivered,
     PreparedSpawn,
     TerminalSpawnRequest,
     TerminalWriteError,
 )
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.termination import kill_terminal
-from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator, WriteRequest
+from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.test_capture import FakeCaptureStorage
 from tests.terminals.fakes import (
     FakeRuntime,
@@ -393,12 +392,11 @@ def _wake_dispatcher(store: MemoryTerminalStore, batch: AsyncMock) -> WakeDispat
         tmux_sender=_send_tmux_session_wake,
         native_batch_sender=batch,
         terminal_manager=store,
-        remote_wake_sender=_send_remote_wake,
     )
 
 
 @pytest.mark.asyncio
-async def test_wake_to_node_terminal_writes_through_the_node(
+async def test_wake_to_node_terminal_is_withheld_never_typed(
     node: _Node, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     terminal = replace(_node_terminal(), session_id=WAKE_SESSION_ID)
@@ -413,19 +411,9 @@ async def test_wake_to_node_terminal_writes_through_the_node(
 
     result = await _wake_dispatcher(store, batch).dispatch_live_wake(WAKE_SESSION_ID)
 
-    assert result["delivered"] is True
-    assert node.sent == [
-        (
-            REMOTE,
-            "terminal.write",
-            {
-                "terminal_id": terminal.id,
-                "kind": "text",
-                "data": CONTINUE_WAKE_MESSAGE,
-                "submit": True,
-            },
-        ),
-    ]
+    assert result["delivered"] is False
+    assert result["skipped"] == "node_terminal_withheld"
+    assert node.sent == []
     batch.assert_not_awaited()
     assert native.write_log == []
 
@@ -452,61 +440,8 @@ async def test_draft_node_composer_withholds_the_wake(
     assert native.write_log == []
 
 
-class _ScriptedCoordinator:
-    """Delivers every write except one terminal's, which fails outside the typed errors."""
-
-    def __init__(self, failing_terminal_id: str) -> None:
-        self._failing = failing_terminal_id
-
-    async def write(
-        self, request: WriteRequest, *, on_dispatch: Callable[[], None] | None = None
-    ) -> Delivered:
-        if request.terminal_id == self._failing:
-            raise RuntimeError("row store unavailable")
-        if on_dispatch is not None:
-            on_dispatch()
-        return Delivered()
-
-
 @pytest.mark.asyncio
-async def test_one_failed_node_wake_does_not_fail_the_others(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    failing_id, delivered_id = str(uuid4()), str(uuid4())
-    monkeypatch.setattr(
-        "gobby.runner_init.orchestration.wake_write_services",
-        lambda: (MemoryTerminalStore(), _ScriptedCoordinator(failing_id)),
-    )
-    targets = [
-        NativeWakeTarget(
-            session_id=str(uuid4()), terminal_id=failing_id, cli_source=None, drain=False
-        ),
-        NativeWakeTarget(
-            session_id=str(uuid4()), terminal_id=delivered_id, cli_source=None, drain=False
-        ),
-    ]
-
-    results = await _send_remote_wake(targets)
-
-    assert [result["delivered"] for result in results] == [False, True]
-    assert results[0]["error_code"] == "remote_wake_failed"
-
-
-def _submitted_wake(terminal_id: str) -> tuple[str, str, dict[str, Any]]:
-    return (
-        REMOTE,
-        "terminal.write",
-        {
-            "terminal_id": terminal_id,
-            "kind": "text",
-            "data": CONTINUE_WAKE_MESSAGE,
-            "submit": True,
-        },
-    )
-
-
-@pytest.mark.asyncio
-async def test_batch_node_wake_is_one_submitted_write(
+async def test_batch_node_wake_is_withheld_never_typed(
     temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     terminal = replace(_node_terminal(), session_id=WAKE_SESSION_ID)
@@ -519,18 +454,17 @@ async def test_batch_node_wake_is_one_submitted_write(
     _report(str(uuid4()), terminal.id, composer="empty")
     batch = AsyncMock(return_value=[])
 
-    [result] = await dispatch_live_wakes(
-        _wake_dispatcher(store, batch), [WAKE_SESSION_ID], priority="normal"
-    )
+    [result] = await dispatch_live_wakes(_wake_dispatcher(store, batch), [WAKE_SESSION_ID])
 
-    assert result["delivered"] is True
-    assert node.sent == [_submitted_wake(terminal.id)]
+    assert result["delivered"] is False
+    assert result["skipped"] == "node_terminal_withheld"
+    assert node.sent == []
     batch.assert_not_awaited()
     assert native.write_log == []
 
 
 @pytest.mark.asyncio
-async def test_batch_wake_to_node_terminal_settles_an_earlier_latch(
+async def test_batch_wake_to_node_terminal_is_withheld_with_its_latch(
     temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     base = replace(_node_terminal(), session_id=WAKE_SESSION_ID)
@@ -546,12 +480,11 @@ async def test_batch_wake_to_node_terminal_settles_an_earlier_latch(
     _report(str(uuid4()), terminal.id, composer="empty")
     batch = AsyncMock(return_value=[])
 
-    [result] = await dispatch_live_wakes(
-        _wake_dispatcher(store, batch), [WAKE_SESSION_ID], priority="normal"
-    )
+    [result] = await dispatch_live_wakes(_wake_dispatcher(store, batch), [WAKE_SESSION_ID])
 
-    assert result["delivered"] is True
-    assert node.sent == [_submitted_wake(terminal.id)]
+    assert result["delivered"] is False
+    assert result["skipped"] == "node_terminal_withheld"
+    assert node.sent == []
     batch.assert_not_awaited()
 
 

@@ -18,7 +18,6 @@ async def dispatch_sdk_wake(
     dispatcher: WakeDispatcher,
     session_id: str,
     *,
-    priority: str,
     prompt: str,
     timeout_seconds: float,
 ) -> dict[str, Any] | None:
@@ -28,7 +27,7 @@ async def dispatch_sdk_wake(
     sdk_session_id = await _resolve_sdk_session_id(dispatcher, session_id)
     if not sdk_session_id:
         return None
-    _, state_failure = await dispatcher._preflight_live_side_effect(session_id, priority=priority)
+    _, state_failure = await dispatcher._preflight_live_side_effect(session_id)
     if state_failure is not None:
         return state_failure
     try:

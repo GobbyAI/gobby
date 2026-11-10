@@ -19,7 +19,7 @@ from typing import Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.agents.srt_runtime import srt_install_root
-from gobby.terminals.composer_ledger import read_composer
+from gobby.terminals.composer_ledger import CURSOR_DRAFT_REASON, read_composer
 from gobby.terminals.foreground import (
     command_name,
     foreground_child_executables,
@@ -172,6 +172,9 @@ async def send_keys_target_refusal(
     terminal_runtime_registry: Any | None,
     *,
     clear_held: bool = False,
+    resolved_terminal: Any | None = None,
+    ledger_vouches: bool = False,
+    cursor_draft: bool = False,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
 
@@ -179,11 +182,26 @@ async def send_keys_target_refusal(
     text, the composer is drained through the pane (recording the drain, so no held
     command is replayed later) and ``ComposerCleared`` is returned; every other
     check still applies.
+
+    ``ledger_vouches`` is set by a live wake. A CLI whose manifest has no composer rules
+    (Grok) has no frame to read, so the ledger's empty verdict confirms its composer; the
+    identity, credential, busy and idle-pane checks still apply. Without it, such a CLI is
+    refused, as send_keys has always refused it.
+
+    ``cursor_draft`` is set by a live wake that found a cursor-only draft. The ledger's draft
+    is not refused then: the frame alone must read as an empty idle composer, and a CLI
+    with no frame reader is refused.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
     try:
-        terminal = terminal_manager.get_live_for_session(session_id)
+        # A wake passes the terminal it resolved, which may be bound by context id
+        # rather than by session id; the session lookup is the send_keys fallback.
+        terminal = (
+            resolved_terminal
+            if resolved_terminal is not None
+            else terminal_manager.get_live_for_session(session_id)
+        )
         if terminal is None:
             return _refuse("send_keys_no_live_terminal", "the target has no live terminal")
 
@@ -210,7 +228,11 @@ async def send_keys_target_refusal(
 
         composer = read_composer(terminal.id)
         draining = clear_held and composer.state == "held"
-        if composer.state != "empty" and not draining:
+        # A cursor-only draft is confirmed by the frame alone: the frame must read empty below.
+        probing = (
+            cursor_draft and composer.state == "draft" and composer.reason == CURSOR_DRAFT_REASON
+        )
+        if composer.state != "empty" and not draining and not probing:
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
@@ -220,12 +242,12 @@ async def send_keys_target_refusal(
         registry = _detection_registry(terminal_manager)
         read_frame = composer_reader(registry, cli)
         manifest = registry.for_provider(cli)
-        if read_frame is None or manifest is None:
+        if manifest is None or (read_frame is None and (probing or not ledger_vouches)):
             return _refuse(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",
             )
-        pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
+        pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry, terminal)
         snapshot = (
             await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi") if pane is not None else None
         )
@@ -250,8 +272,8 @@ async def send_keys_target_refusal(
             or activity.match is None
             or busy
             or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
-            # A held draft is visible in the frame; only the drain may touch it.
-            or (not draining and read_frame(snapshot).state != "empty")
+            # A draft visible in the frame is touched by the drain alone.
+            or (not draining and read_frame is not None and read_frame(snapshot).state != "empty")
         ):
             return _refuse(
                 "send_keys_composer_not_idle",

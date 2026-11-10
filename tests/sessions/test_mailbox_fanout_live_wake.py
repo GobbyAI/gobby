@@ -1,8 +1,8 @@
-"""Fanout live wakes reach only active seats and seats holding a claimed task.
+"""Fanout live wakes follow the per-recipient direct rule, with no claimed-task filter (#25830).
 
-A global or project send still commits a durable row for every recipient. A recipient
-parked between turns (idle, paused or waiting) with no open claimed task gets that row
-queued with no live wake and reads it on its next natural turn.
+A global or project send with wake=true gives every live recipient the same live wake a
+direct send gets: a seat between turns takes it at once, whatever task it holds, and a
+seat with an open turn keeps the durable row for its hook mailbox.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-from gobby.sessions.fanout_wake import is_fanout_metadata
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -27,9 +26,7 @@ class RecordingWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def dispatch_live_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]:
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
         self.calls.append(session_id)
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
@@ -83,7 +80,7 @@ def _mailbox(
     [("global", None), ("global", True), ("project", True)],
     ids=["global-omitted", "global-true", "project-true"],
 )
-async def test_fanout_live_wake_reaches_only_active_or_claimed_seats(
+async def test_fanout_live_wake_reaches_every_recipient_regardless_of_claimed_task(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -93,29 +90,25 @@ async def test_fanout_live_wake_reaches_only_active_or_claimed_seats(
     project_id = sample_project["id"]
     sender = _seat(session_manager, project_id, "sender")
     active = _seat(session_manager, project_id, "active-seat")
-    parked_idle = _seat(session_manager, project_id, "idle-seat", status="idle")
-    parked_paused = _seat(session_manager, project_id, "paused-seat", status="paused")
-    parked_waiting = _seat(session_manager, project_id, "waiting-seat", status="waiting")
+    idle = _seat(session_manager, project_id, "idle-seat", status="idle")
+    paused = _seat(session_manager, project_id, "paused-seat", status="paused")
+    waiting = _seat(session_manager, project_id, "waiting-seat", status="waiting")
     claimed_idle = _seat(session_manager, project_id, "claimed-idle-seat", status="idle")
     _claim_task(temp_db, project_id, claimed_idle)
-    claimed_paused = _seat(session_manager, project_id, "claimed-paused-seat", status="paused")
-    _claim_task(temp_db, project_id, claimed_paused)
     dispatcher = RecordingWakeDispatcher()
     mailbox = _mailbox(temp_db, session_manager, dispatcher)
     options: dict[str, Any] = {} if wake is None else {"wake": wake}
 
     result = await mailbox.send(from_session_id=sender, target=target, content="notice", **options)
 
-    live = {active, claimed_idle, claimed_paused}
-    parked = {parked_idle, parked_paused, parked_waiting}
-    # Every recipient keeps a durable row, whether or not it owes a live wake.
-    assert set(result.recipient_session_ids) == live | parked
-    assert len(result.messages) == len(live | parked)
-    assert sorted(dispatcher.calls) == sorted(live)
+    recipients = {active, idle, paused, waiting, claimed_idle}
+    # Every recipient gets the same per-recipient wake: no claim gate parks a seat.
+    assert set(result.recipient_session_ids) == recipients
+    assert len(result.messages) == len(recipients)
+    assert sorted(dispatcher.calls) == sorted(recipients)
     for message in result.messages:
         assert message.metadata_json is not None
-        owes_wake = message.to_session in live
-        assert json.loads(message.metadata_json)["wake_requested"] is owes_wake
+        assert json.loads(message.metadata_json)["wake_requested"] is True
 
 
 @pytest.mark.asyncio
@@ -228,7 +221,6 @@ async def test_caller_metadata_cannot_claim_fanout_identity(
     assert "broadcast_id" not in payload
     assert "broadcast" not in payload
     assert payload["kept"] == "yes"
-    assert is_fanout_metadata(message.metadata_json) is False
 
 
 @pytest.mark.asyncio

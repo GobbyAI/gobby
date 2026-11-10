@@ -216,18 +216,21 @@ fn existing_home_roots(roots: &[&str], home: &Path) -> Vec<String> {
     )
 }
 
-/// `credential_roots`: install credentials and the daemon's startup files. The oracle
-/// denies the bootstrap the daemon bound at startup. `PolicyInputs` carries no bound
-/// path, so the default `gobby_home/bootstrap.yaml` stands in for it.
-fn credential_roots(gobby: &Path) -> Vec<PathBuf> {
-    vec![
+/// `credential_roots`: install credentials, the daemon's startup files, and the operator's
+/// canonical bootstrap, which the oracle appends last. The oracle denies the bootstrap the daemon
+/// bound at startup. `PolicyInputs` carries no bound path, so the default
+/// `gobby_home/bootstrap.yaml` stands in for it.
+fn credential_roots(gobby: &Path, operator_bootstrap: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = vec![
         gobby.join("bootstrap.yaml"),
         gobby.join(".secret_kek"),
         gobby.join("grants"),
         gobby.join("tools").join("srt"),
         gobby.join("break_glass"),
         gobby.join(".break_glass-staging"),
-    ]
+    ];
+    roots.extend(operator_bootstrap.map(Path::to_path_buf));
+    roots
 }
 
 /// `private_srt_socket_roots`: the private SRT socket roots, including this UID's `/tmp` root.
@@ -250,8 +253,13 @@ pub(super) fn managed_execution_root(gobby: &Path) -> PathBuf {
 }
 
 /// `sensitive_roots`: Gobby roots excluded from every managed allow surface.
-fn sensitive_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
-    let mut roots = credential_roots(gobby);
+fn sensitive_roots(
+    gobby: &Path,
+    home: &Path,
+    env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
+) -> Vec<String> {
+    let mut roots = credential_roots(gobby, operator_bootstrap);
     roots.push(gobby.join("gcode-runtime"));
     roots.push(managed_execution_root(gobby));
     roots.extend(private_srt_socket_roots(gobby, env));
@@ -259,7 +267,12 @@ fn sensitive_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) ->
 }
 
 /// `sensitive_write_roots`: credential and daemon-state roots no write grant may override.
-fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, String>) -> Vec<String> {
+fn sensitive_write_roots(
+    gobby: &Path,
+    home: &Path,
+    env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
+) -> Vec<String> {
     let mut roots = vec![
         home.join(".ssh"),
         home.join(".aws"),
@@ -267,7 +280,7 @@ fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, Strin
         home.join(".kube"),
         home.join(".config").join("gcloud"),
     ];
-    roots.extend(credential_roots(gobby));
+    roots.extend(credential_roots(gobby, operator_bootstrap));
     roots.extend(private_srt_socket_roots(gobby, env));
     deny_paths(roots.iter().map(|root| text(root)), None, home)
 }
@@ -703,8 +716,9 @@ pub(super) fn assert_sensitive_path_contract(
     gobby: &Path,
     home: &Path,
     env: &BTreeMap<String, String>,
+    operator_bootstrap: Option<&Path>,
 ) -> Result<()> {
-    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env)
+    let protected: Vec<PathBuf> = sensitive_roots(gobby, home, env, operator_bootstrap)
         .into_iter()
         .map(PathBuf::from)
         .collect();
@@ -844,6 +858,7 @@ pub(super) fn compute(
 ) -> Result<ResolvedPaths> {
     let home = inputs.home.as_path();
     let gobby = inputs.gobby_home.as_path();
+    let operator_bootstrap = inputs.operator_bootstrap.as_deref();
     let provider = inputs.provider.as_str();
     let workspace = canonical_pathbuf(&text(&inputs.workspace), None, home);
 
@@ -876,7 +891,7 @@ pub(super) fn compute(
         home,
     );
     let mut deny_read_paths = deny_paths(
-        sensitive_roots(gobby, home, env)
+        sensitive_roots(gobby, home, env, operator_bootstrap)
             .into_iter()
             .chain(credential_denies.iter().cloned())
             .chain(toolchain_credential_paths(home))
@@ -890,7 +905,7 @@ pub(super) fn compute(
         .map(|path| canonical_pathbuf(path, Some(&workspace), home))
         .collect();
     let deny_write_paths = deny_paths(
-        sensitive_write_roots(gobby, home, env)
+        sensitive_write_roots(gobby, home, env, operator_bootstrap)
             .into_iter()
             .chain(provider_control_write_paths(
                 &workspace,
@@ -917,6 +932,7 @@ pub(super) fn compute(
         gobby,
         home,
         env,
+        operator_bootstrap,
     )?;
     assert_credential_read_contract(
         &read_paths,
