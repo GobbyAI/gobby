@@ -295,4 +295,6 @@ async def handoff_fixture(
                     json.dump(payload, stream, indent=2)
             if clean:
                 shutil.rmtree(root)
-                shutil.rmtree(home)
+                # The daemon installs its sandbox runtime as a read-only tree under HOME; the
+                # parent TemporaryDirectory restores write bits and removes what is left.
+                shutil.rmtree(home, ignore_errors=True)

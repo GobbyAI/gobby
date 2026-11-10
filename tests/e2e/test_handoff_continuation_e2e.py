@@ -261,8 +261,20 @@ async def test_seat_continues_after_its_own_handoff(
         description=f"{provider}: launch turn after set_handoff (normal login required)",
     )
     await _assert_continuation(composer_fixture, seat, writes_before=writes_before, clear=clear)
+    if clear:
+        # The cleared session's successor now owns this terminal; teardown retires that binding.
+        row = await composer_fixture.terminal(seat.surface.terminal_id)
+        successor, details = await composer_fixture.row_surface(provider, row)
+        if successor.session_id == seat.surface.session_id or (
+            successor.terminal_id,
+            successor.host_epoch,
+            successor.project_id,
+        ) != (seat.surface.terminal_id, seat.surface.host_epoch, seat.surface.project_id):
+            raise ProofRefused("clear did not bind a successor on the same terminal")
+        seat.surface = successor
+        seat.external_id = str(details["external_id"])
     # A clear is not a compaction, so its boundary kind is not asserted here.
-    if scenario != "clear":
+    else:
         assert await asyncio.to_thread(_compact_boundary_recorded, postgres_db, seat), (
             "the daemon recorded no compact boundary for this seat"
         )
