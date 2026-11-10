@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import contextlib
 import shutil
-import subprocess  # nosec B404 # fixed npm invocation resolved with shutil.which
+import subprocess  # nosec B404 # CompletedProcess and TimeoutExpired types only
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.utils import spawn
 from gobby.utils.dependency_requirements import OCR_PACKAGE, OCR_VERSION, ocr_dependency_status
 
 _INSTALL_TIMEOUT_SECONDS = 300
@@ -31,7 +32,7 @@ class OcrInstallResult:
 
 def _run_npm(npm: str, *arguments: str) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(  # nosec B603 # executable resolved with shutil.which
+        return spawn.run(
             [npm, *arguments],
             capture_output=True,
             text=True,

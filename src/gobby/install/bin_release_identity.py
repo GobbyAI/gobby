@@ -78,7 +78,7 @@ def _revision_manifests(repo: Path, revision: str) -> Manifests:
 
     def read(relative: str) -> dict[str, Any] | None:
         if relative not in cache:
-            listing = subprocess.run(
+            listing = spawn.run(
                 ["git", "-C", str(repo), "ls-tree", "-z", "--full-tree", revision, "--", relative],
                 check=True,
                 capture_output=True,
@@ -89,7 +89,7 @@ def _revision_manifests(repo: Path, revision: str) -> Manifests:
                 _mode, kind, oid = listing.split(b"\t", 1)[0].split(b" ")
                 if kind != b"blob":
                     raise BinaryReleaseVersionError(f"{relative} is not a file at {revision}")
-                content = subprocess.run(
+                content = spawn.run(
                     ["git", "-C", str(repo), "cat-file", "blob", oid.decode()],
                     check=True,
                     capture_output=True,

@@ -33,7 +33,7 @@ def test_install_loads_single_service_and_waits_for_new_sample(
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
     monkeypatch.setattr("platform.system", lambda: system)
-    monkeypatch.setattr("subprocess.run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     monkeypatch.setattr("time.time", lambda: 100.5)
     context = {
         "gdaemon_executable": str(home / ".gobby/bin/gdaemon"),
@@ -85,7 +85,7 @@ def test_windows_does_not_install_a_unix_only_command(
 ) -> None:
     monkeypatch.setattr("platform.system", lambda: "Windows")
     run = Mock()
-    monkeypatch.setattr("subprocess.run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     assert fleet_service.install_fleet_service(tmp_path) is False
     run.assert_not_called()
 
@@ -106,7 +106,7 @@ def test_loading_requires_a_new_fresh_sample(
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr("subprocess.run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     clock = iter([0.0, 0.0, 61.0])
     monkeypatch.setattr("time.monotonic", lambda: next(clock))
     monkeypatch.setattr("time.sleep", lambda seconds: None)
@@ -120,7 +120,7 @@ def test_service_load_failure_is_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setattr(
-        "subprocess.run",
+        "gobby.utils.spawn.run",
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "permission denied"),
     )
     with pytest.raises(RuntimeError, match="permission denied"):
@@ -142,7 +142,7 @@ def test_sample_must_come_from_the_supervised_process(
             state.write_text(json.dumps({"sampled_at_unix": 100, "watcher_pid": 111}))
         return subprocess.CompletedProcess(cmd, 0, "42\n", "")
 
-    monkeypatch.setattr("subprocess.run", run)
+    monkeypatch.setattr("gobby.utils.spawn.run", run)
     monkeypatch.setattr("time.time", lambda: 100.5)
     clock = iter([0.0, 0.0, 61.0])
     monkeypatch.setattr("time.monotonic", lambda: next(clock))

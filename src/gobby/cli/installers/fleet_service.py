@@ -4,12 +4,12 @@ import json
 import os
 import platform
 import re
-import subprocess
 import time
 from pathlib import Path
 from uuid import UUID
 
 from gobby.fleet_health.state import fleet_state_path
+from gobby.utils import spawn
 
 from . import service_common
 
@@ -26,7 +26,7 @@ def _service_path() -> Path | None:
 
 
 def _run(command: list[str], *, required: bool = True) -> str:
-    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    result = spawn.run(command, capture_output=True, text=True, timeout=30)
     if required and result.returncode:
         raise RuntimeError(f"Fleet watcher service failed: {result.stderr or result.stdout}")
     return result.stdout or ""
