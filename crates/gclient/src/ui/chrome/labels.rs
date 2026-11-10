@@ -19,11 +19,11 @@ pub enum RowState {
     Attention,
     /// Mid-turn, or between turns while waiting on a child run it started.
     Working,
-    /// Alive but stopped: an operator pause or a user interrupt.
+    /// Alive but not active: between turns, an operator pause or a user interrupt.
     Paused,
     /// Agents are assigned but all are dead, or the machine's daemon is unreachable.
     NoLive,
-    /// Nothing is assigned or being worked.
+    /// Nothing is assigned.
     #[default]
     Blank,
 }

@@ -252,9 +252,14 @@ first in the keybinding help as the attention legend:
 | --- | --- | --- |
 | `⍾` | needs you | waiting on you: a question, a plan approval or a permission prompt; the row's first line also carries the words `needs you` when they fit beside the title |
 | `▶` | active | mid-turn, or between turns while waiting on a child run it started |
-| `‖` | paused | alive but stopped: paused on purpose or interrupted by you |
+| `‖` | paused | alive but not active: between turns, paused on purpose or interrupted by you |
 | `✕` | no live agents | agents are assigned but all are dead, or the machine's daemon is unreachable |
-| (blank) | blank | nothing is assigned or being worked |
+| (blank) | blank | nothing is assigned |
+
+A live agent that is neither mid-turn nor waiting on you draws paused, whether
+it finished its turn, was paused on purpose, or was interrupted; an agent
+between turns that is waiting on a child run it started draws active while that
+run works. Blank never means an idle agent: it means no agent is assigned.
 
 Project and machine rows show their needs-you and no-live counts beside the
 glyph, as in `▶ ✕2`. A rollup takes the most urgent state of its members in the
