@@ -880,6 +880,7 @@ Consumers unchanged:
 - `crates/gcode/src/commands/status/retire_files/tests.rs` — no-edit-reason: retire-files behavior and receipt identity checks are unchanged.
 - `crates/gcode/src/commands/status/retire_files/tests/serial_db.rs` — no-edit-reason: same receipts at the same paths.
 - `crates/gcode/src/index_lock.rs` — no-edit-reason: `lease_project_lock` and `maintenance_try()` are reused; content GC takes the same lease, so GC and apply exclude each other, and `delete_symbol_vectors` (wait=true) is reused unchanged.
+- `crates/gcode/src/index_pending.rs` — no-edit-reason: its pending-batch files reuse `receipt::read_existing` and `receipt::write_atomic` unchanged; the shared receipt module keeps those signatures and the same atomic private-file behavior.
 
 **Research context:** retire-files is the precedent. It takes the
 `maintenance_try()` lease and fails with "project index is busy" when the
