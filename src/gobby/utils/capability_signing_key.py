@@ -11,6 +11,29 @@ from pathlib import Path
 CAPABILITY_SIGNING_KEY_FILENAME = "capability_signing_key"
 
 
+def capability_signing_key_staging_path(path: Path) -> Path:
+    """The owner-only directory the key's bytes are written in before publication.
+
+    It is a credential root like the key itself, so the bytes are never readable at a path the
+    sandbox leaves open, even during the publish window.
+    """
+    return path.with_name(f".{CAPABILITY_SIGNING_KEY_FILENAME}-staging")
+
+
+def _open_staging_directory(staging: Path) -> int:
+    """Create or reuse the owner-only staging directory; refuse a symlink or a shared mode."""
+    try:
+        staging.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    directory_fd = os.open(staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    metadata = os.fstat(directory_fd)
+    if metadata.st_mode & 0o077 or metadata.st_uid != os.getuid():
+        os.close(directory_fd)
+        raise PermissionError(f"capability signing key staging must be owner-only: {staging}")
+    return directory_fd
+
+
 def read_capability_signing_key(path: Path) -> bytes | None:
     """Read the same owner-only regular inode we validate; never follow a symlink."""
     try:
@@ -32,13 +55,16 @@ def read_capability_signing_key(path: Path) -> bytes | None:
 def ensure_capability_signing_key(path: Path) -> bytes | None:
     """Publish a complete random key once, preserving an existing concurrent winner.
 
-    The temporary filename is covered by the credential-read block as well. Existing
-    unsafe or damaged files fail closed rather than silently rotating live credentials.
+    The bytes are staged inside the denied, owner-only staging directory and hard-linked into
+    place. Existing unsafe or damaged files fail closed rather than silently rotating live
+    credentials.
     """
     if not os.path.lexists(path):
+        staging = capability_signing_key_staging_path(path)
         try:
+            os.close(_open_staging_directory(staging))
             with tempfile.NamedTemporaryFile(
-                mode="wb", prefix=f".{CAPABILITY_SIGNING_KEY_FILENAME}-", dir=path.parent
+                mode="wb", prefix=f".{CAPABILITY_SIGNING_KEY_FILENAME}-", dir=staging
             ) as stream:
                 stream.write(secrets.token_bytes(32))
                 stream.flush()
