@@ -13,6 +13,10 @@ from gobby.storage.hook_receipts import HookReceipt, prepare_receipt
 from gobby.storage.hub.protocol import HubDatabase
 
 
+class ReceiptSessionsChanged(RuntimeError):
+    """A receipt's effects named a session its acknowledgment lock did not cover."""
+
+
 def acknowledge_and_apply_receipt(
     db: HubDatabase,
     *,
@@ -26,22 +30,47 @@ def acknowledge_and_apply_receipt(
     The CAS and the variable effects commit in one transaction. A failed variable write
     rolls the acknowledgment back, leaves the receipt prepared for redelivery, and raises.
     Message marks run after that commit and never raise.
-    """
-    from gobby.hooks.receipt_effects import apply_acknowledged_marks, apply_acknowledged_variables
-    from gobby.storage.hook_receipts import acknowledge_receipt
-    from gobby.storage.hub.protocol import SessionVariableMutation
 
-    owner = db.fetchone(
-        "SELECT session_id FROM hook_receipt_effects WHERE receipt_id = %s", (receipt_id,)
+    The effects can write a session other than the receipt's owner (the payload's session
+    and its startup context), so one transfer lock covers every such row in sorted order;
+    the per-row locks the writes take inside it are then no-ops.
+    """
+    from gobby.hooks.receipt_effects import (
+        apply_acknowledged_marks,
+        apply_acknowledged_variables,
+        variable_effect_sessions,
     )
-    if owner is None:
+    from gobby.storage.hook_receipts import acknowledge_receipt
+    from gobby.storage.hub.protocol import (
+        LockTarget,
+        SessionVariableMutation,
+        SessionVariableTransfer,
+    )
+
+    pending = db.fetchone(
+        "SELECT session_id, staged_payload FROM hook_receipt_effects WHERE receipt_id = %s",
+        (receipt_id,),
+    )
+    if pending is None:
         return None
-    with db.transaction_immediate(SessionVariableMutation(session_id=str(owner["session_id"]))):
+    owner = str(pending["session_id"])
+    locked = variable_effect_sessions(owner, pending.get("staged_payload"))
+    # A one-row receipt keeps the per-row lock, so a caller already holding it nests cleanly.
+    lock: LockTarget = (
+        SessionVariableMutation(session_id=next(iter(locked)))
+        if len(locked) == 1
+        else SessionVariableTransfer(tuple(locked))
+    )
+    with db.transaction_immediate(lock):
         committed = acknowledge_receipt(
             db, receipt_id=receipt_id, delivery_generation=delivery_generation
         )
         if committed is None:
             return None
+        if not variable_effect_sessions(committed.session_id, committed.staged_payload) <= locked:
+            # The payload was re-staged between the read and the CAS; roll the
+            # acknowledgment back so redelivery locks the new session set.
+            raise ReceiptSessionsChanged(receipt_id)
         if variable_manager is not None:
             apply_acknowledged_variables(committed, variable_manager=variable_manager)
     apply_acknowledged_marks(committed, message_manager=message_manager)
