@@ -17,6 +17,7 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import INCOMPATIBLE_MODEL_PROVIDER
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import PipelineDefinition
@@ -24,6 +25,7 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
+from tests.fixtures.provider_catalogs import serve_catalogs
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
@@ -340,10 +342,13 @@ class TestProviderResolution:
         assert spawn_request.provider == "claude"
 
     @pytest.mark.asyncio
-    async def test_rotating_providers_substitutes_the_same_tier_model(self) -> None:
-        """A rotated spawn names a model rather than inheriting the target CLI's default."""
+    async def test_rotating_provider_refuses_a_declared_model_it_does_not_serve(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rotated spawn runs the declared model or is refused; it is never swapped for a peer."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
+        serve_catalogs(monkeypatch, {"codex": ("gpt-5.6-sol",), "claude": ("opus",)})
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
@@ -385,16 +390,19 @@ class TestProviderResolution:
             )
             await asyncio.gather(*_spawn_background_tasks.values())
 
-        assert result["success"] is True
-        spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "opus"
+        assert result["success"] is False
+        assert result["error_code"] == INCOMPATIBLE_MODEL_PROVIDER
+        assert result["compatible_providers"] == ["codex"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_rotation_without_a_tier_equivalent_is_refused(self) -> None:
-        """No same-tier model for the target provider fails instead of spawning unpinned."""
+    async def test_rotation_to_a_provider_that_lacks_the_model_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A model another provider serves fails on a rotation target without it, never unpinned."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
+        serve_catalogs(monkeypatch, {"codex": ("gpt-5.6-sol",)})
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
@@ -427,10 +435,13 @@ class TestProviderResolution:
         mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_inherit_provider_model_is_read_as_a_tier(self) -> None:
-        """`provider: inherit` plus a model means a tier, not that provider's model."""
+    async def test_inherit_provider_refuses_a_model_the_landed_provider_does_not_serve(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`provider: inherit` runs the declared model on the provider it lands on, or refuses."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
+        serve_catalogs(monkeypatch, {"codex": ("gpt-6-luna",), "claude": ("sonnet",)})
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="fixture-definition-9b40e272",
@@ -472,11 +483,11 @@ class TestProviderResolution:
             )
             await asyncio.gather(*_spawn_background_tasks.values())
 
-        assert result["success"] is True, result.get("error")
-        spawn_request = mock_execute.call_args[0][0]
-        # `inherit` landed on claude, so the MID tier means sonnet, not terra.
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "sonnet"
+        # `inherit` landed on claude, which does not serve the declared model.
+        assert result["success"] is False
+        assert result["error_code"] == INCOMPATIBLE_MODEL_PROVIDER
+        assert result["compatible_providers"] == ["codex"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_explicit_model_survives_a_provider_rotation(self) -> None:

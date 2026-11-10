@@ -33,14 +33,10 @@ from gobby.agents.cargo_target import (
     sandbox_checkout_cargo_target_dir,
 )
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
-from gobby.agents.sandbox_policy import (
-    deny_paths,
-    gcode_runtime_write_exceptions,
-    prepare_sandbox_run_paths,
-)
+from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions, prepare_sandbox_run_paths
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
 from gobby.agents.srt_settings import render_srt_settings
-from gobby.utils.local_token import operator_bootstrap_path
+from gobby.utils import local_token
 from gobby.utils.project_context import get_project_sandbox_config
 
 _CORPUS = (
@@ -281,6 +277,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
         "tmp": root / "tmp",
         "darwin_temp": root / "darwin-temp",
         "darwin_cache": root / "darwin-cache",
+        # The passwd account home. Distinct from HOME, so a root taken from HOME fails parity.
+        "operator_home": root / "operator-home",
     }
     named = {name: str(path) for name, path in layout.items()}
     named["run_root"] = str(root / "gobby-home" / "run" / "sandbox" / _RUN_ID)
@@ -353,6 +351,12 @@ def _pin_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> No
             monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
+
+
+def _pin_account_home(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -> None:
+    """Pin the passwd account home, so the operator bootstrap is a placeholder, not the host's."""
+    operator_home = Path(layout["operator_home"])
+    monkeypatch.setattr(local_token, "account_home", lambda: operator_home)
 
 
 def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
@@ -464,6 +468,7 @@ def _evaluate(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
+    _pin_account_home(monkeypatch, layout)
     settings, env = _run_chain(inputs)
     return settings, env, layout
 
@@ -480,21 +485,12 @@ def _refusal(
         os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
     )
     _pin_checkout(layout)
+    _pin_account_home(monkeypatch, layout)
     try:
         _run_chain(inputs)
     except ValueError as exc:
         return str(exc), layout
     pytest.fail(f"{template['name']}: the oracle accepted a grant it must refuse")
-
-
-def _operator_credential_entries() -> list[str]:
-    """The operator credential at the passwd home, spelled the way the oracle spells it.
-
-    No environment variable selects this home, so the host's own path is denied on every
-    run (#25723). The corpus cannot hold a host path, so these entries are set aside below.
-    """
-    canonical = operator_bootstrap_path()
-    return [] if canonical is None else deny_paths([str(canonical)])
 
 
 def _portable_settings(settings: str, layout: dict[str, str]) -> str:
@@ -506,12 +502,6 @@ def _portable_settings(settings: str, layout: dict[str, str]) -> str:
             assert paths.count(grant) == int(sys.platform == "darwin"), (key, grant)
             if sys.platform == "darwin":
                 paths.remove(grant)
-    # The operator credential must stay denied: each spelling appears exactly once in
-    # denyRead, then it is set aside as the host's path rather than the corpus's.
-    deny_read: list[str] = document["filesystem"]["denyRead"]
-    for entry in _operator_credential_entries():
-        assert deny_read.count(entry) == 1, ("denyRead", entry)
-        deny_read.remove(entry)
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -36,6 +36,7 @@ from gobby.workflows.dirty_edit_grants import (
     checkout_path_owners,
     claimed_task_carriers,
     content_recorded_paths,
+    unclaimed_content_paths,
 )
 from gobby.workflows.git_commit_parsing import (
     GitCommitInvocation,
@@ -358,6 +359,18 @@ async def foreign_dirty_edit_conflict(
                 paths=rels,
                 exclude_session_id=session_id,
             )
+            # The seat's own edit recorded unclaimed (its tool-start binding was lost) stays its
+            # own unless another live session holds the path or a directory or root above it.
+            own |= {
+                path
+                for path in await asyncio.to_thread(
+                    unclaimed_content_paths,
+                    variables,
+                    root,
+                    session_dirty_file_set_for_checkout(variables, root),
+                )
+                if not _covered_by_holder(path, owners)
+            }
             operation_paths, protected = await operation_exemptions(
                 variables, root, await _operation_paths(root), owners
             )
@@ -674,6 +687,11 @@ def _live_interval_task(
     return max(candidates)[2] if candidates else None
 
 
+def _covered_by_holder(path: str, holders: Iterable[str]) -> bool:
+    """Return whether a live holder owns ``path`` itself or a directory or root above it."""
+    return any(task_edit_path_covers(holder, path) for holder in holders)
+
+
 def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -> set[str]:
     try:
         variables = SessionVariableManager(db).get_variables(session_id)
@@ -681,9 +699,15 @@ def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -
         raise DirtyEditOwnershipInspectionError(
             f"database ownership inspection failed: {exc}"
         ) from exc
-    return content_recorded_paths(
-        variables, checkout_root, session_dirty_file_set_for_checkout(variables, checkout_root)
-    )
+    dirty = session_dirty_file_set_for_checkout(variables, checkout_root)
+    owned = content_recorded_paths(variables, checkout_root, dirty)
+    unclaimed = unclaimed_content_paths(variables, checkout_root, dirty)
+    if unclaimed:
+        held = _live_path_owners(
+            db, checkout_root=checkout_root, paths=unclaimed, exclude_session_id=session_id
+        )
+        owned |= {path for path in unclaimed if not _covered_by_holder(path, held)}
+    return owned
 
 
 def _release_clean_ledger_entries(
