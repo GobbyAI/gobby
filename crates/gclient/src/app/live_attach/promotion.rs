@@ -6,6 +6,10 @@
 use super::*;
 use crate::app::attach::ATTACH_RETRY_MAX;
 
+/// Shown when a direct promotion fails while keys are held for it. The held
+/// keys were never sent, and the pane stays on the proxy.
+const DIRECT_ATTACH_FAILED: &str = "direct attach failed; typed input was not sent";
+
 impl Workspace<LiveDaemon> {
     /// Starts a direct try for each proxy pane whose promotion fell due. Only
     /// auto delivery promotes; a pane's first eligible tick arms its backoff.
@@ -79,17 +83,32 @@ impl Workspace<LiveDaemon> {
         terminal_id: &str,
         proxy_attachment: &str,
         outcome: Result<DirectAttach, FrameError>,
-    ) {
+    ) -> Result<(), FrameError> {
         let pane = self.panes.get_mut(&pane_id);
         let (reply, attachment, locator, source) = match outcome {
             Ok(won) => won,
-            Err(_) => {
-                if let Some(pane) = pane {
-                    pane.promoting = false;
-                    pane.promote_at = Some(Instant::now() + pane.promote_delay);
-                    pane.promote_delay = (pane.promote_delay * 2).min(ATTACH_RETRY_MAX);
+            Err(error) => {
+                let Some(pane) = pane else {
+                    return Ok(());
+                };
+                pane.promoting = false;
+                pane.promote_at = Some(Instant::now() + pane.promote_delay);
+                pane.promote_delay = (pane.promote_delay * 2).min(ATTACH_RETRY_MAX);
+                if pane.pending_input.is_empty() {
+                    return Ok(());
                 }
-                return;
+                // Keys held for this promotion never reach a host stream that
+                // did not open. They are dropped, and the drop is reported.
+                pane.clear_pending_input();
+                pane.status_message = Some(DIRECT_ATTACH_FAILED.to_string());
+                tracing::warn!(
+                    lifecycle_stage = "direct-promotion-failed",
+                    pane = pane_id.0,
+                    terminal_id = %terminal_id,
+                    error = %error,
+                    "typed input held for a direct promotion was dropped"
+                );
+                return Err(FrameError::Refused(DIRECT_ATTACH_FAILED.into()));
             }
         };
         let current = self.daemon.generation() == generation;
@@ -105,15 +124,9 @@ impl Workspace<LiveDaemon> {
             if current {
                 self.release_attachment(terminal_id, &attachment);
             }
-            return;
+            return Ok(());
         };
         pane.promoting = false;
-        // Installing resets control to observe, so a focused pane that held or
-        // was taking the lease asks again under the new attachment.
-        let held = pane.is_held();
-        let reask = self.focus == Some(pane_id) && (held || pane.is_acquiring());
-        // A take still in flight answers for the proxy attachment (#22747).
-        pane.control_request = None;
         // The proxy's finalization must not retire the promoted pane.
         pane.tombstones.insert(proxy_attachment.to_string());
         self.install_direct_source(pane_id, &reply, attachment.clone(), &locator, source);
@@ -127,13 +140,34 @@ impl Workspace<LiveDaemon> {
             reason = "direct locator usable; host accepted the attach",
             "pane promoted to direct frame delivery"
         );
-        self.release_attachment(terminal_id, proxy_attachment);
-        if reask {
-            // A held lease names this client's proxy attachment until its
-            // release lands, so only a takeover moves it. An unanswered take
-            // asks again without one: a peer holder is never displaced.
-            self.request_control(pane_id, held);
+        if self.panes[&pane_id].backend == super::super::Backend::Tmux {
+            let daemon = self.daemon.clone();
+            let terminal_id = terminal_id.to_string();
+            let proxy_attachment = proxy_attachment.to_string();
+            let ready = tokio::spawn(async move {
+                // The new attachment's first claim could not displace its own proxy.
+                // Wait for finalization before claiming again, then permit queued writes.
+                let reply = daemon
+                    .send(json!({
+                        "type": "terminal_detach",
+                        "request_id": uuid::Uuid::new_v4().to_string(),
+                        "terminal_id": terminal_id,
+                        "attachment_id": proxy_attachment,
+                    }))
+                    .await?;
+                if reply.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+                    return Err(FrameError::Protocol("replaced proxy detach refused".into()));
+                }
+                crate::frame_source::claim_writer_lease(&daemon, &terminal_id, &attachment).await
+            });
+            self.panes
+                .get_mut(&pane_id)
+                .expect("pane exists")
+                .writer_ready = Some(ready);
+        } else {
+            self.release_attachment(terminal_id, proxy_attachment);
         }
+        Ok(())
     }
 
     /// Detaches `attachment` beside the loop.

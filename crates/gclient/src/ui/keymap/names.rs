@@ -25,7 +25,6 @@ pub enum Action {
     NavigatePaneDown,
     NavigatePaneUp,
     NavigatePaneRight,
-    Detach,
     ReloadConfig,
     OpenNotificationTarget,
     PreviousTerminal,
@@ -72,9 +71,6 @@ pub enum Action {
     Zoom,
     ResizeMode,
     ToggleSidebar,
-    TakeControl,
-    ReleaseControl,
-    TakeBack,
     Respond,
     Quit,
     CustomCommand,
@@ -145,11 +141,6 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec("navigate_pane_down", "Focus the pane below", &["j"]),
     spec("navigate_pane_up", "Focus the pane above", &["k"]),
     spec("navigate_pane_right", "Focus the pane to the right", &["l"]),
-    spec(
-        "detach",
-        "Release control of the focused terminal",
-        &["prefix+q"],
-    ),
     spec(
         "reload_config",
         "Reload client preferences",
@@ -280,21 +271,6 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec("zoom", "Toggle zoom for the focused pane", &["prefix+z"]),
     spec("resize_mode", "Enter resize mode", &["prefix+r"]),
     spec("toggle_sidebar", "Toggle the sidebar", &["prefix+b"]),
-    spec(
-        "take_control",
-        "Take control of the focused terminal",
-        &["prefix+t"],
-    ),
-    spec(
-        "release_control",
-        "Release control of the focused terminal",
-        &["prefix+u"],
-    ),
-    spec(
-        "take_back",
-        "Accept the take-back prompt",
-        &["prefix+shift+a"],
-    ),
     spec("respond", "Answer the attention prompt", &["prefix+a"]),
     spec("quit", "Quit the client", &["prefix+shift+q"]),
     // Reserved until the plugin/command-menu decision (#20201): the chord is
@@ -347,7 +323,7 @@ action_names! {
     "terminal_picker" => TerminalPicker, "goto" => Goto, "navigate_up" => NavigateUp,
     "navigate_down" => NavigateDown, "navigate_pane_left" => NavigatePaneLeft,
     "navigate_pane_down" => NavigatePaneDown, "navigate_pane_up" => NavigatePaneUp,
-    "navigate_pane_right" => NavigatePaneRight, "detach" => Detach, "reload_config" => ReloadConfig,
+    "navigate_pane_right" => NavigatePaneRight, "reload_config" => ReloadConfig,
     "open_notification_target" => OpenNotificationTarget, "previous_terminal" => PreviousTerminal,
     "next_terminal" => NextTerminal, "previous_project" => PreviousProject,
     "next_project" => NextProject, "toggle_group" => ToggleGroup,
@@ -370,8 +346,7 @@ action_names! {
     "cycle_pane_next" => CyclePaneNext, "cycle_pane_previous" => CyclePanePrevious,
     "last_pane" => LastPane, "split_vertical" => SplitVertical,
     "split_horizontal" => SplitHorizontal, "close_pane" => ClosePane, "zoom" => Zoom,
-    "resize_mode" => ResizeMode, "toggle_sidebar" => ToggleSidebar, "take_control" => TakeControl,
-    "release_control" => ReleaseControl, "take_back" => TakeBack, "respond" => Respond,
+    "resize_mode" => ResizeMode, "toggle_sidebar" => ToggleSidebar, "respond" => Respond,
     "quit" => Quit, "custom_command" => CustomCommand,
 }
 

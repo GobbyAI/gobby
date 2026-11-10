@@ -56,7 +56,7 @@ def _auto(terminal_id: str, action_key: str, payload: str) -> WriteRequest:
 
 
 async def _grant(coordinator: WriteCoordinator, terminal_id: str) -> int:
-    await coordinator.lease_registry.attach(terminal_id, attachment_id="att-1")
+    await coordinator.lease_registry.attach(terminal_id, attachment_id="att-1", viewer="web")
     result = await coordinator.lease_registry.take_control(terminal_id, "att-1")
     assert result.lease_generation is not None
     return result.lease_generation

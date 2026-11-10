@@ -67,6 +67,9 @@ pub struct ViewerState {
     pub focus: BTreeMap<TabId, layout::PaneId>,
     /// Tabs this window shows zoomed to their focused slot.
     pub zoomed: BTreeSet<TabId>,
+    /// Local tabs whose adoption job is in flight. A split started from one
+    /// meanwhile would adopt the same terminals again.
+    pub adopting: BTreeSet<TabId>,
     /// The tab this window shows for each project.
     pub active_tab: BTreeMap<String, TabId>,
     pub panes: PaneInterner,

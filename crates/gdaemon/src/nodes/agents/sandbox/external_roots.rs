@@ -48,6 +48,7 @@ fn validate_root(
         gobby,
         home,
         env,
+        &[],
         operator_bootstrap,
     )
     .map_err(|error| format!("External write root overlaps a protected root: {root} ({error})"))

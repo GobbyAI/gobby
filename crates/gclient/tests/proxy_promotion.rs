@@ -31,6 +31,11 @@ use tokio::time::timeout;
 use tracing::subscriber::DefaultGuard;
 
 const WAIT: Duration = Duration::from_secs(10);
+const KEY_BOUND: Duration = Duration::from_millis(1500);
+const PROXY_NATIVE_INPUT: &str =
+    "this terminal's input runs on its host stream; reattaching it, so the key was not sent";
+const INPUT_QUEUE_FULL: &str = "too much typed while the terminal reattached; the rest was dropped";
+const DIRECT_ATTACH_FAILED: &str = "direct attach failed; typed input was not sent";
 
 struct LogWriter(Arc<Mutex<Vec<u8>>>);
 
@@ -101,6 +106,28 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     })
     .await
     .unwrap_or_else(|_| panic!("mock daemon never saw {expected} {kind} requests"));
+}
+
+/// The attachment the last `terminal_focus` report for `terminal_id` names,
+/// while that report says the pane is focused.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    websocket_requests(mock, "terminal_focus")
+        .into_iter()
+        .rev()
+        .find(|request| request["terminal_id"] == terminal_id)
+        .filter(|request| request["focused"] == true)
+        .and_then(|request| request["attachment_id"].as_str().map(str::to_string))
+}
+
+/// Wait for the loop to report `terminal_id` focused under `attachment_id`.
+async fn wait_for_focus(mock: &MockDaemon, terminal_id: &str, attachment_id: &str) {
+    timeout(WAIT, async {
+        while focused_attachment(mock, terminal_id).as_deref() != Some(attachment_id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{terminal_id} was never reported focused under {attachment_id}"));
 }
 
 /// Moves paused time on two seconds at a time, letting the loop run between
@@ -237,14 +264,15 @@ async fn a_failed_initial_direct_attach_is_promoted_after_a_bounded_proxy_interv
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id, "attachment-2").await;
         let promoted =
             advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 3).await;
         assert!(promoted, "no direct retry within 128s of proxy delivery");
         wait_for_websocket_requests(&mock, "terminal_detach", 2).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        // The promoted pane types at once: no take precedes its first key.
         send_key(&input_tx, KeyCode::Char('x')).await;
         let seen = typed_on_host(&host, b"x").await;
+        wait_for_focus(&mock, terminal_id, "attachment-3").await;
         drop(input_tx);
         seen
     };
@@ -283,13 +311,6 @@ async fn a_failed_initial_direct_attach_is_promoted_after_a_bounded_proxy_interv
         ],
         "the refused direct attachment, the replaced proxy attachment, then the promoted one at exit"
     );
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(takes[1]["attachment_id"], json!("attachment-3"));
-    assert_eq!(
-        takes[1]["takeover"],
-        json!(true),
-        "the retake displaces this client's own proxy holder"
-    );
     assert_eq!(
         bound_before_input(&seen, b"x").as_deref(),
         Some("attachment-3"),
@@ -325,6 +346,49 @@ async fn a_failed_initial_direct_attach_is_promoted_after_a_bounded_proxy_interv
 }
 
 #[tokio::test]
+async fn a_tmux_promotion_reclaims_after_releasing_the_proxy_writer() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-tmux-promotion";
+    mock.set_attach_backend(terminal_id, "tmux");
+    let host = DirectHost::start("epoch-1").await;
+    host.refuse_next_attach();
+    let (mut workspace, _home) =
+        live_workspace(&mock, &host, terminal_id, true, FrameDelivery::Auto).await;
+    let pane_id = workspace.pane_for_terminal(terminal_id).expect("pane");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_focus(&mock, terminal_id, "attachment-2").await;
+        assert!(advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 3).await);
+        wait_for_focus(&mock, terminal_id, "attachment-3").await;
+        send_key(&input_tx, KeyCode::Char('x')).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("promotion loop");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
+    let requests: Vec<_> = mock.requests().into_iter().filter_map(|r| r.body).collect();
+    mock_daemon::lease_admission::assert_tmux_write_admission(&requests, terminal_id);
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
     let (log_guard, logs) = capture_logs();
     let mock = MockDaemon::start("local-token").await;
@@ -341,7 +405,7 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id, "attachment-1").await;
         // The host-local reconnect is refused, so recovery lands on the proxy.
         host.refuse_next_attach();
         host.disconnect();
@@ -351,9 +415,10 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
             advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 3).await;
         assert!(promoted, "no direct retry within 128s of proxy delivery");
         wait_for_websocket_requests(&mock, "terminal_detach", 2).await;
-        // The daemon re-attach left the pane observing, so the key asks.
+        // Every attached pane is writable, so the key needs no take first.
         send_key(&input_tx, KeyCode::Char('x')).await;
         let seen = typed_on_host(&host, b"x").await;
+        wait_for_focus(&mock, terminal_id, "attachment-3").await;
         drop(input_tx);
         seen
     };
@@ -370,13 +435,6 @@ async fn a_recovered_proxy_pane_is_promoted_and_types_direct() {
         driver
     );
     result.expect("recovered promotion loop");
-    let takes = websocket_requests(&mock, "terminal_take_control");
-    assert_eq!(
-        takes.len(),
-        2,
-        "the start-up take, then the key's: {takes:?}"
-    );
-    assert_eq!(takes[1]["attachment_id"], json!("attachment-3"));
     drop(log_guard);
 
     assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
@@ -434,7 +492,7 @@ async fn idle_proxy_pane(
     let (input_tx, input_rx) = mpsc::channel(16);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus(&mock, terminal_id, "attachment-1").await;
         let reattached =
             advance_until(|| websocket_requests(&mock, "terminal_attach").len() >= 2).await;
         drop(input_tx);
@@ -474,4 +532,209 @@ async fn proxy_delivery_never_tries_a_direct_attach() {
     assert!(!reattached, "--frame-delivery proxy never retries");
     assert_eq!(kinds, [Some("proxy".to_string())]);
     assert_eq!(transport, Some(Transport::Proxy));
+}
+
+fn alerts(chrome: &Chrome, title: &str) -> usize {
+    chrome
+        .alert_log
+        .iter()
+        .filter(|toast| toast.title == title)
+        .count()
+}
+
+/// A key typed into a native pane on the proxy is held, not refused: the pane
+/// promotes at once, and the held key goes out on the host stream in time.
+#[tokio::test]
+async fn a_key_held_on_a_native_proxy_pane_reaches_the_host_once_promoted() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-held-proxy";
+    let host = DirectHost::start("epoch-1").await;
+    // The first direct attach is refused, so the pane starts on the proxy with
+    // its direct locator still offered.
+    host.refuse_next_attach();
+    let (mut workspace, _home) =
+        live_workspace(&mock, &host, terminal_id, true, FrameDelivery::Auto).await;
+    let pane_id = workspace.pane_for_terminal(terminal_id).expect("pane");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_focus(&mock, terminal_id, "attachment-2").await;
+        send_key(&input_tx, KeyCode::Char('x')).await;
+        let landed = timeout(KEY_BOUND, typed_on_host(&host, b"x")).await;
+        drop(input_tx);
+        landed
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, landed) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("held-key loop");
+    let seen = landed.expect("the held key reaches the host within KEY_BOUND");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
+    assert_eq!(
+        bound_before_input(&seen, b"x").as_deref(),
+        Some("attachment-3"),
+        "the held key goes out under the promoted attachment: {seen:?}"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "the held key stays on the host stream"
+    );
+    assert_eq!(
+        alerts(&chrome, PROXY_NATIVE_INPUT),
+        0,
+        "a held key is not refused"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+/// When the direct attach a held key waits on fails, the key is dropped with a
+/// visible toast, and the pane records the failure while it stays on the proxy.
+#[tokio::test]
+async fn a_key_held_for_a_failed_direct_attach_is_dropped_visibly() {
+    let (log_guard, logs) = capture_logs();
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-held-failed";
+    let host = DirectHost::start("epoch-1").await;
+    host.refuse_next_attach();
+    let (mut workspace, _home) =
+        live_workspace(&mock, &host, terminal_id, true, FrameDelivery::Auto).await;
+    let pane_id = workspace.pane_for_terminal(terminal_id).expect("pane");
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_focus(&mock, terminal_id, "attachment-2").await;
+        // The promotion's direct attach is refused as well.
+        host.refuse_next_attach();
+        send_key(&input_tx, KeyCode::Char('x')).await;
+        let failed =
+            advance_until(|| !log_lines(&logs, "direct-promotion-failed").is_empty()).await;
+        drop(input_tx);
+        failed
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, failed) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("failed-promotion loop");
+    drop(log_guard);
+    assert!(
+        failed,
+        "the promotion for the held key was tried and failed"
+    );
+    let sent = host.drain();
+    assert!(
+        !sent.iter().any(|message| is_input(message, b"x")),
+        "the dropped key never reaches the host: {sent:?}"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "the dropped key never relays through the daemon"
+    );
+    assert_eq!(
+        alerts(&chrome, DIRECT_ATTACH_FAILED),
+        1,
+        "the drop is shown once"
+    );
+    assert_eq!(
+        workspace.pane(pane_id).transport(),
+        Some(Transport::Proxy),
+        "the pane stays on the proxy"
+    );
+    assert_eq!(
+        workspace.pane(pane_id).status_message(),
+        Some(DIRECT_ATTACH_FAILED),
+        "the pane records why the held key was dropped"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+/// A paste larger than the held-input bound is reported, not refused by pane
+/// kind, and nothing of it reaches the host.
+#[tokio::test]
+async fn a_paste_past_the_held_input_bound_is_reported() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-held-paste";
+    let host = DirectHost::start("epoch-1").await;
+    host.refuse_next_attach();
+    let (mut workspace, _home) =
+        live_workspace(&mock, &host, terminal_id, true, FrameDelivery::Auto).await;
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    // Past the held queue's bound, under the paste limit.
+    let paste = "p".repeat(300 * 1024);
+
+    let driver = async {
+        wait_for_focus(&mock, terminal_id, "attachment-2").await;
+        input_tx
+            .send(RawInputEvent::Paste(paste))
+            .await
+            .expect("live loop input");
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("paste loop");
+    assert_eq!(
+        alerts(&chrome, INPUT_QUEUE_FULL),
+        1,
+        "the paste that did not fit says so"
+    );
+    assert_eq!(
+        alerts(&chrome, PROXY_NATIVE_INPUT),
+        0,
+        "the bound refuses the paste, not the pane kind"
+    );
+    assert!(
+        !host
+            .drain()
+            .iter()
+            .any(|message| matches!(message, ClientMessage::Paste { .. })),
+        "no part of the paste reaches the host"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
 }

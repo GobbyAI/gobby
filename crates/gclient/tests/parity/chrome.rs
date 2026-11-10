@@ -1551,9 +1551,6 @@ fn rendered_hits_match_drawn_cells() {
     }));
     ws.open_terminal("term-alpha", "native", "epoch")
         .expect("open term-alpha");
-    // A peer took the lease: the pane state the control indicator offers.
-    let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
-    ws.pane_mut(alpha).take_back = true;
     for n in 2..=20 {
         ws.open_terminal(&format!("t{n:02}"), "native", "epoch")
             .expect("open scripted terminal");
@@ -1661,18 +1658,6 @@ fn rendered_hits_match_drawn_cells() {
             "{section:?}: {thumb:?}"
         );
     }
-
-    // The pane's title sits top left, where its Read-only makes the whole
-    // title the take-control button; the status row stays plain status.
-    let indicator = view.control_indicator_hit_area.expect("control indicator");
-    let pane = view.pane_infos.first().expect("pane info").rect;
-    assert_eq!((indicator.x, indicator.y), (pane.x + 1, pane.y));
-    assert_ne!(indicator.y, view.status_rect.y);
-    assert_eq!(hit_text(&terminal, indicator), " ⍾ term-alpha · Read-only");
-    assert_eq!(
-        usize::from(indicator.width),
-        display_width(" ⍾ term-alpha · Read-only ")
-    );
 }
 
 #[test]

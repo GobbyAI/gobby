@@ -330,6 +330,9 @@ pub struct SpawnPayload {
     #[serde(deserialize_with = "Option::deserialize")]
     pub title: Option<String>,
     pub source_root: String,
+    /// Credential authorities resolved by the hub outside the child environment.
+    #[serde(default)]
+    pub credential_authority_roots: Vec<String>,
     pub workspace: SpawnWorkspace,
     #[serde(deserialize_with = "Option::deserialize")]
     pub agent_name: Option<String>,

@@ -2,6 +2,7 @@
 
 use gobby_client as client;
 pub mod host;
+pub mod lease_admission;
 mod transport;
 
 #[allow(unused_imports)]

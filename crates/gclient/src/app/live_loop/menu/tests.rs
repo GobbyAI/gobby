@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{ControlState, Workspace};
+use crate::app::Workspace;
 use crate::theme::ThemeName;
 use crate::ui::Action;
 
@@ -131,7 +131,6 @@ fn menus_list_items_per_target_and_state() {
             "Zoom",
             "Arrange ▸",
             "Move to tab ▸",
-            "Take control",
             "Copy mode",
             "Send right-clicks to pane",
             "Close pane",
@@ -151,20 +150,18 @@ fn menus_list_items_per_target_and_state() {
         menu.items[6].action,
         MenuAction::OpenSubmenu(Submenu::MoveToTab { pane: other })
     );
-    assert_eq!(menu.items[7].action, MenuAction::TakeControl(other));
-    assert_eq!(menu.items[9].action, MenuAction::TogglePassthrough(other));
-    assert_eq!(menu.items[10].action, MenuAction::Act(Action::ClosePane));
+    assert_eq!(menu.items[8].action, MenuAction::TogglePassthrough(other));
+    assert_eq!(menu.items[9].action, MenuAction::Act(Action::ClosePane));
     assert_eq!(
         (menu.kind, menu.anchor, menu.selected),
         (ContextMenuKind::Pane(other), (10, 5), 0)
     );
 
-    // The focused pane: held, named, blocked, zoomed and passing
-    // right-clicks through.
+    // The focused pane: named, blocked, zoomed and passing right-clicks
+    // through.
     {
         let pane = ws.pane_mut(focused);
         pane.label = Some("build".to_string());
-        pane.control = ControlState::Held;
         pane.right_click_passthrough = true;
     }
     let entry_id = format!("run:{}", ws.pane(focused).terminal_id);
@@ -188,7 +185,6 @@ fn menus_list_items_per_target_and_state() {
             "Unzoom",
             "Arrange ▸",
             "Move to tab ▸",
-            "Release control",
             "Respond",
             "Copy mode",
             "Use gclient menu",
@@ -196,8 +192,7 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
-    assert_eq!(menu.items[7].action, MenuAction::ReleaseControl(focused));
-    assert_eq!(menu.items[8].action, MenuAction::Respond(entry_id));
+    assert_eq!(menu.items[7].action, MenuAction::Respond(entry_id));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
     assert_eq!(
@@ -239,28 +234,32 @@ fn menus_list_items_per_target_and_state() {
             "Reload config",
             "Toggle sidebar",
             "Destroy orphaned terminals…",
-            "Detach",
             "Quit",
         ]
     );
     assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
     assert_eq!(menu.items[3].action, MenuAction::Act(Action::OpenProject));
     assert_eq!(menu.items[6].action, MenuAction::Act(Action::ReloadConfig));
-    assert_eq!(menu.items[10].action, MenuAction::Act(Action::Quit));
+    assert_eq!(menu.items[9].action, MenuAction::Act(Action::Quit));
     assert!(menu.items.iter().all(|item| item.enabled));
 
     // Rows sit one cell inside the popup at the anchor: `destroy orphaned
-    // terminals…` makes it 31 wide, eleven items make it 13 tall.
+    // terminals…` makes it 31 wide, ten items make it 12 tall.
     assert_eq!(
         menu_rect(menu.anchor, &menu.items),
-        Rect::new(40, 12, 31, 13)
+        Rect::new(40, 12, 31, 12)
     );
-    assert_eq!(menu.item_rects.len(), 11);
+    assert_eq!(menu.item_rects.len(), 10);
     assert_eq!(menu.item_rects[0], Rect::new(41, 13, 29, 1));
     assert_eq!(menu_hit(&menu, 41, 13), Some(0));
     assert_eq!(menu_hit(&menu, 57, 15), Some(2));
     assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-    assert_eq!(menu_hit(&menu, 45, 23), Some(10), "the last row");
+    assert_eq!(menu_hit(&menu, 45, 22), Some(9), "the last row");
+    assert_eq!(
+        menu_hit(&menu, 45, 23),
+        None,
+        "the bottom border is not a row"
+    );
     assert_eq!(menu_hit(&menu, 45, 24), None, "below the last row");
     let short = [item("Zoom", MenuAction::Act(Action::Zoom))];
     assert_eq!(
@@ -326,7 +325,6 @@ fn menu_bar_menus_regroup_items_per_title() {
             "Sort tabs A–Z",
             "Close tab",
             "Destroy orphaned terminals…",
-            "Detach",
         ]
     );
     assert_eq!(
@@ -340,7 +338,6 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::SortTabs),
             MenuAction::Act(Action::CloseTab),
             MenuAction::DestroyOrphans,
-            MenuAction::Act(Action::Detach),
         ]
     );
 
@@ -502,7 +499,8 @@ fn menu_bar_menus_regroup_items_per_title() {
     );
 
     let agent = menu(&ws, &chrome, MenuBarMenu::Agent);
-    assert_eq!(agent.items.len(), 9);
+    // Respond, Mark seen, Open alert target, Next attention, Previous attention.
+    assert_eq!(agent.items.len(), 5);
     assert!(!agent.items[0].enabled);
     assert!(!agent.items[1].enabled);
 
@@ -540,9 +538,9 @@ fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
     );
     assert!(menu.items[0].enabled);
     assert!(menu.items[1].enabled);
-    assert!(!menu.items[7].enabled, "next would revisit the same pane");
+    assert!(!menu.items[3].enabled, "next would revisit the same pane");
     assert!(
-        !menu.items[8].enabled,
+        !menu.items[4].enabled,
         "previous would revisit the same pane"
     );
 }
@@ -638,14 +636,13 @@ fn row_menu_labels_orphaned_rows() {
             "Focus",
             "Open in new tab",
             "Mark seen",
-            "Take control",
             "Destroy orphaned terminal",
         ]
     );
     let enabled: Vec<bool> = menu.items.iter().map(|item| item.enabled).collect();
-    assert_eq!(enabled, [true, true, false, false, true]);
+    assert_eq!(enabled, [true, true, false, true]);
     assert_eq!(
-        menu.items[4].action,
+        menu.items[3].action,
         MenuAction::DestroyTerminal("term-orphan".to_string())
     );
 
@@ -655,8 +652,8 @@ fn row_menu_labels_orphaned_rows() {
         ContextMenuKind::Agent("run:term-live".to_string()),
         (3, 22),
     );
-    assert_eq!(labels(&menu)[4], "Close terminal");
-    assert!(!menu.items[4].enabled, "no pane to close");
+    assert_eq!(labels(&menu)[3], "Close terminal");
+    assert!(!menu.items[3].enabled, "no pane to close");
 }
 
 /// 5.3.1: the sidebar rows' menus. A git project with worktree children
@@ -731,7 +728,6 @@ fn row_menus_list_items_per_target_and_state() {
     }));
     ws.select_project("proj-git");
     ws.reconcile_subscribe_first().expect("scripted roster");
-    ws.pane_mut(held).control = ControlState::Held;
     let mut chrome = Chrome::dark();
     chrome.open_pane(blocked, "blocked");
     chrome.open_pane(held, "held");
@@ -817,7 +813,6 @@ fn row_menus_list_items_per_target_and_state() {
             "Open in new tab",
             "Respond",
             "Mark seen",
-            "Take control",
             "Close terminal",
         ]
     );
@@ -837,35 +832,22 @@ fn row_menus_list_items_per_target_and_state() {
         menu.items[3].action,
         MenuAction::MarkSeen("run:term-blocked".to_string())
     );
-    assert_eq!(menu.items[4].action, MenuAction::TakeControl(blocked));
     assert_ne!(chrome.focused_pane(), Some(blocked));
-    assert_eq!(menu.items[5].action, MenuAction::CloseTerminal(blocked));
+    assert_eq!(menu.items[4].action, MenuAction::CloseTerminal(blocked));
     assert!(menu.items.iter().all(|item| item.enabled));
     let menu = build_menu(&ws, &chrome, agent("run:term-held"), (3, 22));
     assert_eq!(
         labels(&menu),
-        [
-            "Focus",
-            "Open in new tab",
-            "Mark seen",
-            "Release control",
-            "Close terminal",
-        ]
+        ["Focus", "Open in new tab", "Mark seen", "Close terminal",]
     );
-    assert_eq!(enabled(&menu), [true, true, false, true, true]);
-    assert_eq!(menu.items[3].action, MenuAction::ReleaseControl(held));
+    assert_eq!(enabled(&menu), [true, true, false, true]);
+    assert_eq!(menu.items[3].action, MenuAction::CloseTerminal(held));
     let menu = build_menu(&ws, &chrome, agent("run:term-away"), (3, 24));
     assert_eq!(
         labels(&menu),
-        [
-            "Focus",
-            "Open in new tab",
-            "Mark seen",
-            "Take control",
-            "Close terminal",
-        ]
+        ["Focus", "Open in new tab", "Mark seen", "Close terminal",]
     );
-    assert_eq!(enabled(&menu), [true, true, false, false, false]);
+    assert_eq!(enabled(&menu), [true, true, false, false]);
 }
 
 #[test]
@@ -889,7 +871,6 @@ fn agent_row_close_activates_with_the_row_pane_not_the_focused_one() {
         }],
     }));
     ws.reconcile_subscribe_first().expect("scripted roster");
-    ws.pane_mut(held).control = ControlState::Held;
 
     let mut chrome = Chrome::dark();
     chrome.open_pane(blocked, "blocked");

@@ -328,18 +328,26 @@ async fn lagged_subscriber_relists_and_converges() {
         }
     });
     for seq in 1..=1025 {
-        mock.send_event(json!({
+        let event = json!({
             "type": "terminal_event",
             "event": "created",
             "terminal_id": format!("terminal-{seq}"),
             "daemon_epoch": "epoch-1",
             "seq": seq,
             "timestamp": "2026-01-01T00:00:00Z"
-        }));
+        });
+        if seq == 1025 {
+            // This is fixture setup, not a reader-throughput deadline: under
+            // fleet load the mock may still be writing the burst after 2 s.
+            // Acknowledge its last write before budgeting the reader drain.
+            mock.send_event_and_wait(event).await;
+        } else {
+            mock.send_event(event);
+        }
     }
-    timeout(Duration::from_secs(2), monitor_task)
+    timeout(Duration::from_secs(10), monitor_task)
         .await
-        .expect("reader processed burst")
+        .expect("reader processed acknowledged burst through seq 1025")
         .expect("monitor task");
     assert!(matches!(
         lag_probe
@@ -619,6 +627,7 @@ async fn typed_lifecycle_events_update_live_panes() {
         .pane_for_terminal("terminal-1")
         .expect("terminal pane");
     let attachment_id = workspace.pane(pane_id).attachment_id().to_string();
+    let lease_before = workspace.pane(pane_id).lease_generation();
 
     send_event_and_observe(
         &mock,
@@ -637,9 +646,11 @@ async fn typed_lifecycle_events_update_live_panes() {
         .drain_live_events()
         .await
         .expect("apply lease loss");
-    assert!(workspace.pane(pane_id).is_lease_lost());
-    assert!(workspace.pane(pane_id).has_take_back());
-    assert_eq!(workspace.pane(pane_id).lease_generation(), 2);
+    // A lease the daemon moves no longer changes the pane; the event only
+    // advances the lifecycle sequence, which the finalization below (seq 3)
+    // proves by being accepted.
+    assert_eq!(workspace.pane(pane_id).lease_generation(), lease_before);
+    assert!(workspace.pane(pane_id).is_live());
 
     send_event_and_observe(
         &mock,

@@ -1,12 +1,10 @@
 //! Client terminal themes on native slots.
 //!
 //! A frame stream declares its client's colours with
-//! `ClientMessage::SetTerminalTheme`. The slot's input grant decides whose
-//! declaration a pane shows: with no grant any declaration applies, and with a
-//! grant only the holder's does. A stale or observing stream therefore cannot
-//! undo the controlling client's newer theme. When the daemon moves the grant,
-//! the new holder's declaration applies. A declaration only ever reaches its
-//! own attachment's pane: a spawn starts with the theme its request carries,
+//! `ClientMessage::SetTerminalTheme`. Each declaration applies to its slot as it
+//! arrives, so the newest declaration wins. Binding a stream re-applies the
+//! newest declaration among the slot's streams. A declaration only ever reaches
+//! its own attachment's pane: a spawn starts with the theme its request carries,
 //! or with the current ground of the pane its `theme_from` names (a daemon
 //! spawn's spawner), never another client's.
 
@@ -26,42 +24,33 @@ impl HostState {
         };
         let attachment_id = attachment_id.ok_or("attach_required")?;
         let mut inner = self.inner.lock().await;
+        inner.next_theme_seq += 1;
+        let seq = inner.next_theme_seq;
         let attachment = inner
             .attachments
             .get_mut(&attachment_id)
             .ok_or("terminal_gone")?;
-        attachment.declared_theme = Some(theme.clone());
+        attachment.declared_theme = Some((seq, theme.clone()));
         let host_terminal_id = attachment.host_terminal_id.clone();
-        let bound = attachment.client_attachment_id.clone();
         let Some(slot) = native_slot(&inner, &host_terminal_id) else {
             return Ok(());
         };
-        if slot.input_grant.is_some() && slot.input_grant != bound {
-            return Ok(());
-        }
         apply(slot, &theme);
         Ok(())
     }
 }
 
-/// Apply the input-grant holder's newest declaration to its slot, if the
-/// holder's stream has declared one.
-pub(crate) fn apply_holder_theme(inner: &Inner, host_terminal_id: &str) {
+/// Apply the newest declaration among the slot's streams, if any has declared one.
+pub(crate) fn apply_slot_theme(inner: &Inner, host_terminal_id: &str) {
     let Some(slot) = native_slot(inner, host_terminal_id) else {
-        return;
-    };
-    let Some(holder) = slot.input_grant.as_deref() else {
         return;
     };
     let declared = inner
         .attachments
         .iter()
-        .filter(|(_, att)| {
-            att.host_terminal_id == host_terminal_id
-                && att.client_attachment_id.as_deref() == Some(holder)
-        })
-        .filter_map(|(id, att)| Some((*id, att.declared_theme.as_ref()?)))
-        .max_by_key(|(id, _)| *id)
+        .filter(|(_, att)| att.host_terminal_id == host_terminal_id)
+        .filter_map(|(_, att)| att.declared_theme.as_ref())
+        .max_by_key(|(seq, _)| *seq)
         .map(|(_, theme)| theme);
     if let Some(theme) = declared {
         apply(slot, theme);

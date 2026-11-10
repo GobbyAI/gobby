@@ -10,7 +10,7 @@ use tokio::net::{unix::OwnedReadHalf, UnixStream};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
-use super::backpressure::{enqueue_control, send_control, send_event, ControlOutbound};
+use super::backpressure::{enqueue_control, send_event, ControlClose, ControlOutbound};
 use super::events::EventReceiver;
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
@@ -46,7 +46,7 @@ pub struct ControlRequest {
 }
 
 enum RequestRead {
-    Request(ControlRequest),
+    Request(Box<ControlRequest>),
     InvalidJson,
     Overflow,
     Closed,
@@ -80,7 +80,7 @@ async fn read_request(
         }
     }
     match serde_json::from_slice(&line) {
-        Ok(request) => Ok(RequestRead::Request(request)),
+        Ok(request) => Ok(RequestRead::Request(Box::new(request))),
         Err(_) => Ok(RequestRead::InvalidJson),
     }
 }
@@ -90,6 +90,22 @@ fn with_id(mut value: Value, id: &Option<Value>) -> Value {
         obj.insert("id".to_string(), id.clone());
     }
     value
+}
+
+/// Queues a reply. A reply that carries a recorded outcome counts as served
+/// only once its write succeeds.
+async fn send_reply(
+    tx: &mpsc::Sender<ControlOutbound>,
+    state: &Arc<HostState>,
+    reply: Value,
+) -> Result<(), ControlClose> {
+    let outbound = match state.served_reply(&reply) {
+        Some(on_written) => ControlOutbound::Served(reply, on_written),
+        None => ControlOutbound::Reply(reply),
+    };
+    tx.send(outbound)
+        .await
+        .map_err(|_| ControlClose::Disconnected)
 }
 
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
@@ -124,7 +140,12 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         }) = ordered_rx.recv().await
         {
             let result = dispatch_ordered(&ordered_state, conn_id, &request, &mut ledger).await;
-            let _ = send_control(&ordered_outbound, with_id(result.response, &request.id)).await;
+            let _ = send_reply(
+                &ordered_outbound,
+                &ordered_state,
+                with_id(result.response, &request.id),
+            )
+            .await;
             ordered_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")
@@ -134,7 +155,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
 
     loop {
         let request = match read_request(&mut reader, &mut request_buffer).await {
-            Ok(RequestRead::Request(request)) => request,
+            Ok(RequestRead::Request(request)) => *request,
             Ok(RequestRead::InvalidJson) => {
                 if enqueue_control(&outbound_tx, json!({"ok": false, "error": "invalid_json"}))
                     .is_err()
@@ -297,7 +318,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     .expect("event task lock poisoned")
                     .push(event_task);
             }
-            let _ = send_control(&task_outbound, with_id(response, &request.id)).await;
+            let _ = send_reply(&task_outbound, &task_state, with_id(response, &request.id)).await;
             if let Some(replied) = replied {
                 let _ = replied.send(());
             }
@@ -443,8 +464,6 @@ async fn dispatch(
         "resize" => state.resize(&request.extra).await,
         "write" => state.write(&request.extra).await,
         "write_batch" => state.write_batch(&request.extra).await,
-        "grant_input" => state.grant_input(&request.extra).await,
-        "revoke_input" => state.revoke_input(&request.extra).await,
         "snapshot" => state.snapshot(&request.extra).await,
         "subscribe_events" => {
             let (ack, rx) = state

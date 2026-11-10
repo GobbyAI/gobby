@@ -508,6 +508,7 @@ async def _attach_result(
     harness.server.clients[ws] = {"subscriptions": {"*"}}
     payload = {
         "type": "terminal_attach",
+        "viewer": "web",
         "request_id": request_id,
         "terminal_id": row.id,
         "frame_delivery": frame_delivery,

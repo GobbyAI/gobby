@@ -22,7 +22,6 @@ from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.mcp_proxy.tools.workspaces.registry import create_workspaces_registry
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.storage.terminals import Terminal
-from gobby.terminals.input_grants import sync_host_input_grant
 from gobby.terminals.leases import SizingDecision, TerminalLeaseRegistry
 from gobby.terminals.operator_lane import (
     OPERATOR_LANE_THREAD_PREFIX,
@@ -180,7 +179,8 @@ def test_operator_keystroke_answers_while_the_default_executor_is_held() -> None
     )
 
     async def type_one_key() -> object:
-        await leases.attach(terminal.id, attachment_id="att-1")
+        # Daemon-written web input holds the writer lease before delivery.
+        await leases.attach(terminal.id, attachment_id="att-1", terminal=terminal, viewer="web")
         taken = await leases.take_control(terminal.id, "att-1")
         assert taken.granted
         return await coordinator.write(
@@ -218,7 +218,7 @@ def test_bound_operator_keystroke_reads_no_machine_while_default_executor_is_hel
     async def type_one_key() -> object:
         token = bind_caller(user_id, machines)
         try:
-            await leases.attach(terminal.id, attachment_id="att-1", terminal=terminal)
+            await leases.attach(terminal.id, attachment_id="att-1", terminal=terminal, viewer="web")
             taken = await leases.take_control(terminal.id, "att-1")
             assert taken.granted
             return await coordinator.write(
@@ -274,28 +274,3 @@ def test_take_control_sizing_answers_while_the_default_executor_is_held() -> Non
     runtime.resize.assert_called_once()
     assert len(sizer.threads) == 2
     assert all(name.startswith(OPERATOR_LANE_THREAD_PREFIX) for name in sizer.threads)
-
-
-def test_take_control_input_grant_answers_while_the_default_executor_is_held() -> None:
-    """Granting host input to a direct holder clears its handoff on the lane."""
-    terminal = make_memory_terminal(backend="native")
-    threads: list[str] = []
-    manager = MagicMock()
-    manager.clear_native_input_handoff.side_effect = _recording(threads)
-    runtime = MagicMock()
-
-    async def grant_input(
-        _terminal: Terminal, _attachment_id: str, _host_attachment_id: int
-    ) -> None:
-        return None
-
-    runtime.grant_input.side_effect = grant_input
-    holder = SimpleNamespace(attachment_id="att-1", frame_delivery="direct", host_attachment_id=42)
-
-    granted = _run_while_default_executor_held(
-        sync_host_input_grant(runtime, terminal, holder, manager=manager)
-    )
-
-    assert granted is True
-    assert len(threads) == 1
-    assert threads[0].startswith(OPERATOR_LANE_THREAD_PREFIX)

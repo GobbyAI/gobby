@@ -309,42 +309,6 @@ fn header_titles_share_the_sidebar_period() {
 }
 
 #[test]
-fn hovered_read_only_title_underlines_only_while_actionable() {
-    let (mut ws, mut chrome) = scripted();
-    chrome.hover = Some(Hit::ControlIndicator);
-    chrome.compute_view(&ws, Rect::new(0, 0, 100, 12));
-    let info = chrome
-        .view
-        .pane_infos
-        .iter()
-        .find(|info| info.is_focused)
-        .unwrap()
-        .clone();
-    let focused = chrome.focused_pane().unwrap();
-    let underlined = |ws: &Workspace, chrome: &Chrome| {
-        let corners = pane_corners(ws, chrome, ws.pane(focused), true);
-        let rect = pane_chrome::title_rect(&info, &corners).unwrap();
-        let terminal = draw(ws, chrome, 100, 12);
-        let buffer = terminal.backend().buffer();
-        let modifier = |x| buffer[(x, rect.y)].modifier;
-        (
-            corners.title,
-            modifier(rect.x).contains(Modifier::UNDERLINED),
-            modifier(rect.x + 1).contains(Modifier::UNDERLINED),
-        )
-    };
-    assert_eq!(
-        underlined(&ws, &chrome),
-        ("  term-beta · Focused".to_owned(), false, false)
-    );
-    ws.pane_mut(focused).take_back = true;
-    assert_eq!(
-        underlined(&ws, &chrome),
-        ("  term-beta · Read-only".to_owned(), false, true)
-    );
-}
-
-#[test]
 fn empty_state_names_the_next_step_without_exclamation() {
     let mut chrome = Chrome::dark();
     chrome.sidebar.pinned = false;

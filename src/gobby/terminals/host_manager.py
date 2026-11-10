@@ -47,7 +47,6 @@ from gobby.terminals.host_reap import reap_recorded_process
 from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
 from gobby.terminals.host_shutdown import HostShutdown
 from gobby.terminals.host_upgrade import HostUpgradeCoordinator
-from gobby.terminals.input_grants import HandoffKey, expire_native_input_handoffs
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -132,7 +131,6 @@ class TerminalHostManager(HostShutdown):
             health_interval=config.health_interval_seconds,
             monotonic=lambda: self._monotonic(),
         )
-        self._input_handoff_deadlines: dict[HandoffKey, float] = {}
         self.enabled = config.enabled
         self.running = False
         self.adopted = False
@@ -553,10 +551,6 @@ class TerminalHostManager(HostShutdown):
         client = self._client
         epoch = host_epoch if host_epoch is not None else (self.host_epoch or "")
         machine_id = require_machine_id()
-        if client is not None and epoch:
-            await expire_native_input_handoffs(
-                manager, client, machine_id, epoch, self._input_handoff_deadlines, self._monotonic()
-            )
         rows: list[Any] = [] if host_rows is None else host_rows
         if host_rows is None and client is not None:
             try:
@@ -885,9 +879,6 @@ class TerminalHostManager(HostShutdown):
         interval = self.config.health_interval_seconds
         while not self._stop_requested:
             delay = interval
-            if self._input_handoff_deadlines:
-                until_expiry = min(self._input_handoff_deadlines.values()) - self._monotonic()
-                delay = min(delay, max(1.0, until_expiry))
             await self._sleep(delay)
             if self._stop_requested:
                 return

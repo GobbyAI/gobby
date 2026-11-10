@@ -5,11 +5,9 @@
 use crate::app::{Pane, PaneId};
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
-use crate::ui::hit::Hit;
 use crate::ui::marks::{self, MarkPalette};
 use crate::ui::pane_chrome::{
-    self, address_rect, exited, pane_corners, title_budget, title_rect, top_reserve, MetadataTone,
-    PaneCorners,
+    self, address_rect, exited, pane_corners, title_budget, top_reserve, MetadataTone, PaneCorners,
 };
 use crate::ui::pane_layout::{self, PaneInfo, SplitBorder};
 use crate::ui::scrollbar::render_pane_scrollbar;
@@ -154,20 +152,6 @@ pub fn render_panes<W: WorkspaceView>(
         .map(|(info, corners)| corner_style(chrome, info, corners.tone))
         .collect();
     render_pane_border_titles(&resolved, &titles, &styles, frame);
-    // The pointer resting on a Read-only or Uncertain title underlines its
-    // words, not the padding.
-    if matches!(chrome.hover, Some(Hit::ControlIndicator)) {
-        for (info, corners) in resolved.iter().zip(&labels) {
-            let Some(rect) = title_rect(info, corners).filter(|_| corners.actionable) else {
-                continue;
-            };
-            let words = Rect::new(rect.x + 1, rect.y, rect.width.saturating_sub(2), 1);
-            let words = words.intersection(frame.area());
-            frame
-                .buffer_mut()
-                .set_style(words, Style::default().add_modifier(Modifier::UNDERLINED));
-        }
-    }
     for (info, corners) in resolved.iter().zip(&labels) {
         render_pane_address(frame, chrome, info, corners);
     }

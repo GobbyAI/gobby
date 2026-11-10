@@ -123,10 +123,6 @@ pub enum MenuAction {
     Act(Action),
     /// Close the terminal belonging to this pane, independent of focus.
     CloseTerminal(PaneId),
-    /// Take the control lease for this pane, independent of focus.
-    TakeControl(PaneId),
-    /// Release the control lease for this pane, independent of focus.
-    ReleaseControl(PaneId),
     /// Exchange the menu's pane with the focused one.
     SwapWithFocused(PaneId),
     /// Drop the name the user gave the pane so it shows the daemon's again.

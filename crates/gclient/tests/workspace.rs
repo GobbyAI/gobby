@@ -92,7 +92,7 @@ fn src_scan_has_host_write() -> bool {
 }
 
 #[test]
-fn focus_moves_control_through_the_daemon() {
+fn focus_never_takes_a_lease_or_gates_input() {
     assert!(
         !src_scan_has_host_write(),
         "crate must not use the legacy host write verbs"
@@ -104,75 +104,48 @@ fn focus_moves_control_through_the_daemon() {
     let b = ws
         .open_terminal("term-b", "native", "epoch-b")
         .expect("open b");
-    assert!(ws.pane(a).is_observe());
-    assert!(ws.pane(b).is_observe());
+    ws.attach_frames(a).expect("attach a");
+    ws.attach_frames(b).expect("attach b");
+    assert!(ws.pane(a).writable());
+    assert!(ws.pane(b).writable());
 
-    ws.focus_pane(a).expect("focus a");
-    assert!(ws.pane(a).is_held());
-    assert!(ws
-        .daemon()
-        .ws_sent_types()
-        .contains(&"terminal_take_control".into()));
+    ws.focus_pane(a);
+    let sent = ws.daemon().ws_sent_types();
+    assert!(
+        !sent.contains(&"terminal_take_control".into()),
+        "focus takes no lease from the daemon"
+    );
     ws.send_keys(a, "ls\n").expect("keys");
     assert!(
         !ws.daemon()
             .ws_sent_types()
             .contains(&"terminal_input".into()),
-        "a held direct pane's keystrokes never reach the daemon (#22573)"
+        "a direct pane's keystrokes never reach the daemon (#22573)"
     );
     assert!(
         ws.pane(a)
             .scripted_source()
             .expect("scripted source")
             .sent_host_input(),
-        "they go to the terminal's own host instead"
+        "they go straight to the terminal's own host"
     );
 
-    ws.focus_pane(b).expect("focus b");
+    ws.focus_pane(b);
     let sent = ws.daemon().ws_sent_types();
-    assert!(sent.contains(&"terminal_release_control".into()));
-    assert!(ws.pane(a).is_observe());
-    assert!(ws.pane(b).is_held());
-    assert_ne!(ws.pane(a).attachment_id(), ws.pane(b).attachment_id());
-
-    ws.apply_ws(&json!({
-        "type": "terminal_lease_lost",
-        "attachment_id": ws.pane(b).attachment_id(),
-        "holder": "other",
-        "lease_generation": 4
-    }))
-    .unwrap();
-    assert!(ws.pane(b).is_lease_lost());
-    assert!(ws.pane(b).has_take_back());
-
-    let gen = ws.pane(a).lease_generation();
-    ws.apply_ws(&json!({
-        "type": "terminal_control_result",
-        "attachment_id": ws.pane(a).attachment_id(),
-        "granted": true,
-        "reason": "held",
-        "lease_generation": gen.saturating_sub(1)
-    }))
-    .unwrap();
     assert!(
-        ws.pane(a).is_observe(),
-        "lower lease_generation must be ignored"
+        !sent.contains(&"terminal_release_control".into()),
+        "focus releases no lease either"
     );
-
-    ws.apply_ws(&json!({
-        "type": "terminal_control_result",
-        "attachment_id": ws.pane(a).attachment_id(),
-        "granted": true,
-        "reason": "held",
-        "lease_generation": gen.max(1)
-    }))
-    .unwrap();
-    assert!(ws.pane(a).is_held() || ws.pane(a).is_observe());
+    assert!(ws.pane(a).writable());
+    assert!(ws.pane(b).writable());
+    assert_ne!(ws.pane(a).attachment_id(), ws.pane(b).attachment_id());
 
     ws.set_daemon_reachable(false);
     ws.push_frame(a, "still-here");
     assert!(ws.pane(a).frames_rendered() >= 1);
-    assert!(ws.pane(a).is_observe() || ws.pane(a).is_lease_lost() || !ws.pane(a).is_held());
+    ws.send_keys(a, "pwd\n")
+        .expect("a direct pane types while the daemon is away");
+    assert!(ws.pane(a).writable());
 }
 
 #[test]
@@ -280,9 +253,9 @@ async fn direct_frame_eof_detaches_before_reattach() {
     .expect("real direct source");
     ws.replace_frame_source(pane, PaneFrameSource::Direct(source))
         .expect("install direct source");
-    ws.focus_pane(pane).unwrap();
+    ws.focus_pane(pane);
     let old_id = ws.pane(pane).attachment_id().to_string();
-    assert!(ws.pane(pane).is_held());
+    assert!(ws.pane(pane).writable());
     host_task.await.expect("fake host");
     assert!(matches!(
         ws.recv_pane_frame(pane).await,
@@ -297,14 +270,14 @@ async fn direct_frame_eof_detaches_before_reattach() {
         .pane_by_attachment(&old_id)
         .map(|p| p.is_live())
         .unwrap_or(true));
-    assert!(ws.pane(pane).is_observe());
-    let take = ws.take_control(pane);
-    assert!(take.is_err(), "control requires a fresh frame attach");
+    assert!(
+        !ws.pane(pane).writable(),
+        "a dead stream leaves no live attachment"
+    );
     ws.reattach_frames(pane).expect("fresh attach");
     assert_ne!(ws.pane(pane).attachment_id(), old_id);
     assert_eq!(ws.pane(pane).transport(), Some(Transport::Proxy));
-    ws.take_control(pane).expect("control after fresh attach");
-    assert!(ws.pane(pane).is_held());
+    assert!(ws.pane(pane).writable());
 }
 
 #[test]

@@ -18,10 +18,13 @@ pub const TOKEN_FILE: &str = "gterm-control.token";
 /// The pid of the host this test spawned, so a readiness timeout can tell a
 /// host that died before binding from one still starting.
 pub const SPAWN_PID_FILE: &str = "gterm.spawned-pid";
-/// How long a spawned host may take to come up. A cold start pins the binary
-/// and re-execs from the pin before it binds, which a loaded machine stretches
-/// past five seconds (#23420). This is a hang guard, not a speed bound.
+/// Default bound for ordinary test operations.
 pub const COLD_START: Duration = Duration::from_secs(15);
+/// A debug host pins and verifies its image, then re-execs before binding.
+/// Under heavy load measured binds reached 11s and the old 15s guard expired
+/// with a live process still starting (#25653). Allow scheduler headroom here
+/// without extending operation or upgrade deadlines. This remains a hang guard.
+const SOCKET_STARTUP: Duration = Duration::from_secs(60);
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct HostProc {
@@ -102,48 +105,7 @@ pub fn spawn_host(socket_dir: &Path) -> HostProc {
     spawn_host_with_args(socket_dir, &[])
 }
 
-/// Copy `gterm` onto a private inode. Sibling tests (`build_env`,
-/// `frame_source_live`) invoke Cargo against this checkout's target dir and can
-/// replace `CARGO_BIN_EXE_gterm` while a host is starting; macOS kills a
-/// process that execs an in-place-overwritten signed binary.
-fn private_gterm(socket_dir: &Path) -> PathBuf {
-    let src = gterm_bin();
-    let dst = socket_dir.join("gterm");
-    // Stage under a private name and rename over `gterm` so every spawn execs a
-    // new inode. `std::fs::copy` onto an existing path truncates and rewrites
-    // the inode a previous host in this directory already executed, and macOS
-    // kills the next exec of an in-place-overwritten signed binary with SIGKILL.
-    let staged = socket_dir.join(".gterm.staged");
-    let mut last_err = None;
-    for _ in 0..20 {
-        match std::fs::copy(&src, &staged) {
-            Ok(_) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = std::fs::metadata(&staged)
-                        .expect("gterm copy metadata")
-                        .permissions();
-                    perms.set_mode(0o755);
-                    std::fs::set_permissions(&staged, perms).expect("gterm copy mode");
-                }
-                std::fs::rename(&staged, &dst).expect("rename staged gterm copy");
-                return dst;
-            }
-            Err(err) => {
-                last_err = Some(err);
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    }
-    panic!(
-        "copy gterm from {} to {}: {:?}",
-        src.display(),
-        dst.display(),
-        last_err
-    );
-}
-
+/// Start the once-built Cargo image with additional host arguments.
 pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
     spawn_host_with_env_removed(socket_dir, extra, &[])
 }
@@ -165,7 +127,11 @@ pub fn spawn_host_with_env(
     env: &[(&str, &str)],
     removed: &[&str],
 ) -> HostProc {
-    spawn_host_binary(&private_gterm(socket_dir), socket_dir, extra, env, removed)
+    // Cargo built this image once for the run. Reuse its inode instead of
+    // triggering another macOS executable assessment for each host launch.
+    // Nextest groups host fixtures with nested Cargo builders to protect this
+    // image from replacement. The host still pins its private runtime image.
+    spawn_host_binary(&gterm_bin(), socket_dir, extra, env, removed)
 }
 
 /// Spawns `binary` as the host, for a test that launches it through a path
@@ -235,12 +201,25 @@ pub fn rpc(stream: &mut UnixStream, method: &str, extra: serde_json::Value) -> V
 }
 
 pub fn wait_socket(path: &Path) {
-    let deadline = Instant::now() + COLD_START;
-    while Instant::now() < deadline {
+    let started = Instant::now();
+    wait_socket_with(
+        path,
+        || started.elapsed(),
+        || std::thread::sleep(Duration::from_millis(20)),
+    );
+}
+
+/// Clock and polling seams let the startup guard be tested without a slow sleep.
+pub fn wait_socket_with(
+    path: &Path,
+    mut elapsed: impl FnMut() -> Duration,
+    mut pause: impl FnMut(),
+) {
+    while elapsed() < SOCKET_STARTUP {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        pause();
     }
     let dir = path.parent().unwrap_or(path);
     let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
@@ -249,9 +228,11 @@ pub fn wait_socket(path: &Path) {
     let spawned = std::fs::read_to_string(dir.join(SPAWN_PID_FILE)).unwrap_or_default();
     let state = host_process_state(&spawned);
     panic!(
-        "timed out waiting for {}; path_len={}; exists={}; pid={pid:?}; \
+        "timed out waiting for {}; elapsed={:?}; budget={SOCKET_STARTUP:?}; \
+         path_len={}; exists={}; pid={pid:?}; \
          spawned_pid={spawned:?}; state={state:?}; log={log:?}; stderr={stderr:?}",
         path.display(),
+        elapsed(),
         path.as_os_str().len(),
         path.exists(),
     );
@@ -495,11 +476,18 @@ pub fn try_ping(socket_dir: &Path, token: &str) -> Option<Value> {
 /// Waits for an idle host whose `last_outcome` names `attempt_id`, and returns
 /// that ping.
 pub fn wait_outcome(socket_dir: &Path, token: &str, attempt_id: &str, timeout: Duration) -> Value {
+    let observed = Instant::now();
     let deadline = Instant::now() + timeout;
     let mut last = None;
+    let mut phase = None;
     loop {
         if let Some(ping) = try_ping(socket_dir, token) {
             let upgrade = &ping["upgrade"];
+            let current = upgrade["phase"].as_str().map(str::to_owned);
+            if phase != current {
+                eprintln!("{attempt_id} at {:?}: {upgrade}", observed.elapsed());
+                phase = current;
+            }
             if upgrade["phase"] == "idle" && upgrade["last_outcome"]["attempt_id"] == attempt_id {
                 return ping;
             }
