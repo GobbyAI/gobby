@@ -106,21 +106,22 @@ def derive_managed_signing_key(api_key: str) -> bytes:
 
 
 def read_managed_signing_key(bootstrap: Path | None = None) -> bytes | None:
-    """Read the current startup-bound bootstrap key, failing closed on bad input."""
-    from gobby.config.bootstrap import BootstrapConfigError
-    from gobby.config.bootstrap_io import read_bootstrap_yaml
+    """Load the daemon's persistent authority; the machine bearer supplies no signing key."""
+    from gobby.utils.capability_signing_key import (
+        CAPABILITY_SIGNING_KEY_FILENAME,
+        ensure_capability_signing_key,
+    )
 
-    try:
-        api_key = read_bootstrap_yaml(bootstrap or daemon_bootstrap_path()).get("api_key")
-    except (OSError, BootstrapConfigError):
-        return None
-    return derive_managed_signing_key(api_key) if isinstance(api_key, str) and api_key else None
+    path = (bootstrap or daemon_bootstrap_path()).with_name(CAPABILITY_SIGNING_KEY_FILENAME)
+    return ensure_capability_signing_key(path)
 
 
 # This is a filename, not a credential value.
 GOBBY_AGENT_API_TOKEN_ENV = "GOBBY_AGENT_API_TOKEN"
 GOBBY_MANAGED_EXECUTION_ID_ENV = "GOBBY_MANAGED_EXECUTION_ID"
 _AGENT_TOKEN_VERSION = "gobby-agent-v1"
+# A session-bound capability carries no agent owner; its only owner is the session.
+SESSION_TOKEN_KIND = "session"
 
 # Expiry is defense-in-depth: the daemon's per-request owner-liveness check is
 # authoritative, while the untimed ceiling avoids stranding legitimate long
@@ -186,6 +187,31 @@ def issue_agent_api_token(
     )
 
 
+def issue_session_api_token(
+    signing_key: bytes,
+    *,
+    session_id: str,
+    project_id: str,
+    machine_id: str | None = None,
+    ttl_seconds: int = AGENT_TOKEN_MAX_TTL_SECONDS,
+) -> str:
+    """Mint a capability bound to one session and no agent owner.
+
+    A session token names only its session and project. Liveness is the
+    session row staying live, so it has no run or execution owner to check.
+    """
+    return _issue_managed_api_token(
+        signing_key,
+        owner_claim=None,
+        owner_id=None,
+        session_id=session_id,
+        project_id=project_id,
+        machine_id=machine_id,
+        ttl_seconds=ttl_seconds,
+        kind=SESSION_TOKEN_KIND,
+    )
+
+
 def issue_tool_api_token(
     signing_key: bytes,
     *,
@@ -232,8 +258,8 @@ def issue_maintenance_api_token(
 def _issue_managed_api_token(
     signing_key: bytes,
     *,
-    owner_claim: str,
-    owner_id: str,
+    owner_claim: str | None,
+    owner_id: str | None,
     session_id: str,
     project_id: str,
     ttl_seconds: int,
@@ -251,10 +277,11 @@ def _issue_managed_api_token(
         "exp": exp,
         "iat": iat,
         "machine_id": resolved_machine,
-        owner_claim: owner_id,
         "project_id": project_id,
         "session_id": session_id,
     }
+    if owner_claim is not None:
+        claims[owner_claim] = owner_id
     if kind is not None:
         claims["kind"] = kind
     payload = json.dumps(
@@ -353,9 +380,13 @@ def _verify_capability_claims(
     project_id = raw.get("project_id")
     machine_id = raw.get("machine_id")
     owner_claims = [raw[name] for name in ("agent_run_id", "managed_execution_id") if name in raw]
-    if len(owner_claims) != 1:
+    kind = raw.get("kind")
+    if kind == SESSION_TOKEN_KIND:
+        if owner_claims:
+            return "capability_invalid"
+    elif len(owner_claims) != 1:
         return "capability_invalid"
-    if not isinstance(owner_claims[0], str) or not owner_claims[0]:
+    elif not isinstance(owner_claims[0], str) or not owner_claims[0]:
         return "capability_invalid"
     if not all(isinstance(value, str) and value for value in (session_id, project_id, machine_id)):
         return "capability_invalid"
@@ -368,7 +399,6 @@ def _verify_capability_claims(
     assert isinstance(machine_id, str)
     assert isinstance(iat, int)
     assert isinstance(exp, int)
-    kind = raw.get("kind")
     if kind is not None and (not isinstance(kind, str) or not kind):
         return "capability_invalid"
     return AgentApiTokenClaims(

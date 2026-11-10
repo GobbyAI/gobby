@@ -6,9 +6,8 @@ import asyncio
 import ipaddress
 import json
 import logging
-import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -42,11 +41,20 @@ MAX_BATCH_BYTES = 1024 * 1024
 # that one op accepts today. A frame above the cap goes alone in its own op.
 PUBLISH_CHUNK = 4 * 1024 * 1024
 
-REQUEST_TIMEOUT = 2.0
+# A publish or bind that outlives this deadline is ambiguous, so its generation retires and the
+# door unbinds. Overruns came from host-load loop stalls, not slow bodies or peers: 666 timed-out
+# publishes on 2026-11-06 and 2026-11-07 took a median 2.8 s, p99 11.2 s and max 19.2 s against
+# the old 2.0 s deadline. 15 s keeps 665 of those 666 bound.
+REQUEST_TIMEOUT = 15.0
 TOKEN_WAIT = 2.0
 TOKEN_POLL_INTERVAL = 0.05
 REBIND_INTERVAL = 5.0
 LEG_CLOSE_TIMEOUT = 1.0
+# Diagnostics for the front-door stall (#25822): the sampler measures how late a fixed sleep wakes
+# on this loop; a bind logs how far its request got. Lags at or above these thresholds are logged.
+LOOP_LAG_INTERVAL = 0.25
+LOOP_LAG_WARN = 0.5
+SLOW_REQUEST_WARN = 0.5
 
 BIND_PATH = "/_gobby/ws/bind"
 PUBLISH_PATH = "/_gobby/ws/publish"
@@ -86,7 +94,10 @@ class NativePublisher:
         self._base_url = base_url.rstrip("/")
         self._config = config
         # The secret and token go only to loopback: no proxy or .netrc from the environment.
-        self._client = httpx.AsyncClient(transport=transport, trust_env=False)
+        # Every socket phase shares the publish deadline; httpx's 5 s default would fire first.
+        self._client = httpx.AsyncClient(
+            transport=transport, trust_env=False, timeout=REQUEST_TIMEOUT
+        )
         self._generation: str | None = None
         self._legs: dict[str, set[NativeLeg]] = {}
         self._queue: deque[_Op] = deque()
@@ -94,8 +105,10 @@ class NativePublisher:
         self._retained_ops = 0
         self._in_flight: tuple[list[_Op], asyncio.Task[bool]] | None = None
         self._wake = asyncio.Event()
+        self._bound = asyncio.Event()
         self._sender: asyncio.Task[None] | None = None
         self._rebind: asyncio.Task[None] | None = None
+        self._sampler: asyncio.Task[None] | None = None
         self._background: set[asyncio.Task[None]] = set()
         self._stopped = False
         self._closed = False
@@ -137,13 +150,29 @@ class NativePublisher:
 
     async def start(self) -> None:
         """Bind once; a failure enters the rebind loop instead of raising."""
+        self.ensure_sampler()
         try:
             await self.bind()
         except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
-            logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
-            self._schedule_rebind(immediate=False)
+            self.fail_bind_into_rebind(exc)
 
-    async def bind(self) -> str:
+    def ensure_sampler(self) -> None:
+        """Start the loop-lag sampler once. stop() cancels it with the other background tasks."""
+        if self._stopped:
+            return
+        if self._sampler is not None and not self._sampler.done():
+            return
+        self._sampler = self._spawn(self._sample_loop_lag())
+
+    def fail_bind_into_rebind(self, exc: BaseException) -> bool:
+        """Log a retryable bind failure and enter the bounded rebind loop."""
+        if self._stopped or not isinstance(exc, (_BindFailed, httpx.HTTPError, TimeoutError)):
+            return False
+        logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
+        self._schedule_rebind(immediate=False)
+        return True
+
+    async def bind(self, label: str = "bind") -> str:
         token = await self._await_token()
         body = json_dumps(
             {
@@ -152,12 +181,37 @@ class NativePublisher:
                 "ping_timeout": self._config.ping_timeout,
             }
         ).encode()
-        response = await asyncio.wait_for(
-            self._client.post(
-                f"{self._base_url}{BIND_PATH}", content=body, headers=self._headers(token)
-            ),
-            REQUEST_TIMEOUT,
-        )
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        phases: dict[str, float] = {}
+
+        try:
+            response = await asyncio.wait_for(
+                self._client.post(
+                    f"{self._base_url}{BIND_PATH}",
+                    content=body,
+                    headers=self._headers(token),
+                    extensions={"trace": _phase_recorder(loop, started, phases)},
+                ),
+                REQUEST_TIMEOUT,
+            )
+        except (TimeoutError, httpx.HTTPError) as exc:
+            logger.warning(
+                "Native WS %s failed after %.2fs; phases %s: %r",
+                label,
+                loop.time() - started,
+                _format_phases(phases),
+                exc,
+            )
+            raise
+        elapsed = loop.time() - started
+        if elapsed >= SLOW_REQUEST_WARN:
+            logger.warning(
+                "Native WS %s answered after %.2fs; phases %s",
+                label,
+                elapsed,
+                _format_phases(phases),
+            )
         if response.status_code != 200:
             raise _BindFailed(f"bind answered {response.status_code}")
         try:
@@ -171,6 +225,7 @@ class NativePublisher:
         if self._generation is not None:
             self._retire(self._generation)
         self._generation = generation
+        self._bound.set()
         return generation
 
     def publish(
@@ -284,9 +339,24 @@ class NativePublisher:
         self._retire(generation)
         self._schedule_rebind(immediate=True)
 
+    async def wait_bound(self, timeout: float | None = None) -> bool:
+        """Return whether the door is bound within ``timeout``, default ``front_door_wait()``."""
+        if self._bound.is_set():
+            return True
+        if self._stopped:
+            return False
+        try:
+            await asyncio.wait_for(
+                self._bound.wait(), front_door_wait() if timeout is None else timeout
+            )
+        except TimeoutError:
+            return False
+        return True
+
     async def stop(self) -> None:
         self._stopped = True
         self._generation = None
+        self._bound.clear()
         self._drop_queued(lambda op: True)
         # Calls still preparing are cancelled. Calls already queued settle through _drop_queued.
         tasks: list[asyncio.Task[Any]] = [*self._background, *self._preparing.values()]
@@ -401,25 +471,38 @@ class NativePublisher:
             logger.warning("Native WS publish has no supervisor write token")
             return False
         body = _request_body(generation, [op.encoded for op in batch])
-        started = time.monotonic()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        phases: dict[str, float] = {}
         try:
             response = await asyncio.wait_for(
                 self._client.post(
-                    f"{self._base_url}{PUBLISH_PATH}", content=body, headers=self._headers(token)
+                    f"{self._base_url}{PUBLISH_PATH}",
+                    content=body,
+                    headers=self._headers(token),
+                    extensions={"trace": _phase_recorder(loop, started, phases)},
                 ),
                 REQUEST_TIMEOUT,
             )
         except (httpx.HTTPError, TimeoutError) as exc:
             logger.warning(
                 "Native WS publish failed for generation %s after %.2fs with %d ops and "
-                "%d body bytes: %r",
+                "%d body bytes; phases %s: %r",
                 generation,
-                time.monotonic() - started,
+                loop.time() - started,
                 len(batch),
                 len(body),
+                _format_phases(phases),
                 exc,
             )
             return False
+        elapsed = loop.time() - started
+        if elapsed >= SLOW_REQUEST_WARN:
+            logger.warning(
+                "Native WS publish answered after %.2fs; phases %s",
+                elapsed,
+                _format_phases(phases),
+            )
         if response.status_code != 204:
             logger.warning(
                 "Native WS publish for generation %s answered %s", generation, response.status_code
@@ -446,6 +529,7 @@ class NativePublisher:
     def _retire(self, generation: str) -> None:
         if self._generation == generation:
             self._generation = None
+            self._bound.clear()
         self._drop_queued(lambda op: op.generation == generation)
         if self._in_flight is not None:
             batch, request = self._in_flight
@@ -476,16 +560,53 @@ class NativePublisher:
             await asyncio.sleep(REBIND_INTERVAL)
         while not self._stopped:
             try:
-                await self.bind()
+                await self.bind(label="rebind")
                 return
             except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
                 logger.warning("Native WS rebind failed: %r", exc)
             await asyncio.sleep(REBIND_INTERVAL)
 
-    def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+    def _spawn(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+        return task
+
+    async def _sample_loop_lag(self) -> None:
+        # A fixed sleep wakes late by exactly the time this loop was busy or starved.
+        loop = asyncio.get_running_loop()
+        while True:
+            started = loop.time()
+            await asyncio.sleep(LOOP_LAG_INTERVAL)
+            lag = loop.time() - started - LOOP_LAG_INTERVAL
+            if lag >= LOOP_LAG_WARN:
+                logger.warning(
+                    "Native WS event loop lag %.2fs over a %.2fs sample",
+                    lag,
+                    LOOP_LAG_INTERVAL,
+                )
+
+
+def _phase_recorder(
+    loop: asyncio.AbstractEventLoop, started: float, phases: dict[str, float]
+) -> Callable[[str, Mapping[str, Any]], Coroutine[Any, Any, None]]:
+    """An httpx trace hook that records when each httpcore phase of one request completes."""
+
+    async def trace(event: str, _info: Mapping[str, Any]) -> None:
+        # httpcore reports "<layer>.<step>.complete" when each phase finishes on this loop.
+        if event.endswith(".complete"):
+            phases[event.removesuffix(".complete")] = loop.time() - started
+
+    return trace
+
+
+def _format_phases(phases: dict[str, float]) -> str:
+    return " ".join(f"{name}={at:.2f}s" for name, at in phases.items()) or "none"
+
+
+def front_door_wait() -> float:
+    """Longest wait for a bind: two bind attempts, each followed by one rebind interval."""
+    return 2 * (REQUEST_TIMEOUT + REBIND_INTERVAL)
 
 
 def _request_body(generation: str, ops: list[bytes]) -> bytes:

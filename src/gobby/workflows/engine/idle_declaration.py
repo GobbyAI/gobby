@@ -4,7 +4,8 @@ An idle step lets its seat stop after declaring ``seat_idle``. Native
 ``set_variable`` otherwise skips step allowlists as an infrastructure tool; at an
 idle step it meets the step's ``allowed_tools`` instead, and the guard admits the
 declaration itself: ``seat_idle`` set to true, in session scope, on the caller's
-own session. Definitions grant native writes with ``write_session_variables``;
+own session. Definitions grant native writes with ``write_session_variables``, or
+the narrower ``write_own_step_phase`` for the caller's own step phase at step scope;
 other seats declare idleness through a readiness-message rule effect.
 """
 
@@ -22,6 +23,28 @@ if TYPE_CHECKING:
 
 IDLE_VARIABLE = "seat_idle"
 SET_VARIABLE_TOOL = "mcp__gobby__set_variable"
+# A narrower grant than write_session_variables: the seat may write only its own
+# session's step phase, at step scope, and nothing else.
+OWN_STEP_PHASE_CAPABILITY = "write_own_step_phase"
+OWN_STEP_PHASE_VARIABLE = "phase"
+
+
+def _is_own_step_phase_write(tool_input: Any, caller_id: str, sessions: SessionManager) -> bool:
+    """Whether a native write names the caller's own session, its phase, at step scope."""
+    if not isinstance(tool_input, dict):
+        return False
+    if tool_input.get("name") != OWN_STEP_PHASE_VARIABLE or tool_input.get("scope") != "step":
+        return False
+    target = tool_input.get("session_id")
+    if not isinstance(target, str) or not target:
+        return False
+    caller = sessions.get(caller_id)
+    if caller is None:
+        return False
+    try:
+        return sessions.resolve_session_reference(target, caller.project_id) == caller_id
+    except ValueError:
+        return False
 
 
 def native_variable_write_error(
@@ -66,10 +89,19 @@ def native_variable_write_error(
         active_run = LocalAgentRunManager(sessions.db).get_by_session(caller_id)
         if active_run is not None or (instance is not None and instance.enabled):
             return prefix + "The calling seat has no protected active agent definition."
-    if not session_has_capability_or_operator(sessions.db, caller_id, "write_session_variables"):
-        return prefix + "The calling definition does not grant write_session_variables."
-    # The idle step's own-session restriction is enforced by is_idle_declaration.
-    return None
+    if session_has_capability_or_operator(sessions.db, caller_id, "write_session_variables"):
+        # The idle step's own-session restriction is enforced by is_idle_declaration.
+        return None
+    if session_has_capability_or_operator(sessions.db, caller_id, OWN_STEP_PHASE_CAPABILITY):
+        if _is_own_step_phase_write(tool_input, caller_id, sessions):
+            return None
+        return prefix + (
+            f"The calling definition for session {caller_id} may write only its own step "
+            f"variable {OWN_STEP_PHASE_VARIABLE!r}, at scope 'step'."
+        )
+    return prefix + (
+        f"The calling definition for session {caller_id} does not grant write_session_variables."
+    )
 
 
 def reserved_variable_block_guidance(variable_name: str, step_name: str | None) -> str:

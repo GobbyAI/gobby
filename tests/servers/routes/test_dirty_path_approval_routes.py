@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +19,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.users import LocalUserManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.workflows.dirty_edit_grants import (
     OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE,
     approved_dirty_paths,
@@ -85,7 +85,7 @@ def _route(session_id: str) -> str:
 
 
 def _body(checkout: Path, paths: list[str] | None = None) -> dict[str, Any]:
-    return {"checkout_root": str(checkout), "paths": paths or ["a.txt"]}
+    return {"checkout_root": str(checkout), "paths": paths or ["a.txt"], "reason": "test release"}
 
 
 def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
@@ -95,13 +95,14 @@ def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
 def test_dirty_path_approval_route_refuses_managed_claims(
     db: HubDatabase, seat: Session, tmp_path: Path
 ) -> None:
+    server = _server(db)
     token = issue_agent_api_token(
-        derive_managed_signing_key(BOOTSTRAP_KEY),
+        cast(bytes, server.auth_service.managed_signing_key()),
         agent_run_id=str(uuid.uuid4()),
         session_id=seat.id,
         project_id="project-123",
     )
-    response = TestClient(_server(db).app).post(
+    response = TestClient(server.app).post(
         _route(seat.id),
         json=_body(tmp_path),
         headers={"Authorization": f"Bearer {token}"},
@@ -162,12 +163,16 @@ def test_dirty_path_approval_route_records_a_verified_operator_approval(
     assert approved_dirty_paths(variables, str(tmp_path)) == {"a.txt"}
 
     relative = operator.post(
-        _route(seat.id), json={"checkout_root": "relative", "paths": ["a.txt"]}
+        _route(seat.id), json={"checkout_root": "relative", "paths": ["a.txt"], "reason": "r"}
     )
     escape = operator.post(_route(seat.id), json=_body(tmp_path, ["../escape.txt"]))
     missing = operator.post(_route(str(uuid.uuid4())), json=_body(tmp_path))
+    unexplained = operator.post(
+        _route(seat.id), json={"checkout_root": str(tmp_path), "paths": ["a.txt"]}
+    )
 
     assert relative.status_code == 400
     assert escape.status_code == 400
     assert missing.status_code == 404
+    assert unexplained.status_code == 422
     assert approved_dirty_paths(_variables(db, seat.id), str(tmp_path)) == {"a.txt"}

@@ -478,22 +478,40 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 490,
-        filename: "490_session_status_line.sql",
-        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
-        sql: include_str!("../../assets/schema/migrations/490_session_status_line.sql"),
+        filename: "490_grant_plan_coverage_reads.sql",
+        checksum: "531bf6fd9c8f37232a2deefa28c2433639d6b0a9d04f7612d1ee632ecf4ec6de",
+        sql: include_str!("../../assets/schema/migrations/490_grant_plan_coverage_reads.sql"),
     },
     EmbeddedMigration {
         version: 491,
-        filename: "491_drop_session_titles.sql",
-        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
-        sql: include_str!("../../assets/schema/migrations/491_drop_session_titles.sql"),
+        filename: "491_worktree_notes.sql",
+        checksum: "19ff29bc58e2cba31705bf9e8c186fb7348bffac52f4a615110bf7192240c870",
+        sql: include_str!("../../assets/schema/migrations/491_worktree_notes.sql"),
     },
     EmbeddedMigration {
         version: 492,
-        filename: "492_session_status_line_control_check.sql",
-        checksum: "2abff5fefb60c7288c7ccea7fd6d75b8b92423f4e4cc0e898336d33af57bd84f",
+        filename: "492_scope_role_sweeps_to_owning_hub.sql",
+        checksum: "f73c703a077253bc9e539fa3409c6c856dc871ba36d916f436d1f6be5fc6c211",
+        sql: include_str!("../../assets/schema/migrations/492_scope_role_sweeps_to_owning_hub.sql"),
+    },
+    EmbeddedMigration {
+        version: 493,
+        filename: "493_session_status_line.sql",
+        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
+        sql: include_str!("../../assets/schema/migrations/493_session_status_line.sql"),
+    },
+    EmbeddedMigration {
+        version: 494,
+        filename: "494_drop_session_titles.sql",
+        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
+        sql: include_str!("../../assets/schema/migrations/494_drop_session_titles.sql"),
+    },
+    EmbeddedMigration {
+        version: 495,
+        filename: "495_session_status_line_control_check.sql",
+        checksum: "3b555e41bb76bb7f44f918062473dbac7d71b27b7967a49ed3aad2d3a171a31f",
         sql: include_str!(
-            "../../assets/schema/migrations/492_session_status_line_control_check.sql"
+            "../../assets/schema/migrations/495_session_status_line_control_check.sql"
         ),
     },
 ];

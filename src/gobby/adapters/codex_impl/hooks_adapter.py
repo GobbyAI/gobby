@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
+import shlex
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -26,17 +28,17 @@ from gobby.adapters.codex_impl.execution_chain import (
     functions_exec_shell_input,
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
-from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
+from gobby.adapters.codex_impl.literal_shell_calls import literal_exec_calls, literal_shell_calls
 from gobby.adapters.codex_impl.native_exec_failures import is_simple_native_exec_cell
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
 from gobby.adapters.degradation import (
     AdapterDegradationKind,
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
     record_adapter_degradation,
     record_unsupported_response_fields,
-    truncate_context_for_adapter,
 )
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.checkout_reads import node_origin
@@ -80,6 +82,24 @@ class _PendingLookup(NamedTuple):
     outer_call_id: str | None = None
 
 
+def _held_cell_refusal(chain: dict[str, Any]) -> str | None:
+    """Refuse while a typed latch's cell is live, naming each cell and the action that clears it."""
+    sticky = set(chain["sticky_unattributed"])
+    live = [entry for key in ("calls", "cells") for entry in chain[key].values()]
+    held = [entry for entry in live if entry["outer_call_id"] in sticky]
+    if not held:
+        return None
+    cells = sorted({entry["cell_id"] for entry in held if entry.get("cell_id")})
+    if not cells:
+        return "typed input reached an unmapped session; a pending cell is unattributed"
+    names = ", ".join(cells)
+    actions = " and ".join(f"wait on cell {cell} until it exits" for cell in cells)
+    return (
+        "typed input reached an unmapped session; a pending cell is unattributed "
+        f"(held by cell {names}): {actions}, or end it"
+    )
+
+
 def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
     """Read the rollout once and prove the pending call that launched ``command``."""
     parser = CodexTranscriptParser()
@@ -101,11 +121,15 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
                     if parsed.tool_use_id and parsed.tool_name in FUNCTIONS_EXEC_NAMES:
                         if is_simple_native_exec_cell(arguments.get("raw")):
                             simple_cells.add(parsed.tool_use_id)
-                        calls = literal_shell_calls(arguments.get("raw"))
+                        calls = literal_exec_calls(arguments.get("raw"))
                         if calls is not None and len(calls) > 1:
+                            # Attribution reads every member; only absolute workdirs prove cwd.
                             batches[parsed.tool_use_id] = calls
-                            cwd = arguments.get("cwd")
-                            validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
+                            if literal_shell_calls(arguments.get("raw")) is not None:
+                                cwd = arguments.get("cwd")
+                                validated[parsed.tool_use_id] = (
+                                    cwd if isinstance(cwd, str) else None
+                                )
                     if parsed.tool_use_id and (
                         parsed.tool_name in DIRECT_EXEC_NAMES
                         or (
@@ -119,8 +143,9 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
-    # receipts must not poison a new command's cwd proof; unresolved calls and
-    # yielded cells can still launch it, so their overflow remains fail closed.
+    # receipts must not poison a new command's cwd proof; unresolved calls, yielded
+    # cells, and unattributed sessions that can still be typed into stay fail closed
+    # through pending_complete. The chain latches that overflow when it drops one.
     if not chain["pending_complete"] or chain["ambiguous_cells"]:
         return _PendingLookup(None, "pending calls overflowed or are ambiguous")
     pending = {
@@ -129,6 +154,17 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
         for entry in chain[key].values()
         if entry.get("session_id") is None
     }
+    # Typed input reached a shell this chain could not attribute: its latched cell may run it.
+    held = _held_cell_refusal(chain)
+    if held is not None:
+        return _PendingLookup(None, held)
+    # An open session whose launch command is unreadable can still take typed input and run
+    # it, so it blocks every proof. An attributed session names its command and stays out.
+    pending.update(
+        (entry["outer_call_id"], entry)
+        for entry in chain["sessions"].values()
+        if entry["literal_command"] is None
+    )
     invocations = [
         {**entry, "literal_command": call["cmd"], "workdir": call.get("workdir")}
         for entry in pending.values()
@@ -155,6 +191,21 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
     # A yielded or multi-command cell can no longer vouch for one inner invocation.
     unique_outer = outer if outer in chain["calls"] and outer in simple_cells else None
     return _PendingLookup(str(cwd), outer_call_id=unique_outer)
+
+
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_PLAIN_WORD = re.compile(r"[A-Za-z0-9_.+-]+")
+
+
+def _redacted_command_head(command: str) -> tuple[str, int]:
+    """Name the executable and count argv for diagnostics, never argument or env values."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return "<unparsed>", len(command.split())
+    words = [word for word in argv if not _ENV_ASSIGNMENT.match(word)]
+    head = words[0].rsplit("/", 1)[-1] if words else ""
+    return (head if _PLAIN_WORD.fullmatch(head) else "<redacted>"), len(argv)
 
 
 def _pending_shell_workdir(
@@ -187,7 +238,16 @@ def _pending_shell_workdir(
         time.sleep(_PENDING_RECORD_RETRY_DELAY_SECONDS)
         lookup = _pending_shell_lookup(transcript_path, command)
     if lookup.workdir is None:
-        logger.warning("cwd proof refused: %s", lookup.refusal)
+        if correlation is not None:
+            correlation["refusal"] = lookup.refusal
+        head, argc = _redacted_command_head(command)
+        logger.warning(
+            "cwd proof refused: %s (session=%s head=%s argc=%d)",
+            lookup.refusal,
+            input_data.get("session_id"),
+            head,
+            argc,
+        )
     elif correlation is not None and lookup.outer_call_id is not None:
         explicit = any(tool_input.get(key) for key in ("workdir", "cwd"))
         if not explicit or current_tool_cwd(input_data) == Path(lookup.workdir):
@@ -363,8 +423,10 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata: dict[str, Any] = {"_native_hook_type": hook_type}
-        if shell_correlation:
+        if "outer_call_id" in shell_correlation:
             metadata["_native_shell_outer_call_id"] = shell_correlation["outer_call_id"]
+        if "refusal" in shell_correlation:
+            metadata["_native_shell_cwd_refusal"] = shell_correlation["refusal"]
         if shell_cwd_unproven:
             # The launcher's cwd cannot vouch for a script in a computed workdir.
             # Keep it for session lookup, but classify without it for the read-only proof.
@@ -475,7 +537,7 @@ class CodexHooksAdapter(BaseAdapter):
                             destination_channel=ContextChannel.SYSTEM_MESSAGE,
                             event_logger=logger,
                         )
-                    deny_result["systemMessage"] = truncate_context_for_adapter(
+                    deny_result["systemMessage"] = page_context_for_adapter(
                         system_parts,
                         provider=self.source,
                         hook_type=hook_type,
@@ -567,16 +629,17 @@ class CodexHooksAdapter(BaseAdapter):
         # so place it after session-critical context before applying the budget.
         context_parts.extend(response.context_contributors())
 
-        # Build hookSpecificOutput or systemMessage based on event type.
-        if context_parts:
-            combined_context = truncate_context_for_adapter(
-                context_parts,
-                provider=self.source,
-                hook_type=hook_type,
-                destination_channel=context_channel,
-                event_logger=logger,
-                **persist_kwargs_from_hook_response(response, self._hook_manager),
-            )
+        # Build hookSpecificOutput or systemMessage based on event type. Always page: a delivery
+        # with nothing fresh still carries the session's queued remainder.
+        combined_context = page_context_for_adapter(
+            context_parts,
+            provider=self.source,
+            hook_type=hook_type,
+            destination_channel=context_channel,
+            event_logger=logger,
+            **persist_kwargs_from_hook_response(response, self._hook_manager),
+        )
+        if combined_context:
             if context_channel is ContextChannel.SYSTEM_MESSAGE:
                 if response.context:
                     record_adapter_degradation(

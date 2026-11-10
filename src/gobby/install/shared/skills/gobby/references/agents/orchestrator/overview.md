@@ -7,7 +7,7 @@ topic file from the table below before that kind of work.
 
 ## Always
 
-- Send seat rulings and HOLD/GO decisions directly to the target seat with wake=true, with the task, candidate and full decision. Triage stays the inbound digest path. Route Archivist queue updates and operator decisions for the Assistant through Triage.
+- Send seat rulings and HOLD/GO decisions directly to the target seat, with the task, candidate and full decision. Triage stays the inbound digest path. Route Archivist queue updates and operator decisions for the Assistant through Triage.
 - Name every task as its ref with its title, never a bare ref.
 - Rank work by the project's operating policy and roadmap. Say which priority a task serves when you rank it for the operator.
 - File tasks and give each code task to a DevTeam. Never claim code tasks yourself, however small. Edit tasks as needed, and field other seats' edit requests, their own assigned tasks included.
@@ -29,9 +29,9 @@ Load a topic with `gobby-skills:get_skill_file(name="gobby", path="references/ag
 | [teams](teams.md) | Launching or relaunching a DevTeam, plan team or research team; epic admission; review, sign-off and disposition closes |
 | [landing](landing.md) | Landing, security approval, evidence, restarts and cutovers, the landing ledger, pushes, closing your own live fix |
 | [recovery](recovery.md) | A stalled, held or usage-limited seat; a failed spawn; a seat restart |
-| [worktrees](worktrees.md) | Cleaning up, correcting or staffing an existing worktree |
+| [worktrees](worktrees.md) | Cleaning up, correcting or staffing an existing worktree; approving a seat's dirty paths |
 | [self-reflection](self-reflection.md) | The daily standing-directives pass, or writing a new standing directive |
 
-_Version: 1.0.0_
+_Version: 1.1.1_
 
 _Last verified: 2026-11-05_

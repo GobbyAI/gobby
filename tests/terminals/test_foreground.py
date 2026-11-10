@@ -54,12 +54,13 @@ def test_node_script_is_read_from_actual_foreground_group(
         process.assert_called_once_with(20)
 
 
-# pid, tpgid, comm -- the three columns `ps -A -o pid=,tpgid=,comm=` prints.
+# pid, tpgid, ucomm -- the three columns `ps -A -o pid=,tpgid=,ucomm=` prints: accounting
+# names, never argument lists.
 PS_TABLE = """\
-    1    0 /sbin/launchd
-  535    0 /Applications/Microsoft Outlook.app/Contents/MacOS/Outlook
+    1    0 launchd
+  535    0 Microsoft Outlook
 37904 37904 -zsh
-83724 86413 /bin/zsh
+83724 86413 zsh
 86413 86413 claude
 90001    0 /usr/libexec/logd
 """
@@ -84,13 +85,20 @@ def test_command_name_strips_paths_and_the_login_shell_dash() -> None:
     assert command_name("cargo") == "cargo"
 
 
-def test_snapshot_parses_commands_that_contain_spaces() -> None:
+def test_snapshot_parses_names_that_contain_spaces() -> None:
     with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)):
         snapshot = _process_snapshot()
 
     assert snapshot[37904] == (37904, "-zsh")
-    assert snapshot[83724] == (86413, "/bin/zsh")
-    assert snapshot[535] == (0, "/Applications/Microsoft Outlook.app/Contents/MacOS/Outlook")
+    assert snapshot[83724] == (86413, "zsh")
+    assert snapshot[535] == (0, "Microsoft Outlook")
+
+
+def test_snapshot_reads_the_accounting_name_never_the_argument_list() -> None:
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)) as run:
+        _process_snapshot()
+
+    assert run.call_args.args[0] == ["ps", "-A", "-o", "pid=,tpgid=,ucomm="]
 
 
 def test_snapshot_skips_lines_it_cannot_parse() -> None:

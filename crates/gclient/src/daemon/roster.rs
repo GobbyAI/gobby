@@ -18,7 +18,8 @@ pub struct RosterEntry {
     pub project_id: Option<String>,
     pub lifecycle_status: Option<String>,
     /// The subject's agent definition name (`backend-architect`), raw; the chrome
-    /// renders it beside the session ref.
+    /// renders it beside the session ref and the needs-you log names it. Absent
+    /// means the default definition.
     pub definition: Option<String>,
     /// Set only while the subject is blocked; the daemon sends `null` otherwise.
     pub attention: Option<Attention>,

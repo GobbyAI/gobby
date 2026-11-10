@@ -1,13 +1,12 @@
-//! 2.1 sidebar model: `agent_state` over a typed roster entry and its pane,
-//! and `build` joining projects, source status, worktrees, sessions, runs,
+//! 2.1 sidebar model: `build` joining projects, source status, worktrees, sessions, runs,
 //! and the roster into the tree the sidebar draws.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{
-    agent_state, build, provider_label, rollup, worktree_focus_target, AgentEntry, SandboxState,
-    SidebarInputs, SidebarModel,
+    build, provider_label, rollup, worktree_focus_target, AgentEntry, SandboxState, SidebarInputs,
+    SidebarModel,
 };
 use gobby_client::app::Workspace;
 use gobby_client::app::{Backend, Pane, PaneId};
@@ -77,223 +76,34 @@ fn session_row_accepts_a_missing_reasoning_effort() {
     assert_eq!(row.reasoning_effort(), None);
 }
 
-/// 2.1.1: `attention == null` renders idle or working by the pane's output,
-/// only a set `attention` renders blocked, and an entry without a `terminal`
-/// never becomes an agent row.
-#[test]
-fn agent_state_follows_attention_and_terminal() {
-    let running = entry("run:a", Some("terminal-a"));
-    let quiet = pane(1, "terminal-a", false, true);
-    let busy = pane(2, "terminal-a", true, true);
-    let detached = pane(3, "terminal-a", true, false);
-
-    assert_eq!(
-        agent_state(&running, Some(&quiet)),
-        RowState::Working,
-        "a running agent is working at the live edge"
-    );
-    assert_eq!(
-        agent_state(&running, Some(&busy)),
-        RowState::Working,
-        "a running agent with live output is working"
-    );
-    assert_eq!(
-        agent_state(&running, Some(&detached)),
-        RowState::Working,
-        "a running agent is working even when its pane is detached"
-    );
-    assert_eq!(
-        agent_state(&running, None),
-        RowState::Working,
-        "a running agent is working without an open pane"
-    );
-
-    let mut active = running.clone();
-    active.lifecycle_status = Some("active".to_string());
-    assert_eq!(agent_state(&active, Some(&quiet)), RowState::Working);
-    assert_eq!(agent_state(&active, None), RowState::Working);
-
-    let mut finished = running.clone();
-    finished.lifecycle_status = Some("completed".to_string());
-    assert_eq!(
-        agent_state(&finished, Some(&busy)),
-        RowState::Unseen,
-        "output after the run ended is unseen, never working"
-    );
-    assert_eq!(
-        agent_state(&finished, Some(&quiet)),
-        RowState::Idle,
-        "without new output an ended run is idle"
-    );
-
-    let mut blocked_entry = running.clone();
-    blocked_entry.attention = blocked();
-    assert_eq!(
-        agent_state(&blocked_entry, Some(&quiet)),
-        RowState::Attention,
-        "only a set attention renders blocked"
-    );
-
-    let mut paused = running.clone();
-    paused.lifecycle_status = Some("paused".to_string());
-    assert_eq!(
-        agent_state(&paused, Some(&busy)),
-        RowState::Paused,
-        "a paused run is held even while output lands"
-    );
-    assert_eq!(
-        agent_state(&paused, None),
-        RowState::Paused,
-        "a paused run is held with no pane"
-    );
-    paused.attention = blocked();
-    assert_eq!(
-        agent_state(&paused, Some(&quiet)),
-        RowState::Attention,
-        "a prompt outranks a pause"
-    );
-
-    for status in ["awaiting_input", "awaiting_approval"] {
-        let mut waiting = running.clone();
-        waiting.lifecycle_status = Some(status.to_string());
-        for pane in [Some(&quiet), Some(&busy), None] {
-            assert_eq!(agent_state(&waiting, pane), RowState::Attention, "{status}");
-        }
-    }
-
-    // A handoff wait never requires the operator by itself.
-    let mut handoff = running.clone();
-    handoff.lifecycle_status = Some("awaiting_handoff".to_string());
-    assert_eq!(
-        agent_state(&handoff, Some(&quiet)),
-        RowState::Idle,
-        "awaiting_handoff is idle at its prompt"
-    );
-    assert_eq!(
-        agent_state(&handoff, Some(&busy)),
-        RowState::Unseen,
-        "awaiting_handoff with new output is unseen"
-    );
-    assert_eq!(
-        agent_state(&handoff, None),
-        RowState::Idle,
-        "awaiting_handoff with no pane is idle"
-    );
-    handoff.attention = blocked();
-    assert_eq!(
-        agent_state(&handoff, Some(&quiet)),
-        RowState::Attention,
-        "a prompt outranks awaiting_handoff"
-    );
-
-    // A user interrupt stays held until the operator acts, whatever the pane shows.
-    let mut interrupted = running.clone();
-    interrupted.lifecycle_status = Some("interrupted".to_string());
-    for pane in [Some(&quiet), Some(&busy), None] {
-        assert_eq!(
-            agent_state(&interrupted, pane),
-            RowState::Paused,
-            "interrupted is held"
-        );
-    }
-    interrupted.attention = blocked();
-    assert_eq!(
-        agent_state(&interrupted, Some(&quiet)),
-        RowState::Attention,
-        "a prompt outranks an interrupt"
-    );
-
-    let mut stalled = finished.clone();
-    stalled.attention = Some(Attention {
-        kind: Some("non_actionable".to_string()),
-        reason: Some("provider_error".to_string()),
-        ..Default::default()
-    });
-    assert_eq!(agent_state(&stalled, Some(&quiet)), RowState::Idle);
-    assert_eq!(agent_state(&stalled, Some(&busy)), RowState::Unseen);
-
-    let roster = [entry("run:a", Some("terminal-a")), entry("session:s", None)];
-    let model = model(&SidebarRows::default(), &roster, &[quiet]);
-    let agents: Vec<&str> = model
-        .agents
-        .iter()
-        .map(|agent| agent.entry_id.as_str())
-        .collect();
-    assert_eq!(
-        agents,
-        ["run:a"],
-        "an entry without a terminal never becomes an agent row"
-    );
-    assert_eq!(
-        model.agents[0].project_id, PROJECT,
-        "a terminal the daemon joins to no session or run belongs to the focused project"
-    );
-}
-
-/// The daemon writes four turn states; gclient draws each as one row state.
-/// Only an operator pause or a user interrupt is held.
-#[test]
-fn daemon_turn_states_map_to_four_row_states() {
-    let running = entry("run:a", Some("terminal-a"));
-    let quiet = pane(1, "terminal-a", false, true);
-    let row_state = |status: &str| {
-        let mut row = running.clone();
-        row.lifecycle_status = Some(status.to_string());
-        agent_state(&row, Some(&quiet))
-    };
-    assert_eq!(
-        row_state("active"),
-        RowState::Working,
-        "a turn in progress is working"
-    );
-    assert_eq!(
-        row_state("waiting"),
-        RowState::Idle,
-        "a turn parked on an armed wait is idle"
-    );
-    assert_eq!(
-        row_state("idle"),
-        RowState::Idle,
-        "a routine turn end is idle, never held"
-    );
-    assert_eq!(
-        row_state("paused"),
-        RowState::Paused,
-        "an operator pause is held"
-    );
-    assert_eq!(
-        row_state("interrupted"),
-        RowState::Paused,
-        "a user interrupt is held"
-    );
-}
-
 /// A tab, project or machine takes its most urgent member: needs you, then
-/// gone, then active, then idle. Output unseen, held and no state yet roll
-/// up as idle, and a container with no members is idle.
+/// active, then paused, then no live agents, then blank. A container with no
+/// members is blank.
 #[test]
-fn rollup_ranks_needs_you_gone_held_active_idle() {
+fn rollup_ranks_needs_you_active_paused_no_live_blank() {
+    // Ascending urgency: blank, no live agents, paused, active, needs you.
     let every = [
-        RowState::Idle,
-        RowState::Unseen,
-        RowState::Unknown,
-        RowState::Working,
+        RowState::Blank,
+        RowState::NoLive,
         RowState::Paused,
-        RowState::Orphaned,
+        RowState::Working,
         RowState::Attention,
     ];
     // Each prefix rolls up to its last, most urgent member.
     assert_eq!(rollup(every), RowState::Attention);
-    assert_eq!(rollup(every[..6].iter().copied()), RowState::Orphaned);
-    assert_eq!(rollup(every[..5].iter().copied()), RowState::Paused);
     assert_eq!(rollup(every[..4].iter().copied()), RowState::Working);
-    // Output unseen and no state yet count as idle.
-    assert_eq!(rollup(every[..3].iter().copied()), RowState::Idle);
+    assert_eq!(rollup(every[..3].iter().copied()), RowState::Paused);
+    assert_eq!(rollup(every[..2].iter().copied()), RowState::NoLive);
+    assert_eq!(rollup(every[..1].iter().copied()), RowState::Blank);
     assert_eq!(
-        rollup([RowState::Paused, RowState::Working]),
+        rollup([RowState::NoLive, RowState::Working]),
+        RowState::Working
+    );
+    assert_eq!(
+        rollup([RowState::NoLive, RowState::Paused]),
         RowState::Paused
     );
-    assert_eq!(rollup(Vec::<RowState>::new()), RowState::Idle);
+    assert_eq!(rollup(Vec::<RowState>::new()), RowState::Blank);
 }
 
 /// 2.1.2: projects carry branch and ahead/behind, worktree children carry
@@ -405,7 +215,7 @@ fn build_joins_projects_worktrees_and_agents() {
     );
     assert_eq!(
         model.projects[1].state,
-        RowState::Idle,
+        RowState::Blank,
         "a project with no agents is idle"
     );
 
@@ -426,7 +236,7 @@ fn build_joins_projects_worktrees_and_agents() {
     );
     assert_eq!(
         worktree.state,
-        Some(RowState::Working),
+        RowState::Working,
         "the worktree shows the state of the agent running in it"
     );
 
@@ -1184,7 +994,7 @@ fn sessions_bind_through_the_daemon_resolved_worktree_id() {
             ("session:c", None),
         ]
     );
-    let states: Vec<(&str, Option<RowState>)> = model.projects[0]
+    let states: Vec<(&str, RowState)> = model.projects[0]
         .worktrees
         .iter()
         .map(|worktree| (worktree.worktree_id.as_str(), worktree.state))
@@ -1192,11 +1002,11 @@ fn sessions_bind_through_the_daemon_resolved_worktree_id() {
     assert_eq!(
         states,
         [
-            ("wt-1", Some(RowState::Working)),
-            ("wt-10", Some(RowState::Working)),
-            ("wt-idle", None),
+            ("wt-1", RowState::Working),
+            ("wt-10", RowState::Working),
+            ("wt-idle", RowState::Blank),
         ],
-        "a bound worktree rolls up its sessions; an unbound one has no state"
+        "a bound worktree rolls up its sessions; an unbound one is blank"
     );
 }
 
@@ -1224,7 +1034,7 @@ fn a_workspace_path_without_a_resolved_worktree_binds_nothing() {
     let model = model(&rows, &roster, &[]);
 
     assert_eq!(model.agents[0].worktree_id, None);
-    assert_eq!(model.projects[0].worktrees[0].state, None);
+    assert_eq!(model.projects[0].worktrees[0].state, RowState::Blank);
 }
 
 /// #23280 item 5: a click on the worktree glyph shows the agent whose state
@@ -1245,7 +1055,7 @@ fn worktree_focus_target_is_the_agent_behind_the_rolled_up_glyph() {
     let panes = [pane(1, "term-unseen", true, false)];
 
     let calm = model(&rows, &roster[..3], &panes);
-    assert_eq!(calm.projects[0].worktrees[0].state, Some(RowState::Working));
+    assert_eq!(calm.projects[0].worktrees[0].state, RowState::Working);
     assert_eq!(
         worktree_focus_target(&calm, "wt-1").map(|agent| agent.entry_id.as_str()),
         Some("session:first")
@@ -1254,10 +1064,7 @@ fn worktree_focus_target_is_the_agent_behind_the_rolled_up_glyph() {
 
     roster[3].attention = blocked();
     let urgent = model(&rows, &roster, &panes);
-    assert_eq!(
-        urgent.projects[0].worktrees[0].state,
-        Some(RowState::Attention)
-    );
+    assert_eq!(urgent.projects[0].worktrees[0].state, RowState::Attention);
     assert_eq!(
         worktree_focus_target(&urgent, "wt-1").map(|agent| agent.entry_id.as_str()),
         Some("session:blocked")

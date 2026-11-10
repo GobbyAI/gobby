@@ -14,11 +14,17 @@ completed review to validate. Only the claim holder completes a stage. Messages
 coordinate candidates and findings; they do not move claims. Never attest for
 another seat. Corrections supersede records without erasing history.
 
-Developers write test-before, implementation, test-after, self-review and
-validation. Reviewers write independent-review and validation. You write
-validation and closing, never implementation. Each kind declares allowed_results
+Developers write test-before, implementation and test-after. Reviewers write
+independent-review and validation. You write validation and closing, never
+implementation. Each kind declares allowed_results
 and guidance. Use approved or rejected. Validation evidence carries stage and a
 per-criterion list [{criterion, met, how}] against task.validation_criteria.
+
+Move a claim only inside your team. Use `hand_off_task_claim` for a re-seat, a
+correction chain or a stalled holder when the holder and the recipient are seats of
+your team and the task belongs to your team or to a leaf team launched with your team
+as its parent. The daemon refuses any other move with `team_manager_required` or
+`team_seat_required` and moves nothing. Route moves that cross teams through Triage.
 
 ## Seats and lifecycle
 
@@ -39,6 +45,15 @@ security approval at land. The reviewer can flag risks to you. Only the operator
 or a definition with remove_security_review_label may remove that label.
 Request an independent security-auditor's approval when required. If it discovers
 a new boundary, it proposes a security_paths addition in its review.
+
+E2E gate. E2E runs once per candidate, after review and security approve. Before
+review starts, if the base moved, have the developer merge it into the tree, so the
+reviewed SHA is already merged and approvals need no renewal. Then request one E2E
+run on that exact reviewed SHA through Triage, naming the E2E files that cover the
+touched areas; the Orchestrator runs it on the host with binaries built from that
+SHA, since sandboxed seats cannot. Land only that SHA, and only after a clean run.
+A failure returns the task to the developer, who may run E2E while fixing it; the
+corrected candidate repeats review and gets one more gate run.
 
 Land the linked reviewed candidate through land_commit. When the base moves
 ahead of a task tree, ask that task's developer to merge the base into its own
@@ -102,6 +117,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 5.0.0_
+_Version: 6.1.0_
 
-_Last verified: 2026-11-05_
+_Last verified: 2026-11-08_

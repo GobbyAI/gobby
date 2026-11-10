@@ -15,7 +15,7 @@ use std::cmp::Reverse;
 
 use super::{render_band, render_section_rows, SidebarHits};
 use crate::app::project_tabs::TabSet;
-use crate::app::sidebar_model::{agent_row_state, urgency, AgentEntry, SidebarModel};
+use crate::app::sidebar_model::{urgency, AgentEntry, SidebarModel};
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::pane_chrome::sandbox_mark;
@@ -89,15 +89,6 @@ pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Optio
     }
 }
 
-/// The row state: the pane's live state where one is attached, else the
-/// roster's.
-pub(crate) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
-    let pane = ws
-        .pane_for_terminal(&agent.terminal_id)
-        .map(|pane| ws.pane(pane));
-    agent_row_state(agent, pane)
-}
-
 /// Whether the entry is waiting on an attention prompt; an entry the model
 /// no longer lists counts as blocked, so a stale row still opens respond.
 /// A bare terminal has no prompt to answer.
@@ -109,7 +100,7 @@ pub fn agent_blocked<W: WorkspaceView>(ws: &W, entry_id: &str) -> bool {
         .agents
         .iter()
         .find(|agent| agent.entry_id == entry_id)
-        .is_none_or(|agent| agent_state(ws, agent) == RowState::Attention)
+        .is_none_or(|agent| agent.state == RowState::Attention)
 }
 
 /// Whether the machine filter admits an entry on `machine_id`: the local
@@ -167,7 +158,7 @@ fn visible_agents<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Vec<Visib
         .filter(|agent| admits(ws, chrome, agent))
         .map(|agent| Visible {
             agent,
-            state: agent_state(ws, agent),
+            state: agent.state,
             tab_index: tab_of(ws, chrome, agent),
         })
         .collect();

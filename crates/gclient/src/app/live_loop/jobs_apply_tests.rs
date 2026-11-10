@@ -10,6 +10,8 @@ mod host;
 
 use super::*;
 
+#[path = "jobs_apply_focus_tests.rs"]
+mod focus;
 #[path = "jobs_held_placement_tests.rs"]
 mod held_placement;
 #[path = "jobs_apply_orphan_tests.rs"]

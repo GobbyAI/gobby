@@ -153,7 +153,8 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
                 "scope": arg_or(arguments, "scope", json!("session")),
             });
             let path = format!("/api/sessions/{}/variables/set", quote(target));
-            Ok(dialer.request("POST", &path, Some(&body), scoped(Some(target))))
+            // The target lives in the path only; the caller is the environment or terminal session.
+            Ok(dialer.request("POST", &path, Some(&body), scoped(None)))
         }
         "get_variable" => {
             let target = str_arg(arguments, "session_id")?;
@@ -169,7 +170,7 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
                 "brief": arg_or(arguments, "brief", json!(true)),
             });
             let path = format!("/api/sessions/{}/variables/get", quote(target));
-            Ok(dialer.request("POST", &path, Some(&body), scoped(Some(target))))
+            Ok(dialer.request("POST", &path, Some(&body), scoped(None)))
         }
         "init_project" => Ok(json!({"success": false, "error": INIT_PROJECT_ERROR})),
         _ => Err(ErrorData::invalid_params(

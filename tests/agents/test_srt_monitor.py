@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import os
 import pty
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -26,6 +27,7 @@ import psutil
 import pytest
 
 from gobby.agents import srt_monitor
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from tests.agents.srt_probe import ready_node_probes
 from tests.srt_fixture_helpers import write_srt_parser_fixture
@@ -47,6 +49,8 @@ export const SandboxManager = {
   initialize: async () => {
     transport = globalThis.gobbySrtLogTransport(process.env.TEST_SUFFIX)
     transport.stdout.on('data', data => {
+      // Stands in for SRT's canonical filter: this noise is never recorded.
+      if (data.toString().includes('mDNSResponder')) return
       violations.push({ line: data.toString(), command: process.env.TEST_SUFFIX })
       listeners.forEach(listener => listener())
       console.log('recorded')
@@ -648,18 +652,49 @@ async def main() -> None:
                 preserved_agent_pids=set(),
                 preserve_srt_monitor=preserve,
             )
-        noise.wait(timeout=5)
+        noise.wait(timeout=EXIT_WAIT_SECONDS)
         print(f'broker pid={broker.pid} alive={broker.poll() is None} noise reaped={noise.poll() is not None}')
     finally:
         for child in (noise, broker):
             if child.poll() is None:
                 child.kill()
-            child.wait(timeout=5)
+            child.wait(timeout=EXIT_WAIT_SECONDS)
         temporary.cleanup()
 
 
 asyncio.run(main())
 """
+
+
+# Exit waits the restart-reap programs make on their own children, in seconds. Each program's
+# EXIT_WAIT_SECONDS placeholder takes this value.
+_PROGRAM_EXIT_WAIT_SECONDS = 5
+# Seconds a program may take to exit after its last bounded wait returns.
+_EXIT_MARGIN_SECONDS = 1
+
+
+def _restart_reap_program(source: str) -> str:
+    return source.replace("EXIT_WAIT_SECONDS", str(_PROGRAM_EXIT_WAIT_SECONDS))
+
+
+def _default_seconds(function: Callable[..., object], parameter: str) -> float:
+    return float(inspect.signature(function).parameters[parameter].default)
+
+
+# Outer guard for a restart-reap program: every bounded wait it can reach, summed, so the guard
+# fires only after an inner wait has had its full bound. Readiness and the connect after it are
+# broker startup waits. The two sweeps use the reaper's default bound. The three probes are the
+# preserve path's node-resolution select and wait and its broker connect. The exit waits are the
+# program's own children. The connect that waits only on an existing socket is unreachable here,
+# because each program starts in a fresh socket directory.
+_RESTART_REAP_GUARD_SECONDS = (
+    srt_monitor._READY_TIMEOUT_SECONDS
+    + _default_seconds(srt_monitor._connect, "timeout")
+    + 2 * _default_seconds(_reap_remaining_child_processes, "timeout")
+    + 3 * srt_monitor._PROBE_TIMEOUT_SECONDS
+    + 3 * _PROGRAM_EXIT_WAIT_SECONDS
+    + _EXIT_MARGIN_SECONDS
+)
 
 
 def _run_pinned_restart_reap(
@@ -669,7 +704,7 @@ def _run_pinned_restart_reap(
         [
             sys.executable,
             "-c",
-            _PINNED_RESTART_PROGRAM,
+            _restart_reap_program(_PINNED_RESTART_PROGRAM),
             str(harness.root),
             str(harness.node),
             str(harness.runner),
@@ -678,7 +713,7 @@ def _run_pinned_restart_reap(
         ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=_RESTART_REAP_GUARD_SECONDS,
         check=False,
     )
 
@@ -825,7 +860,7 @@ async def main() -> None:
     finally:
         if spoof.poll() is None:
             spoof.kill()
-        spoof.wait(timeout=5)
+        spoof.wait(timeout=EXIT_WAIT_SECONDS)
         parent.close()
         temporary.cleanup()
 
@@ -841,7 +876,7 @@ def _run_spoof_restart_reap(
         [
             sys.executable,
             "-c",
-            _SPOOF_PROGRAM,
+            _restart_reap_program(_SPOOF_PROGRAM),
             str(harness.root),
             str(harness.node),
             str(harness.runner),
@@ -849,7 +884,7 @@ def _run_spoof_restart_reap(
         ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=_RESTART_REAP_GUARD_SECONDS,
         check=False,
     )
 
@@ -1324,8 +1359,9 @@ def test_acknowledged_records_stay_only_in_execution_log(monitor_harness: Monito
         child.send_signal(signal.SIGINT)
         child.communicate(timeout=15)
         assert child.returncode == -signal.SIGINT
+        # The broker retires the backlog after the runner's socket closes.
+        _wait_path(harness.root / "acked_SBX.srt-backlog.jsonl.active", absent=True)
         assert not (harness.root / "acked_SBX.srt-backlog.jsonl").exists()
-        assert not (harness.root / "acked_SBX.srt-backlog.jsonl.active").exists()
         assert Path(harness.socket_path + ".jsonl").stat().st_size == 0
         records = [
             json.loads(line)

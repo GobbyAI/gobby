@@ -1,4 +1,4 @@
-version: "1.7.1"
+version: "1.11.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -84,10 +84,35 @@ rules:
               "src/gobby/install/shared/workflows/rules/tool-hygiene/workflow-cli-authority.yaml",
               "src/gobby/install/shared/workflows/rules/tool-hygiene/agent-activation-authority.yaml",
               "src/gobby/workflows/condition_helpers_spawn.py",
-              "src/gobby/install/shared/workflows/rules/tool-hygiene/spawn-capability-authority.yaml"
+              "src/gobby/install/shared/workflows/rules/tool-hygiene/spawn-capability-authority.yaml",
+              "crates/gdaemon/src/nodes/agents/removal_lock.rs",
+              "src/gobby/worktrees/removal_lock.py",
+              "src/gobby/agents/team_tree_provisioning.py",
+              "src/gobby/agents/isolation_repair.py",
+              "src/gobby/utils/project_context.py",
+              "crates/gcode/src/commands/pin.rs",
+              "src/gobby/servers/websocket/terminal_ws.py",
+              "src/gobby/terminals/leases.py",
+              "crates/gclient/src/app/attach.rs",
+              "crates/gclient/src/frame_source/proxy.rs",
+              "crates/gterminal/src/host/mod.rs",
+              "src/gobby/worktrees/deletion.py",
+              "src/gobby/worktrees/git/_status.py",
+              "src/gobby/worktrees/creation.py",
+              "src/gobby/servers/routes/source_control_worktrees.py",
+              "src/gobby/agents/srt_runner.mjs",
+              "src/gobby/utils/dependency_requirements.py",
+              "crates/gdaemon/src/nodes/agents/sandbox/verify.rs",
+              "src/gobby/sessions/owner_process_tree.py",
+              "src/gobby/adapters/codex_impl/pending_execution.py",
+              "src/gobby/install/shared/workflows/rules/worker-safety/no-process-environment-listing.yaml",
+              "crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh",
+              "src/gobby/agents/droid_ps_shim.py",
+              "src/gobby/terminals/foreground.py"
             ],
+            "fleet_health": {"probe_degraded_ms": 1000, "probe_unstable_ms": 3000, "severe_unstable_window_seconds": 120, "window_seconds": 300, "warning_lines_degraded": 10, "load_per_core_degraded": 2.5, "load_consecutive_samples": 2, "memory_free_degraded_percent": 15.0, "fseventsd_cpu_degraded_percent": 50.0, "fseventsd_consecutive_samples": 3, "max_new_seats": 3, "ramp_window_seconds": 900},
             "operator_channel": "gobby-telegram",
-            "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
+            "quiet_hours": "04:00–06:30 America/Chicago daily",
             "operator_timezone": "America/Chicago",
             "report_cadence_seconds": 1800,
             "full_report_minutes": "00-29 UTC",
@@ -143,7 +168,7 @@ rules:
           - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-user label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
           - Present every time to the operator in project_policy.operator_timezone; convert UTC timestamps first.
-          - Friction: work around it. A YAML-only fix the Orchestrator makes live. A blocking item that can't be worked around goes under the Friction epic #25603 with a team launched for it. A non-blocking item goes under the non-blocking sub-epic #25662, which the Consolidator periodically consolidates and exactly one team works.
+          - Friction: work around it. A YAML-only fix the Orchestrator makes live. A blocking item that can't be worked around goes under the Friction epic #25603 with a team launched for it. A non-blocking item goes under the non-blocking sub-epic #25662, which the Consolidator consolidates hourly and up to three teams work.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected
@@ -177,12 +202,12 @@ rules:
           - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.
           - The operator retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
           - Close preview is deterministic only; the configured authorized closer closes after landing.
-          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need the operator via Assistant. Report load only if breaching.
+          - Threshold/admission/escalation changes need the operator via Assistant.
           - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
           - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.
           - Place panes by project_policy.workspace_layout.
-          - Friction: work around it and report it to Triage. The Orchestrator fixes YAML-only items live, files a blocking item under the Friction epic #25603 with a team launched for it, and files a non-blocking item under the sub-epic #25662, which the Consolidator periodically consolidates and exactly one team works.
+          - Friction: work around it and report it to Triage. The Orchestrator fixes YAML-only items live, files a blocking item under the Friction epic #25603 with a team launched for it, and files a non-blocking item under the sub-epic #25662, which the Consolidator consolidates hourly and up to three teams work.
       - type: set_variable
         delivery: on_receipt
         variable: _runbook_policy_injected

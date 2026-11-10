@@ -70,7 +70,8 @@ def _load_roster_entries(
         terminal_context = session.terminal_context
         terminal = _terminal_block(server, session.terminal)
         pane = terminal_context.get("tmux_pane")
-        if terminal is None and (not isinstance(pane, str) or not pane):
+        # A session with no terminal or pane is still assigned work when it holds a claim.
+        if terminal is None and session.task_id is None and (not isinstance(pane, str) or not pane):
             continue
         entry_id = f"session:{session.source_id}"
         entries.append(

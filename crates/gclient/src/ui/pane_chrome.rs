@@ -5,12 +5,12 @@
 //! A shared divider moves the upper pane's address beside its title; a pane
 //! with no top edge hands its title to status.
 
-use crate::app::sidebar_model::{pane_state, AgentEntry, SandboxState};
+use crate::app::sidebar_model::{AgentEntry, SandboxState};
 use crate::app::{ControlState, Pane};
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::pane_layout::PaneInfo;
-use crate::ui::sidebar::agents::{agent_reference, agent_state};
+use crate::ui::sidebar::agents::agent_reference;
 use crate::ui::sidebar_rows::TICKER_MIN_WINDOW;
 use crate::ui::status::state_dot;
 use crate::ui::text::display_width;
@@ -102,9 +102,10 @@ pub fn pane_corners<W: WorkspaceView>(
         .iter()
         .find(|agent| agent.terminal_id == pane.terminal_id);
     let state = if exited(pane, agent) {
-        RowState::Orphaned
+        RowState::NoLive
     } else {
-        agent.map_or_else(|| pane_state(pane), |agent| agent_state(ws, agent))
+        // A pane no roster row names is a bare terminal: nothing is assigned, so it is blank.
+        agent.map_or(RowState::Blank, |agent| agent.state)
     };
     let identity = agent
         .filter(|agent| agent.agent_definition_name.is_some() || !agent.provider.trim().is_empty())
@@ -243,7 +244,7 @@ pub fn title_rect(info: &PaneInfo, corners: &PaneCorners) -> Option<Rect> {
         return None;
     }
     let budget = title_budget(info.rect.width, top_reserve(info, corners));
-    let width = display_width(corners.title.trim()).min(budget) + 2;
+    let width = display_width(corners.title.trim_end()).min(budget) + 2;
     Some(Rect::new(
         info.rect.x.saturating_add(1),
         info.rect.y,
@@ -267,7 +268,8 @@ pub fn title_travel<W: WorkspaceView>(
     if budget < TICKER_MIN_WINDOW {
         return 0;
     }
-    display_width(corners.title.trim()).saturating_sub(budget)
+    // The leading state cell counts even when blank: the header draws it.
+    display_width(corners.title.trim_end()).saturating_sub(budget)
 }
 
 /// The focused pane's Read-only or Uncertain title, which a click resolves.

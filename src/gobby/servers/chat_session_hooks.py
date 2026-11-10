@@ -7,18 +7,20 @@ from uuid import uuid4
 
 from claude_agent_sdk import HookContext, HookMatcher, PermissionResultDeny
 from claude_agent_sdk.types import HookInput as SDKHookInput
-from claude_agent_sdk.types import SyncHookJSONOutput, UserPromptSubmitHookSpecificOutput
+from claude_agent_sdk.types import SyncHookJSONOutput
 
 from gobby.adapters.degradation import (
     AdditionalContextPersistKwargs,
     tool_result_store_from_hook_manager,
 )
-from gobby.hooks.context_limits import additional_context_limit_for
-from gobby.hooks.events import SessionSource
+from gobby.hooks.events import ContextPart
+from gobby.hooks.receipt_effects import (
+    take_worker_staging,
+    worker_staging_scope,
+)
+from gobby.hooks.replay_decision import commit_staged_effects
 from gobby.servers.chat_session_helpers import (
     _PLAN_FILE_PATTERN,
-    _bound_resp_context,
-    _resp_context_parts,
     _response_to_compact_output,
     _response_to_post_tool_output,
     _response_to_pre_tool_output,
@@ -26,8 +28,19 @@ from gobby.servers.chat_session_helpers import (
     _response_to_stop_output,
     _response_to_subagent_output,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
+
+_HookFn = Callable[[SDKHookInput, str | None, HookContext], Awaitable[SyncHookJSONOutput]]
+
+
+def _withholds(output: SyncHookJSONOutput) -> bool:
+    """Whether an output blocks its event: a blocked decision, or a denied tool call."""
+    if output.get("decision") == "block":
+        return True
+    specific = output.get("hookSpecificOutput")
+    return isinstance(specific, dict) and specific.get("permissionDecision") == "deny"
 
 
 class ChatSessionHooksMixin:
@@ -44,7 +57,7 @@ class ChatSessionHooksMixin:
     _session_manager_ref: Any | None
     _transcript_path_captured: bool
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
-    _on_prompt_delivered: Callable[[], None] | None
+    _on_prompt_delivered: Callable[..., None] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_post_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_pre_compact: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
@@ -54,12 +67,76 @@ class ChatSessionHooksMixin:
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
 
     def _additional_context_persist(self) -> AdditionalContextPersistKwargs:
-        """Session/project/store kwargs for additionalContext overflow persist."""
+        """Session and store kwargs that carry this session's waiting context parts."""
         return {
             "store": tool_result_store_from_hook_manager(self._session_manager_ref),
             "session_id": self.db_session_id,
-            "project_id": self.project_id,
         }
+
+    def _staged_hook(
+        self,
+        hook: _HookFn,
+        settle: Callable[[dict[str, Any]], None] | None = None,
+    ) -> _HookFn:
+        """Commit the context queue a hook output staged, once the output ships unblocked.
+
+        The queue is staged while the output is built, so the staging scope wraps the
+        build, and the staged queue commits only when the output is not a block. A blocked
+        output delivers nothing, so the queue it would have changed stays as it was.
+
+        ``settle`` replaces that plain commit for a hook that owes one-shot state. It receives
+        the staged queue and owns the commit, so it must commit before it clears anything.
+        """
+
+        async def _staged(
+            inp: SDKHookInput,
+            tool_use_id: str | None,
+            ctx: HookContext,
+        ) -> SyncHookJSONOutput:
+            with worker_staging_scope():
+                output = await hook(inp, tool_use_id, ctx)
+                staged = take_worker_staging()
+            if not _withholds(output):
+                if settle is None:
+                    self._commit_staged_context(staged)
+                else:
+                    settle(staged)
+            return output
+
+        return _staged
+
+    def _commit_staged_context(self, staged: dict[str, Any]) -> None:
+        """Persist the queued context a shipped hook output staged, through a receipt CAS.
+
+        The staged effects are prepared as a receipt and acknowledged in one call. They
+        apply only when this call wins the CAS, the same gate every other delivery uses.
+        """
+        db = getattr(self._additional_context_persist()["store"], "db", None)
+        if not staged or db is None or not self.db_session_id:
+            return
+        commit_staged_effects(
+            db,
+            session_id=self.db_session_id,
+            staged=staged,
+            variable_manager=SessionVariableManager(db),
+        )
+
+    def _settle_prompt_delivery(self, staged: dict[str, Any]) -> None:
+        """Commit a shipped prompt's staged queue, then settle its one-shot context.
+
+        Order: the lifecycle payload commit (idempotent), then the queue commit, which is the
+        success boundary, then the message marks, then the clears. A raise before the queue
+        commit consumes no queue, so the retry ships the same sources and the receipt stays owed.
+        """
+        acknowledge = self._on_prompt_delivered
+        if acknowledge is None:
+            self._commit_staged_context(staged)
+        else:
+            acknowledge(lambda: self._commit_staged_context(staged))
+            if self._on_prompt_delivered is acknowledge:
+                self._on_prompt_delivered = None
+        getattr(self, "_clear_plan_feedback", lambda: None)()
+        self._needs_history_injection = False
 
     def _build_sdk_hooks(self) -> dict[str, list[HookMatcher]] | None:
         """Build SDK hook matchers from lifecycle callbacks."""
@@ -99,51 +176,35 @@ class ChatSessionHooksMixin:
                 raw_resp = await cb(data)
                 resp = raw_resp if isinstance(raw_resp, dict) else None
                 persist = self._additional_context_persist()
-                output = _response_to_prompt_output(resp, persist=persist)
+                extra_parts: list[ContextPart] = []
 
-                plan_ctx = getattr(self, "_consume_plan_mode_context", lambda: None)()
-                if plan_ctx:
-                    output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
-                        hookEventName="UserPromptSubmit",
-                        additionalContext=_bound_resp_context(
-                            resp,
-                            [*_resp_context_parts(resp), ("plan_mode", str(plan_ctx))],
-                            persist=persist,
-                        ),
-                    )
+                # Plan feedback and first-prompt history are one-shot, owed to a prompt that ships.
+                # A blocked prompt owes nothing. This hook only reads them: _settle_prompt_delivery
+                # clears them after the output ships and its queue commit succeeds.
+                owes_one_shot = resp is None or resp.get("decision") != "block"
+                history_owed = owes_one_shot and self._needs_history_injection
+                if owes_one_shot:
+                    # Inject conversation history on first prompt of a recreated session.
+                    history_ctx: str | None = None
+                    if history_owed:
+                        history_ctx = await cast(Any, self)._load_history_context()
 
-                # Inject conversation history on first prompt of a recreated session.
-                if self._needs_history_injection:
-                    self._needs_history_injection = False
-                    existing = ""
-                    hook_specific = output.get("hookSpecificOutput")
-                    if hook_specific and isinstance(hook_specific, dict):
-                        existing = str(hook_specific.get("additionalContext", "") or "")
-                    history_budget = (
-                        additional_context_limit_for(SessionSource.CLAUDE) - len(existing) - 4
-                    )
-                    if history_budget > 500:
-                        history_ctx = await cast(Any, self)._load_history_context(
-                            max_total_chars=history_budget
-                        )
-                        if history_ctx:
-                            output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
-                                hookEventName="UserPromptSubmit",
-                                additionalContext=_bound_resp_context(
-                                    resp,
-                                    [("existing", existing), ("history", history_ctx)],
-                                    persist=persist,
-                                ),
-                            )
+                    # Read plan feedback after the last await, so the settle drops only
+                    # feedback this output carries; nothing can add feedback in between.
+                    plan_ctx = getattr(self, "_plan_mode_context", lambda: None)()
+                    if plan_ctx:
+                        extra_parts.append(("plan_mode", str(plan_ctx)))
+                    if history_ctx:
+                        extra_parts.append(("history", history_ctx))
 
-                if output.get("decision") != "block":
-                    acknowledge = getattr(self, "_on_prompt_delivered", None)
-                    if acknowledge is not None:
-                        self._on_prompt_delivered = None
-                        acknowledge()
-                return output
+                return _response_to_prompt_output(resp, persist=persist, extra_parts=extra_parts)
 
-            hooks["UserPromptSubmit"] = [HookMatcher(matcher=None, hooks=[_prompt_hook])]
+            hooks["UserPromptSubmit"] = [
+                HookMatcher(
+                    matcher=None,
+                    hooks=[self._staged_hook(_prompt_hook, settle=self._settle_prompt_delivery)],
+                )
+            ]
 
         if self._on_pre_tool:
             cb_pre = self._on_pre_tool
@@ -201,7 +262,9 @@ class ChatSessionHooksMixin:
                         self._preapproved_tool_use_ids.add(tool_use_id)
                 return _response_to_pre_tool_output(allow_resp, persist=persist)
 
-            hooks["PreToolUse"] = [HookMatcher(matcher=None, hooks=[_pre_tool_hook])]
+            hooks["PreToolUse"] = [
+                HookMatcher(matcher=None, hooks=[self._staged_hook(_pre_tool_hook)])
+            ]
 
         if self._on_post_tool:
             cb_post = self._on_post_tool
@@ -251,7 +314,9 @@ class ChatSessionHooksMixin:
                     resp, persist=self._additional_context_persist()
                 )
 
-            hooks["PostToolUse"] = [HookMatcher(matcher=None, hooks=[_post_tool_hook])]
+            hooks["PostToolUse"] = [
+                HookMatcher(matcher=None, hooks=[self._staged_hook(_post_tool_hook)])
+            ]
 
         if self._on_stop:
             cb_stop = self._on_stop
@@ -265,7 +330,7 @@ class ChatSessionHooksMixin:
                 resp = await cb_stop(data)
                 return _response_to_stop_output(resp, persist=self._additional_context_persist())
 
-            hooks["Stop"] = [HookMatcher(matcher=None, hooks=[_stop_hook])]
+            hooks["Stop"] = [HookMatcher(matcher=None, hooks=[self._staged_hook(_stop_hook)])]
 
         if self._on_pre_compact:
             cb_compact = self._on_pre_compact
@@ -281,7 +346,9 @@ class ChatSessionHooksMixin:
                 resp = await cb_compact(data)
                 return _response_to_compact_output(resp, persist=self._additional_context_persist())
 
-            hooks["PreCompact"] = [HookMatcher(matcher=None, hooks=[_compact_hook])]
+            hooks["PreCompact"] = [
+                HookMatcher(matcher=None, hooks=[self._staged_hook(_compact_hook)])
+            ]
 
         if self._on_subagent_start:
             cb_sub_start = self._on_subagent_start
@@ -300,7 +367,9 @@ class ChatSessionHooksMixin:
                     resp, "SubagentStart", persist=self._additional_context_persist()
                 )
 
-            hooks["SubagentStart"] = [HookMatcher(matcher=None, hooks=[_subagent_start_hook])]
+            hooks["SubagentStart"] = [
+                HookMatcher(matcher=None, hooks=[self._staged_hook(_subagent_start_hook)])
+            ]
 
         if self._on_subagent_stop:
             cb_sub_stop = self._on_subagent_stop
@@ -319,6 +388,8 @@ class ChatSessionHooksMixin:
                     resp, "SubagentStop", persist=self._additional_context_persist()
                 )
 
-            hooks["SubagentStop"] = [HookMatcher(matcher=None, hooks=[_subagent_stop_hook])]
+            hooks["SubagentStop"] = [
+                HookMatcher(matcher=None, hooks=[self._staged_hook(_subagent_stop_hook)])
+            ]
 
         return hooks if hooks else None

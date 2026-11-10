@@ -268,10 +268,17 @@ When a publisher is attached:
   frame order. A frame larger than that goes alone in its own operation. No frame is
   refused or dropped by the split.
 - A POST carries whole operations up to 1 MiB (`MAX_BATCH_BYTES`), or one larger operation
-  alone. This bounds each request's latency under the 2 s `REQUEST_TIMEOUT`; it is a
+  alone. This bounds each request's latency under the 15 s `REQUEST_TIMEOUT`; it is a
   mitigation, not a demonstrated cause of the timeouts. A failed publish logs its batch
   size and elapsed time. The 16 MiB publish limit above is gdaemon's bound. It covers one
   frame at the default 5 MiB `max_message_size` with every byte escaped, about 10 MiB.
+- A publish or bind that outlives `REQUEST_TIMEOUT` is ambiguous: its generation retires,
+  the door unbinds, and the publisher rebinds on `REBIND_INTERVAL`. The 15 s deadline
+  covers the host-load loop stalls seen in the logs; it does not cure a sustained bind
+  stall.
+- `spawn_agent` admission waits up to `front_door_wait()` (40 s) for a rebind before it
+  refuses with "native WS front door unbound", so a transient unbind does not fail a
+  pipeline spawn step. An unbind that outlasts the wait still refuses.
 
 Python-only mode (no publisher) is unchanged.
 

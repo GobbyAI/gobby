@@ -273,13 +273,7 @@ class ComposerRaces:
         )
         if clear:
             row = await self.proof.terminal(predecessor.terminal_id)
-            successor = Surface(
-                predecessor.provider,
-                str(row.get("session_id")),
-                predecessor.terminal_id,
-                self.proof.locator(row).frame_host_epoch,
-                str(row.get("project_id")),
-            )
+            successor, _ = await self.proof.row_surface(predecessor.provider, row)
             if successor == predecessor:
                 raise ProofRefused("real clear boundary did not bind a successor")
             # This is canonical row readback, not a fabricated lifecycle or trace receipt.
@@ -652,13 +646,7 @@ class ComposerRaces:
         seat = seats[0]
         row = await self.proof.terminal(predecessor.terminal_id)
         locator = self.proof.locator(row)
-        observed = Surface(
-            predecessor.provider,
-            str(row.get("session_id")),
-            str(row.get("id")),
-            locator.frame_host_epoch,
-            str(row.get("project_id")),
-        )
+        observed, _ = await self.proof.row_surface(predecessor.provider, row)
         self.proof.scope.require_surface(successor, observed)
         if locator != seat.locator:
             raise ProofRefused("clear successor native attachment binding changed")

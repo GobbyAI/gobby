@@ -299,14 +299,25 @@ class AttentionStateManager:
         *,
         live_session_statuses: Sequence[str],
     ) -> list[AttentionRosterRow]:
-        """Load every machine's runs, sessions, tasks, and terminals in one round trip."""
+        """Load every machine's live runs, sessions, tasks, and terminals in one round trip.
+
+        Only live work is listed. An ended run or session leaves the roster even while its
+        task stays open or claimed, so the operator's sidebar shows no row it cannot open
+        (Josh, 2026-11-09: "dumbass agents left a bunch of dead agents showing up in my
+        sidebar"). An open task with no live seat therefore carries no marker.
+        """
         rows = self.db.fetchall(
             """
+            WITH eligible_runs AS MATERIALIZED (
+                SELECT id FROM agent_runs WHERE status IN ('queued', 'running', 'pending')
+            ), eligible_sessions AS MATERIALIZED (
+                SELECT id FROM sessions WHERE status = ANY(%s)
+            )
             SELECT
                 'run' AS roster_kind,
                 run.id::text AS source_id,
                 run.child_session_id::text AS session_id,
-                COALESCE(child.status, run.status) AS lifecycle_status,
+                COALESCE(child.status, run.status)::text AS lifecycle_status,
                 task.id::text AS task_id,
                 CASE
                     WHEN task.id IS NULL THEN NULL
@@ -335,7 +346,8 @@ class AttentionStateManager:
                 ) AS definition,
                 run.machine_id::text AS machine_id,
                 COALESCE(child.project_id, parent.project_id)::text AS project_id
-            FROM agent_runs run
+            FROM eligible_runs eligible
+            JOIN agent_runs run ON run.id = eligible.id
             LEFT JOIN sessions child ON child.id = run.child_session_id
             LEFT JOIN sessions parent ON parent.id = run.parent_session_id
             LEFT JOIN session_variables seat ON seat.session_id = child.id
@@ -350,7 +362,6 @@ class AttentionStateManager:
             ) claimed ON TRUE
             LEFT JOIN tasks task ON task.id = COALESCE(claimed.id, run.task_id)
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
-            WHERE run.status IN ('queued', 'running', 'pending')
 
             UNION ALL
 
@@ -358,7 +369,7 @@ class AttentionStateManager:
                 'session' AS roster_kind,
                 session.id::text AS source_id,
                 session.id::text AS session_id,
-                session.status AS lifecycle_status,
+                session.status::text AS lifecycle_status,
                 claimed.id::text AS task_id,
                 CASE
                     WHEN claimed.id IS NULL THEN NULL
@@ -384,7 +395,8 @@ class AttentionStateManager:
                      THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition,
                 session.machine_id::text AS machine_id,
                 session.project_id::text AS project_id
-            FROM sessions session
+            FROM eligible_sessions eligible
+            JOIN sessions session ON session.id = eligible.id
             LEFT JOIN session_variables seat ON seat.session_id = session.id
             LEFT JOIN LATERAL (
                 SELECT candidate.*
@@ -414,13 +426,12 @@ class AttentionStateManager:
             LEFT JOIN LATERAL (
                 SELECT owned.id, owned.seq_num, owned.title
                 FROM tasks owned
-                WHERE owned.claimed_by_session_id = session.id
+                WHERE owned.claimed_by_session_id = eligible.id
                   AND owned.closed_at IS NULL
                 ORDER BY (owned.id::text = seat.variables->>'active_task_id') DESC NULLS LAST,
                          owned.updated_at DESC, owned.id
                 LIMIT 1
             ) claimed ON TRUE
-            WHERE session.status = ANY(%s)
 
             ORDER BY roster_kind, source_id
             """,

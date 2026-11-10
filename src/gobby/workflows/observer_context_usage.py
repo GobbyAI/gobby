@@ -85,14 +85,19 @@ def detect_context_compact_guidance(
     session_id: str,
     session_manager: _SessionManager | None,
     config: _ContextHandoffConfig | None = None,
+    *,
+    hold_open: bool = False,
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
     gate = _handoff_gate(variables)
-    skip_session_lookup = (
-        gate in {"pending", "failed"}
-        or variables.get("pending_context_reset") is True
-        or _is_plan_mode(variables)
+    turns_since_compact = _turns_since_compact(variables)
+    # A held lifecycle inside its grace window may still clear a reset, and its usage predates the
+    # compaction, so it suppresses the band whether or not the reset is set yet.
+    pending_reset = hold_open or (
+        variables.get("pending_context_reset") is True
+        and not _is_stale_pending_reset(variables, turns_since_compact)
     )
+    skip_session_lookup = gate in {"pending", "failed"} or pending_reset or _is_plan_mode(variables)
     # A timed-out or failed read must leave the previous guidance and turn counters intact.
     try:
         session = None if skip_session_lookup else _load_session(session_manager, session_id)
@@ -101,7 +106,7 @@ def detect_context_compact_guidance(
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
-    if gate == "pending" or variables.get("pending_context_reset") is True:
+    if gate == "pending" or pending_reset:
         _reset_epoch_state(variables)
         return
     if gate == "failed":
@@ -118,15 +123,9 @@ def detect_context_compact_guidance(
         _write_band(variables, "none", None, None)
         return
 
-    turn_seq = _next_turn_seq(variables)
-    last_compacted = _int_or_none(variables.get("last_compacted_turn_seq"))
-    if last_compacted is not None:
-        turns_since_compact = max(0, turn_seq - last_compacted)
-    else:
-        previous_turns_since_compact = (
-            _int_or_none(variables.get("turns_since_compact"), default=0) or 0
-        )
-        turns_since_compact = previous_turns_since_compact + 1
+    _record_turn_seq(variables)
+    if _is_stale_pending_reset(variables, turns_since_compact):
+        variables["pending_context_reset"] = False
     variables["turns_since_compact"] = turns_since_compact
 
     used = _used_tokens_from_session(session)
@@ -161,6 +160,8 @@ def detect_mid_turn_context_compact_guidance(
     session_id: str,
     session_manager: _SessionManager | None,
     config: _ContextHandoffConfig | None = None,
+    *,
+    hold_open: bool = False,
 ) -> None:
     """Populate compact guidance for an after_tool event under context pressure."""
     variables["context_compact_guidance_kind"] = ""
@@ -169,11 +170,14 @@ def detect_mid_turn_context_compact_guidance(
     _record_handoff_result(event, variables)
 
     gate = _handoff_gate(variables)
-    if (
+    stored_turns = _int_or_none(variables.get("turns_since_compact"), default=0) or 0
+    # A held lifecycle inside its grace window may still clear a reset, and its usage predates the
+    # compaction, so it suppresses the band whether or not the reset is set yet.
+    pending_reset = hold_open or (
         variables.get("pending_context_reset") is True
-        or _is_plan_mode(variables)
-        or gate == "pending"
-    ):
+        and not _is_stale_pending_reset(variables, stored_turns)
+    )
+    if pending_reset or _is_plan_mode(variables) or gate == "pending":
         _write_band(variables, "none", None, None)
         variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
         return
@@ -182,6 +186,8 @@ def detect_mid_turn_context_compact_guidance(
         session = _load_session(session_manager, session_id)
     except _SessionReadFailed:
         return
+    if _is_stale_pending_reset(variables, stored_turns):
+        variables["pending_context_reset"] = False
     used = _used_tokens_from_session(session)
     if used is None:
         _write_band(variables, "none", None, None)
@@ -428,14 +434,37 @@ def _is_plan_mode(variables: dict[str, Any]) -> bool:
     return variables.get("chat_mode") == "plan"
 
 
-def _next_turn_seq(variables: dict[str, Any]) -> int:
+def _current_turn_seq(variables: dict[str, Any]) -> int:
+    """This turn's sequence number. Pure: the fallback counter is recorded only when accounted."""
     parent_turn_seq = _int_or_none(variables.get("parent_turn_seq"))
     if parent_turn_seq is not None:
         return parent_turn_seq + 1
-    previous = _int_or_none(variables.get("_context_usage_turn_seq"), default=0) or 0
-    current = previous + 1
-    variables["_context_usage_turn_seq"] = current
-    return current
+    return (_int_or_none(variables.get("_context_usage_turn_seq"), default=0) or 0) + 1
+
+
+def _record_turn_seq(variables: dict[str, Any]) -> None:
+    """Record this turn for the fallback counter. Call only where the turn is accounted."""
+    if _int_or_none(variables.get("parent_turn_seq")) is None:
+        variables["_context_usage_turn_seq"] = _current_turn_seq(variables)
+
+
+def _turns_since_compact(variables: dict[str, Any]) -> int:
+    """Turn starts since the last compaction, counting this one. Pure: records nothing."""
+    last_compacted = _int_or_none(variables.get("last_compacted_turn_seq"))
+    if last_compacted is not None:
+        return max(0, _current_turn_seq(variables) - last_compacted)
+    previous = _int_or_none(variables.get("turns_since_compact"), default=0) or 0
+    return previous + 1
+
+
+def _is_stale_pending_reset(variables: dict[str, Any], turns_since_compact: int) -> bool:
+    """Whether a pending reset outlived its compaction turn, so it cannot mute the band forever.
+
+    The reset clears when the compaction's SessionStart replays, and a dropped replay leaves it set.
+    Within the compaction turn the reset still suppresses the band, because the usage it would
+    compare resets only at PostCompact. From the next turn on, a reset still set is stale.
+    """
+    return variables.get("pending_context_reset") is True and turns_since_compact > 0
 
 
 def _pressure_band(used: int, warn_threshold: int, block_threshold: int) -> str:

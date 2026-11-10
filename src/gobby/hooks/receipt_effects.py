@@ -162,33 +162,39 @@ def stage_append_set_variables(session_id: str, name: str, values: list[str]) ->
     )
 
 
-def apply_acknowledged_receipt(
-    receipt: Any,
-    *,
-    message_manager: Any = None,
-    variable_manager: Any = None,
-) -> None:
-    """Commit staged one-shot effects after a successful receipt CAS."""
+def apply_acknowledged_marks(receipt: Any, *, message_manager: Any = None) -> None:
+    """Mark the piggybacked messages a won receipt delivered. Never raises."""
+
+    payload = getattr(receipt, "staged_payload", None)
+    if message_manager is None or not isinstance(payload, dict):
+        return
+    raw_ids = payload.get("pending_message_ids")
+    session_id = payload.get("pending_message_session_id")
+    if isinstance(session_id, str) and session_id and isinstance(raw_ids, list):
+        message_ids = [str(message_id) for message_id in raw_ids if str(message_id)]
+        if message_ids:
+            try:
+                message_manager.mark_delivered_batch(message_ids, session_id)
+            except Exception:
+                logger.warning(
+                    "Failed to mark piggyback messages delivered after receipt %s",
+                    getattr(receipt, "receipt_id", None),
+                    exc_info=True,
+                )
+
+
+def apply_acknowledged_variables(receipt: Any, *, variable_manager: Any) -> None:
+    """Persist a won receipt's session effects. A failed write raises.
+
+    The caller holds the transaction that also wrote the receipt's acknowledgment, so a raise
+    rolls the acknowledgment back and the receipt stays prepared for redelivery.
+    """
 
     payload = getattr(receipt, "staged_payload", None)
     if not isinstance(payload, dict):
         return
-    if message_manager is not None:
-        raw_ids = payload.get("pending_message_ids")
-        session_id = payload.get("pending_message_session_id")
-        if isinstance(session_id, str) and session_id and isinstance(raw_ids, list):
-            message_ids = [str(message_id) for message_id in raw_ids if str(message_id)]
-            if message_ids:
-                try:
-                    message_manager.mark_delivered_batch(message_ids, session_id)
-                except Exception:
-                    logger.warning(
-                        "Failed to mark piggyback messages delivered after receipt %s",
-                        getattr(receipt, "receipt_id", None),
-                        exc_info=True,
-                    )
     session_id = payload.get("session_id") or getattr(receipt, "session_id", None)
-    if variable_manager is None or not isinstance(session_id, str) or not session_id:
+    if not isinstance(session_id, str) or not session_id:
         return
     startup = payload.get("startup_context")
     commit = getattr(variable_manager, "commit_startup_context", None)
@@ -203,14 +209,7 @@ def apply_acknowledged_receipt(
             and isinstance(startup_session, str)
             and startup_session
         ):
-            try:
-                commit(startup_session, generation, owner_token)
-            except Exception:
-                logger.warning(
-                    "Failed to commit startup context after receipt %s",
-                    getattr(receipt, "receipt_id", None),
-                    exc_info=True,
-                )
+            commit(startup_session, generation, owner_token)
     appends = payload.get("append_set_variables")
     if isinstance(appends, dict) and appends:
         for name, raw_values in appends.items():
@@ -219,23 +218,20 @@ def apply_acknowledged_receipt(
             values = _string_list(raw_values)
             if not values:
                 continue
-            try:
-                variable_manager.append_to_set_variable(session_id, name, values)
-            except Exception:
-                logger.warning(
-                    "Failed to append staged set variable %s after receipt %s",
-                    name,
-                    getattr(receipt, "receipt_id", None),
-                    exc_info=True,
-                )
+            variable_manager.append_to_set_variable(session_id, name, values)
     updates = payload.get("session_variables")
-    if not isinstance(updates, dict) or not updates:
-        return
-    try:
+    if isinstance(updates, dict) and updates:
         variable_manager.merge_variables(session_id, updates)
-    except Exception:
-        logger.warning(
-            "Failed to persist staged session variables after receipt %s",
-            getattr(receipt, "receipt_id", None),
-            exc_info=True,
-        )
+
+
+def apply_acknowledged_receipt(
+    receipt: Any,
+    *,
+    message_manager: Any = None,
+    variable_manager: Any = None,
+) -> None:
+    """Apply a won receipt's variable effects, then its message marks."""
+
+    if variable_manager is not None:
+        apply_acknowledged_variables(receipt, variable_manager=variable_manager)
+    apply_acknowledged_marks(receipt, message_manager=message_manager)

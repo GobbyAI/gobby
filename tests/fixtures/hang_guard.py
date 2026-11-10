@@ -9,6 +9,7 @@ and exits the process instead.
 from __future__ import annotations
 
 import faulthandler
+import gc
 
 import pytest
 
@@ -24,7 +25,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 @pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # Pytest's unconfigure forces five full collections, and interpreter shutdown adds
+    # more. Each scans every tracked object, and the import graph alone is ~370k of them,
+    # so under load the exit overran the watchdog below (#25804). Freezing the
+    # import-time heap leaves those passes scanning only what the tests create.
+    gc.freeze()
+
+
+@pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config: pytest.Config) -> None:
+    # Interpreter finalization collects every live object, and a session heap of about
+    # 378k objects took 2 to 17 s per full pass under load: that overran the 60 s guard
+    # on a clean run. Freezing first moves those objects to the permanent generation so
+    # the exit passes skip them; the guard then bounds only the exit work that remains.
+    gc.freeze()
     # The process's own stderr descriptor: pytest's capture has ended by now.
     faulthandler.dump_traceback_later(
         float(config.getini("exit_watchdog_timeout")), exit=True, file=_STDERR_FD

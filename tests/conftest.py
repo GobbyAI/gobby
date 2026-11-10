@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.fleet_health.ledger import ledger_path
+from gobby.fleet_health.state import fleet_state_path
+from tests.fixtures.fleet_state import keep_fleet_state_fresh
+
 # Capture the operator location before pytest or individual tests isolate home.
 # Host guards only compare paths here; tests never read or mutate this directory.
 OPERATOR_GOBBY_HOME = Path.home() / ".gobby"
@@ -24,6 +28,7 @@ pytest_plugins = [
     "tests.fixtures.e2e_run_cleanup",
     "tests.fixtures.socket_paths",
     "tests.fixtures.hang_guard",
+    "tests.fixtures.git_repo",
 ]
 
 
@@ -105,6 +110,23 @@ def pytest_configure(config: pytest.Config) -> None:
     config.add_cleanup(home.cleanup)
     config.add_cleanup(patcher.undo)
     _ensure_isolated_bootstrap()
+
+
+@pytest.fixture(autouse=True)
+def healthy_fleet_state() -> Iterator[None]:
+    """Start each test with a healthy fleet and an empty admission ledger.
+
+    The fleet gate reads the Gobby home, which one pytest session shares, so each test
+    writes its own healthy state and clears the ledger. The state is re-stamped every
+    30 seconds while the test runs, so a slow test does not age it past the gate's
+    90 second window. Refusal tests overwrite the state file with the condition they
+    need, and the refresh leaves that file alone. The ramp is wide open here because
+    unrelated tests launch many seats in one session; tests/fleet_health exercises the
+    real ramp with explicit values. This is fixture data, not a bypass.
+    """
+    ledger_path().unlink(missing_ok=True)
+    with keep_fleet_state_fresh(fleet_state_path()):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -852,6 +874,14 @@ def _clear_worker_staging() -> Iterator[None]:
     take_worker_staging()
     yield
     take_worker_staging()
+
+
+@pytest.fixture(autouse=True)
+def reset_code_index_enabled_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Daemon startup installs a process-wide code-index resolver; each test starts unset (pins)."""
+    from gobby.code_index import gcode_gateway
+
+    monkeypatch.setattr(gcode_gateway, "_code_index_enabled", None)
 
 
 @pytest.fixture(autouse=True)

@@ -493,20 +493,13 @@ fn refuse_during_outage(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) 
     }
 }
 
-/// Applies an outage grant's answer. Each revoke that landed clears its pane,
-/// and a granted pane types its queued keys. A refused or unreachable grant
-/// says why, and sends nothing.
-pub(super) fn apply_outage_grant(
+/// Clears each pane whose revoke landed. A failed revoke leaves its pane as it
+/// was, and the next grant retries it.
+pub(super) fn drop_revoked_grants(
     workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    jobs: &LoopJobs,
-    pane_id: PaneId,
-    attachment: &str,
-    grant: io::Result<GrantOutcome>,
     revoked: Vec<(PaneId, String, io::Result<()>)>,
 ) {
     for (other, other_attachment, result) in revoked {
-        // A failed revoke leaves its pane as it was; the next grant retries it.
         if result.is_err() {
             continue;
         }
@@ -516,6 +509,20 @@ pub(super) fn apply_outage_grant(
             }
         }
     }
+}
+
+/// Applies an outage grant's answer. A granted pane types its queued keys. A
+/// refused or unreachable grant says why, and sends nothing.
+pub(super) fn apply_outage_grant(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    jobs: &LoopJobs,
+    pane_id: PaneId,
+    attachment: &str,
+    lease: u64,
+    grant: io::Result<GrantOutcome>,
+) {
+    let daemon_ready = workspace.daemon_ready();
     // A grant answers keys typed to the focused pane, and only those keys give
     // the pane control. A late answer for a pane that lost focus, or that has
     // no keys waiting, must not give it control back.
@@ -527,6 +534,11 @@ pub(super) fn apply_outage_grant(
     if pane.attachment_id() != attachment {
         return;
     }
+    // A grant asked under an older lease than the pane holds now was answered
+    // after the daemon's take granted the pane. That take is the newer answer,
+    // so a refusal to the older grant does not take the lease back (#25790).
+    let superseded = pane.lease_generation() > lease;
+    let failed = grant.is_err();
     match grant {
         Ok(GrantOutcome::Granted) if focused && !pane.pending_input.is_empty() => {
             pane.restore_host_control();
@@ -549,16 +561,35 @@ pub(super) fn apply_outage_grant(
             pane.clear_pending_input();
             chrome.notify(Toast::warning(HELD_BY_PEER));
         }
-        // A pane that holds control and the host grant keeps both. A refusal or
-        // failure of this repeated ask must not downgrade it: the downgrade would
-        // leave the daemon lease with no release to follow.
-        Ok(GrantOutcome::Refused(_)) | Err(_) if pane.is_held() && pane.direct_input() => {}
+        // A held pane whose repeated ask under its current lease was refused,
+        // or met no host, drops to Observe and offers take-back (#25790). It
+        // also gives up the daemon lease through the release a focus move
+        // sends, so the lease does not outlive the downgrade (#25480). With
+        // the daemon away the release is skipped rather than awaited, and the
+        // pane still lets go (#24815).
+        Ok(GrantOutcome::Refused(_)) | Err(_)
+            if !superseded && pane.is_held() && pane.direct_input() =>
+        {
+            pane.apply_host_grant(Some(false));
+            if daemon_ready {
+                pane.release_pending = true;
+            }
+            pane.control_request = None;
+            if failed && !daemon_ready {
+                pane.status_message = Some(CONTROL_UNREACHABLE.to_string());
+            }
+        }
+        Ok(GrantOutcome::Refused(_)) if superseded => {}
         Ok(GrantOutcome::Refused(_)) => {
             pane.apply_host_grant(Some(false));
         }
+        Err(_) if superseded => {}
         Err(_) => {
             pane.apply_host_grant(Some(false));
-            pane.status_message = Some(CONTROL_UNREACHABLE.to_string());
+            // A host control socket can fail while the daemon is still ready.
+            if !daemon_ready {
+                pane.status_message = Some(CONTROL_UNREACHABLE.to_string());
+            }
         }
     }
 }

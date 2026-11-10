@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_session import resolve_session
+from gobby.memory import stage_timing
 from gobby.memory.prompt_triage import is_substantive_prompt
 from gobby.memory.push_exclusion import PUSH_EXCLUDED_TAGS
 
@@ -33,10 +35,28 @@ TURN_MIN_PROMPT_WORDS = 6
 SURFACE_CALLER = "memory.surface"
 
 SurfaceTrigger = Literal["turn", "spawn_agent", "task", "handoff"]
+# A recall at or over this wall time is logged at INFO with its stage breakdown;
+# faster recalls log the same line at DEBUG.
+_SLOW_RECALL_SECONDS = 1.0
 
 
 def _empty(trigger: str) -> dict[str, Any]:
     return {"trigger": trigger, "count": 0, "memories": []}
+
+
+def _log_recall_stages(
+    trigger: str,
+    total_seconds: float,
+    timings: stage_timing.StageTimings,
+) -> None:
+    level = logging.INFO if total_seconds >= _SLOW_RECALL_SECONDS else logging.DEBUG
+    logger.log(
+        level,
+        "memory recall trigger=%s total=%.0fms stages: %s",
+        trigger,
+        total_seconds * 1000,
+        timings.render(),
+    )
 
 
 def _serialize(memory: Any) -> dict[str, Any]:
@@ -76,6 +96,18 @@ def register_memory_surface_tools(
         trigger: SurfaceTrigger,
         session_id: str,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
+        with stage_timing.recording() as timings:
+            try:
+                return await _surface_memories(text, trigger, session_id)
+            finally:
+                _log_recall_stages(trigger, time.perf_counter() - started, timings)
+
+    async def _surface_memories(
+        text: str,
+        trigger: SurfaceTrigger,
+        session_id: str,
+    ) -> dict[str, Any]:
         try:
             # Truncation is the only edit the text takes: the search service
             # embeds it verbatim, so trimming here would change the vector.
@@ -92,7 +124,9 @@ def register_memory_surface_tools(
             if session_manager is None or (not fall_back and not query.strip()):
                 return _empty(trigger)
 
-            resolved = await asyncio.to_thread(resolve_session, session_manager, session_id)
+            resolved = await stage_timing.timed_await(
+                "session_resolve", asyncio.to_thread(resolve_session, session_manager, session_id)
+            )
             if resolved is None:
                 return _empty(trigger)
             resolved_session_id, session = resolved
@@ -107,18 +141,19 @@ def register_memory_surface_tools(
                     return _empty(trigger)
 
             manager = memory_manager()
-            memories = await manager.search_memories(
-                # The search service embeds ``embed_text`` and hands ``query``
-                # to the keyword leg; passing the same text keeps both verbatim.
-                query=query,
-                embed_text=query,
-                project_id=project_id,
-                limit=SURFACE_LIMIT,
-                tags_none=list(PUSH_EXCLUDED_TAGS),
-                min_score=SURFACE_MIN_SCORE,
-                session_id=resolved_session_id,
-                caller=SURFACE_CALLER,
-            )
+            with stage_timing.timed("search"):
+                memories = await manager.search_memories(
+                    # The search service embeds ``embed_text`` and hands ``query``
+                    # to the keyword leg; passing the same text keeps both verbatim.
+                    query=query,
+                    embed_text=query,
+                    project_id=project_id,
+                    limit=SURFACE_LIMIT,
+                    tags_none=list(PUSH_EXCLUDED_TAGS),
+                    min_score=SURFACE_MIN_SCORE,
+                    session_id=resolved_session_id,
+                    caller=SURFACE_CALLER,
+                )
         except Exception:
             # Surfacing is unasked-for context; it never fails the caller's turn.
             logger.warning(

@@ -39,9 +39,9 @@ from gobby.adapters.capabilities import (
     get_provider_capabilities,
 )
 from gobby.adapters.degradation import (
+    page_context_for_adapter,
     persist_kwargs_from_hook_response,
     record_unsupported_response_fields,
-    truncate_context_for_adapter,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
@@ -367,8 +367,9 @@ class ACPHookAdapter(BaseAdapter):
         if resolved_hook_type == "BeforeToolSelection" and response.modify_args:
             hook_specific["toolConfig"] = response.modify_args
 
-        if context_parts and context_channel is ContextChannel.ADDITIONAL_CONTEXT:
-            hook_specific["additionalContext"] = truncate_context_for_adapter(
+        if context_channel is ContextChannel.ADDITIONAL_CONTEXT:
+            # Always page: a delivery with nothing fresh still carries the queued remainder.
+            additional_context = page_context_for_adapter(
                 context_parts,
                 provider=self.source,
                 hook_type=hook_type,
@@ -376,6 +377,8 @@ class ACPHookAdapter(BaseAdapter):
                 event_logger=event_logger,
                 **persist_kwargs_from_hook_response(response, self._hook_manager),
             )
+            if additional_context:
+                hook_specific["additionalContext"] = additional_context
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:

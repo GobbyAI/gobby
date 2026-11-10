@@ -589,7 +589,6 @@ const CONFIG_VALUES = {
     summary_file_path: ".gobby/session_summaries",
   },
   compact_handoff: { enabled: true, refresh_timeout_seconds: 60 },
-  chat_history: { max_message_chars: 4000, max_total_chars: 40000 },
   message_tracking: {
     enabled: true,
     poll_interval: 1.0,

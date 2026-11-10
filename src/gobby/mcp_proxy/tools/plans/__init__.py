@@ -20,8 +20,14 @@ from gobby.plans.plan_roots import resolve_plan_overlay_root
 from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    OverlayRegistrationRejectedError,
+    resolve_operation_root,
+)
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.git import run_git_command
 from gobby.utils.project_context import get_project_context
 
@@ -209,16 +215,23 @@ def create_plan_registry(
     )
 
     async def update_plan_hash(plan_id: str, project: str | None = None) -> dict[str, Any]:
-        def update_record() -> tuple[PlanRecord, bool]:
-            return manager.update_plan_hash_record(
-                plan_id,
-                project_id=_optional_project_id(db, project, default_project_id),
+        def update_record() -> tuple[PlanRecord, bool, Path | None]:
+            project_id = _optional_project_id(db, project, default_project_id)
+            checkout = _linked_checkout(db, project, project_id)
+            record, changed = manager.update_plan_hash_record(
+                plan_id, project_id=project_id, checkout_root=checkout
             )
+            return record, changed, checkout
 
         try:
-            record, changed = await _run_db_call(run_db, update_record)
+            record, changed, checkout = await _run_db_call(run_db, update_record)
             if changed and record.plan_kind == "implementation":
-                await _run_coverage(coverage_executor, manager.generate_coverage_manifest, record)
+                await _run_coverage(
+                    coverage_executor,
+                    manager.generate_coverage_manifest,
+                    record,
+                    checkout_root=checkout,
+                )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except (ValueError, OSError, psycopg.Error) as exc:
@@ -227,7 +240,12 @@ def create_plan_registry(
 
     registry.register(
         name="update_plan_hash",
-        description="Recompute a plan hash and regenerate coverage if it changed.",
+        description=(
+            "Recompute a plan hash and regenerate coverage if it changed. A project naming a "
+            "registered linked worktree or clone reads that checkout's plan, writes its coverage "
+            "manifest there, and sets the registry hash to that plan's hash. Unregistered or "
+            "foreign-project checkouts fail with invalid_project."
+        ),
         input_schema={
             "type": "object",
             "properties": {"plan_id": {"type": "string"}, "project": PROJECT_PROPERTY},
@@ -240,18 +258,18 @@ def create_plan_registry(
         plan_id: str,
         project: str | None = None,
     ) -> dict[str, Any]:
-        def get_record() -> PlanRecord:
-            return manager.get_plan(
-                plan_id,
-                project_id=_optional_project_id(db, project, default_project_id),
-            )
+        def get_record() -> tuple[PlanRecord, Path | None]:
+            project_id = _optional_project_id(db, project, default_project_id)
+            checkout = _linked_checkout(db, project, project_id)
+            return manager.get_plan(plan_id, project_id=project_id), checkout
 
         try:
-            record = await _run_db_call(run_db, get_record)
+            record, checkout = await _run_db_call(run_db, get_record)
             path = await _run_coverage(
                 coverage_executor,
                 manager.generate_coverage_manifest,
                 record,
+                checkout_root=checkout,
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
@@ -261,7 +279,11 @@ def create_plan_registry(
 
     registry.register(
         name="regenerate_coverage_manifest",
-        description="Regenerate the managed coverage manifest for a plan.",
+        description=(
+            "Regenerate the managed coverage manifest for a plan. A project naming a registered "
+            "linked worktree or clone writes the manifest into that checkout; the registry hash must "
+            "match that checkout's plan, so run update_plan_hash for the checkout first."
+        ),
         input_schema={
             "type": "object",
             "properties": {"plan_id": {"type": "string"}, "project": PROJECT_PROPERTY},
@@ -432,6 +454,31 @@ def _optional_project_id(
             raise _InvalidProjectError(f"Project not found: {project}; pass a {PROJECT_FORMS}")
         return resolved.id
     return default_project_id
+
+
+def _linked_checkout(db: HubDatabase, project: str | None, project_id: str | None) -> Path | None:
+    """Return the registered linked worktree or clone that `project` names.
+
+    None means the primary checkout: the caller named no absolute path, or named the
+    primary checkout itself. A path that is neither the primary checkout nor a
+    registered overlay of this project on this machine is refused.
+    """
+    if not project or project_id is None or not Path(project).is_absolute():
+        return None
+    machine_id = require_local_machine_id(
+        None, resource_kind="project_checkout", resource_id=project_id
+    )
+    requested = Path(project).resolve()
+    try:
+        primary = Path(resolve_operation_root(db, project_id, machine_id)).resolve()
+    except CheckoutNotFoundError:
+        primary = None
+    if requested == primary:
+        return None
+    try:
+        return Path(resolve_operation_root(db, project_id, machine_id, overlay_path=str(requested)))
+    except OverlayRegistrationRejectedError as exc:
+        raise _InvalidProjectError(str(exc)) from exc
 
 
 def _known_error_payload(exc: Exception, fallback_error: str) -> dict[str, Any]:

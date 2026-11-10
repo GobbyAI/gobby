@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, Protocol
 
+from gobby.fleet_health import launch_refusal
 from gobby.hub.caller_scope import current_caller, require_machine_owned
 from gobby.hub.node_client import NodeCommandError
 from gobby.storage.agents import AgentRun
@@ -432,6 +433,12 @@ async def run_pipeline(
     refusal = input_refusal(pipeline, inputs)
     if refusal is not None:
         return {"success": False, "error": refusal}
+
+    # Refuse before the record exists: a refused launch returns the typed fleet result and
+    # leaves no execution behind, the same shape the spawn boundary returns.
+    fleet_refusal = await asyncio.to_thread(launch_refusal)
+    if fleet_refusal is not None:
+        return fleet_refusal.as_result()
 
     # Pre-create execution record so we can return the ID immediately
     try:

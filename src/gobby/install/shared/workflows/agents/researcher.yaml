@@ -20,7 +20,7 @@ timeout: 0
 # A sandboxed researcher reaches the web through the trusted egress allowlist.
 network: trusted
 send_message_targets: [parent, session]
-task_attestation_writes: [implementation, validation, self-review, closing]
+task_attestation_writes: [implementation]
 task_attestation_scope:
   task_types: [research_spike]
   own_claim_only: true
@@ -39,22 +39,6 @@ task_attestation_kinds:
     - approved
     - rejected
     guidance: Describe the change and reference its exact full candidate SHA.
-  validation:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
-      the integrated SHA after land.
-  self-review:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
-  closing:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Review every criterion and reference the full integrated SHA after validation.
 
 prompts:
   agent: &seat |
@@ -71,11 +55,11 @@ prompts:
     - Create your research spike with `gobby-tasks:create_task` (`claim=true`, `category=research`, `task_type=research_spike`) under the domain root the Orchestrator names in `parent_task_id`. Claim and close only your own spike.
     - Read your spike with `get_task(brief=false)` and answer every validation criterion in the report.
     - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
-    Record approved implementation and closing attestations through `gobby-tasks:record_attestation`
-      records for that SHA. Send Triage the spike's task and SHA: the Orchestrator reviews the report
-      and records an approved `review` attestation for that SHA.
+    Record the approved implementation attestation through `gobby-tasks:record_attestation`
+      for that SHA. Send Triage the spike's task and SHA: the Orchestrator reviews the report
+      and records an approved `independent-review` attestation for that SHA.
       Close the spike with `gobby-tasks:close_task` (reason `done`) once that approval covers the linked SHA. Close refuses any other reason, any task you did not claim, and any task that is not a research spike.
-      These grants cover research reports; never implement code or write review or test records.
+      These grants cover research reports; never implement code or write review, validation or closing records.
 
     ## Messages
     - Reach Triage and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
@@ -93,6 +77,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-implementer-review"
       - "tag:task-closure-general"
       - "tag:task-closure-independent-review"
       - "tag:task-security"

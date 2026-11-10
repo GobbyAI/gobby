@@ -42,12 +42,16 @@ async def _flush(_session_id: str) -> None:
     return None
 
 
-def _stranded_codex_seat(session_manager: SessionManager, project_id: str) -> str:
-    """Register a Codex row and leave it active well after any restart horizon."""
+def _stranded_seat(session_manager: SessionManager, project_id: str) -> str:
+    """Register a row of a source with no turn-end evidence, active past any restart horizon.
+
+    Only the deferred retry idles such a row. Claude, Codex and Grok rows take the direct
+    path instead (see tests/events/test_wake_direct_policy.py).
+    """
     session_id = session_manager.register(
-        external_id="stranded-codex",
+        external_id="stranded-agy",
         machine_id=None,
-        source="codex",
+        source="agy",
         project_id=project_id,
     ).id
     with session_manager.db.transaction():
@@ -66,7 +70,7 @@ async def _deferred_wake(
     read: Callable[[str], TerminalActivity],
 ) -> _Wake:
     """Queue one mailbox wake and run the real decline, reconcile, CAS and retry."""
-    recipient_id = _stranded_codex_seat(session_manager, project_id)
+    recipient_id = _stranded_seat(session_manager, project_id)
     sender_id = session_manager.register(
         external_id="wake-sender",
         machine_id=None,

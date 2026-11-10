@@ -344,7 +344,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
     }
     // Bound both cardinality and sample size; large unique events retain the
     // existing durable backlog limit. Repeats flush every second and on close.
-    if (message.length <= 8192) {
+    if (message.length <= repeatableMessageLength) {
       if (state.repeats.size === 64) {
         const oldest = state.repeats.keys().next().value
         const pending = state.repeats.get(oldest)
@@ -521,6 +521,8 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
   const transport = new EventEmitter()
   transport.stdout = new EventEmitter()
   transport.stderr = new EventEmitter()
+  // First events reach SRT's stdout handler, the canonical filter, through here.
+  transport.deliver = message => transport.stdout.emit('data', Buffer.from(message))
   const socket = createConnection(socketPath)
   const lines = createInterface({ input: socket, crlfDelay: Infinity })
   let stopped = false
@@ -553,7 +555,7 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
         transport.emit('providerReady', record.identity)
       } else if (ready && Number.isSafeInteger(record.id) && record.id > 0 && typeof record.message === 'string' && record.message.endsWith(suffix)) {
         if (record.aggregated === true) transport.emit('summary', record)
-        else transport.stdout.emit('data', Buffer.from(record.message))
+        else transport.deliver(record.message)
         // Upstream processing and Gobby's append are synchronous. Ack only
         // after they finish; a lost consumer leaves its unacked tail durable.
         socket.write(JSON.stringify({ ack: record.id }) + '\n')
@@ -722,6 +724,17 @@ function appendViolations(path, store, recorded) {
   return total
 }
 
+// The monitor repeats only messages up to repeatableMessageLength characters, and
+// only while they are among its last 64 such messages. Verdicts kept for exactly
+// those messages, the last 256 of them, therefore cover every summary it can write.
+const repeatableMessageLength = 8192
+const verdictLimit = 256
+function rememberVerdict(verdicts, message, accepted) {
+  verdicts.delete(message)
+  verdicts.set(message, accepted)
+  if (verdicts.size > verdictLimit) verdicts.delete(verdicts.keys().next().value)
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2))
   // sandbox-runtime allocates its mux/TLS unix sockets under os.tmpdir(), and
@@ -775,6 +788,9 @@ async function main() {
     if (process.platform === 'darwin') {
       const socketPath = process.env.GOBBY_SRT_MONITOR_SOCKET
       if (!socketPath) throw new Error('missing shared SRT violation monitor')
+      // A repeat summary takes the verdict SRT's canonical filter gave its
+      // message's first event, so noise that filter drops is never summarized.
+      const firstEventVerdicts = new Map()
       globalThis.gobbySrtLogTransport = suffix => {
         transport = sharedTransport(socketPath, suffix, error => {
           monitorFailure = error
@@ -782,7 +798,16 @@ async function main() {
             monitorFailure = new Error(`fail-closed provider cleanup failed: ${cleanupError.message}`, { cause: cleanupError })
           })
         })
+        const deliver = transport.deliver
+        transport.deliver = message => {
+          const store = SandboxManager.getSandboxViolationStore()
+          const before = store.getTotalCount()
+          deliver(message)
+          if (message.length <= repeatableMessageLength) rememberVerdict(firstEventVerdicts, message, store.getTotalCount() > before)
+        }
         transport.on('summary', record => {
+          // No verdict means the first event was never judged here, so keep the record.
+          if (firstEventVerdicts.get(record.message) === false) return
           appendFileSync(options.violationsPath, JSON.stringify({
             source: 'srt-monitor', line: record.message, occurrences: record.occurrences,
             firstObserved: record.firstObserved, lastObserved: record.lastObserved,

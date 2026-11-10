@@ -13,7 +13,7 @@ use super::super::{PaneId, Workspace};
 use super::chain_apply;
 use super::control::{
     apply_outage_grant, apply_write_abandoned, apply_write_result, apply_write_unconfirmed,
-    focus_live_pane,
+    drop_revoked_grants, focus_live_pane,
 };
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
@@ -135,9 +135,13 @@ pub(super) fn apply_job_outcome(
         JobResult::HostGrant {
             pane,
             attachment,
+            lease,
             grant,
             revoked,
-        } => apply_outage_grant(workspace, chrome, jobs, pane, &attachment, grant, revoked),
+        } => {
+            drop_revoked_grants(workspace, revoked);
+            apply_outage_grant(workspace, chrome, jobs, pane, &attachment, lease, grant);
+        }
         JobResult::ThemeRelayed {
             pane,
             theme,

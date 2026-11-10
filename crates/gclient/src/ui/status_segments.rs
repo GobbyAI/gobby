@@ -3,10 +3,8 @@
 //! counted by legend class. Health and the needs-you count stay in the fixed
 //! slot.
 
-use crate::app::sidebar_model::state_class;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::pane_chrome::pane_corners;
-use crate::ui::sidebar::agents::agent_state;
 use crate::ui::status::focused_overflow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,28 +29,29 @@ impl StatusSegment {
 }
 
 /// Every agent on this machine by its legend class, whatever the sidebar
-/// filter shows. The four counts sum to that agent total.
+/// filter shows. The five counts sum to that agent total.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AgentCounts {
     pub need_you: usize,
-    pub idle: usize,
     pub active: usize,
-    pub gone: usize,
+    pub paused: usize,
+    pub no_live: usize,
+    pub blank: usize,
 }
 
 pub fn agent_counts<W: WorkspaceView>(ws: &W) -> AgentCounts {
     let model = ws.sidebar();
     let mut counts = AgentCounts::default();
     for agent in model
-        .agents
-        .iter()
+        .rollup_agents()
         .filter(|agent| model.local_machine.is_empty() || agent.machine_id == model.local_machine)
     {
-        match state_class(agent_state(ws, agent)) {
+        match agent.state {
             RowState::Attention => counts.need_you += 1,
-            RowState::Orphaned => counts.gone += 1,
+            RowState::NoLive => counts.no_live += 1,
             RowState::Working => counts.active += 1,
-            _ => counts.idle += 1,
+            RowState::Paused => counts.paused += 1,
+            RowState::Blank => counts.blank += 1,
         }
     }
     counts

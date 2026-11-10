@@ -27,7 +27,7 @@ Recorded verbatim:
    no task reference, slug, role suffix, counter, or caller-supplied text.
 2. **No stored titles or manual names.** A session has no stored title. The
    `sessions.title` and `sessions.title_source` columns are dropped by migration
-   491, `/api/sessions` returns neither field, and no caller can set a manual
+   494, `/api/sessions` returns neither field, and no caller can set a manual
    name. Every display label is derived at read time from four inputs only: the
    session ref, the agent definition, the claimed task, and the status line. A
    claim, close, or clear changes the task line of a label; it never writes a
@@ -57,7 +57,7 @@ Recorded verbatim:
   communications seat label and the spawn pane title derive from ref and
   definition through it. The tmux window fallback is the session ref alone
   (`_synthesize_fallback_title` in `src/gobby/sessions/tmux_window_naming.py`).
-- Schema: `crates/gcore/assets/schema/migrations/491_drop_session_titles.sql`.
+- Schema: `crates/gcore/assets/schema/migrations/494_drop_session_titles.sql`.
 - Roster: `src/gobby/storage/attention.py` (`AttentionRosterRow.definition`,
   `task_claim_held`) and `src/gobby/servers/routes/attention_roster.py` (entry
   key `definition`, task key `claim_holder`).

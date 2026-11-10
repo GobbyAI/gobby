@@ -5,13 +5,14 @@ use futures_util::FutureExt;
 use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_daemon::lifecycle::shutdown_intent::{Intent, IntentMarker};
 use gobby_daemon::{
-    lease::{ActiveDaemonLease, LeaseMode},
+    lease::{ActiveDaemonLease, LeaseMode, NamedLock},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit, crash_delay},
         pid_file::{Role, claim_pid_file},
     },
 };
 use gobby_terminals::write_api::WriteRefused;
+
 use serde_json::json;
 use std::fs;
 use std::{
@@ -27,10 +28,22 @@ use tokio::{
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+#[path = "common/hub_lock.rs"]
+mod hub_lock;
+
 /// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
 /// the test deadline.
 fn repo_venv() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv")
+}
+
+fn backend_argv(script: &str) -> Result<String> {
+    // `uv run` is another process plus project discovery on every start. That
+    // startup, with the interpreter and the gobby import, is what stretches
+    // under host load. The synced venv interpreter imports gobby on its own.
+    let python = repo_venv().join("bin").join("python");
+    let python = python.to_str().context("venv python path is not utf-8")?;
+    serde_json::to_string(&[python, "-c", script]).context("encode backend argv")
 }
 
 fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
@@ -39,7 +52,27 @@ fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
         "UV_PROJECT_ENVIRONMENT".into(),
         repo_venv().into_os_string(),
     );
+    // The environment is already seeded; a child must never sync protected files.
+    config.environment.insert("UV_NO_SYNC".into(), "1".into());
     Ok(config)
+}
+
+#[test]
+fn backend_argv_execs_the_venv_python() -> Result<()> {
+    let parsed: Vec<String> = serde_json::from_str(&backend_argv("pass")?)?;
+    let python = repo_venv().join("bin").join("python");
+    assert_eq!(
+        parsed,
+        vec![
+            python
+                .to_str()
+                .context("venv python path is not utf-8")?
+                .to_owned(),
+            "-c".into(),
+            "pass".into(),
+        ]
+    );
+    Ok(())
 }
 
 struct TestDb {
@@ -62,17 +95,31 @@ impl TestDb {
     }
 
     async fn supervisor(&self, home: &Path, script: &str) -> Result<BackendSupervisor> {
+        self.supervisor_with(home, script, |_| {}).await
+    }
+
+    async fn supervisor_with(
+        &self,
+        home: &Path,
+        script: &str,
+        tune: impl FnOnce(&mut BackendConfig),
+    ) -> Result<BackendSupervisor> {
         let mut lease = self.lease("supervisor")?;
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let argv = backend_argv(script)?;
         let mut config = backend_config(home, &argv)?;
         config
             .environment
             .insert("HOME".into(), home.as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = TERM_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
+        // Under fleet load a backend can take seconds to exit on its own. A short
+        // grace drains it mid-exit; the lingering test sets 100ms to cover that path.
+        config.exit_grace = Duration::from_secs(5);
+        config.report_interval = Duration::from_secs(60);
+        tune(&mut config);
         Ok(BackendSupervisor::new(lease, claim, config))
     }
 }
@@ -92,11 +139,16 @@ async fn database_case(case: impl AsyncFnOnce(&TestDb) -> Result<()>) -> Result<
     );
     let (admin, connection) = config.connect(NoTls).await?;
     let driver = tokio::spawn(connection);
+    // The lock is shared with every worktree's lease and lifecycle runs on this hub, and a
+    // waiter queues behind whole test bodies from those runs. The bound must outlast several
+    // of them, so it is a hang guard, not a fairness budget.
     timeout(
-        Duration::from_secs(60),
+        Duration::from_secs(300),
         admin.simple_query("SELECT pg_advisory_lock(hashtext('gdaemon-lease-tests'), 1)"),
     )
     .await??;
+    // Armed only after the lock is held, so a waiter's own timeout still covers the queue.
+    let _watchdog = hub_lock::arm(hub_lock::HOLD_DEADLINE);
     let schema = format!("test_rust_lifecycle_{}", Uuid::new_v4().simple());
     admin
         .batch_execute(&format!(
@@ -155,8 +207,11 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// The peer must build its pool, acquire the lease, claim its PID file and start a `uv run`
+/// backend before any file appears. That chain runs under the same host load as the rest of
+/// the suite, so the bound is a hang guard sized for it, and the error names the awaited file.
 async fn wait_for_file(path: &Path) -> Result<String> {
-    timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(60), async {
         loop {
             match tokio::fs::read_to_string(path).await {
                 Ok(value) if !value.is_empty() => return Ok(value),
@@ -168,7 +223,8 @@ async fn wait_for_file(path: &Path) -> Result<String> {
             }
         }
     })
-    .await?
+    .await
+    .with_context(|| format!("waiting for {}", path.display()))?
 }
 
 #[tokio::test]
@@ -200,7 +256,10 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         let mut standby = db.lease("standby")?;
         assert!(!standby.try_acquire().await?);
         let (_tx, rx) = watch::channel(false);
-        assert_eq!(supervisor.run(rx.clone()).await?, SupervisorExit::Refused);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx.clone())).await??,
+            SupervisorExit::Refused
+        );
         assert!(
             standby.try_acquire().await?,
             "refusal releases lease to healthy standby"
@@ -209,7 +268,7 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         let healthy_home=TempDir::new()?;
         let claim=claim_pid_file(&healthy_home.path().join("gobby.pid"),Role::Daemon)?.context("standby PID claim")?;
         let script="import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('healthy'); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
-        let argv=serde_json::to_string(&["uv","run","python","-c",script])?;
+        let argv=serde_json::to_string(&["uv","run","--no-sync","python","-c",script])?;
         let mut config=backend_config(healthy_home.path(), &argv)?;
         config.drain_timeout=Duration::from_millis(100);
         let mut healthy=BackendSupervisor::new(standby,claim,config);
@@ -219,12 +278,34 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         assert_eq!(wait_for_file(&healthy_home.path().join("ready")).await?,"healthy");
         stop.send(true)?;
         assert_eq!(timeout(Duration::from_secs(5),task).await???,SupervisorExit::Stopped);
-        assert_eq!(supervisor.run(rx).await?, SupervisorExit::Refused);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+            SupervisorExit::Refused
+        );
         let mut standby=db.lease("next-standby")?;
         assert!(standby.try_acquire().await?, "refused is never a contender");
         Ok(())
     })
     .await
+}
+
+#[tokio::test]
+async fn lifecycle_backend_disables_environment_sync() -> Result<()> {
+    let home = TempDir::new()?;
+    let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
+        .context("fixture PID claim")?;
+    // The explicit flag keeps RED safe before the fixture exports UV_NO_SYNC.
+    let script = "import os,pathlib,sys; (pathlib.Path(os.environ['GOBBY_HOME'])/'sync').write_text(os.environ.get('UV_NO_SYNC', 'missing')); sys.exit(78)";
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
+    let config = backend_config(home.path(), &argv)?;
+    let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+    let (_stop, rx) = watch::channel(false);
+    assert_eq!(
+        timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+        SupervisorExit::Refused
+    );
+    assert_eq!(fs::read_to_string(home.path().join("sync"))?, "1");
+    Ok(())
 }
 
 #[tokio::test]
@@ -303,7 +384,7 @@ os.read(fd,1)
         ensure!(lease.try_acquire().await?, "fixture must hold lease");
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
             .context("fixture PID claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
         let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let slot = config.write_token.clone();
@@ -382,7 +463,7 @@ control.sendall(b'ready')
 control.recv(1)
 raise SystemExit(1)
 "#;
-    let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", script])?;
     let mut config = backend_config(home.path(), &argv)?;
     config.drain_timeout = Duration::from_millis(100);
     let claim =
@@ -440,7 +521,7 @@ if {code}==0:
 raise SystemExit({code})
 "#
         );
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", &script])?;
         let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
@@ -511,6 +592,7 @@ async fn standby_does_not_spawn_a_backend() -> Result<()> {
         let command = serde_json::to_string(&[
             "uv",
             "run",
+            "--no-sync",
             "python",
             "-c",
             "raise RuntimeError('standby spawned')",
@@ -551,9 +633,16 @@ async fn pre_spawn_stop_marker_and_shutdown_in_backoff_do_not_respawn() -> Resul
     }).await
 }
 
+/// Grace between SIGTERM and SIGKILL for the tests that check the TERM marker. A TERM handler
+/// can run late under host load, so the grace must outlast it. At 100 ms the kill won that
+/// race and both tests failed with ENOENT reading the marker.
+const TERM_GRACE: Duration = Duration::from_secs(2);
+
 const IGNORE_TERM: &str = r#"import os,pathlib,signal,time
 home=pathlib.Path(os.environ['GOBBY_HOME'])
-def term(*args): (home/'term').write_text('TERM')
+def term(*args):
+    time.sleep(.3)
+    (home/'term').write_text('TERM')
 signal.signal(signal.SIGTERM,term)
 (home/'ready').write_text(str(os.getpid()))
 while True: time.sleep(.01)
@@ -571,11 +660,11 @@ async fn shutdown_sends_term_then_bounded_kill() -> Result<()> {
         let started = Instant::now();
         tx.send(true)?;
         assert_eq!(
-            timeout(Duration::from_secs(5), task).await???,
+            timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::Stopped
         );
         assert!(started.elapsed() >= Duration::from_millis(90));
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(fs::read_to_string(home.path().join("term"))?, "TERM");
         // SAFETY: signal zero only probes the already reaped isolated child.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
@@ -598,12 +687,12 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         let application = lease.application_name().to_string();
         let claim =
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "python", "-c", IGNORE_TERM])?;
+        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", IGNORE_TERM])?;
         let mut config = backend_config(home.path(), &argv)?;
         config
             .environment
             .insert("HOME".into(), home.path().as_os_str().to_owned());
-        config.drain_timeout = Duration::from_millis(100);
+        config.drain_timeout = TERM_GRACE;
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
         let (_tx, rx) = watch::channel(false);
@@ -619,7 +708,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
             .await?;
         assert_eq!(rows.len(), 1);
         assert_eq!(
-            timeout(Duration::from_secs(5), task).await???,
+            timeout(Duration::from_secs(10), task).await???,
             SupervisorExit::LeaseLost
         );
         assert_eq!(fs::read_to_string(home.path().join("term"))?, "TERM");
@@ -649,7 +738,8 @@ assert os.read(fd,1)==b''
 async fn supervisor_death_gives_backend_eof() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;
-        let command = serde_json::to_string(&["uv", "run", "python", "-c", EOF_BACKEND])?;
+        let command =
+            serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", EOF_BACKEND])?;
         let executable = std::env::current_exe()?;
         let peer_path = executable
             .parent()
@@ -714,7 +804,11 @@ raise SystemExit(0 if n!=2 else 1)
         let mut supervisor=db.supervisor(home.path(),script).await?;
         let (_tx,rx)=watch::channel(false);
         let started=Instant::now();
-        assert_eq!(timeout(Duration::from_secs(10),supervisor.run(rx)).await??,SupervisorExit::Stopped);
+        // Hang guard for three interpreter starts plus the 1 s crash backoff.
+        // The whole test finished in 6.5 s at 1-minute load about 50. Import
+        // time grew with load; supervisor transitions stayed under 0.3 s.
+        // 15 s is 8.5 s over that completion.
+        assert_eq!(timeout(Duration::from_secs(15),supervisor.run(rx)).await??,SupervisorExit::Stopped);
         assert!(started.elapsed()>=Duration::from_secs(1), "consumed restart must back off second crash");
         assert_eq!(fs::read_to_string(home.path().join("starts"))?,"aaa");
         let epoch:i64=db.admin.query_one(&format!("SELECT fencing_epoch FROM {}.deployment_runtime WHERE deployment_token='lifecycle-test'",db.schema),&[]).await?.get(0);
@@ -892,7 +986,7 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
     let home = TempDir::new()?;
     let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
         .context("fixture PID claim")?;
-    let argv = serde_json::to_string(&["uv", "run", "python", "-c", SECRET_BACKEND])?;
+    let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", SECRET_BACKEND])?;
     let mut config = backend_config(home.path(), &argv)?;
     config.front_door_secret = Some(FRONT_DOOR_SECRET.into());
     config.drain_timeout = Duration::from_millis(100);
@@ -921,4 +1015,221 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
         SupervisorExit::Stopped
     );
     Ok(())
+}
+
+/// A backend that announces its own restart and then never exits must not hold the supervisor
+/// in `Starting` forever. The announced intent is applied after the exit grace, which respawns
+/// the backend; the respawned backend announces a stop that the supervisor also applies.
+#[tokio::test]
+async fn lingering_backend_after_announced_restart_is_drained_and_respawned() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib,signal
+from gobby.shutdown_intent import write_shutdown_intent
+home=pathlib.Path(os.environ['GOBBY_HOME']); p=home/'starts'
+n=len(p.read_text())+1 if p.exists() else 1
+p.write_text('a'*n)
+write_shutdown_intent('test_restart' if n==1 else 'test_stop', 'restart' if n==1 else 'stop', home=home)
+while True:
+    signal.pause()
+"#;
+        let mut supervisor = db
+            .supervisor_with(home.path(), script, |config| {
+                config.exit_grace = Duration::from_millis(100);
+            })
+            .await?;
+        let (_tx, rx) = watch::channel(false);
+        assert_eq!(
+            timeout(Duration::from_secs(15), supervisor.run(rx)).await??,
+            SupervisorExit::Stopped,
+            "the announced restart and stop are applied to lingering backends"
+        );
+        assert_eq!(fs::read_to_string(home.path().join("starts"))?, "aa");
+        Ok(())
+    })
+    .await
+}
+
+/// A lease lock another task holds past the supervisor's bound fails the supervisor with an error
+/// naming the holder, instead of waiting on the lock indefinitely.
+#[tokio::test]
+async fn lease_lock_held_by_another_task_fails_the_supervisor_at_its_bound() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let lease = Arc::new(NamedLock::new(db.lease("lock-holder")?));
+        let _held = lease.lock_as("test lease holder").await;
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv("pass")?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config.lease_lock_limit = Duration::from_millis(300);
+        config.report_interval = Duration::from_millis(100);
+        let mut supervisor = BackendSupervisor::with_lease(Some(lease.clone()), claim, config);
+        let (_stop, rx) = watch::channel(false);
+        // The wait reason the front door reports, observed while the supervisor waits.
+        let mut wait = supervisor.subscribe_wait();
+        let observe = async {
+            while wait.changed().await.is_ok() {
+                if let Some(reason) = wait.borrow().clone() {
+                    return Some(reason);
+                }
+            }
+            None
+        };
+        let (outcome, observed) = tokio::join!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)),
+            timeout(Duration::from_secs(5), observe),
+        );
+        let reason = observed?.expect("the supervisor publishes its wait reason");
+        assert!(
+            reason.contains("test lease holder"),
+            "the wait reason must name the holder: {reason}"
+        );
+        let error = outcome?.expect_err("a lock held past the bound must fail the supervisor");
+        assert!(
+            format!("{error:#}").contains("test lease holder"),
+            "the error must name the holder: {error:#}"
+        );
+        assert!(
+            wait.borrow()
+                .as_deref()
+                .is_some_and(|reason| reason.contains("test lease holder")),
+            "the front door must retain the blocker after supervision fails: {:?}",
+            *wait.borrow()
+        );
+        Ok(())
+    })
+    .await
+}
+
+/// While a backend has not exited, the supervisor reports what it waits on at the configured
+/// cadence, so a stuck start is visible in the daemon log instead of silent.
+#[tokio::test]
+async fn silent_backend_wait_is_reported_each_interval() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let (line_tx, mut lines) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let mut supervisor = db
+            .supervisor_with(
+                home.path(),
+                "import signal\nwhile True:\n    signal.pause()\n",
+                move |config| {
+                    config.report_interval = Duration::from_millis(100);
+                    config.reporter = Arc::new(move |line: &str| {
+                        let _ = line_tx.send(line.to_owned());
+                    });
+                },
+            )
+            .await?;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let mut reports = Vec::new();
+        timeout(Duration::from_secs(10), async {
+            while reports.len() < 3 {
+                reports.push(lines.recv().await.expect("report channel open"));
+            }
+        })
+        .await?;
+        stop.send(true)?;
+        assert_eq!(
+            timeout(Duration::from_secs(10), task).await???,
+            SupervisorExit::Stopped
+        );
+        while let Ok(line) = lines.try_recv() {
+            reports.push(line);
+        }
+        assert!(
+            reports
+                .iter()
+                .all(|line| line.contains("backend pid") && line.contains("waiting on its exit")),
+            "{reports:?}"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn silent_backend_wait_writes_progress_to_startup_timings() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        // The readiness bootstrap creates this file; the supervisor adds progress only to it.
+        let timings = home.path().join("logs").join("startup-timings.jsonl");
+        std::fs::create_dir_all(timings.parent().context("timings parent")?)?;
+        std::fs::write(&timings, "")?;
+        let mut supervisor = db
+            .supervisor_with(
+                home.path(),
+                "import signal\nwhile True:\n    signal.pause()\n",
+                |config| {
+                    config.report_interval = Duration::from_millis(100);
+                },
+            )
+            .await?;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let observed = timeout(Duration::from_secs(10), async {
+            loop {
+                let text = std::fs::read_to_string(&timings).unwrap_or_default();
+                let progress = text
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .filter(|record| record["state"] == "progress")
+                    .count();
+                if progress >= 3 {
+                    return progress;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        stop.send(true)?;
+        assert_eq!(
+            timeout(Duration::from_secs(10), task).await???,
+            SupervisorExit::Stopped
+        );
+        ensure!(
+            observed.is_ok(),
+            "no progress reached startup timings during a silent wait: {:?}",
+            std::fs::read_to_string(&timings).unwrap_or_default()
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn lease_lock_wait_writes_progress_to_startup_timings() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        // The harness creates this file before launch, so a wait that blocks before the
+        // bootstrap child starts is recorded too.
+        let timings = home.path().join("logs").join("startup-timings.jsonl");
+        std::fs::create_dir_all(timings.parent().context("timings parent")?)?;
+        std::fs::write(&timings, "")?;
+        let lease = Arc::new(NamedLock::new(db.lease("lock-holder")?));
+        let _held = lease.lock_as("test lease holder").await;
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv("pass")?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config.lease_lock_limit = Duration::from_secs(1);
+        config.report_interval = Duration::from_millis(100);
+        let mut supervisor = BackendSupervisor::with_lease(Some(lease.clone()), claim, config);
+        let (_stop, rx) = watch::channel(false);
+        let outcome = timeout(Duration::from_secs(10), supervisor.run(rx)).await?;
+        outcome.expect_err("a lock held past the bound must fail the supervisor");
+        let text = std::fs::read_to_string(&timings)?;
+        let progress = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| record["state"] == "progress")
+            .count();
+        ensure!(
+            progress >= 3,
+            "no progress reached startup timings during a lease-lock wait: {text:?}"
+        );
+        Ok(())
+    })
+    .await
 }

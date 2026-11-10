@@ -13,7 +13,7 @@ fn row(depth: u8, is_workspace: bool) -> NavigatorRow {
     NavigatorRow {
         target: NavigatorTarget::Terminal(String::new()),
         title: String::new(),
-        state: RowState::Idle,
+        state: RowState::Blank,
         detail: String::new(),
         pane: None,
         depth,

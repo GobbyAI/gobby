@@ -104,6 +104,8 @@ pub enum JobResult {
     HostGrant {
         pane: PaneId,
         attachment: String,
+        /// The pane's lease generation when the grant went out.
+        lease: u64,
         grant: io::Result<GrantOutcome>,
         revoked: Vec<(PaneId, String, io::Result<()>)>,
     },
@@ -638,6 +640,7 @@ impl LoopJobs {
                 let frame_socket = PathBuf::from(&locator.frame_socket_path);
                 let host_terminal_id = locator.host_terminal_id;
                 let attachment = pane.attachment_id().to_string();
+                let lease = pane.lease_generation();
                 // Each other pane with a host grant gives it up whatever this
                 // grant's outcome, so the grant follows the focus.
                 let others: Vec<_> = workspace
@@ -672,6 +675,7 @@ impl LoopJobs {
                     JobResult::HostGrant {
                         pane: pane_id,
                         attachment,
+                        lease,
                         grant,
                         revoked,
                     }

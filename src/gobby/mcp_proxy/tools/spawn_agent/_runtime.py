@@ -20,11 +20,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def native_front_door_refusal() -> dict[str, Any] | None:
-    """Refuse admission before creating a run while the native publisher is unbound."""
+async def native_front_door_refusal() -> dict[str, Any] | None:
+    """Refuse admission before creating a run if the native publisher stays unbound.
+
+    A transient unbind is waited out up to the publisher's bounded rebind deadline; only an
+    unbind that outlasts it refuses, so a pipeline spawn step does not fail on a brief stall.
+    """
     server = getattr(get_app_context(), "websocket_server", None)
     publisher = getattr(server, "native_publisher", None)
-    if publisher is None or publisher.generation is not None:
+    if publisher is None or await publisher.wait_bound():
         return None
     return {
         "success": False,

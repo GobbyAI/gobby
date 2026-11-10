@@ -37,13 +37,15 @@ handoff receipts. Inspect the target and returned errors before proceeding.
 
 The operator can authorize a session to edit specific dirty paths that have no
 live owner with `gobby sessions approve-dirty-paths SESSION_REF --checkout ROOT
-PATHS...`. Agent sessions cannot run this command. Approval applies to that
-checkout and the paths' current content; a new approval replaces the session's
-previous approval for that checkout. Source:
+--reason TEXT PATHS...`. `--reason` is required and is recorded with the release.
+Agent sessions cannot run this command. Approval applies to that checkout and the
+paths' current content; a new approval replaces the session's previous approval for
+that checkout. The release also clears the paths' overlap records and retires the
+background calls of sessions that have ended on this machine. Source:
 `src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`.
 
 Guide: [Finding your session](../../../../../../../../docs/guides/sessions.md#finding-your-own-session).
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
-_Last verified: 2026-11-05_
+_Last verified: 2026-11-06_

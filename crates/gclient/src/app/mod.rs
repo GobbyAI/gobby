@@ -157,6 +157,9 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// `(tab, pane)` of the panes pending placements landed in, drained by
     /// the chrome sync that focuses them.
     placed_panes: Vec<(String, String)>,
+    /// Panes of held placements the model has shown. A placement waits while its
+    /// pane has not reached the model yet, and is dropped once a pane it saw leaves.
+    placement_seen: HashSet<String>,
     /// `(project, tab)` the last `workspace.select` asked every window to
     /// show, drained by the chrome sync that shows it on the tab row's pane.
     requested_focus: Option<(String, String)>,
@@ -261,6 +264,7 @@ impl Workspace {
             pending_control: None,
             next_control_seq: 0,
             placed_panes: Vec::new(),
+            placement_seen: HashSet::new(),
             requested_focus: None,
         }
     }

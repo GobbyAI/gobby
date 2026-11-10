@@ -30,10 +30,8 @@ class TeamBinding:
     # None for a treeless team, whose admission records an explicit null for its tree.
     worktree_id: str | None
     worktree_path: str | None
-    # One entry per reviewer definition the team binds; None until its seat exists.
-    reviewers: dict[str, str | None] = field(default_factory=dict)
-    # Domain metadata for primary runs; only one primary may be live across this map.
-    primaries: dict[str, str | None] = field(default_factory=dict)
+    # Reviewer definitions the team admits; a join must name one of them.
+    reviewers: list[str] = field(default_factory=list)
     # "epic" for a team bound to an epic's open leaves; "single" for one task.
     mode: str = SINGLE_MODE
     # Resolved runbook tab title, shared by replacements and later epic-seat spawns.
@@ -103,15 +101,31 @@ def recorded_team(step: StepExecution | None) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
+def reviewer_names(value: Any) -> list[str]:
+    """The reviewer definitions a stored admission names.
+
+    A list names them. A mapping, as persisted before reviewers became a list, names them by key.
+    Null names none. Any other stored value is refused rather than read as none.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, dict)):
+        return list(value)
+    raise TeamAdmissionRefused(
+        "team_record_invalid",
+        f"reviewers must be a list or a mapping, not {type(value).__name__}",
+    )
+
+
 def binding_from_record(record: dict[str, Any] | None) -> TeamBinding | None:
     if record is None:
         return None
     values: dict[str, Any] = {}
     for item in fields(TeamBinding):
         value = record.get(item.name)
-        if item.name in ("reviewers", "primaries"):
-            # The admission intent carries neither map until a seat binds.
-            values[item.name] = dict(value) if isinstance(value, dict) else {}
+        if item.name == "reviewers":
+            # The admission intent carries no reviewers list unless a reviewer is named.
+            values[item.name] = reviewer_names(value)
             continue
         if item.name == "mode":
             # Records admitted before epic mode carry no mode: they are single-task teams.

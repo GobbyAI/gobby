@@ -38,8 +38,8 @@ from gobby.llm.sdk_utils import (
 
 logger = logging.getLogger(__name__)
 
-_HISTORY_MESSAGE_LIMIT = 50
-_HISTORY_WRAPPER_OVERHEAD_CHARS = 200
+# Messages fetched per read while the loader pages through the whole history.
+_HISTORY_PAGE_SIZE = 500
 _DRAIN_PENDING_RESPONSE_TIMEOUT_SECONDS = 1.0
 _EXPECTED_CHAT_ERRORS: tuple[type[Exception], ...] = (
     ClaudeSDKError,
@@ -62,23 +62,17 @@ class ChatSessionMessagesMixin:
     _context_window_overrides: dict[str, int]
     _last_model: str | None
     _lock: asyncio.Lock
-    _max_history_message_chars: int
-    _max_history_total_chars: int
     _message_manager: Any | None
     _message_manager_source_session_id: str | None
     _abort_pending_interactions: Callable[[], None]
 
-    async def _load_history_context(self, max_total_chars: int | None = None) -> str | None:
-        """Load prior conversation messages and format as context for injection.
+    async def _load_history_context(self) -> str | None:
+        """Load prior conversation messages as one context part, with nothing cut.
 
-        Args:
-            max_total_chars: Override for maximum total characters. If None, uses
-                the instance default (_max_history_total_chars). Callers should pass
-                a budget that accounts for other additionalContext content to avoid
-                Claude Code's 10K truncation limit.
-
-        Returns a formatted string with conversation history, or None if
-        no messages exist or an error occurs.
+        Returns the formatted history wrapped in ``<conversation-history>``, or None when
+        no text messages exist. A read error raises: an empty result would look like no
+        history, and the prompt hook would then clear the injection that is still owed.
+        The delivery queue pages long history.
         """
         if not self._message_manager:
             return None
@@ -86,102 +80,40 @@ class ChatSessionMessagesMixin:
         if not target_id:
             return None
 
-        try:
-            messages = await self._message_manager.get_messages(
-                target_id,
-                limit=_HISTORY_MESSAGE_LIMIT,
+        messages: list[dict[str, Any]] = []
+        after_seq = 0
+        while True:
+            batch = await self._message_manager.get_messages(
+                target_id, after_seq=after_seq, limit=_HISTORY_PAGE_SIZE
             )
-            if not messages:
-                return None
-
-            text_messages = [
-                m
-                for m in messages
-                if m.get("role") in ("user", "assistant")
-                and m.get("content_type") == "text"
-                and m.get("content")
-            ]
-            if not text_messages:
-                return None
-
-            effective_max = (
-                max_total_chars if max_total_chars is not None else self._max_history_total_chars
-            )
-            content_budget = effective_max - _HISTORY_WRAPPER_OVERHEAD_CHARS
-            if content_budget <= 0:
-                return None
-
-            parts: list[str] = []
-            total = 0
-            session_ref = str(target_id)
-
-            for index, message in enumerate(text_messages):
-                role_label = "**User:**" if message["role"] == "user" else "**Assistant:**"
-                content = str(message["content"])
-                entry = f"{role_label} {content}"
-                separator = 2 if parts else 0
-                if total + separator + len(entry) <= content_budget:
-                    parts.append(entry)
-                    total += separator + len(entry)
-                    continue
-
-                if not parts:
-                    pointer_entry = (
-                        f"{role_label} [omitted {len(content)} chars; "
-                        f"get_session_messages session_id={session_ref}]"
-                    )
-                    if len(pointer_entry) <= content_budget:
-                        parts.append(pointer_entry)
-                        total += len(pointer_entry)
-                        continue
-                    return None
-
-                omitted = len(text_messages) - index
-                omit_line = (
-                    f"[omitted {omitted} messages to fit history budget; "
-                    f"get_session_messages session_id={session_ref}]"
-                )
-                if len(omit_line) > content_budget:
-                    return None
-                while parts and total + (2 if parts else 0) + len(omit_line) > content_budget:
-                    removed = parts.pop()
-                    omitted += 1
-                    omit_line = (
-                        f"[omitted {omitted} messages to fit history budget; "
-                        f"get_session_messages session_id={session_ref}]"
-                    )
-                    total -= len(removed)
-                    if parts:
-                        total -= 2
-                    if len(omit_line) > content_budget:
-                        return None
-                if parts:
-                    parts.append(omit_line)
-                    total += 2 + len(omit_line)
-                elif len(omit_line) <= content_budget:
-                    parts.append(omit_line)
-                    total = len(omit_line)
-                else:
-                    return None
+            messages.extend(batch)
+            if len(batch) < _HISTORY_PAGE_SIZE:
                 break
-
-            if not parts:
-                return None
-
-            return (
-                "<conversation-history>\n"
-                "The following is the prior conversation history for this session, "
-                "restored after session recreation. Use it to maintain continuity.\n\n"
-                + "\n\n".join(parts)
-                + "\n</conversation-history>"
-            )
-        except _EXPECTED_CHAT_ERRORS as e:
-            logger.warning(
-                "Failed to load history context for %s: %s",
-                self.conversation_id,
-                e,
-            )
+            after_seq = batch[-1]["seq"]
+        if not messages:
             return None
+
+        text_messages = [
+            m
+            for m in messages
+            if m.get("role") in ("user", "assistant")
+            and m.get("content_type") == "text"
+            and m.get("content")
+        ]
+        if not text_messages:
+            return None
+
+        entries = [
+            f"{'**User:**' if m['role'] == 'user' else '**Assistant:**'} {m['content']}"
+            for m in text_messages
+        ]
+        return (
+            "<conversation-history>\n"
+            "The following is the prior conversation history for this session, "
+            "restored after session recreation. Use it to maintain continuity.\n\n"
+            + "\n\n".join(entries)
+            + "\n</conversation-history>"
+        )
 
     async def send_message(
         self,

@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -2764,8 +2765,14 @@ _ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
     HookEventType.POST_COMPACT,
 }
 
+# A PostCompact and an auto PreCompact wait for a main-thread event, then materialize.
+_HELD_COMPACTION_EVENTS = (HookEventType.PRE_COMPACT, HookEventType.POST_COMPACT)
 _FIRST_HOOK_CASES = tuple(
-    (event_type, event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS)
+    (
+        event_type,
+        event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS
+        and event_type not in _HELD_COMPACTION_EVENTS,
+    )
     for event_type in HookEventType
     if event_type is not HookEventType.SESSION_START
 )
@@ -2798,6 +2805,21 @@ def test_first_hook_materialization_matrix(
     )
     handler = MagicMock(return_value=HookResponse(decision="allow"))
 
+    with _materialization_seams(manager, handler) as activate:
+        response = manager.handle(event)
+
+    assert response.decision == "allow"
+    if should_materialize:
+        assert isinstance(event.metadata.get("_platform_session_id"), str)
+        activate.assert_called_once()
+    else:
+        assert "_platform_session_id" not in event.metadata
+        activate.assert_not_called()
+
+
+@contextmanager
+def _materialization_seams(manager: HookManager, handler: MagicMock) -> Iterator[MagicMock]:
+    """Stub the rules, webhooks and activation around one hook; yield the activation mock."""
     with (
         patch(
             "gobby.hooks.hook_manager.validate_managed_agent_hook",
@@ -2822,15 +2844,112 @@ def test_first_hook_materialization_matrix(
         patch.object(manager, "_evaluate_blocking_webhooks", return_value=None),
         patch.object(manager, "_dispatch_webhooks_async"),
     ):
-        response = manager.handle(event)
+        yield activate
 
-    assert response.decision == "allow"
-    if should_materialize:
-        assert isinstance(event.metadata.get("_platform_session_id"), str)
-        activate.assert_called_once()
-    else:
-        assert "_platform_session_id" not in event.metadata
+
+def _compaction_event(
+    event_type: HookEventType, temp_dir: Path, external_id: str, **data: Any
+) -> HookEvent:
+    return HookEvent(
+        event_type=event_type,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "cwd": str(temp_dir),
+            "transcript_path": str(temp_dir / f"{external_id}.jsonl"),
+            **data,
+        },
+        machine_id=LOCAL_MACHINE_ID,
+    )
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    _HELD_COMPACTION_EVENTS,
+    ids=[event_type.value for event_type in _HELD_COMPACTION_EVENTS],
+)
+def test_held_auto_compaction_materializes_when_its_replay_settles(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+    event_type: HookEventType,
+) -> None:
+    """An auto compaction waits for the next main-thread event, and its replay materializes it."""
+    manager = hook_manager_with_mocks
+    external_id = f"settle-{event_type.value}"
+    transcript = temp_dir / f"{external_id}.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    compaction = _compaction_event(event_type, temp_dir, external_id)
+    settling = _compaction_event(HookEventType.BEFORE_AGENT, temp_dir, external_id)
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+
+    with _materialization_seams(manager, handler) as activate:
+        assert manager.handle(compaction).decision == "allow"
+        assert "_platform_session_id" not in compaction.metadata
         activate.assert_not_called()
+        if event_type in _HELD_COMPACTION_EVENTS:
+            handler.assert_not_called()
+
+        # Claude flushes the boundary after the held hook; the next main-thread event settles it.
+        boundary = {"type": "system", "subtype": "compact_boundary", "uuid": external_id}
+        with transcript.open("a", encoding="utf-8") as lines:
+            lines.write(json.dumps(boundary) + "\n")
+        assert manager.handle(settling).decision == "allow"
+
+    replayed = activate.call_args_list[0].args[0]
+    assert replayed.event_type == event_type
+    assert isinstance(replayed.metadata.get("_platform_session_id"), str)
+
+
+def test_manual_post_compact_materializes_when_its_replay_settles(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    """A manual PostCompact is held like an auto one and materializes when its replay settles."""
+    manager = hook_manager_with_mocks
+    external_id = "manual-post-compact"
+    transcript = temp_dir / f"{external_id}.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    compaction = _compaction_event(
+        HookEventType.POST_COMPACT, temp_dir, external_id, trigger="manual"
+    )
+    settling = _compaction_event(HookEventType.BEFORE_AGENT, temp_dir, external_id)
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+
+    with _materialization_seams(manager, handler) as activate:
+        assert manager.handle(compaction).decision == "allow"
+        assert "_platform_session_id" not in compaction.metadata
+        activate.assert_not_called()
+
+        boundary = {"type": "system", "subtype": "compact_boundary", "uuid": external_id}
+        with transcript.open("a", encoding="utf-8") as lines:
+            lines.write(json.dumps(boundary) + "\n")
+        assert manager.handle(settling).decision == "allow"
+
+    replayed = activate.call_args_list[0].args[0]
+    assert replayed.event_type == HookEventType.POST_COMPACT
+    assert replayed.data["trigger"] == "manual"
+    assert isinstance(replayed.metadata.get("_platform_session_id"), str)
+
+
+def test_manual_pre_compact_materializes_at_receipt(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    """A manual PreCompact runs its rules now, so its session materializes on receipt."""
+    manager = hook_manager_with_mocks
+    external_id = "manual-pre-compact"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    event = _compaction_event(HookEventType.PRE_COMPACT, temp_dir, external_id, trigger="manual")
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+
+    with _materialization_seams(manager, handler) as activate:
+        assert manager.handle(event).decision == "allow"
+
+    assert isinstance(event.metadata.get("_platform_session_id"), str)
+    activate.assert_called_once()
 
 
 def test_first_pre_tool_use_without_ups_registers_session(

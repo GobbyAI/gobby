@@ -108,6 +108,34 @@ class TestAdminRoutesExtended:
             # Verify DB insert
             mock_server.session_manager.db.execute.assert_called()
 
+    def test_register_test_project_refused_without_marker_leaves_no_project_row(
+        self, client: TestClient, mock_server: MagicMock, tmp_path: Path
+    ) -> None:
+        """A checkout without a marker for the project id is refused before any insert."""
+        # No marker is written, so the checkout root cannot prove the project id.
+        with (
+            patch("gobby.storage.projects.LocalProjectManager") as MockPM,
+            patch("gobby.storage.project_checkouts.LocalProjectCheckoutManager"),
+        ):
+            mock_pm_instance = MockPM.return_value
+            mock_pm_instance.get.return_value = None
+            mock_pm_instance._is_isolated_agent_session.return_value = False
+            mock_pm_instance._is_under_isolation_root.return_value = False
+            mock_pm_instance._is_registered_isolation_path.return_value = False
+
+            payload = {
+                "project_id": "proj-456",
+                "name": "Unmarked Project",
+                "repo_path": str(tmp_path),
+            }
+            response = client.post("/api/admin/test/register-project", json=payload)
+
+        assert response.status_code == 500
+        assert "does not match project proj-456" in response.json()["detail"]
+        # The refusal comes before the projects insert, so no projects row is written.
+        for call in mock_server.session_manager.db.execute.call_args_list:
+            assert "INSERT INTO projects" not in str(call.args[0])
+
     @patch("gobby.storage.agents.LocalAgentRunManager")
     def test_register_test_agent(self, mock_arm_cls, client, mock_server) -> None:
         """Test POST /test/register-agent endpoint."""

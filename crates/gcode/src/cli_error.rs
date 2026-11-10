@@ -190,6 +190,9 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
             "run gcode from the managed session that launched it; that session provides the token in its private GOBBY_MANAGED_EXECUTION_BOOTSTRAP envelope",
         ),
         GrantError::Unauthorized(code) => unauthorized_recovery(code),
+        GrantError::SessionCredentialRefused(_) => Some(
+            "run the command from the session that holds this grant; only that session's CLI holds its credential",
+        ),
         GrantError::SchemaMismatch { .. } => Some(BINARY_SET_RECOVERY),
         GrantError::DeploymentMismatch | GrantError::ConfigRevisionMismatch => {
             Some("restart the Gobby daemon so grants match the installed schema and config")

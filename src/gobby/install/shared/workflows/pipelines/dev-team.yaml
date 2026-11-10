@@ -1,6 +1,6 @@
 name: dev-team
 type: pipeline
-version: 5.0.0
+version: 8.0.0
 description: 'One DevTeam for a task or epic: developer, independent reviewer and dev-team-lead. A leaf
   run under a parent team launches no lead; the epic''s Dev Team Lead leads the leaf.'
 tags:
@@ -126,8 +126,9 @@ steps:
         Implement ${{ inputs.task }} in ${{ steps.admit.output.project_path }}.
         Team ${{ steps.admit.output.team.team_id }}, tree ${{ steps.admit.output.worktree }}.
         ${{ 'For this epic, retain this shared tree and wait for the lead to assign a ready leaf; claim that leaf before edits.' if steps.admit.output.team.mode == 'epic' else 'Claim this task before editing.' }}
-        Own TDD, implementation, self-review and validation. The daemon moves the claim
-        through claim_flow. Developers never land, merge into the integration branch, close
+        Own TDD and implementation; record test-before, implementation and test-after. The daemon
+        moves the claim through claim_flow to an independent reviewer, who records review and
+        validation. Developers never land, merge into the integration branch, close
         or delete worktrees; when the lead asks, merge the base into your own tree under your claim.
         The lead owns completion and cleanup; report readiness to ${{ inputs.report_to }}
         until the pipeline connects your seats. Follow installed definitions and evidence guidance.
@@ -261,9 +262,10 @@ claim_flow:
     - test-before
     - implementation
     - test-after
-    - self-review
-    - validation
-    next: review
+    # Docs-category tasks take the docs reviewer; every other task takes the code reviewer.
+    next:
+    - review-docs
+    - review
   review:
     seat: reviewer
     done_when:
@@ -276,3 +278,21 @@ claim_flow:
     done_when:
     - validation
     - closing
+  implement-docs:
+    agent: docs-writer
+    done_when:
+    - test-before
+    - implementation
+    - test-after
+    next: review-docs
+  review-docs:
+    agent: docs-reviewer
+    categories:
+    - docs
+    done_when:
+    - independent-review
+    next: validate
+    # The lane that produced the candidate takes a rejection back.
+    on_rejected:
+    - implement-docs
+    - implement

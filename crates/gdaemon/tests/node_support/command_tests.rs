@@ -9,7 +9,11 @@ use gobby_daemon::{
 };
 use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
 
-const WAIT: Duration = Duration::from_secs(30);
+/// Real-time hang guard for the preparation barrier. The chain before the barrier runs git,
+/// uv and sandbox compiles as child processes, so its wall time scales with host load:
+/// about 6 s idle and 27 s with 36 extra CPU-bound processes on the test host. The guard
+/// only has to outlast that; the 300 s preparation deadline itself runs on a virtual clock.
+const WAIT: Duration = Duration::from_secs(120);
 
 struct CommandsFixture {
     launch: LaunchFixture,
@@ -98,7 +102,7 @@ impl CommandsFixture {
     async fn seed_entered(&self) {
         tokio::time::timeout(WAIT, async {
             while !self.ready.is_file() {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
         .await
@@ -127,7 +131,7 @@ impl CommandsFixture {
             .expect("blocking policy fixture");
         tokio::time::timeout(WAIT, async {
             while !entered.is_file() {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
         .await
@@ -1289,10 +1293,14 @@ async fn unread_acceptance_times_out_and_cancels_the_run() -> Result<()> {
     use tokio_tungstenite::tungstenite::Message;
 
     let fixture = CommandsFixture::new(true).await?;
+    // Transfer the request before the idle clock can expire under scheduler load.
+    // Only the duplex is active here; resume real time before waiting on state I/O.
+    tokio::time::pause();
     let mut socket = serve_duplex_for(&fixture, 16, Duration::from_secs(1)).await;
     socket
         .send(Message::Text(fixture.spawn("spawn").to_string().into()))
         .await?;
+    tokio::time::resume();
     // The peer stays connected but never reads, so the send outlives the idle bound.
     assert_unprepared_cancel(&fixture).await?;
     drop(socket);

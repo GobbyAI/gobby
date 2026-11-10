@@ -6,13 +6,18 @@ process, and the inner run must not load this suite's conftest or database.
 
 from __future__ import annotations
 
+import faulthandler
+import gc
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+
+from tests.fixtures import hang_guard
 
 pytestmark = pytest.mark.integration
 
@@ -96,3 +101,27 @@ def test_run_that_never_exits_dumps_its_threads(
     assert "1 passed" in output
     assert result.returncode != 0
     assert "_leaked_worker" in output
+
+
+@pytest.mark.unit
+def test_exit_watchdog_freezes_the_session_heap_before_it_arms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Finalization garbage-collects every live object once the process exits, and
+    # that work is what overran the watchdog. The freeze must come before the timer
+    # arms so the exit passes skip the session's objects, not after.
+    calls: list[str] = []
+    monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda *_a, **_k: calls.append("arm"))
+    config = MagicMock(spec=pytest.Config)
+    config.getini.return_value = "60"
+
+    hang_guard.pytest_unconfigure(config)
+
+    assert calls == ["freeze", "arm"]
+
+
+def test_import_heap_is_frozen_before_tests_run() -> None:
+    # Exit forces full GC passes over every tracked object. The import-time heap is
+    # ~370k objects, so under load five such passes overran the exit watchdog (#25804).
+    assert gc.get_freeze_count() > 0

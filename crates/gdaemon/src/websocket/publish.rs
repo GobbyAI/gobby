@@ -3,6 +3,7 @@
 //! not at all.
 
 use std::net::SocketAddr;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
@@ -59,11 +60,43 @@ pub async fn handle(native: &NativeWs, request: Request<Body>, peer: SocketAddr)
         return status_only(StatusCode::FORBIDDEN);
     };
     if path == BIND {
-        bind(native, &token, &parts.headers, body).await
+        let started = Instant::now();
+        let response = bind(native, &token, &parts.headers, body).await;
+        if let Some(line) = bind_timing_line(started.elapsed(), unix_ms(SystemTime::now())) {
+            eprintln!("{line}");
+        }
+        response
     } else {
         publish(native, &token, &parts.headers, body).await
     }
 }
+
+/// A bind answered after at least this long is logged, so a slow front door shows in runtime.log.
+const BIND_SLOW: Duration = Duration::from_millis(500);
+
+/// The stderr line for a slow bind, or nothing when the bind was quick. An answer instant that
+/// could not be read, because the clock predates the Unix epoch, is logged as `unavailable`.
+fn bind_timing_line(elapsed: Duration, answered_unix_ms: Option<u128>) -> Option<String> {
+    (elapsed >= BIND_SLOW).then(|| {
+        let answered =
+            answered_unix_ms.map_or_else(|| "unavailable".to_owned(), |ms| ms.to_string());
+        format!(
+            "native WS bind answered after {}ms (unix_ms={answered})",
+            elapsed.as_millis()
+        )
+    })
+}
+
+/// Milliseconds since the Unix epoch at `at`, or `None` when `at` predates the epoch.
+fn unix_ms(at: SystemTime) -> Option<u128> {
+    at.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|since| since.as_millis())
+}
+
+#[cfg(test)]
+#[path = "publish/tests.rs"]
+mod tests;
 
 async fn bind(native: &NativeWs, token: &str, headers: &HeaderMap, body: Body) -> Response<Body> {
     let body = match read_bounded(headers, body, BIND_LIMIT).await {

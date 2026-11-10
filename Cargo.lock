@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.115"
+version = "0.1.116"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2435,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.108"
+version = "1.9.109"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-core"
-version = "0.10.23"
+version = "0.10.25"
 dependencies = [
  "anyhow",
  "axum",
@@ -2507,6 +2507,7 @@ dependencies = [
  "httpdate",
  "ignore",
  "jsonschema",
+ "libc",
  "log",
  "openssl",
  "postgres",
@@ -2532,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.139"
+version = "0.4.149"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2541,6 +2542,7 @@ dependencies = [
  "bytes",
  "clap",
  "deadpool-postgres",
+ "dirs",
  "fancy-regex",
  "futures-util",
  "gobby-core",
@@ -2552,6 +2554,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "libc",
+ "nix 0.29.0",
  "num-bigint",
  "rand 0.8.6",
  "rcgen",
@@ -2572,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.72"
+version = "0.9.73"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2592,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.37"
+version = "0.1.38"
 dependencies = [
  "anyhow",
  "clap",
@@ -2637,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "base64 0.22.1",
  "bincode",

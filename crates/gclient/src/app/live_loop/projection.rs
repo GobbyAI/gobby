@@ -19,10 +19,20 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
     let focused_pane_removed = workspace
         .focus
         .is_some_and(|pane| !workspace.panes.contains_key(&pane));
+    // Projection drops populated slots whose client pane has been reaped.
+    // Remember them so their lingering model rows cannot look newly pending.
+    let reaped_slots: Vec<_> = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .flat_map(|tab| &tab.slots)
+        .filter_map(|(slot, pane)| (!workspace.panes.contains_key(pane)).then_some(*slot))
+        .collect();
     project_live_workspace(workspace, chrome);
     let index = chrome.active_index();
     let viewer = &mut chrome.viewer;
     let set = chrome.project_tabs.set_mut();
+    let model = workspace.workspace_model();
     for tab in &mut set.tabs {
         let stale: Vec<_> = tab
             .slots
@@ -36,18 +46,23 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
                 tab.slots.remove(&slot);
             }
         }
+        // A new terminal keeps its layout slot while resolving, and a focus whose
+        // shell the roster has not reached yet is pending, not gone: its placement
+        // is consumed when applied, so a fallback here would lose that focus for
+        // good. A reaped terminal or a pane now owned by another tab cannot
+        // retain focus.
         let focus = viewer.focus_of(tab);
-        // A focus whose shell the roster has not reached yet is pending, not
-        // gone: its placement is consumed when applied, so a fallback here
-        // would lose that focus for good.
-        let pending = workspace.workspace_model().is_some_and(|model| {
-            viewer
-                .panes
-                .daemon_id(focus)
-                .and_then(|pane_id| model.pane(pane_id))
-                .and_then(|pane| pane.terminal_id.as_deref())
-                .is_some_and(|terminal_id| workspace.pending_spawns.contains(terminal_id))
-        });
+        let model_pane = viewer
+            .panes
+            .daemon_id(focus)
+            .and_then(|pane| model.and_then(|model| model.pane(pane)));
+        let spawning = model_pane
+            .and_then(|pane| pane.terminal_id.as_deref())
+            .is_some_and(|terminal_id| workspace.pending_spawns.contains(terminal_id));
+        let pending = !reaped_slots.contains(&focus)
+            && (spawning
+                || (tab.layout.pane_ids().contains(&focus)
+                    && model_pane.is_some_and(|pane| pane.tab_id == tab.id)));
         if !tab.slots.is_empty() && !tab.slots.contains_key(&focus) && !pending {
             if let Some(slot) = tab
                 .layout
@@ -135,33 +150,45 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
     }
     let mut held = Vec::new();
     for (tab_id, pane_id) in workspace.take_placed_panes() {
-        // A slot is placed only once the tab shows it. A pane whose terminal has
-        // not landed has no slot in the tab yet, and focusing it now would be
-        // undone by the stale-slot pass in `sync_live_chrome`.
-        let Some(slot) = chrome
-            .tabs()
-            .tabs
-            .iter()
-            .find(|tab| tab.id == tab_id)
-            .and_then(|tab| {
-                chrome
-                    .viewer
-                    .panes
-                    .slot(&pane_id)
-                    .filter(|slot| tab.slots.contains_key(slot))
-            })
+        // Placement replies can outlive a move. Follow the pane's current
+        // owner rather than focusing its slot in the reply's former tab.
+        let Some(owner) = workspace
+            .workspace_model()
+            .and_then(|model| model.pane(&pane_id))
+            .map(|pane| pane.tab_id.clone())
         else {
-            // Another project's tab, or a pane still landing: the placement
-            // waits while the daemon still shows its pane on that tab. A pane
-            // that has left the model cannot resolve, so its placement is dropped.
-            if workspace
-                .workspace_model()
-                .is_some_and(|model| model.pane(&pane_id).is_some_and(|row| row.tab_id == tab_id))
-            {
+            // A pane the model has not shown yet waits for its row. A pane that
+            // left the model after it was seen cannot resolve, so its placement
+            // is dropped.
+            if !workspace.placement_seen.remove(&pane_id) {
                 held.push((tab_id, pane_id));
             }
             continue;
         };
+        let tab_id = owner;
+        // A placement in the tab already shown waits until that tab shows its
+        // shell, so focus stays on the pane in use while the terminal lands. One
+        // in another tab on the bar switches there at once: its layout slot takes
+        // focus, and the pending check in `sync_live_chrome` keeps it while the
+        // terminal resolves.
+        let tab = chrome.tabs().tabs.iter().find(|tab| tab.id == tab_id);
+        let shown = chrome
+            .active_tab()
+            .is_some_and(|active| active.id == tab_id);
+        let Some(slot) = tab.and_then(|tab| {
+            chrome
+                .viewer
+                .panes
+                .slot(&pane_id)
+                .filter(|slot| !shown || tab.slots.contains_key(slot))
+        }) else {
+            // Another project's tab, or a pane with no layout slot yet: the
+            // placement waits while the daemon still shows its pane on its tab.
+            workspace.placement_seen.insert(pane_id.clone());
+            held.push((tab_id, pane_id));
+            continue;
+        };
+        workspace.placement_seen.remove(&pane_id);
         chrome
             .viewer
             .active_tab
