@@ -445,7 +445,7 @@ RUFF_SHAPES = (
 def test_literal_ruff_check_proves_its_workdir(
     event_handlers: EventHandlers, tmp_path: Path, prior: str, ruff: str
 ) -> None:
-    """Report 756fe608: a literal, read-only ruff check was refused in a Codex developer tree."""
+    """Report 756fe608: a literal, read-only ruff check was refused in a Codex task worktree."""
     workdir = tmp_path / "task"
     records: list[dict[str, Any]] = []
     if prior == "after_yielded_batch":
@@ -530,7 +530,10 @@ def test_empty_poll_to_unmapped_shell_keeps_later_literal_cwd_proof(
     assert current_tool_cwd(event.data) == workdir
 
 
-STICKY_REFUSAL = "typed input reached an unmapped session; a pending cell is unattributed"
+STICKY_REFUSAL = (
+    "typed input reached an unmapped session; a pending cell is unattributed "
+    "(held by cell 10): wait on cell 10 until it exits, or end it"
+)
 TYPED_JS = json.dumps(TYPED + "\n")
 UNMAPPED_WRITE = f"text(await tools.write_stdin({{session_id:{SHELL_SESSION},chars:{TYPED_JS}}}));"
 # The write_stdin contract reads omitted chars as an empty poll.

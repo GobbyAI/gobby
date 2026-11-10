@@ -26,10 +26,9 @@ def shutdown_background_services() -> None:
     """Stop workers within the caller's existing shutdown ordering and error boundary."""
     from gobby.tasks.transcript_evidence_pool import shutdown_transcript_evidence_pool
 
-    # No lease can be active before its owning module loads. Importing it here on an
-    # early exit would execute the entire startup package inside the shutdown budget.
-    if "gobby.runner_init.embedding_lease" in sys.modules:
-        from gobby.runner_init.embedding_lease import dispose_active_embedding_leases
-
-        dispose_active_embedding_leases()
+    # A partially initialized runner has no serving leases. Importing the initialization
+    # facade here can spend the child-reap budget loading services that never started.
+    embedding_lease = sys.modules.get("gobby.runner_init.embedding_lease")
+    if embedding_lease is not None:
+        embedding_lease.dispose_active_embedding_leases()
     shutdown_transcript_evidence_pool()
