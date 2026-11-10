@@ -24,8 +24,6 @@ _DEFAULTS: dict[str, Any] = {
     "memory_free_degraded_percent": 15.0,
     "fseventsd_cpu_degraded_percent": 50.0,
     "fseventsd_consecutive_samples": 3,
-    "max_new_seats": 3,
-    "ramp_window_seconds": 900,
 }
 
 

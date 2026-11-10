@@ -3,8 +3,7 @@
 //! Contract (`schema_version` 1), one JSON object with these keys:
 //! `schema_version`, `state` (`healthy|degraded|unstable`), `sampled_at_unix`,
 //! `last_non_healthy_at_unix` (null until the first non-healthy sample),
-//! `reasons` (array of strings), `ramp` (`max_new_seats`, `ramp_window_seconds`: the admission
-//! ramp in force, so admission never parses policy itself), `thresholds_source`, `watcher_pid`.
+//! `reasons` (array of strings), `thresholds_source`, `watcher_pid`.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -25,13 +24,6 @@ pub enum ThresholdsSource {
     Defaults,
 }
 
-/// The admission ramp in force: at most `max_new_seats` new seats per `ramp_window_seconds`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Ramp {
-    pub max_new_seats: u32,
-    pub ramp_window_seconds: i64,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateFile {
     pub schema_version: u32,
@@ -39,7 +31,6 @@ pub struct StateFile {
     pub sampled_at_unix: i64,
     pub last_non_healthy_at_unix: Option<i64>,
     pub reasons: Vec<String>,
-    pub ramp: Ramp,
     pub thresholds_source: ThresholdsSource,
     pub watcher_pid: u32,
 }

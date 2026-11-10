@@ -27,7 +27,7 @@ fn sample_at(index: i64, elapsed_ms: u64) -> Sample {
 fn a_failed_policy_read_keeps_the_last_good_thresholds() {
     let mut cache = ThresholdCache::default();
     let tuned = Thresholds {
-        max_new_seats: 7,
+        warning_lines_degraded: 7,
         ..Thresholds::default()
     };
     assert_eq!(
@@ -53,7 +53,7 @@ fn a_failed_first_policy_read_falls_back_to_the_defaults() {
 fn a_policy_without_a_fleet_block_reports_the_defaults_and_drops_the_last_good() {
     let mut cache = ThresholdCache::default();
     let tuned = Thresholds {
-        max_new_seats: 7,
+        warning_lines_degraded: 7,
         ..Thresholds::default()
     };
     cache.resolve(Ok(Some(tuned)));
@@ -172,29 +172,6 @@ async fn a_failed_state_write_does_not_stop_the_sampling_loop() {
     assert!(
         outcome.is_err(),
         "the loop exited on a failed write: {outcome:?}"
-    );
-}
-
-#[test]
-fn the_state_file_carries_the_ramp_in_force() {
-    let mut watcher = Watcher::new();
-    let tuned = Thresholds {
-        max_new_seats: 2,
-        ramp_window_seconds: 600,
-        ..Thresholds::default()
-    };
-    let state = watcher.record(
-        sample_at(0, 100),
-        &tuned,
-        ThresholdsSource::ProjectPolicy,
-        1,
-    );
-    assert_eq!(
-        state.ramp,
-        Ramp {
-            max_new_seats: 2,
-            ramp_window_seconds: 600,
-        }
     );
 }
 

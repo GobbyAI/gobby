@@ -22,7 +22,6 @@ def _document(**overrides: Any) -> dict[str, Any]:
         "sampled_at_unix": NOW,
         "last_non_healthy_at_unix": None,
         "reasons": [],
-        "ramp": {"max_new_seats": 3, "ramp_window_seconds": 900},
         "thresholds_source": "defaults",
         "watcher_pid": 1,
     }
@@ -35,9 +34,15 @@ def _write(path: Path, document: Any) -> Path:
     return path
 
 
-def test_fresh_healthy_file_admits_with_the_ramp_it_carries(tmp_path: Path) -> None:
+def test_fresh_healthy_file_admits(tmp_path: Path) -> None:
     state = read_fleet_state(_write(tmp_path / "fleet.json", _document()), NOW)
-    assert state == FleetState("healthy", (), None, 3, 900)
+    assert state == FleetState("healthy", (), None)
+
+
+def test_a_file_from_an_older_watcher_with_a_ramp_block_still_reads(tmp_path: Path) -> None:
+    document = _document(ramp={"max_new_seats": 3, "ramp_window_seconds": 900})
+    state = read_fleet_state(_write(tmp_path / "fleet.json", document), NOW)
+    assert state == FleetState("healthy", (), None)
 
 
 def test_degraded_file_carries_its_reasons(tmp_path: Path) -> None:
@@ -87,11 +92,4 @@ def test_an_invalid_field_is_named_in_the_reason(tmp_path: Path) -> None:
 
 def test_an_unknown_schema_version_is_unreadable(tmp_path: Path) -> None:
     path = _write(tmp_path / "fleet.json", _document(schema_version=2))
-    assert read_fleet_state(path, NOW).reasons[0].startswith("state_file_unreadable")
-
-
-def test_a_file_without_its_ramp_is_unreadable(tmp_path: Path) -> None:
-    document = _document()
-    del document["ramp"]
-    path = _write(tmp_path / "fleet.json", document)
     assert read_fleet_state(path, NOW).reasons[0].startswith("state_file_unreadable")

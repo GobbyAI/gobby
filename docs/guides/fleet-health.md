@@ -8,22 +8,21 @@ never runs inside the Python daemon, and it keeps sampling while the daemon rest
 ## What it writes
 
 `GOBBY_HOME/state/fleet-health.json` (default `~/.gobby/state/fleet-health.json`) holds
-the state, the sample time, the reasons, the ramp in force and the threshold source.
+the state, the sample time, the reasons and the threshold source.
 Each write goes to a sibling temp file, is synced, then renamed over the old file.
 
 - `state`: `healthy`, `degraded` or `unstable`.
 - `sampled_at_unix`: when the sample was taken. A file older than 90 seconds counts as
   `unstable`.
 - `reasons`: the signals that set the state.
-- `ramp`: `max_new_seats` and `ramp_window_seconds`, copied from `fleet_health`.
 - `thresholds_source`: `project_policy`, `last_good` or `defaults`.
 
 Thresholds come from the installed `project_policy` rule row, `fleet_health` block. The
 watcher reads it directly from PostgreSQL. A failed read keeps the last good value, and
 the first failed read falls back to the compiled defaults.
 
-Admission also keeps `GOBBY_HOME/state/fleet-admissions.json`, the ledger of seats
-admitted in the current ramp window.
+A healthy fleet admits every spawn and launch. Admission enforces no seat count; pacing
+new work is the coordinator's job.
 
 ## Supervision
 

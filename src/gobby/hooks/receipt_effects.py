@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from collections.abc import Iterator
@@ -222,6 +223,32 @@ def apply_acknowledged_variables(receipt: Any, *, variable_manager: Any) -> None
     updates = payload.get("session_variables")
     if isinstance(updates, dict) and updates:
         variable_manager.merge_variables(session_id, updates)
+
+
+def variable_effect_sessions(owner: Any, payload: Any) -> frozenset[str]:
+    """Every session whose variable row apply_acknowledged_variables may write for a receipt.
+
+    The receipt's owner always counts, so the acknowledgment's lock covers its own row too.
+    """
+    sessions: set[str] = set()
+    if isinstance(owner, str) and owner:
+        sessions.add(owner)
+    if isinstance(payload, str) and payload:
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            payload = None
+    if not isinstance(payload, dict):
+        return frozenset(sessions)
+    target = payload.get("session_id") or owner
+    if isinstance(target, str) and target:
+        sessions.add(target)
+    startup = payload.get("startup_context")
+    if isinstance(startup, dict):
+        startup_session = startup.get("session_id") or target
+        if isinstance(startup_session, str) and startup_session:
+            sessions.add(startup_session)
+    return frozenset(sessions)
 
 
 def apply_acknowledged_receipt(

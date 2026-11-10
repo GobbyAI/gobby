@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.fleet_health.ledger import ledger_path, read_admissions, write_admissions
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.workflows.pipeline_executor import PipelineExecutor
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineStepRefusal
@@ -29,27 +27,14 @@ async def test_spawn_agent_refuses_with_a_typed_error_while_degraded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_spawn_refused_before_admission_does_not_use_a_ramp_seat() -> None:
+async def test_a_healthy_fleet_passes_spawns_through_to_their_own_checks() -> None:
     write_fleet_state(state="healthy")
 
-    # No parent session is refused before the seat is admitted, so nothing is recorded.
-    result = await spawn_agent_impl(prompt="check the fleet", runner=MagicMock())
-
-    assert result["success"] is False
-    assert "error_code" not in result
-    assert read_admissions(ledger_path()) == []
-
-
-@pytest.mark.asyncio
-async def test_a_capped_ramp_refuses_a_spawn_before_it_prepares_anything() -> None:
-    write_fleet_state(state="healthy", max_new_seats=1)
-    write_admissions(ledger_path(), [time.time()])
-
-    result = await spawn_agent_impl(prompt="check the fleet", runner=MagicMock())
-
-    assert result["success"] is False
-    assert result["error_code"] == "fleet_ramp_capped"
-    assert len(read_admissions(ledger_path()) or []) == 1
+    # No parent session: the spawn's own validation refuses it, never the fleet gate.
+    for _ in range(5):
+        result = await spawn_agent_impl(prompt="check the fleet", runner=MagicMock())
+        assert result["success"] is False
+        assert "error_code" not in result
 
 
 @pytest.mark.asyncio

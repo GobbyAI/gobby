@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.fleet_health import spawn_refusal
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import run_pipeline
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from tests.fleet_health.support import write_fleet_state
@@ -81,24 +80,3 @@ async def test_a_launch_is_admitted_while_the_fleet_is_healthy() -> None:
     assert started["success"] is True
     assert started["status"] == "running"
     executor.execution_manager.create_execution.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_a_launch_refuses_a_capped_ramp_before_any_record_exists() -> None:
-    write_fleet_state(state="healthy", max_new_seats=2)
-    for _ in range(2):
-        assert spawn_refusal() is None
-    executor = _executor()
-
-    started = await run_pipeline(
-        loader=_loader(),
-        executor=executor,
-        name="fixture-pipeline",
-        inputs={},
-        project_id="proj-1",
-    )
-
-    assert started["success"] is False
-    assert started["error_code"] == "fleet_ramp_capped"
-    assert started["fleet"]["state"] == "healthy"
-    executor.execution_manager.create_execution.assert_not_called()

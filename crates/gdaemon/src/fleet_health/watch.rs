@@ -12,7 +12,7 @@ use super::logtail::LogTail;
 use super::policy::Thresholds;
 use super::policy_source::load_thresholds;
 use super::probe::{dial_host, probe_health};
-use super::state_file::{Ramp, SCHEMA_VERSION, StateFile, ThresholdsSource, write_atomic};
+use super::state_file::{SCHEMA_VERSION, StateFile, ThresholdsSource, write_atomic};
 
 /// Seconds between samples.
 pub const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
@@ -227,10 +227,6 @@ impl Watcher {
             sampled_at_unix: now,
             last_non_healthy_at_unix: self.last_non_healthy_at,
             reasons: verdict.reasons,
-            ramp: Ramp {
-                max_new_seats: thresholds.max_new_seats,
-                ramp_window_seconds: thresholds.ramp_window_seconds,
-            },
             thresholds_source: source,
             watcher_pid,
         }
