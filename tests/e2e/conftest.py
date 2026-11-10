@@ -1259,7 +1259,6 @@ def _write_healthy_fleet_state(state_path: Path) -> None:
         "sampled_at_unix": time.time(),
         "last_non_healthy_at_unix": None,
         "reasons": [],
-        "ramp": {"max_new_seats": 1000, "ramp_window_seconds": 900},
         "thresholds_source": "defaults",
         "watcher_pid": 0,
     }

@@ -1,4 +1,4 @@
-version: "1.13.0"
+version: "2.0.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -263,7 +263,7 @@ rules:
               "src/gobby/cli/build_sweep.py",
               "src/gobby/terminals/native_env_policy.py"
             ],
-            "fleet_health": {"probe_degraded_ms": 1000, "probe_unstable_ms": 3000, "severe_unstable_window_seconds": 120, "window_seconds": 300, "warning_lines_degraded": 10, "load_per_core_degraded": 2.5, "load_consecutive_samples": 2, "memory_free_degraded_percent": 15.0, "fseventsd_cpu_degraded_percent": 50.0, "fseventsd_consecutive_samples": 3, "max_new_seats": 3, "ramp_window_seconds": 900},
+            "fleet_health": {"probe_degraded_ms": 1000, "probe_unstable_ms": 3000, "severe_unstable_window_seconds": 120, "window_seconds": 300, "warning_lines_degraded": 10, "load_per_core_degraded": 2.5, "load_consecutive_samples": 2, "memory_free_degraded_percent": 15.0, "fseventsd_cpu_degraded_percent": 50.0, "fseventsd_consecutive_samples": 3},
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–06:30 America/Chicago daily",
             "operator_timezone": "America/Chicago",

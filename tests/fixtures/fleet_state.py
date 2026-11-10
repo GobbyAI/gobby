@@ -18,14 +18,13 @@ FLEET_STATE_REFRESH_SECONDS = 30
 
 
 def healthy_fleet_document(sampled_at: float) -> dict[str, Any]:
-    """Return a healthy state with the ramp wide open, as the root fixture has always written."""
+    """Return a healthy state, as the root fixture has always written."""
     return {
         "schema_version": 1,
         "state": "healthy",
         "sampled_at_unix": sampled_at,
         "last_non_healthy_at_unix": None,
         "reasons": [],
-        "ramp": {"max_new_seats": 1000, "ramp_window_seconds": 900},
         "thresholds_source": "defaults",
         "watcher_pid": 0,
     }

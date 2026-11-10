@@ -52,9 +52,6 @@ cli_events = e2e_fixtures.cli_events
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow, pytest.mark.usefixtures("healthy_fleet")]
 
-# A seat ceiling above any one run's seat count, so the ramp window never caps the rerun test.
-FLEET_SEATS = 50
-
 FIXTURE = Path(__file__).parent / "fixtures" / "two_seat_placement.yaml"
 PIPELINE = "two-seat-placement-fixture"
 PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
@@ -276,7 +273,7 @@ class FleetStub:
             self._write()
 
     def _write(self) -> None:
-        write_fleet_state(state=self._state, reasons=self._reasons, max_new_seats=FLEET_SEATS)
+        write_fleet_state(state=self._state, reasons=self._reasons)
 
 
 @pytest.fixture
