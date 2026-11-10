@@ -80,6 +80,11 @@ get_variable(session_id="#123", name="example_limit")
 set_variable(session_id="#123", name="example_limit", value=4)
 ```
 
+A seat granted `write_own_step_phase` may write only its own step `phase`: pass its
+own session, `scope="step"` and `name="phase"`. Session-scope writes of `phase` are
+refused because a step value overlays the session value. Every other variable write
+still needs `write_session_variables`, and cross-session writes need that grant too.
+
 Session writes accept JSON-compatible values. Strings representing booleans,
 null/none, integers or floats are coerced; JSON-looking strings containing arrays
 or objects are not parsed. Send actual arrays/objects. Values are literals here,

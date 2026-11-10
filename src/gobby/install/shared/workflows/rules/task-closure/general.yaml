@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-closure-general]
 
 rules:
@@ -73,3 +73,12 @@ rules:
     effects:
       - type: block
         reason: Identify the replacement in the disposition attestation's reference.
+
+  closure-refuses-linked-commits-on-no-work-close:
+    description: A no-work close fails integration_ancestry while any commit is linked; unlink each candidate first.
+    event: task_close
+    priority: 14
+    when: "reason != 'done' and facts.get('commit_shas')"
+    effects:
+      - type: block
+        reason: Unlink each candidate commit with a reason; a no-work close cannot carry linked commits (integration_ancestry).

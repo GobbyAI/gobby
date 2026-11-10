@@ -36,18 +36,28 @@ call ran in:
   writes by a script, a formatter, or a literal write, including deleting a clean tracked
   file. A failed call keeps the changes it made. You may then Edit, `git restore`,
   `git checkout --`, or `rm` those paths like any file you wrote. A background call is
-  attributed when its process ends, at your next tool call. If its output file is gone,
-  its paths stay foreign.
+  attributed when its completion notice arrives in your transcript: a task-notification row
+  whose task-id, tool-use-id and output file all match that call. Whatever its output
+  shows, no clock settles it. Until the notice arrives its paths stay unattributed. If its
+  output file is gone, its paths stay foreign.
 - If another session's call overlapped yours in the same worktree and changed a path,
-  that path stays foreign to every session, including yours, for as long as it stays
-  dirty. This holds even when your task already owns the path: an overlapping rewrite of
-  it is refused too. A structured Edit or Write in flight counts as overlap for a Bash
-  call, so a Bash call that overlaps it does not attribute the paths it changed. The other
-  call finishing does not release the path; only its return to a clean state does, which
-  Triage arranges as below.
+  that path stays foreign to every session, including yours, while any Bash call in that
+  worktree is still in flight. This holds even when your task already owns the path: an
+  overlapping rewrite of it is refused too. A structured Edit or Write in flight counts as
+  overlap for a Bash call, so a Bash call that overlaps it does not attribute the paths it
+  changed. A background call stays in flight until its completion notice arrives, even when
+  its output shows an exit line. The one other settle is a graceful end of its owner
+  session (exit, logout, or prompt-input exit): the owner's job processes are stopped, and
+  the call settles only once that job tree is empty. Any other end, such as a clear,
+  compact, resume, idle, or crash, leaves the call in flight until an operator releases
+  its paths with `gobby sessions approve-dirty-paths --reason`. Once no Bash call in the worktree
+  is in flight, edit the path with the native Edit or Write tool: that edit reclaims it for
+  your session. A Bash write to the path does not reclaim it.
 - In the main or a shared checkout, script writes stay unattributed and nothing changes.
   `block-cross-session-foreign-dirty-edit` refuses later edits to those paths with the
   reason "no live session owns it".
+
+Session transcripts are not repository files: Edit, Write and redirected shell writes into any session transcript are refused, including your own, because a forged notice row would settle a background call before its job finished.
 
 An unowned path is not routine recovery. Do not revert it or approve it to clear an
 edit lock. Send Triage the path and the command that wrote it with
@@ -86,6 +96,6 @@ prior evidence stale; committing does not.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [Tests-first Development](../../../../../../../../docs/guides/tdd-enforcement.md).
 
-_Version: 1.0.0_
+_Version: 1.2.0_
 
-_Last verified: 2026-10-27_
+_Last verified: 2026-11-06_

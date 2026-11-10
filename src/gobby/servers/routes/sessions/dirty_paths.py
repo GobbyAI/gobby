@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 class DirtyPathApprovalRequest(BaseModel):
     checkout_root: str
     paths: list[str]
+    reason: str = Field(min_length=1, max_length=500)
 
 
 def register_dirty_path_routes(router: APIRouter, server: HTTPServer) -> None:
@@ -41,14 +42,20 @@ def register_dirty_path_routes(router: APIRouter, server: HTTPServer) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         try:
-            approvals = await server.run_db(
+            release = await server.run_db(
                 record_dirty_path_approval,
                 db,
                 session_id,
                 checkout_root=payload.checkout_root,
                 paths=payload.paths,
                 approved_by=f"{identity.user_id}/{identity.key_id}",
+                reason=payload.reason,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"session_id": session_id, "approvals": approvals}
+        return {
+            "session_id": session_id,
+            "approvals": release.approvals,
+            "cleared_overlaps": list(release.cleared_overlaps),
+            "released_calls": {owner: list(ids) for owner, ids in release.released_calls.items()},
+        }

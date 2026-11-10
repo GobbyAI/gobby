@@ -824,6 +824,15 @@ async def init_subsystems(
     # terminals, so the surviving gterm host must be adopted (or a fresh one
     # spawned) before the slow recovery steps below (#22002).
     await timed_startup_phase("terminal_host", _start_terminal_host(runner, tracker))
+    # Native admit waits on this bind. BM25 repair can run for the maintenance
+    # index timeout, so schedule the bind once the terminal host is adopted.
+    bridge_services = getattr(getattr(runner, "http_server", None), "services", None)
+    if bridge_services is None or not bool(getattr(bridge_services, "shutdown_in_progress", False)):
+        _run_tracked_start(
+            lambda: _start_websocket_server(runner, tracker),
+            "WebSocket server",
+            tracker,
+        )
     await timed_startup_phase("mcp_connections", _connect_mcp_servers(runner, tracker))
     code_index_bm25_ready = await hub_only_phase(
         "code_index_bm25", lambda: _repair_code_index_bm25(runner, tracker)
@@ -847,11 +856,6 @@ async def init_subsystems(
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
 
-    _run_tracked_start(
-        lambda: _start_websocket_server(runner, tracker),
-        "WebSocket server",
-        tracker,
-    )
     await timed_startup_phase(
         "ui_development_server",
         _run_tracked_start_async(
