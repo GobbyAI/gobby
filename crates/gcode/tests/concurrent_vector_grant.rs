@@ -303,6 +303,10 @@ mod serial_db {
             } else if line.starts_with("PUT /collections/") {
                 counts.qdrant.fetch_add(1, Ordering::SeqCst);
                 write_json(&mut stream, "200 OK", "{\"result\":true}");
+            } else if line.starts_with("POST /collections/") && line.contains("/points/count") {
+                // The prune count before a filtered delete: this scripted store holds no points.
+                counts.qdrant.fetch_add(1, Ordering::SeqCst);
+                write_json(&mut stream, "200 OK", "{\"result\":{\"count\":0}}");
             } else {
                 write_json(
                     &mut stream,

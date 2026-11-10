@@ -19,6 +19,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeCommandResult,
     GcodeDaemonConfigUnavailableError,
     GcodeGateway,
+    GcodeIndexLock,
     GcodeUnavailableError,
 )
 from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
@@ -75,6 +76,7 @@ class RecordingGateway(GcodeGateway):
         *,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        lock: GcodeIndexLock = GcodeIndexLock.SKIP,
     ) -> GcodeCommandResult:
         self.calls.append((project_root, tuple(files), timeout))
         self.envs.append(dict(env) if env is not None else None)
@@ -102,6 +104,7 @@ class FirstCallBlockingGateway(RecordingGateway):
         *,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        lock: GcodeIndexLock = GcodeIndexLock.SKIP,
     ) -> GcodeCommandResult:
         self.calls.append((project_root, tuple(files), timeout))
         self.envs.append(dict(env) if env is not None else None)
@@ -671,6 +674,41 @@ async def test_lock_busy_requeues_without_warning_and_closes_breaker(
     assert harness.breaker.state is BreakerState.CLOSED
     assert "breaker closed" in caplog.text
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_busy_index_run_is_indexed_once_the_lock_frees(
+    harness: TriggerHarness,
+    tmp_path: Path,
+) -> None:
+    root_key = harness.trigger._root_key(str(tmp_path))
+    harness.trigger._pending_by_root[root_key] = {"src/foo.py"}
+    harness.gateway.outcomes.append(
+        _result(
+            returncode=3,
+            stdout='{"completed_files": [], "busy_files": ["src/foo.py"]}',
+        )
+    )
+    harness.gateway.outcomes.append(
+        _result(
+            returncode=0,
+            stdout='{"completed_files": ["src/foo.py"], "busy_files": []}',
+        )
+    )
+
+    # The lock is held: the run is refused and the file stays queued for the retry.
+    await harness.trigger._flush(root_key, "proj-1")
+    _cancel_scheduled_callback(harness.trigger, root_key)
+    assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
+
+    # The lock frees: the retry indexes the queued file and nothing stays pending.
+    await harness.trigger._flush(root_key, "proj-1")
+
+    assert harness.trigger._pending_by_root.get(root_key, set()) == set()
+    assert [files for _, files, _ in harness.gateway.calls] == [
+        ("src/foo.py",),
+        ("src/foo.py",),
+    ]
 
 
 @pytest.mark.asyncio

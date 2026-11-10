@@ -8,7 +8,6 @@ use crate::db;
 use crate::index::languages;
 use crate::models::Symbol;
 use crate::output::{self, Format};
-use crate::savings;
 use crate::search::fts;
 use crate::utils::short_id;
 use crate::visibility;
@@ -36,31 +35,6 @@ pub fn outline(
 
     if symbols.is_empty() && !ctx.quiet {
         eprintln!("{}", outline_missing_diagnostic(&mut conn, ctx, &file));
-    }
-
-    // Report savings: outline bytes vs full file bytes
-    let file_path = ctx.project_root.join(&file);
-    if let Ok(meta) = file_path.metadata() {
-        let file_bytes = meta.len() as usize;
-        let outline_bytes: usize = symbols
-            .iter()
-            .map(|s| {
-                // Approximate outline size: name + kind + line numbers + signature
-                s.qualified_name.len()
-                    + s.kind.len()
-                    + s.signature.as_ref().map_or(0, |sig| sig.len())
-                    + 20 // line numbers, separators
-            })
-            .sum();
-        if outline_bytes > 0 && file_bytes > outline_bytes {
-            let url = gobby_core::daemon_url::daemon_url()?;
-            savings::report_savings(
-                &url,
-                file_bytes,
-                outline_bytes,
-                ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
-            );
-        }
     }
 
     let groups = outline_groups(symbols, verbose)?;
@@ -296,17 +270,6 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
     match sym {
         Some(s) => {
             if let Some(source) = read_symbol_source(&ctx.project_root, &s)? {
-                // Report savings: symbol bytes vs full file bytes
-                if source.symbol_bytes > 0 && source.file_bytes > source.symbol_bytes {
-                    let url = gobby_core::daemon_url::daemon_url()?;
-                    savings::report_savings(
-                        &url,
-                        source.file_bytes,
-                        source.symbol_bytes,
-                        ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
-                    );
-                }
-
                 match format {
                     Format::Json => {
                         let mut result = serde_json::to_value(&s)?;
@@ -335,8 +298,6 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
 #[derive(Debug)]
 pub(crate) struct ReadSymbolSource {
     pub(crate) text: String,
-    pub(super) file_bytes: usize,
-    pub(super) symbol_bytes: usize,
 }
 
 pub(crate) fn read_symbol_source(
@@ -353,8 +314,6 @@ pub(crate) fn read_symbol_source(
     let bytes = &source[start..end];
     Ok(Some(ReadSymbolSource {
         text: String::from_utf8_lossy(bytes).to_string(),
-        file_bytes: source.len(),
-        symbol_bytes: bytes.len(),
     }))
 }
 
@@ -831,8 +790,6 @@ mod tests {
             .expect("source file exists");
 
         assert_eq!(source.text, "345");
-        assert_eq!(source.symbol_bytes, 3);
-        assert_eq!(source.file_bytes, 6);
     }
 
     #[test]

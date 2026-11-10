@@ -463,3 +463,82 @@ fn dim_probe_with_override() {
     assert_eq!(schema.size, 1536);
     assert!(explicit_requests[1].contains(r#""size":1536"#));
 }
+
+#[test]
+fn prune_file_points_deletes_only_points_outside_the_keep_set() {
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (200, json!({"result": {"count": 1}, "status": "ok"})),
+        (
+            200,
+            json!({"result": {"operation_id": 21, "status": "completed"}, "status": "ok"}),
+        ),
+    ]);
+    let lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle");
+
+    let pruned = lifecycle
+        .prune_file_points("src/lib.rs", &["symbol-keep".to_string()])
+        .expect("prune file points");
+    let requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(pruned, 1);
+    assert!(requests[0].contains("POST /collections/code_symbols_project-1/points/count"));
+    assert!(
+        requests[1].contains("POST /collections/code_symbols_project-1/points/delete?wait=true")
+    );
+    assert!(requests[1].contains(r#""value":"project-1""#));
+    assert!(requests[1].contains(r#""value":"src/lib.rs""#));
+    assert!(requests[1].contains(r#""must_not":[{"has_id":["symbol-keep"]}]"#));
+}
+
+#[test]
+fn prune_file_points_with_an_empty_keep_set_deletes_every_file_point() {
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (200, json!({"result": {"count": 2}, "status": "ok"})),
+        (
+            200,
+            json!({"result": {"operation_id": 22, "status": "completed"}, "status": "ok"}),
+        ),
+    ]);
+    let lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle");
+
+    let pruned = lifecycle
+        .prune_file_points("src/lib.rs", &[])
+        .expect("prune file points");
+    let requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(pruned, 2);
+    assert!(
+        requests[1].contains("POST /collections/code_symbols_project-1/points/delete?wait=true")
+    );
+    assert!(!requests[1].contains("must_not"));
+}

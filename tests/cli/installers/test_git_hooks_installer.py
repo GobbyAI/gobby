@@ -683,7 +683,9 @@ class TestInstallGitHooks:
         for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
             assert hook_name in result["installed"]
             content = (hooks_dir / hook_name).read_text()
-            assert 'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1' in content
+            assert (
+                'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in content
+            )
             assert "/api/code-index/codewiki/refresh" not in content
             assert "GOBBY HOOK START" in content
 
@@ -740,7 +742,7 @@ class TestInstallGitHooks:
 
         assert "branch-only.txt" in stdout
 
-    def test_post_commit_lock_busy_exits_without_codewiki_refresh(
+    def test_post_commit_index_waits_for_lock_instead_of_skipping(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -753,22 +755,20 @@ class TestInstallGitHooks:
         gobby_bin.mkdir(parents=True)
         path_bin.mkdir()
         args_file = tmp_path / "gcode.args"
-        done_fifo = tmp_path / "gcode.done.fifo"
-        os.mkfifo(done_fifo)
-        waiter_file = tmp_path / "gcode.waiter"
+        indexed_fifo = tmp_path / "gcode.indexed.fifo"
+        os.mkfifo(indexed_fifo)
         curl_file = tmp_path / "curl.called"
         gcode = gobby_bin / "gcode"
+        # A skip-if-locked run exits 3 without indexing: the change would be lost.
         gcode.write_text(
             "#!/usr/bin/env bash\n"
             f"printf '%s\\n' \"$@\" > {shlex.quote(str(args_file))}\n"
             'for ARG in "$@"; do\n'
             '  if [ "$ARG" = "--skip-if-locked" ]; then\n'
-            f"    printf 'done\\n' > {shlex.quote(str(done_fifo))}\n"
             "    exit 3\n"
             "  fi\n"
             "done\n"
-            f"touch {shlex.quote(str(waiter_file))}\n"
-            "sleep 5\n"
+            f"printf 'indexed\\n' > {shlex.quote(str(indexed_fifo))}\n"
         )
         gcode.chmod(gcode.stat().st_mode | stat.S_IXUSR)
         curl = path_bin / "curl"
@@ -792,22 +792,25 @@ class TestInstallGitHooks:
 
         hook = repo / ".git" / "hooks" / "post-commit"
         reader = subprocess.Popen(
-            ["cat", str(done_fifo)],
+            ["cat", str(indexed_fifo)],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
         )
         try:
-            subprocess.run([str(hook)], cwd=repo, check=False, timeout=1)
-            stdout, _ = reader.communicate(timeout=1)
+            subprocess.run([str(hook)], cwd=repo, check=False, timeout=30)
+            stdout, _ = reader.communicate(timeout=30)
         except subprocess.TimeoutExpired:
             reader.kill()
             reader.communicate()
-            pytest.fail("post-commit gcode process did not exit after lock skip")
+            pytest.fail("post-commit gcode run never indexed the changed file")
 
-        assert stdout == "done\n"
-        assert "--skip-if-locked" in args_file.read_text().splitlines()
-        assert not waiter_file.exists()
+        assert stdout == "indexed\n"
+        args = args_file.read_text().splitlines()
+        assert "--skip-if-locked" not in args
+        assert "--lock-wait-seconds" in args, "the background run must bound its lock wait"
+        assert args[args.index("--lock-wait-seconds") + 1] == "300"
+        assert "--files=tracked.txt" in args
         assert not curl_file.exists()
 
     @staticmethod
@@ -1096,7 +1099,7 @@ class TestHookTemplates:
         content = HOOK_TEMPLATES["post-commit"]
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
-        assert 'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1' in content
+        assert 'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in content
         assert "/api/code-index/codewiki/refresh" not in content
 
         git_dir = tmp_path / ".git"
@@ -1110,7 +1113,9 @@ class TestHookTemplates:
         installed = (hooks_dir / "post-commit").read_text()
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
-        assert 'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1' in installed
+        assert (
+            'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1' in installed
+        )
         assert "/api/code-index/codewiki/refresh" not in installed
 
     def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:
@@ -1120,7 +1125,7 @@ class TestHookTemplates:
             'GCODE="${GOBBY_HOME:-$HOME/.gobby}/bin/gcode"',
             "sed 's/^/--files=/'",
             r"tr '\n' '\0'",
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1',
+            'xargs -0 "$GCODE" index --quiet --lock-wait-seconds 300 >/dev/null 2>&1',
         )
 
         for snippet in shared_snippets:

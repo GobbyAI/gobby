@@ -43,6 +43,11 @@ separate session field. `abandon_worktree` and `reactivate_worktree` change
 metadata, not branch contents. Inspect before reactivation or reuse. Detached
 worktrees cannot be synced, pushed or marked merged through branch operations.
 
+`set_worktree_note` records a registered worktree's owner, next action and blocker
+(single lines; an empty blocker means nothing blocks it), replacing any earlier note.
+It requires a definition granting `manage_worktree_notes`. The status report shows the
+note only while it is newer than the tree's last commit or dirty change.
+
 Project and machine context matter: another machine's path is not usable locally.
 On a context/ownership error, select the correct project and machine instead of
 adopting a foreign path. Creation writes project context into the isolated checkout.
@@ -50,4 +55,4 @@ adopting a foreign path. Creation writes project context into the isolated check
 Continue with [synchronization](synchronization.md) and [cleanup](cleanup.md).
 See [worktrees](../../../../../../../../docs/guides/worktrees.md#creation).
 
-_Version: 1.1.0_
+_Version: 1.2.0_

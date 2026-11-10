@@ -921,7 +921,6 @@ _AI_BROKER_ROUTES: tuple[tuple[str, str], ...] = (
     *_MODALITY_ROUTES,
     ("POST", "/api/code-index/graph/clear"),
     ("POST", "/api/code-index/graph/rebuild"),
-    ("POST", "/api/admin/savings/record"),
 )
 
 

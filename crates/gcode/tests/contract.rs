@@ -82,9 +82,19 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_twelve_without_ask() {
+fn contract_is_version_thirteen_without_ask() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(12));
+    assert_eq!(contract["contract_version"], serde_json::json!(13));
+    assert!(
+        contract["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .all(|command| command["name"] != "vector cleanup-orphans"),
+        "vector cleanup-orphans must be absent"
+    );
+    let reconcile = command(&contract, "vector reconcile");
+    assert_eq!(reconcile["daemon_consumed"], serde_json::json!(false));
     assert!(
         contract["commands"]
             .as_array()
@@ -153,7 +163,7 @@ fn contract_is_version_twelve_without_ask() {
             },
             {
                 "code": 3,
-                "meaning": "`index --skip-if-locked` yielded to a concurrent indexer"
+                "meaning": "`index` yielded without indexing: the index lock stayed busy past its wait, or a timed-out wait queued its work for the next index run"
             },
             {
                 "code": 10,

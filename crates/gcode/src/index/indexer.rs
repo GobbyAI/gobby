@@ -31,7 +31,7 @@ pub use types::{
     CommunityRefreshReport, IndexDegradation, IndexDurations, IndexOptions, IndexOutcome,
     IndexProgressSink, IndexRequest, UnsupportedFileType,
 };
-pub(crate) use util::effective_excludes;
+pub(crate) use util::{effective_excludes, explicit_file_storage_paths};
 
 #[cfg(test)]
 mod stale_cleanup_tests;

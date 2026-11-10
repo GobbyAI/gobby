@@ -1,9 +1,11 @@
+use crate::commands::vector::reconcile as vector_reconcile;
 use crate::config::Context;
 use crate::graph::report::hotspot_snapshot;
 use crate::index::api::{
     self, IndexDegradation, IndexOutcome, IndexProgressSink, IndexRequest, UnsupportedFileType,
 };
-use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
+use crate::index_lock::{self, IndexLockPolicy, IndexLockResult, LockWaitTimeout};
+use crate::index_pending;
 use crate::output::{self, Format};
 use crate::projection::sync::{
     self, ProjectionProgressSink, ProjectionSyncReports, ProjectionTarget,
@@ -14,10 +16,32 @@ use serde::Serialize;
 use serde_json::Value;
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+/// How one index run ended. `Skipped` means a busy lock was not waited on and no index work ran.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum IndexRunStatus {
+    Completed,
+    Skipped,
+}
 
 pub(crate) enum RunIndexLockedOutput {
     IndexOnly(IndexOutcome),
     Projections(IndexSyncProjectionsOutput),
+}
+
+/// Lock policy for an index run: `skip_if_locked` yields at once, `lock_wait_seconds`
+/// bounds the wait, and an unbounded run keeps the default wait.
+fn index_lock_policy(skip_if_locked: bool, lock_wait_seconds: Option<u64>) -> IndexLockPolicy {
+    if skip_if_locked {
+        IndexLockPolicy::brief_index_flush_try()
+    } else if let Some(seconds) = lock_wait_seconds {
+        IndexLockPolicy::Wait {
+            max_wait: Duration::from_secs(seconds),
+        }
+    } else {
+        IndexLockPolicy::wait()
+    }
 }
 
 // Args map 1:1 to the `gcode index` CLI flags; a wrapper struct would only add
@@ -32,6 +56,7 @@ pub fn run(
     require_cpp_semantics: bool,
     sync_projections: bool,
     skip_if_locked: bool,
+    lock_wait_seconds: Option<u64>,
     format: Format,
 ) -> anyhow::Result<()> {
     let mut timings = crate::index::indexer::IndexTimings::new("command.context");
@@ -61,38 +86,88 @@ pub fn run(
         sync_projections,
     };
 
-    let lock_policy = if skip_if_locked {
-        IndexLockPolicy::brief_index_flush_try()
-    } else {
-        IndexLockPolicy::wait()
-    };
+    let lock_policy = index_lock_policy(skip_if_locked, lock_wait_seconds);
+    match run_with_lock_policy(
+        &target_ctx,
+        request,
+        lock_policy,
+        skip_if_locked,
+        format,
+        &mut timings,
+    )? {
+        IndexRunStatus::Completed => Ok(()),
+        // The lock stayed busy, or a bounded wait ran out with its work queued: no index work
+        // ran in this process.
+        IndexRunStatus::Skipped => std::process::exit(3),
+    }
+}
+
+/// Runs one index request under `lock_policy`. `Skipped` means a busy lock was not waited on
+/// and no index work ran; the caller chooses the exit status.
+fn run_with_lock_policy(
+    target_ctx: &Context,
+    request: IndexRequest,
+    lock_policy: IndexLockPolicy,
+    skip_if_locked: bool,
+    format: Format,
+    timings: &mut crate::index::indexer::IndexTimings,
+) -> anyhow::Result<IndexRunStatus> {
+    // Paths queued by earlier timed-out runs go first. The drain and this run share one wait
+    // bound, so this run gets only what the drain left of it.
+    let drain_started = Instant::now();
+    drain_queued_paths(target_ctx, &request, lock_policy)?;
+    drain_queued_whole_tree(
+        target_ctx,
+        &request,
+        index_lock::remaining_policy(lock_policy, drain_started.elapsed()),
+    )?;
+    let lock_policy = index_lock::remaining_policy(lock_policy, drain_started.elapsed());
     let explicit_request = !request.explicit_files.is_empty();
     timings.phase("command.locks");
     let (run_output, completed_files, busy_files) = if explicit_request {
-        let locks =
-            index_lock::lock_project_files(&target_ctx, &request.explicit_files, lock_policy)?;
+        let locks = match index_lock::lock_project_files(
+            target_ctx,
+            &request.explicit_files,
+            lock_policy,
+        ) {
+            Ok(locks) => locks,
+            Err(error) => {
+                return queue_on_lock_timeout(error, || {
+                    queue_paths(target_ctx, &request.explicit_files)
+                        .map(|count| format!("{count} path(s)"))
+                });
+            }
+        };
         if locks.acquired_files.is_empty() {
             print_all_files_busy(&locks.busy_files, format)?;
             std::io::stdout().flush()?;
-            std::process::exit(3);
+            return Ok(IndexRunStatus::Skipped);
         }
         let mut acquired_request = request;
         acquired_request.explicit_files = locks.acquired_files.clone();
         timings.phase("command.index");
-        let run_output = run_index_locked(&target_ctx, acquired_request)?;
+        let run_output = run_index_locked(target_ctx, acquired_request)?;
         (
             run_output,
             locks.acquired_files.clone(),
             locks.busy_files.clone(),
         )
     } else {
-        let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
+        let (path_filter, full) = (request.path_filter.clone(), request.full);
+        let locked = index_lock::with_project_lock(target_ctx, lock_policy, || {
             timings.phase("command.index");
-            run_index_locked(&target_ctx, request)
-        })?;
-        let run_output = match run_output {
-            IndexLockResult::Acquired(run_output) => run_output,
-            IndexLockResult::Busy(holder) => {
+            run_index_locked(target_ctx, request)
+        });
+        let run_output = match locked {
+            Ok(IndexLockResult::Acquired(run_output)) => run_output,
+            Err(error) => {
+                return queue_on_lock_timeout(error, || {
+                    let dir = index_pending::pending_dir(&target_ctx.project_id)?;
+                    index_pending::persist_whole_tree(&dir, path_filter.as_deref(), full)?;
+                    Ok("a whole-tree index run".to_string())
+                });
+            }
+            Ok(IndexLockResult::Busy(holder)) => {
                 let holder = holder
                     .map(|holder| format!("; {holder}"))
                     .unwrap_or_default();
@@ -103,7 +178,7 @@ pub fn run(
                             target_ctx.project_id, holder
                         );
                     }
-                    std::process::exit(3);
+                    return Ok(IndexRunStatus::Skipped);
                 }
                 anyhow::bail!(
                     "index lock is busy for project {}; wait policy did not acquire it{}",
@@ -145,7 +220,151 @@ pub fn run(
                 Format::Text => output::print_text(&index_text(&outcome)),
             }
         }
+    }?;
+    Ok(IndexRunStatus::Completed)
+}
+
+/// Indexes the paths that earlier timed-out runs queued, then deletes each batch whose paths
+/// are no longer busy. A batch the lock still holds stays queued for the next run.
+fn drain_queued_paths(
+    target_ctx: &Context,
+    request: &IndexRequest,
+    lock_policy: IndexLockPolicy,
+) -> anyhow::Result<()> {
+    let mut batches = Vec::new();
+    for batch in index_pending::take(&index_pending::pending_dir(&target_ctx.project_id)?)? {
+        if batch.paths().is_empty() {
+            continue;
+        }
+        if !index_pending::batch_stays_within_root(&target_ctx.project_root, &batch.batch) {
+            eprintln!(
+                "warning: skipping a queued index batch whose paths leave the project root; it stays queued on disk"
+            );
+            continue;
+        }
+        batches.push(batch);
     }
+    if batches.is_empty() {
+        return Ok(());
+    }
+    let mut paths: Vec<PathBuf> = batches
+        .iter()
+        .flat_map(|batch| batch.paths().iter().cloned())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    let locks = match index_lock::lock_project_files(target_ctx, &paths, lock_policy) {
+        Ok(locks) => locks,
+        Err(error) if error.is::<LockWaitTimeout>() => {
+            eprintln!(
+                "index lock wait timed out; {} queued path(s) stay queued for the next index run",
+                paths.len()
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    if !locks.acquired_files.is_empty() {
+        run_index_locked(
+            target_ctx,
+            IndexRequest {
+                project_root: target_ctx.project_root.clone(),
+                path_filter: None,
+                explicit_files: locks.acquired_files.clone(),
+                full: false,
+                require_cpp_semantics: request.require_cpp_semantics,
+                sync_projections: request.sync_projections,
+            },
+        )?;
+    }
+    for batch in &batches {
+        if batch
+            .paths()
+            .iter()
+            .all(|path| !locks.busy_files.contains(path))
+        {
+            index_pending::settle(batch)?;
+        }
+    }
+    Ok(())
+}
+
+/// Runs each queued whole-tree marker under the project lock, oldest first, and settles it once
+/// its run succeeds. A wait that runs out stops the drain: the markers stay queued and the
+/// current run continues with whatever budget is left.
+fn drain_queued_whole_tree(
+    target_ctx: &Context,
+    request: &IndexRequest,
+    lock_policy: IndexLockPolicy,
+) -> anyhow::Result<()> {
+    let batches = index_pending::take(&index_pending::pending_dir(&target_ctx.project_id)?)?;
+    let started = Instant::now();
+    for batch in batches {
+        let index_pending::Batch::WholeTree { path_filter, full } = &batch.batch else {
+            continue;
+        };
+        if !index_pending::batch_stays_within_root(&target_ctx.project_root, &batch.batch) {
+            eprintln!(
+                "warning: skipping a queued whole-tree index run whose path filter leaves the project root; it stays queued on disk"
+            );
+            continue;
+        }
+        let marker_request = IndexRequest {
+            project_root: target_ctx.project_root.clone(),
+            path_filter: path_filter.clone(),
+            explicit_files: Vec::new(),
+            full: *full,
+            require_cpp_semantics: request.require_cpp_semantics,
+            sync_projections: request.sync_projections,
+        };
+        let policy = index_lock::remaining_policy(lock_policy, started.elapsed());
+        match index_lock::with_project_lock(target_ctx, policy, || {
+            run_index_locked(target_ctx, marker_request)
+        }) {
+            Ok(IndexLockResult::Acquired(_)) => index_pending::settle(&batch)?,
+            Ok(IndexLockResult::Busy(_)) => break,
+            Err(error) if error.is::<LockWaitTimeout>() => {
+                eprintln!("index lock wait timed out; the queued whole-tree run stays queued");
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// A bounded lock wait that runs out queues its work durably and yields with status 3, so the
+/// next index run takes it. Any other failure stays an error, and so does a failed queue write.
+fn queue_on_lock_timeout(
+    error: anyhow::Error,
+    queue: impl FnOnce() -> anyhow::Result<String>,
+) -> anyhow::Result<IndexRunStatus> {
+    if !error.is::<LockWaitTimeout>() {
+        return Err(error);
+    }
+    match queue() {
+        Ok(queued) => {
+            eprintln!("index lock wait timed out; queued {queued} for the next index run");
+            Ok(IndexRunStatus::Skipped)
+        }
+        Err(queue_error) => Err(error.context(format!(
+            "could not queue timed-out index work: {queue_error:#}"
+        ))),
+    }
+}
+
+fn queue_paths(target_ctx: &Context, paths: &[PathBuf]) -> anyhow::Result<usize> {
+    let mut relative = paths
+        .iter()
+        .map(|path| index_lock::normalize_file_lock_path(&target_ctx.project_root, path))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    relative.sort();
+    relative.dedup();
+    index_pending::persist(
+        &index_pending::pending_dir(&target_ctx.project_id)?,
+        &relative,
+    )?;
+    Ok(relative.len())
 }
 
 fn explicit_index_json_payload(
@@ -207,6 +426,14 @@ pub(crate) fn run_index_locked(
     request: IndexRequest,
 ) -> anyhow::Result<RunIndexLockedOutput> {
     let sync_projections = request.sync_projections;
+    // An explicit-file run repairs only its own files; any other run repairs the whole
+    // collection. Both reset versions that lost symbol points for the pending-sync worker.
+    let repair_scope = (!request.explicit_files.is_empty()).then(|| {
+        crate::index::indexer::explicit_file_storage_paths(
+            &request.project_root,
+            &request.explicit_files,
+        )
+    });
     let mut index_progress = StderrIndexProgress::new(ctx.quiet);
     let mut outcome = api::index_files(
         request,
@@ -214,6 +441,13 @@ pub(crate) fn run_index_locked(
         api::IndexOptions::with_progress(&mut index_progress),
     )?;
     if !sync_projections {
+        // The default request repairs missing vectors too; only projection sync is opt-in.
+        outcome
+            .degraded
+            .extend(vector_reconcile::repair_after_index(
+                ctx,
+                repair_scope.as_deref(),
+            ));
         return Ok(RunIndexLockedOutput::IndexOnly(outcome));
     }
 
@@ -227,6 +461,12 @@ pub(crate) fn run_index_locked(
         sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
         &mut projection_progress,
     );
+    outcome
+        .degraded
+        .extend(vector_reconcile::repair_after_index(
+            ctx,
+            repair_scope.as_deref(),
+        ));
     // Refresh the stored hotspot snapshot once the graph is in sync. A failed refresh
     // is a visible degradation; the index itself still succeeds.
     outcome
@@ -474,6 +714,14 @@ fn path_filter_for(
         Some(target_abs)
     }
 }
+
+#[cfg(test)]
+#[path = "index/explicit_run_tests.rs"]
+mod explicit_run_tests;
+
+#[cfg(test)]
+#[path = "index/lock_policy_tests.rs"]
+mod lock_policy_tests;
 
 #[cfg(test)]
 mod tests {

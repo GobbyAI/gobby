@@ -21,6 +21,7 @@ from gobby.config.code_index import CodeIndexConfig
 
 if TYPE_CHECKING:
     from gobby.code_index.maintenance_launch import MaintenanceLaunchFactory
+    from gobby.code_index.trigger import CodeIndexTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,10 @@ class CodeIndexContext:
     provides access to storage and gcode projection lifecycle operations for
     the sync worker, maintenance loop, and HTTP invalidate endpoint.
     """
+
+    # Set once the daemon builds its trigger. A landing that cannot index its paths hands
+    # them here, so the trigger retries them until the index lock frees.
+    index_trigger: CodeIndexTrigger | None = None
 
     def __init__(
         self,

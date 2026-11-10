@@ -162,14 +162,15 @@ gcode graph clear --project-id <id>       # Clear graph projection by explicit p
 gcode graph sync-file --file src/lib.rs   # Sync one indexed file into the graph projection
 gcode graph rebuild                       # Rebuild current project's graph projection
 gcode graph cleanup-orphans               # Remove project-wide orphaned graph nodes
-gcode vector cleanup-orphans              # Remove code-symbol vectors for unindexed files
+gcode vector reconcile                    # Dry-run code-symbol vector inventory + digest
+gcode vector reconcile --apply --expect-digest <digest> --receipt <file>  # Operator apply
 
 # Project management
 gcode status                              # Index stats
 gcode projects                            # List all indexed projects
 gcode index                               # Re-index (incremental)
 gcode invalidate                          # Clear index, force full re-index
-gcode prune                               # Remove stale projects + reconcile orphaned projections
+gcode prune                               # Remove stale projects + unreferenced content versions
 
 # Cross-project queries
 gcode search --project myapp "query"      # By project name

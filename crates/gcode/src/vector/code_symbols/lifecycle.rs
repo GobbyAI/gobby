@@ -12,8 +12,8 @@ use gobby_core::qdrant::UpsertRequest;
 use super::embedding::{EmbeddingBackend, EmbeddingSource, dimension_probe_text};
 use super::qdrant::{
     VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_project_collection,
-    delete_vectors_for_filter, parse_collection_schema, qdrant_http_error,
-    qdrant_request_for_config,
+    delete_vectors_for_filter, delete_vectors_for_filter_excluding_ids, parse_collection_schema,
+    qdrant_http_error, qdrant_request_for_config,
 };
 use super::types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput, CodeSymbolVectorPayload,
@@ -114,6 +114,23 @@ impl CodeSymbolVectorLifecycle {
             vectors_upserted,
             0,
         ))
+    }
+
+    /// Deletes this project's vector points for `file_path` whose ids are not in `keep_ids`.
+    pub fn prune_file_points(
+        &self,
+        file_path: &str,
+        keep_ids: &[String],
+    ) -> Result<usize, VectorLifecycleError> {
+        self.require_qdrant_boundary()?;
+        delete_vectors_for_filter_excluding_ids(
+            &self.client,
+            &self.qdrant,
+            &self.collection,
+            &self.project_id,
+            Some(file_path),
+            keep_ids,
+        )
     }
 
     pub fn clear_project_vectors(

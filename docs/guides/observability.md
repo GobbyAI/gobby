@@ -11,8 +11,7 @@ The daemon records operational data at several layers:
 - OpenTelemetry spans describe traced operations.
 - Hub-backed metrics aggregate MCP tool calls and event history.
 - Token events record model usage by source, model, project, and session.
-- Savings events record token or character savings from code index, compression,
-  discovery, and related systems.
+- Savings events are not currently produced; no subsystem posts them to the daemon.
 - Admin HTTP routes expose health and dashboard data.
 - HTTP reports expose chart data and stored spans. The current Activity panel
   hides the Traces tab.
@@ -231,7 +230,46 @@ The `gobby-metrics` MCP server includes tools for:
 
 ## Token Usage And Savings
 
-Token usage is exposed by:
+Three separate surfaces answer three separate questions. Do not combine them.
+
+- **Account quota:** how much provider allowance is left. Read
+  `gobby-metrics:get_provider_capacity` or `gobby tokens quota [PROVIDER...]`.
+  Sources and freshness are in [Provider Capacity](#provider-capacity).
+- **Context occupancy:** how full a session's context window is. Read
+  `gobby-sessions:get_session` and its `context_window`, `context_usage_ratio`,
+  `context_usage_source`, `context_usage_confidence` and
+  `context_usage_updated_at` fields. Occupancy snapshots describe one session's
+  current window. They are not accounting: subagent calls and rebuilt history
+  never change them.
+- **Spend:** what was used per call, per session or per task. Read
+  `gobby-metrics:get_usage_ledger`, `GET /api/admin/usage/ledger`, or
+  `gobby tokens ledger`.
+
+The ledger takes exactly one of a session or a task. Each page returns rows in
+`(event_at, session_id, message_key)` order with a `next_cursor`. Totals, reported
+spend, durations and coverage describe the whole scope on every page; cursor and
+limit never filter them. Paging is a live traversal, not a frozen export: usage
+ingested between two pages raises the later page's totals and appears on it or a
+later page, and a late row sorted before an issued cursor counts in the totals but
+appears only when the traversal restarts without a cursor.
+
+Read `coverage` before any number. Each source states whether its tokens,
+`api_calls` and spend are `exact`, `reported` or `unknown`, with a reason, and
+`unkeyed_rows` counts rows without a message id. `spend_observed` separates
+unknown spend (`no reported run`) from a reported run whose amount is zero.
+Reported amounts stay in the provider's own unit (USD or credits); Gobby keeps no
+price table.
+
+Task attribution uses claim intervals. The latest claim wins when intervals
+overlap, so each call belongs to at most one task. A reported run counts toward a
+task only when one interval of that task covers the whole run and no other
+interval of the session opens inside it; otherwise it appears under `unattributed`
+and is never split. Intervals start with migration 463, which opened one interval
+for each task held at deploy time; earlier history is not reconstructed.
+`attribution_since` reports the earliest interval. Interval edges use the database
+clock, so compare them with database timestamps, not client clocks.
+
+Aggregate token volume is exposed by:
 
 ```text
 /api/admin/usage
@@ -395,6 +433,42 @@ windows, support flag, and reason alongside its four-state result:
 The service normally reuses observations for 60 seconds, shares concurrent
 refreshes, and persists successful observations. A read may therefore refresh
 provider data. Unknown capacity is neither unlimited quota nor exhaustion.
+`gobby tokens quota [PROVIDER...]` prints the same snapshot from the CLI.
+
+Observations come from verified provider signals only. Pane text is never
+quota evidence:
+
+| Provider | Verified signal | Otherwise |
+| --- | --- | --- |
+| Claude | A typed `rate_limit_event` in the native transcript record, when the provider actually emits one | Unknown; no statusline or bare 429 inference |
+| Codex | Transcript `rate_limits` windows and reached flags, observed by the live collector, plus a typed `usage_limit_exceeded` error | Unknown; the account credit balance is quota detail, never session spend |
+| AGY | The existing `/usage` reporter windows | Unknown or stale on reporter failure |
+| Grok, Droid, Qwen | None admitted | Unknown |
+
+For every provider, a fresh pane match of the provider's exact limit message
+(for example Codex "You've hit your usage limit") is a possible-limit hint only.
+A hint carries no window, percent, reset time or recovery, and a hint-only
+snapshot still reads `unknown`.
+
+Each snapshot persists per-component `details`: limit id, scope, state,
+`source_observed_at`, `resets_at`, and whether the component is fresh. A
+component goes stale when its source reading is older than 900 seconds
+(`source_older_than_900s`) or its reset time has passed (`reset_passed`).
+Components with unknown scope never become a provider-wide window, and missing
+numbers stay absent rather than zero. Recovery is accepted only from a verified
+signal or a later reset epoch.
+
+Quota edges go to the operator channel named by
+`communications.operator_alert_channel`, never to agent sessions. Each window
+raises `warn` at 90% and `exhausted` at its limit, once per level, and `reset`
+when a later reset epoch arrives after an alert. Account-wide `limit_reached`
+fires on a verified reached flag, and `drawing_credits` fires when a balance falls
+while the account is exhausted. A pane hint raises a separate `possible limit`
+alert, at most once per 900 seconds per provider. With communications disabled
+or no channel set, edges are logged at INFO. Delivery failures never change quota
+state. Alert state starts from the first capture after deploy and from the
+persisted state after a restart, so an edge that happened while the daemon was
+down is not replayed.
 
 ## Metrics Retention And Reset
 
@@ -438,6 +512,14 @@ It requires an intentional repair request and a usable authoritative transcript.
 Missing sessions or unreadable transcripts can be reported and skipped; inspect
 the summary and diagnostics, not only the process exit code. Test repairs against
 isolated fixture transcripts and the test hub, never live user sessions.
+
+After a deploy that changes ledger identity, the operator runs
+`uv run gobby tokens audit --all --fix` once so stored rows match the current
+per-call keys. The audit deduplicates parsed events by message id, so repeated
+cumulative totals are not drift. A stored row with no message id is drift:
+`--fix` replaces it with keyed rows, and the ledger's `unkeyed_rows` count shows
+how many remain. `--fix` never deletes a row ingested after the audit read the
+stored rows.
 
 ## File Locations
 

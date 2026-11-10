@@ -389,7 +389,7 @@ async def ensure_isolation_code_index(
             env=probe_env,
         )
     finally:
-        finish_spawn_phase(phase_timings_ms, "code_index_index", index_started)
+        finish_spawn_phase(phase_timings_ms, "code_overlay_index", index_started)
 
     search_started = start_spawn_phase()
     try:
