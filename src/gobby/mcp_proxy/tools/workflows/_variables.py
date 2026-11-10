@@ -116,7 +116,7 @@ def set_variable(
     )
     authority_error = native_variable_write_error(
         SET_VARIABLE_TOOL,
-        {"name": name, "session_id": resolved_session_id},
+        {"name": name, "session_id": resolved_session_id, "scope": scope},
         caller_id,
         authority_variables,
         session_manager,

@@ -223,6 +223,10 @@
     "status": "proxied",
     "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:476` (`create_communications_registry::add_channel`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
   },
+  "MCP gobby-communications:compose_status_report": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:271` (`compose_status_report`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
   "MCP gobby-communications:attach_conversation": {
     "status": "proxied",
     "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:262` (`create_communications_registry::attach_conversation`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."

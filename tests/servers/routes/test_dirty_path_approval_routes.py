@@ -85,7 +85,7 @@ def _route(session_id: str) -> str:
 
 
 def _body(checkout: Path, paths: list[str] | None = None) -> dict[str, Any]:
-    return {"checkout_root": str(checkout), "paths": paths or ["a.txt"]}
+    return {"checkout_root": str(checkout), "paths": paths or ["a.txt"], "reason": "test release"}
 
 
 def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
@@ -162,12 +162,16 @@ def test_dirty_path_approval_route_records_a_verified_operator_approval(
     assert approved_dirty_paths(variables, str(tmp_path)) == {"a.txt"}
 
     relative = operator.post(
-        _route(seat.id), json={"checkout_root": "relative", "paths": ["a.txt"]}
+        _route(seat.id), json={"checkout_root": "relative", "paths": ["a.txt"], "reason": "r"}
     )
     escape = operator.post(_route(seat.id), json=_body(tmp_path, ["../escape.txt"]))
     missing = operator.post(_route(str(uuid.uuid4())), json=_body(tmp_path))
+    unexplained = operator.post(
+        _route(seat.id), json={"checkout_root": str(tmp_path), "paths": ["a.txt"]}
+    )
 
     assert relative.status_code == 400
     assert escape.status_code == 400
     assert missing.status_code == 404
+    assert unexplained.status_code == 422
     assert approved_dirty_paths(_variables(db, seat.id), str(tmp_path)) == {"a.txt"}

@@ -8,7 +8,7 @@ import os
 import re
 import signal
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,6 +48,14 @@ _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
 _CHECKOUT_ERROR_CODES = frozenset({"checkout_required", "checkout_mismatch"})
 _TIMEOUT_OUTPUT_LIMIT_BYTES = 4096
 _PROCESS_CLEANUP_TIMEOUT_SECONDS = 1.0
+# Process-wide reader installed by the daemon; None keeps pinning on.
+_code_index_enabled: Callable[[], bool] | None = None
+
+
+def set_code_index_enabled_resolver(resolver: Callable[[], bool] | None) -> None:
+    """Install the reader that says whether code indexing is on."""
+    global _code_index_enabled
+    _code_index_enabled = resolver
 
 
 def _bounded_timeout_output(data: bytes, *, suffix: bytes = b"") -> bytes:
@@ -648,7 +656,13 @@ class GcodeGateway(GcodeReconcileMixin):
         )
 
     async def pin_project(self, project_root: Path) -> None:
-        """Pin the checkout's isolation-marker selectors into its overlay."""
+        """Pin the checkout's isolation-marker selectors into its overlay.
+
+        Skipped when code indexing is off: pinning needs the parent code index, which
+        exists only when indexing runs. Every pin caller shares this guard.
+        """
+        if _code_index_enabled is not None and not _code_index_enabled():
+            return
         binary = await self._ensure_version()
         await self._run_command([binary, "pin", "--quiet", "--project", str(project_root)])
 

@@ -489,7 +489,7 @@
   },
   "HTTP POST /api/runtime/signed-request/nonce": {
     "status": "proxied",
-    "note": "Python `src/gobby/servers/routes/signed_request.py::create_signed_request_router.<locals>.issue_nonce (line 41)`; blocked on Rust config/runtime family handler for `HTTP POST /api/runtime/signed-request/nonce` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
+    "note": "Python `src/gobby/servers/routes/signed_request.py:40` (`create_signed_request_router.<locals>.issue_nonce`); blocked on Rust config/runtime family handler for `HTTP POST /api/runtime/signed-request/nonce` and its delegate flip. Owner: #21559 Config, runtime handshake, and grant issuing."
   },
   "HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate": {
     "status": "proxied",

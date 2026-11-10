@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Self
 from uuid import UUID, uuid4
@@ -12,8 +13,9 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
+from gobby.tasks.attestation_authorship import attestation_authorship_refusal
 from gobby.tasks.attestation_shapes import attestation_shape_refusal
-from gobby.tasks.claim_flow import advance_claim_flow
+from gobby.tasks.claim_flow import ClaimFlowStall, advance_claim_flow
 from gobby.tasks.lifecycle_access import task_scope_refusal
 from gobby.utils.datetime import utc_now
 from gobby.workflows.agent_resolver import session_agent_definition
@@ -200,9 +202,28 @@ def _records(conn: Transaction, task_id: str) -> list[TaskAttestation]:
     return records
 
 
+@dataclass(frozen=True)
+class AttestationRecording:
+    """The recorded attestation, whether this call created it, and any claim-flow stall."""
+
+    record: TaskAttestation
+    created: bool
+    claim_flow_stalled: ClaimFlowStall | None = None
+
+
 def record_attestation(
     db: HubDatabase, *, task_id: str, session_id: str, submission: AttestationSubmission
 ) -> tuple[TaskAttestation, bool]:
+    """Record evidence and return the attestation with whether this call created it."""
+    recording = record_attestation_recording(
+        db, task_id=task_id, session_id=session_id, submission=submission
+    )
+    return recording.record, recording.created
+
+
+def record_attestation_recording(
+    db: HubDatabase, *, task_id: str, session_id: str, submission: AttestationSubmission
+) -> AttestationRecording:
     """Serialize evidence additions on their task, authenticating every new author.
 
     No kind, result, reference scheme or domain workflow has special meaning here.
@@ -236,7 +257,7 @@ def record_attestation(
                     )
                     if not _same_content(original, submission):
                         raise AttestationError("idempotency key already names different evidence")
-                    return record, False
+                    return AttestationRecording(record, False)
         if not ({"*", submission.kind} & set(body.task_attestation_writes)):
             raise AttestationError("definition has no writer grant for this attestation kind")
         kind = body.task_attestation_kinds.get(submission.kind)
@@ -253,6 +274,16 @@ def record_attestation(
             raise AttestationError(refusal)
         if task.closed_at is not None:
             raise AttestationError("closed tasks cannot receive new attestations")
+        rules = RuleDefinitionManager(db).list_effective(task.project_id)
+        if authorship_refusal := attestation_authorship_refusal(
+            kind=submission.kind,
+            session_id=session_id,
+            records=records,
+            reference=submission.reference,
+            agent=body,
+            rules=rules,
+        ):
+            raise AttestationError(authorship_refusal)
         reference = submission.reference
         if shape_refusal := attestation_shape_refusal(
             kind=submission.kind,
@@ -262,7 +293,7 @@ def record_attestation(
             task=task.to_dict(),
             agent=body,
             declared=kind,
-            rules=RuleDefinitionManager(db).list_effective(task.project_id),
+            rules=rules,
         ):
             raise AttestationError(shape_refusal)
         if submission.supersedes_id is not None:
@@ -291,5 +322,5 @@ def record_attestation(
             (record.id, task_id, session_id, AUTHOR_TYPE, record.model_dump_json()),
         )
         conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
-        advance_claim_flow(db, conn, task, record, [*records, record])
-    return record, True
+        stalled = advance_claim_flow(db, conn, task, record, [*records, record])
+    return AttestationRecording(record, True, stalled)

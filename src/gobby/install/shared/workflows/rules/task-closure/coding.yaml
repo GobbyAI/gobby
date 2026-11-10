@@ -1,9 +1,9 @@
-version: "2.1.0"
+version: "3.0.0"
 tags: [task-closure-coding]
 
 rules:
   coding-closure-requires-evidence:
-    description: The coding example requires TDD, implementation, validation, OCR and a closing review.
+    description: The coding example requires TDD, implementation, validation and a closing review.
     event: task_close
     priority: 20
     when: >-
@@ -11,10 +11,10 @@ rules:
       'epic-devteam' not in (task.get('labels') or []) and
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       any(latest_attestation(kind).get('result') != 'approved'
-          for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review', 'closing'])
+          for kind in ['test-before', 'implementation', 'test-after', 'validation', 'closing'])
     effects:
       - type: block
-        reason: Record approved test-before, implementation, test-after, validation, self-review and closing attestations. Describe any justified test non-applicability in the evidence.
+        reason: Record approved test-before, implementation, test-after, validation and closing attestations. Describe any justified test non-applicability in the evidence.
 
   coding-closure-requires-tdd-order:
     description: Tests-first evidence precedes implementation and the passing rerun follows it.
@@ -65,23 +65,23 @@ rules:
         reason: Commit the task's attributed changes and integrate its linked commits before closing.
 
   coding-landing-requires-evidence:
-    description: Validate and self-review coding deliverables before integration.
+    description: Validate coding deliverables before integration.
     event: task_land
     priority: 20
     when: >-
       task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
       'epic-devteam' not in (task.get('labels') or []) and
       any(latest_attestation(kind).get('result') != 'approved'
-          for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review'])
+          for kind in ['test-before', 'implementation', 'test-after', 'validation'])
     attestation_shape:
-      kinds: [test-before, implementation, test-after, validation, self-review]
+      kinds: [test-before, implementation, test-after, validation]
       result: approved
       applies_when: &coding_task >-
         task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
         'epic-devteam' not in (task.get('labels') or [])
     effects:
       - type: block
-        reason: Record approved TDD, implementation, validation and OCR self-review attestations before landing.
+        reason: Record approved TDD, implementation and validation attestations before landing.
 
   coding-landing-requires-tdd-order:
     description: Coding delivery preserves the declared tests-first sequence.
@@ -93,7 +93,7 @@ rules:
         reason: Attest the tests-first check, implementation and passing rerun in that order.
 
   coding-closure-requires-candidate-evidence:
-    description: Implementation, passing checks and OCR attest the resolved current candidate.
+    description: Implementation, passing checks and validation attest the resolved current candidate.
     event: task_close
     priority: 24
     when: &coding_candidate_evidence >-
@@ -107,10 +107,10 @@ rules:
                  any(receipt.get('commit_sha') == (latest_attestation(kind).get('reference') or {}).get('value') and
                      receipt.get('facts', {}).get('landed_tip') == facts.get('candidate_commit_sha')
                      for receipt in facts.get('landing_receipts', []))))
-           for kind in ['implementation', 'test-after', 'validation', 'self-review']))
+           for kind in ['implementation', 'test-after', 'validation']))
     effects:
       - type: block
-        reason: Reference the resolved full Git candidate in implementation, passing-test, validation and OCR attestations.
+        reason: Reference the resolved full Git candidate in implementation, passing-test and validation attestations.
 
   coding-landing-requires-candidate-evidence:
     description: A new delivery candidate needs its own implementation and validation evidence.
@@ -118,9 +118,9 @@ rules:
     priority: 24
     when: *coding_candidate_evidence
     attestation_shape:
-      kinds: [implementation, test-after, validation, self-review]
+      kinds: [implementation, test-after, validation]
       reference: {scheme: git, value_pattern: '[0-9a-f]{40}'}
       applies_when: *coding_task
     effects:
       - type: block
-        reason: Reference this full Git candidate in implementation, passing-test, validation and OCR attestations.
+        reason: Reference this full Git candidate in implementation, passing-test and validation attestations.

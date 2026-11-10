@@ -239,3 +239,13 @@ async def test_detached_default_has_no_side_effects(repo: Path, tmp_path: Path) 
     assert not result.success
     assert result.error_code == "detached_head_requires_base"
     assert not child.parent.exists()
+
+
+@pytest.mark.parametrize("base", [None, "main"])
+async def test_fork_survives_a_loaded_host(
+    repo: Path, tmp_path: Path, loaded_host: None, base: str | None
+) -> None:
+    child = tmp_path / "loaded-fork"
+    result = await fork(repo, child, base)
+    assert result.success, result.error
+    assert git(child, "rev-parse", "HEAD") == git(repo, "rev-parse", "HEAD")

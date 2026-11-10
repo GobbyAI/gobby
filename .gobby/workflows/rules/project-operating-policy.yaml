@@ -1,4 +1,4 @@
-version: "1.9.0"
+version: "1.11.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -99,7 +99,16 @@ rules:
               "src/gobby/worktrees/deletion.py",
               "src/gobby/worktrees/git/_status.py",
               "src/gobby/worktrees/creation.py",
-              "src/gobby/servers/routes/source_control_worktrees.py"
+              "src/gobby/servers/routes/source_control_worktrees.py",
+              "src/gobby/agents/srt_runner.mjs",
+              "src/gobby/utils/dependency_requirements.py",
+              "crates/gdaemon/src/nodes/agents/sandbox/verify.rs",
+              "src/gobby/sessions/owner_process_tree.py",
+              "src/gobby/adapters/codex_impl/pending_execution.py",
+              "src/gobby/install/shared/workflows/rules/worker-safety/no-process-environment-listing.yaml",
+              "crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh",
+              "src/gobby/agents/droid_ps_shim.py",
+              "src/gobby/terminals/foreground.py"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–06:30 America/Chicago daily",
@@ -158,7 +167,7 @@ rules:
           - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-user label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
           - Present every time to the operator in project_policy.operator_timezone; convert UTC timestamps first.
-          - Friction: work around it. A YAML-only fix the Orchestrator makes live. A blocking item that can't be worked around goes under the Friction epic #25603 with a team launched for it. A non-blocking item goes under the non-blocking sub-epic #25662, which the Consolidator periodically consolidates and exactly one team works.
+          - Friction: work around it. A YAML-only fix the Orchestrator makes live. A blocking item that can't be worked around goes under the Friction epic #25603 with a team launched for it. A non-blocking item goes under the non-blocking sub-epic #25662, which the Consolidator consolidates hourly and up to three teams work.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected
@@ -197,7 +206,7 @@ rules:
           - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.
           - Place panes by project_policy.workspace_layout.
-          - Friction: work around it and report it to Triage. The Orchestrator fixes YAML-only items live, files a blocking item under the Friction epic #25603 with a team launched for it, and files a non-blocking item under the sub-epic #25662, which the Consolidator periodically consolidates and exactly one team works.
+          - Friction: work around it and report it to Triage. The Orchestrator fixes YAML-only items live, files a blocking item under the Friction epic #25603 with a team launched for it, and files a non-blocking item under the sub-epic #25662, which the Consolidator consolidates hourly and up to three teams work.
       - type: set_variable
         delivery: on_receipt
         variable: _runbook_policy_injected

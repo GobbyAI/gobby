@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -23,9 +23,11 @@ from gobby.status_report.model import (
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._queries import projected_task_state_sql
+from gobby.storage.worktree_notes import WorktreeNote, WorktreeNoteStore
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.tasks.close_receipts import CLOSE_RECEIPT_AUTHOR_TYPE, LANDING
 from gobby.tasks.state_semantics import TASK_HOLD_STATES
+from gobby.utils.spawn import run as spawn_run
 
 _GIT_TIMEOUT_SECONDS = 10.0
 _NEEDS_DECISION_LABEL = "needs-decision"
@@ -129,6 +131,7 @@ def collect_status(
     latest = _latest_attestations(db, project_id)
     claims = _open_claims(db, project_id)
     refs = _task_refs(db, _referenced_task_ids(runs, worktrees))
+    notes = WorktreeNoteStore(db).list_for([str(worktree.id) for worktree in worktrees])
 
     in_flight = tuple(
         _in_flight(row, latest, claims) for row in open_rows if _is_in_flight(row, latest, claims)
@@ -153,7 +156,7 @@ def collect_status(
         attention=attention,
         decisions=decisions,
         stalled=_stalled(runs, refs),
-        worktrees=_worktrees(worktrees, runs, refs, integration_branch, gaps),
+        worktrees=_worktrees(worktrees, runs, refs, integration_branch, gaps, notes),
         load_5m=_load_5m(loadavg, gaps),
         load_threshold=load_threshold,
         gaps=tuple(gaps),
@@ -323,6 +326,7 @@ def _worktrees(
     refs: Mapping[str, _TaskRef],
     integration_branch: str,
     gaps: list[str],
+    notes: Mapping[str, WorktreeNote],
 ) -> tuple[WorktreeRow, ...]:
     live = {str(run.worktree_id) for run in runs if run.worktree_id is not None}
     rows: list[WorktreeRow] = []
@@ -334,7 +338,7 @@ def _worktrees(
         task_state = None if ref is None else ref.state
         live_seat = str(worktree.id) in live
         try:
-            behind, ahead, dirty, last_commit = _worktree_metrics(worktree.worktree_path, base)
+            metrics = _worktree_metrics(worktree.worktree_path, base)
         except _GitUnavailable as exc:
             gaps.append(f"worktrees {branch} - git unavailable for {worktree.worktree_path}: {exc}")
             rows.append(
@@ -347,6 +351,7 @@ def _worktrees(
                     behind=None,
                     dirty=None,
                     last_commit_at=None,
+                    note=notes.get(str(worktree.id)),
                     git_error=str(exc),
                 )
             )
@@ -357,23 +362,81 @@ def _worktrees(
                 task_seq=task_seq,
                 task_state=task_state,
                 live_seat=live_seat,
-                ahead=ahead,
-                behind=behind,
-                dirty=dirty,
-                last_commit_at=last_commit,
+                ahead=metrics.ahead,
+                behind=metrics.behind,
+                dirty=metrics.dirty,
+                last_commit_at=metrics.last_commit,
+                change_at=metrics.last_change,
+                note=notes.get(str(worktree.id)),
                 git_error=None,
             )
         )
     return tuple(rows)
 
 
-def _worktree_metrics(path: str, base: str) -> tuple[int, int, int, datetime]:
-    counts = _git_text(Path(path), "rev-list", "--left-right", "--count", f"{base}...HEAD").split()
+class _WorktreeMetrics(NamedTuple):
+    behind: int
+    ahead: int
+    dirty: int
+    last_commit: datetime
+    # The tree's last commit or dirty change, whichever is later. A reconcile note must be newer.
+    last_change: datetime
+
+
+def _worktree_metrics(path: str, base: str) -> _WorktreeMetrics:
+    root = Path(path)
+    counts = _git_text(root, "rev-list", "--left-right", "--count", f"{base}...HEAD").split()
     behind, ahead = int(counts[0]), int(counts[1])
-    status = _git_text(Path(path), "status", "--porcelain")
-    dirty = sum(1 for line in status.splitlines() if line.strip())
-    last_commit = datetime.fromisoformat(_git_text(Path(path), "log", "-1", "--format=%cI"))
-    return behind, ahead, dirty, last_commit
+    dirty, dirty_paths, staged = _dirty_entries(root)
+    last_commit = datetime.fromisoformat(_git_text(root, "log", "-1", "--format=%cI"))
+    changed = [last_commit, *(_changed_at(root, rel) for rel in dirty_paths)]
+    if staged:
+        # Staging and unstaging rewrite the index, which is itself a change to the tree.
+        changed.append(_changed_at(root, _git_text(root, "rev-parse", "--git-path", "index")))
+    return _WorktreeMetrics(behind, ahead, dirty, last_commit, max(changed))
+
+
+def _dirty_entries(root: Path) -> tuple[int, list[str], bool]:
+    """Count git's dirty records, collect every path they name, and flag any staged change.
+
+    A rename's source path follows as its own NUL-terminated record. Reporting is read-only:
+    `--no-optional-locks` keeps status from refreshing or locking the index under a seat's commit.
+    """
+    raw = _git_raw(
+        root, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"
+    )
+    records = iter(record for record in raw.split("\0") if record)
+    entries = 0
+    paths: list[str] = []
+    staged = False
+    for record in records:
+        entries += 1
+        if record[0] not in " ?":
+            staged = True
+        paths.append(record[3:])
+        if "R" in record[:2]:
+            paths.append(next(records, ""))
+    return entries, paths, staged
+
+
+def _changed_at(root: Path, rel: str) -> datetime:
+    """When a path last changed: the later of its mtime and ctime, or its nearest surviving ancestor.
+
+    lstat reads a symlink's own times, not its target's. ctime also moves on chmod and on copies
+    that keep an old mtime, which mtime alone misses.
+    """
+    path = root / rel
+    while True:
+        try:
+            info = path.lstat()
+            break
+        except (FileNotFoundError, NotADirectoryError):
+            if path.parent == path:
+                raise _GitUnavailable(f"no surviving ancestor of {root / rel}") from None
+            path = path.parent
+        except OSError as exc:
+            raise _GitUnavailable(f"cannot stat {path}: {exc}") from exc
+    return datetime.fromtimestamp(max(info.st_mtime, info.st_ctime), tz=UTC)
 
 
 def _load_5m(loadavg: Callable[[], tuple[float, float, float]], gaps: list[str]) -> float | None:
@@ -401,7 +464,7 @@ def _task_refs(db: HubDatabase, task_ids: Sequence[str]) -> dict[str, _TaskRef]:
 
 def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(
+        return spawn_run(
             ["git", "-C", str(cwd), *args],
             capture_output=True,
             text=True,
@@ -412,11 +475,16 @@ def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         raise _GitUnavailable(str(exc) or type(exc).__name__) from exc
 
 
-def _git_text(cwd: Path, *args: str) -> str:
+def _git_raw(cwd: Path, *args: str) -> str:
+    """Stdout exactly as git wrote it. Porcelain output begins with a status flag that strip would eat."""
     proc = _run_git(cwd, *args)
     if proc.returncode != 0:
         raise _GitUnavailable(proc.stderr.strip() or f"exit {proc.returncode}")
-    return proc.stdout.strip()
+    return proc.stdout
+
+
+def _git_text(cwd: Path, *args: str) -> str:
+    return _git_raw(cwd, *args).strip()
 
 
 def active_worktrees(db: HubDatabase, project_id: str) -> list[Worktree]:
