@@ -1,5 +1,5 @@
 name: code-reviewer
-version: "3.3.0"
+version: "4.0.0"
 description: Independently reviews the exact candidate and validates its task criteria; reviews an epic holistically.
 tags:
 - gobby

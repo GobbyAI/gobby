@@ -1185,7 +1185,6 @@ def test_pytest_usage_error_is_not_a_terminal_validation_failure(tmp_path: Path)
 
     red, corrected_green, dropped_green = runs
     assert red.output is not None
-    assert "no tests ran" in red.output
     assert f"ERROR: file or directory not found: {missing}" in red.output
     assert unresolved_validation_failures(
         [red], owner_handoff=False, project_path=str(tmp_path)

@@ -43,6 +43,6 @@ for Gobby-specific authoring and to other capability references for procedures.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#behavioral-skill-validation).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
 
 _Last verified: 2026-09-12_

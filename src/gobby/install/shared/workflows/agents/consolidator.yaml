@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, message_assistant]
 task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
-version: "2.7.0"
+version: "3.0.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: claude
