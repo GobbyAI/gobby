@@ -285,7 +285,7 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
                 "entry_id": "session:seat",
                 "session_id": "seat",
                 "provider": "codex",
-                "definition": "Lane 1 Architect",
+                "definition": "Lane 1 Publisher",
                 "terminal": {"terminal_id": "term-seat", "backend": "native"},
                 "lifecycle_status": status,
                 "attention": attention
@@ -312,7 +312,7 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
         let corners =
             gobby_client::ui::pane_chrome::pane_corners(&ws, &chrome, ws.pane(pane), true);
         assert!(
-            corners.title.contains("Lane 1 Architect"),
+            corners.title.contains("Lane 1 Publisher"),
             "{}",
             corners.title
         );
@@ -459,10 +459,7 @@ fn tab_bar_clicks_activate_new_tab_and_scroll() {
             &mut chrome,
             &mouse(LEFT_DOWN, col, row, KeyModifiers::NONE)
         ),
-        MouseOutcome::Focus {
-            pane: pane(&ws, 1),
-            observe_only: false
-        }
+        MouseOutcome::Focus { pane: pane(&ws, 1) }
     );
     assert_eq!(chrome.active_index(), 1);
     assert_eq!(
@@ -492,10 +489,7 @@ fn tab_bar_clicks_activate_new_tab_and_scroll() {
             &mut chrome,
             &mouse(LEFT_DOWN, col, row, KeyModifiers::ALT)
         ),
-        MouseOutcome::Focus {
-            pane: pane(&ws, 0),
-            observe_only: true
-        }
+        MouseOutcome::Focus { pane: pane(&ws, 0) }
     );
     route_mouse(
         &ws,
@@ -523,10 +517,7 @@ fn tab_bar_clicks_activate_new_tab_and_scroll() {
     };
     assert_eq!(
         wheel(&mut chrome, MouseEventKind::ScrollDown, bar.x + 1),
-        MouseOutcome::Focus {
-            pane: pane(&ws, 1),
-            observe_only: false
-        }
+        MouseOutcome::Focus { pane: pane(&ws, 1) }
     );
     assert_eq!(chrome.active_index(), 1);
     wheel(&mut chrome, MouseEventKind::ScrollUp, bar.x + 1);

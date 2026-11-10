@@ -228,6 +228,7 @@
           "maintenance_interval_seconds": 3600,
           "maintenance_log_file": "~/.gobby/logs/code-index-maintenance.log",
           "missing_root_purge_observations": 3,
+          "nightly_reconcile_apply": false,
           "nightly_repair_concurrency": 1,
           "nightly_repair_cron": "0 2 * * *",
           "nightly_repair_enabled": true,
@@ -278,6 +279,7 @@
         "communications": {
           "auto_create_sessions": true,
           "enabled": false,
+          "operator_alert_channel": "",
           "webhook_base_url": "",
           "channel_defaults": {
             "burst": 5,
@@ -1380,6 +1382,7 @@
           "maintenance_interval_seconds": 3600,
           "maintenance_log_file": "~/.gobby/logs/code-index-maintenance.log",
           "missing_root_purge_observations": 3,
+          "nightly_reconcile_apply": false,
           "nightly_repair_concurrency": 1,
           "nightly_repair_cron": "0 2 * * *",
           "nightly_repair_enabled": true,
@@ -1430,6 +1433,7 @@
         "communications": {
           "auto_create_sessions": true,
           "enabled": false,
+          "operator_alert_channel": "",
           "webhook_base_url": "",
           "channel_defaults": {
             "burst": 5,

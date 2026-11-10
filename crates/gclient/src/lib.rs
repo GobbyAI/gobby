@@ -1,5 +1,9 @@
 //! Gobby terminal workspace client (`gclient`).
 
+#[cfg(test)]
+#[path = "../tests/mock_daemon/transport.rs"]
+mod mock_daemon;
+
 pub mod app;
 pub mod command;
 pub mod copy_mode;

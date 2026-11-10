@@ -227,7 +227,7 @@ fn cold_start_runs_from_pin() {
     let control_path = dir.path().join(host_support::CONTROL_SOCKET);
     host_support::wait_socket(&control_path);
 
-    let installed = std::fs::read(dir.path().join("gterm")).expect("launched binary");
+    let installed = std::fs::read(host_support::gterm_bin()).expect("launched binary");
     let hash = sha256_hex(&installed);
     let pin_path = dir.path().join(IMAGES_DIR).join(format!("gterm-{hash}"));
     assert!(pin_path.exists(), "the host pinned its launch binary");
@@ -339,7 +339,7 @@ fn only_the_socket_owner_prunes() {
     let mut first = host_support::spawn_host(dir.path());
     let control_path = dir.path().join(host_support::CONTROL_SOCKET);
     host_support::wait_socket(&control_path);
-    let running_hash = sha256_hex(&std::fs::read(dir.path().join("gterm")).expect("binary"));
+    let running_hash = sha256_hex(&std::fs::read(host_support::gterm_bin()).expect("binary"));
     let running_pin = images.join(format!("gterm-{running_hash}"));
     host_support::wait_until_host(&dir, "the socket owner prunes stale pins", || {
         !stale_before.exists()

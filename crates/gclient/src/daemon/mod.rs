@@ -11,9 +11,7 @@ mod roster;
 mod workspace;
 mod ws;
 
-pub use live::{
-    LiveDaemon, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE, SUBSCRIBED_EVENTS,
-};
+pub use live::{LiveDaemon, BROADCAST_CAPACITY, REQUEST_DEADLINE, SUBSCRIBED_EVENTS};
 pub use projects::{
     Checkout, ProjectRow, RunRow, RunSandbox, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
@@ -54,8 +52,6 @@ pub enum DaemonError {
     GoingAway,
     #[error("Daemon protocol error: {detail}")]
     Protocol { detail: String },
-    #[error("A control request is already in flight for this attachment.")]
-    ControlRequestInFlight,
     #[error("The attachment's control scope has an indeterminate result.")]
     ControlScopeIndeterminate,
     /// The daemon did not answer inside the request deadline. `request`
@@ -87,7 +83,7 @@ impl DaemonError {
             Self::Unauthorized => 401,
             Self::NotFound => 404,
             Self::Unavailable { .. } | Self::GoingAway => 503,
-            Self::ControlRequestInFlight | Self::ControlScopeIndeterminate => 409,
+            Self::ControlScopeIndeterminate => 409,
             Self::Timeout { .. } => 408,
             Self::Workspace(_) => 400,
             Self::Protocol { detail } => detail
@@ -106,7 +102,6 @@ impl DaemonError {
             Self::GoingAway => "daemon_going_away",
             Self::Protocol { detail } if detail.contains("paste_too_large") => "paste_too_large",
             Self::Protocol { .. } => "protocol",
-            Self::ControlRequestInFlight => "control_request_in_flight",
             Self::ControlScopeIndeterminate => "control_scope_indeterminate",
             Self::Timeout { .. } => "timeout",
             Self::Workspace(_) => "workspace_error",

@@ -6,7 +6,6 @@ mod attention;
 mod disconnect;
 mod live;
 mod live_attach;
-mod live_control;
 mod live_loop;
 mod live_workspace;
 mod pane;
@@ -24,8 +23,6 @@ mod workspace_panes;
 
 pub use attach::AttachState;
 pub use live::{SidebarFetch, SidebarFetchFuture};
-pub use live_control::ControlOutcome;
-use live_control::PendingControl;
 pub use live_loop::arrange::plan_arrange;
 pub use live_loop::jobs::{
     spawn_job, Coalescer, JobKey, JobLedger, JobOutcome, JobResult, JobTag, OpIntent,
@@ -49,7 +46,7 @@ pub use live_loop::projects::{
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
-pub use pane::{short_terminal_id, Backend, ControlState, Pane, PaneId, HOST_GRANT_UNAVAILABLE};
+pub use pane::{short_terminal_id, Backend, Pane, PaneId};
 pub use viewer_state::{PaneInterner, ViewerState};
 pub use workspace_ops::WorkspaceModel;
 
@@ -163,13 +160,10 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// `(project, tab)` the last `workspace.select` asked every window to
     /// show, drained by the chrome sync that shows it on the tab row's pane.
     requested_focus: Option<(String, String)>,
-    /// The control request a focus change or a queued key asked for. The loop
-    /// starts it beside the select, which is what keeps every daemon round
-    /// trip out of the click and the keystroke (#22573).
-    pending_control: Option<PendingControl>,
-    /// Stamps each started control request so a reply that outlived its focus
-    /// change can be told from the one the pane is waiting on.
-    next_control_seq: u64,
+    /// Terminals whose latest open failed and has not been retried, each with
+    /// the error text it failed with: a split waiting on one no longer holds
+    /// focus, since it cannot resolve yet.
+    open_failures: HashMap<String, String>,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -187,21 +181,12 @@ impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
     }
 
     fn take_shutdown_requests(&mut self) -> Vec<Value> {
-        let mut releases = Vec::new();
         let mut detaches = Vec::new();
         for pane_id in &self.order {
             let Some(pane) = self.panes.get(pane_id) else {
                 continue;
             };
             let attachment_id = pane.attachment_id();
-            if pane.is_held() {
-                releases.push(json!({
-                    "type": "terminal_release_control",
-                    "request_id": uuid::Uuid::new_v4().to_string(),
-                    "terminal_id": pane.terminal_id,
-                    "attachment_id": attachment_id,
-                }));
-            }
             if matches!(pane.attach_state(), AttachState::Attached { .. }) {
                 detaches.push(json!({
                     "type": "terminal_detach",
@@ -211,8 +196,7 @@ impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
                 }));
             }
         }
-        releases.extend(detaches);
-        releases
+        detaches
     }
 }
 
@@ -261,11 +245,10 @@ impl Workspace {
             shutdown_started: false,
             workspace_model: None,
             pending_placements: HashSet::new(),
-            pending_control: None,
-            next_control_seq: 0,
             placed_panes: Vec::new(),
             placement_seen: HashSet::new(),
             requested_focus: None,
+            open_failures: HashMap::new(),
         }
     }
 
@@ -468,7 +451,6 @@ impl Workspace {
             "terminal_id": terminal_id,
             "attachment_id": attachment,
             "frame_delivery": "direct",
-            "viewer": "gclient"
         }));
         self.push_frame(id, "first-frame");
         Ok(())
@@ -493,69 +475,10 @@ impl Workspace {
         pane.frames_rendered += 1;
     }
 
-    pub fn focus_pane(&mut self, id: PaneId) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
-        if let Some(prev) = self.focus {
-            if prev != id {
-                self.release_control(prev)?;
-            }
-        }
+    /// Make `id` the workspace's focused pane. Focus sends nothing to the
+    /// daemon: every attached pane is writable, so there is no lease to move.
+    pub fn focus_pane(&mut self, id: PaneId) {
         self.focus = Some(id);
-        if self.daemon.reachable() {
-            self.take_control(id)?;
-        } else {
-            let pane = self.panes.get_mut(&id).expect("pane");
-            pane.control = ControlState::Observe;
-        }
-        Ok(())
-    }
-
-    pub fn take_control(&mut self, id: PaneId) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
-        let pane = self.panes.get(&id).expect("pane");
-        if !pane.is_live() {
-            return Err(DaemonError::new(
-                409,
-                "stale_attachment",
-                "attachment is not live",
-            ));
-        }
-        let attachment = pane.attachment_id().to_string();
-        let terminal_id = pane.terminal_id.clone();
-        if !self.daemon.reachable() {
-            return Err(DaemonError::new(503, "unreachable", "daemon unreachable"));
-        }
-        self.daemon.send_ws(json!({
-            "type": "terminal_take_control",
-            "terminal_id": terminal_id,
-            "attachment_id": attachment,
-            "host_attachment_id": pane.host_attachment_id(),
-            "takeover": false
-        }))?;
-        let pane = self.panes.get_mut(&id).expect("pane");
-        pane.control = ControlState::Held;
-        pane.take_back = false;
-        pane.host_input_granted = true;
-        pane.set_lease_generation(pane.lease_generation().max(1));
-        Ok(())
-    }
-
-    pub fn release_control(&mut self, id: PaneId) -> Result<(), DaemonError> {
-        self.ensure_requests_allowed()?;
-        let pane = self.panes.get(&id).expect("pane");
-        let attachment = pane.attachment_id().to_string();
-        let terminal_id = pane.terminal_id.clone();
-        if self.daemon.ws_connected() && self.daemon.reachable() {
-            let _ = self.daemon.send_ws(json!({
-                "type": "terminal_release_control",
-                "terminal_id": terminal_id,
-                "attachment_id": attachment
-            }));
-        }
-        let pane = self.panes.get_mut(&id).expect("pane");
-        pane.control = ControlState::Observe;
-        pane.take_back = false;
-        Ok(())
     }
 
     pub fn paste_local(&mut self, id: PaneId, text: &str) -> Result<(), DaemonError> {
@@ -571,13 +494,6 @@ impl Workspace {
 
     pub fn set_bracketed_paste(&mut self, id: PaneId, on: bool) {
         self.panes.get_mut(&id).expect("pane").bracketed_paste = on;
-    }
-
-    pub fn force_held(&mut self, id: PaneId) {
-        let pane = self.panes.get_mut(&id).expect("pane");
-        pane.control = ControlState::Held;
-        pane.take_back = false;
-        pane.host_input_granted = true;
     }
 
     pub fn seed_attach_history(&mut self, id: PaneId, text: &str) {
@@ -672,7 +588,6 @@ impl Workspace {
             "attachment_id": attachment,
             "frame_delivery": "proxy",
             "encoding": "semantic_frame",
-            "viewer": "gclient"
         }))?;
         self.push_frame(id, "first-frame");
         Ok(())
@@ -710,7 +625,6 @@ impl Workspace {
                 "terminal_id": terminal_id,
                 "attachment_id": attachment,
                 "frame_delivery": "direct",
-                "viewer": "gclient"
             }))?;
         }
         Ok(())

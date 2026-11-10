@@ -98,6 +98,13 @@ class CodeIndexConfig(BaseModel):
         ge=1,
         description="Maximum concurrent nightly repair commands",
     )
+    nightly_reconcile_apply: bool = Field(
+        default=False,
+        description=(
+            "Apply the nightly vector reconcile with the digest it observed; "
+            "false runs a dry run that records counts only"
+        ),
+    )
     maintenance_log_file: str = Field(
         default="~/.gobby/logs/code-index-maintenance.log",
         description="Dedicated rotating log file for code-index prune and nightly maintenance",

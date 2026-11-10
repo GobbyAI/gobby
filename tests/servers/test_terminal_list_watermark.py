@@ -295,10 +295,11 @@ async def test_direct_lifecycle_fallbacks_are_ordered() -> None:
         {"terminal_id": "term-1", "attachment_id": detached.attachment_id},
     )
 
-    previous = await server.lease_registry.attach("term-2", attachment_id="previous")
+    # Both lease holders are web viewers: the handoff under test is the writer lease.
+    previous = await server.lease_registry.attach("term-2", attachment_id="previous", viewer="web")
     requester = MockWebSocket()
     replacement = await server.lease_registry.attach(
-        "term-2", attachment_id="replacement", websocket=requester
+        "term-2", attachment_id="replacement", websocket=requester, viewer="web"
     )
     assert (await server.lease_registry.take_control("term-2", previous.attachment_id)).granted
     await server._handle_terminal_take_control(

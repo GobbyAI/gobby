@@ -15,8 +15,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager, native_locator_key
 from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.input_grants import sync_host_input_grant
-from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalRuntime, WriteOutcome
 from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.servers.terminal_fakes import MockWebSocket
@@ -47,21 +46,6 @@ class _NativeRuntime:
         del terminal
         self.inputs.append(data)
         return Delivered()
-
-
-class _GrantingRuntime(_NativeRuntime):
-    """Records the host grant calls the lease observer makes: (terminal, holder|None)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.grants: list[tuple[str, str | None]] = []
-
-    async def grant_input(self, terminal: Any, attachment_id: str, host_attachment_id: int) -> None:
-        assert host_attachment_id == 42
-        self.grants.append((str(terminal.id), attachment_id))
-
-    async def revoke_input(self, terminal: Any, attachment_id: str | None = None) -> None:
-        self.grants.append((str(terminal.id), None))
 
 
 class _RuntimeRegistry(TerminalRuntimeRegistry):
@@ -157,6 +141,7 @@ async def test_lease_request_result_and_lost_events(
         observer,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "a1",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -183,6 +168,7 @@ async def test_lease_request_result_and_lost_events(
         holder,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "a2",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -249,6 +235,7 @@ async def test_attach_result_supplies_attachment_identity(
         ws,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "ok",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -285,6 +272,7 @@ async def test_attach_and_inventory_report_current_lease_holder(
         holder,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "holder",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -306,6 +294,7 @@ async def test_attach_and_inventory_report_current_lease_holder(
         observer,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "observer",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -313,7 +302,7 @@ async def test_attach_and_inventory_report_current_lease_holder(
     )
     expected = {
         "attachment_id": holder_attachment,
-        "kind": "gclient",
+        "kind": "web",
         "session_ref": None,
     }
     attach_result = observer.messages_of_type("terminal_attach_result")[-1]
@@ -331,8 +320,8 @@ async def test_attach_and_inventory_report_current_lease_holder(
 
 async def test_explicit_takeover_displaces_the_existing_holder() -> None:
     registry = TerminalLeaseRegistry()
-    first = await registry.attach("terminal-agent", "direct")
-    second = await registry.attach("terminal-agent", "direct")
+    first = await registry.attach("terminal-agent", "direct", viewer="web")
+    second = await registry.attach("terminal-agent", "direct", viewer="web")
     initial = await registry.take_control("terminal-agent", first.attachment_id, takeover=False)
     assert initial.granted is True
     refused = await registry.take_control("terminal-agent", second.attachment_id, takeover=False)
@@ -358,6 +347,7 @@ async def test_direct_delivery_registers_without_frame_relay(
         ws,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "d1",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -374,6 +364,7 @@ async def test_direct_delivery_registers_without_frame_relay(
         ws2,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "d2",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -408,6 +399,7 @@ async def test_paste_is_lease_gated_and_size_capped(
         ws,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "p",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -468,6 +460,7 @@ async def test_disconnect_releases_direct_and_proxy_leases(
         ws,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "x",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -492,6 +485,7 @@ async def test_disconnect_releases_direct_and_proxy_leases(
         ws2,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "y",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -525,6 +519,7 @@ async def test_release_control_is_idempotent_and_races_takeover(
         ws,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "r",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -591,6 +586,7 @@ async def test_terminal_focus_marks_the_holder_and_sends_nothing(
         ws,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "r",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
@@ -628,8 +624,8 @@ async def test_terminal_focus_marks_the_holder_and_sends_nothing(
 async def test_lease_write_linearizes_with_takeover() -> None:
     registry = TerminalLeaseRegistry()
     socket_a, socket_b = object(), object()
-    a = await registry.attach("t", frame_delivery="proxy", websocket=socket_a)
-    b = await registry.attach("t", frame_delivery="proxy", websocket=socket_b)
+    a = await registry.attach("t", frame_delivery="proxy", websocket=socket_a, viewer="web")
+    b = await registry.attach("t", frame_delivery="proxy", websocket=socket_b, viewer="web")
     gen = (await registry.take_control("t", a.attachment_id, takeover=False)).lease_generation
     await registry.take_control("t", b.attachment_id, takeover=True)
     refused = registry.admit_write(
@@ -647,9 +643,9 @@ async def test_lease_write_linearizes_with_takeover() -> None:
 @pytest.mark.asyncio
 async def test_stale_lease_generation_is_ignored() -> None:
     registry = TerminalLeaseRegistry()
-    a = await registry.attach("t", frame_delivery="proxy")
+    a = await registry.attach("t", frame_delivery="proxy", viewer="web")
     first = await registry.take_control("t", a.attachment_id, takeover=False)
-    b = await registry.attach("t", frame_delivery="proxy")
+    b = await registry.attach("t", frame_delivery="proxy", viewer="web")
     second = await registry.take_control("t", b.attachment_id, takeover=True)
     assert second.lease_generation > first.lease_generation
 
@@ -657,7 +653,7 @@ async def test_stale_lease_generation_is_ignored() -> None:
 @pytest.mark.asyncio
 async def test_frame_and_lag_paths_finalize_the_lease() -> None:
     registry = TerminalLeaseRegistry()
-    a = await registry.attach("t", frame_delivery="proxy")
+    a = await registry.attach("t", frame_delivery="proxy", viewer="web")
     await registry.take_control("t", a.attachment_id, takeover=False)
     event = await registry.finalize(a.attachment_id, reason="proxy_lag")
     assert event is not None
@@ -670,8 +666,12 @@ async def test_frame_and_lag_paths_finalize_the_lease() -> None:
 async def test_observer_finalization_keeps_holder_writable() -> None:
     registry = TerminalLeaseRegistry()
     holder_socket, observer_socket = object(), object()
-    holder = await registry.attach("t", frame_delivery="proxy", websocket=holder_socket)
-    observer = await registry.attach("t", frame_delivery="proxy", websocket=observer_socket)
+    holder = await registry.attach(
+        "t", frame_delivery="proxy", websocket=holder_socket, viewer="web"
+    )
+    observer = await registry.attach(
+        "t", frame_delivery="proxy", websocket=observer_socket, viewer="web"
+    )
     granted = await registry.take_control("t", holder.attachment_id, takeover=False)
     await registry.finalize(observer.attachment_id, reason="detach")
     assert registry.holder("t") == holder.attachment_id
@@ -691,9 +691,9 @@ async def test_observer_finalization_keeps_holder_writable() -> None:
 async def test_takeover_then_old_disconnect_keeps_new_holder_writable() -> None:
     registry = TerminalLeaseRegistry()
     old_socket, new_socket = object(), object()
-    old = await registry.attach("t", frame_delivery="proxy", websocket=old_socket)
+    old = await registry.attach("t", frame_delivery="proxy", websocket=old_socket, viewer="web")
     await registry.take_control("t", old.attachment_id, takeover=False)
-    new = await registry.attach("t", frame_delivery="proxy", websocket=new_socket)
+    new = await registry.attach("t", frame_delivery="proxy", websocket=new_socket, viewer="web")
     granted = await registry.take_control("t", new.attachment_id, takeover=True)
     await registry.finalize(old.attachment_id, reason="ws_loss")
     admitted = registry.admit_write(
@@ -711,8 +711,8 @@ async def test_takeover_then_old_disconnect_keeps_new_holder_writable() -> None:
 @pytest.mark.asyncio
 async def test_equal_generation_held_and_release_results_are_applied() -> None:
     registry = TerminalLeaseRegistry()
-    holder = await registry.attach("t", frame_delivery="proxy")
-    other = await registry.attach("t", frame_delivery="proxy")
+    holder = await registry.attach("t", frame_delivery="proxy", viewer="web")
+    other = await registry.attach("t", frame_delivery="proxy", viewer="web")
     await registry.take_control("t", holder.attachment_id, takeover=False)
     held = await registry.take_control("t", other.attachment_id, takeover=False)
     assert held.reason == "held"
@@ -750,6 +750,7 @@ async def test_attachment_required_and_runtime_unavailable(
         terminal_id,
         websocket=websocket,
         attachment_id="unavailable-runtime",
+        viewer="web",
     )
     granted = await server.lease_registry.take_control(
         terminal_id,
@@ -797,6 +798,7 @@ async def test_finalize_revokes_authority_before_frame_close(
             attachment_id=attachment_id,
             frame_delivery="proxy",
             websocket=websocket,
+            viewer="web",
         )
         granted = await server.lease_registry.take_control(terminal_id, attachment_id)
         assert granted.granted
@@ -841,88 +843,77 @@ async def test_finalize_revokes_authority_before_frame_close(
 
 
 @pytest.mark.asyncio
-async def test_direct_gclient_holder_is_granted_and_revoked_on_transitions(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
+@pytest.mark.parametrize(
+    "label",
+    [{}, {"viewer": "gclient"}],
+    ids=["unlabeled", "claims-gclient"],
+)
+async def test_attach_is_lease_gated_as_web_whatever_viewer_it_claims(
+    temp_db: HubDatabase, sample_project: dict[str, Any], label: dict[str, str]
 ) -> None:
+    # The daemon WebSocket has one bearer identity, so no attach can claim a
+    # lease-free viewer: an unlabeled or gclient-labelled attach is web and
+    # stays behind the writer lease while another web attach holds it.
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    runtime = _GrantingRuntime()
-    _configure(server, temp_db, _RuntimeRegistry(runtime))
-
-    async def follow(change: HolderChange) -> bool | None:
-        return await sync_host_input_grant(runtime, change.terminal, change.holder)
-
-    server.lease_registry.set_holder_observer(follow)
-    gclient = MockWebSocket()
-    server.clients[gclient] = {"subscriptions": {"*"}}
+    _configure(server, temp_db)
+    holder = MockWebSocket()
+    observer = MockWebSocket()
+    server.clients[holder] = {"subscriptions": {"*"}}
+    server.clients[observer] = {"subscriptions": {"*"}}
     await _send(
         server,
-        gclient,
+        holder,
         {
             "type": "terminal_attach",
-            "request_id": "g",
+            "request_id": "holder",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
         },
     )
-    direct = gclient.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
-    take = {
-        "type": "terminal_take_control",
-        "terminal_id": terminal_id,
-        "attachment_id": direct,
-        "takeover": False,
-        "host_attachment_id": 42,
-    }
-    await _send(server, gclient, take)
-    granted = gclient.messages_of_type("terminal_control_result")[-1]
-    assert granted["granted"] is True
-    assert granted["host_input_granted"] is True
-    assert runtime.grants == [(terminal_id, direct)]
-
-    # A web viewer takes over through the proxy path: the grant is revoked.
-    assert server.terminal_manager is not None
-    row = server.terminal_manager.get(terminal_id)
-    web = MockWebSocket()
-    server.clients[web] = {"subscriptions": {"*"}}
-    web_record = await server.lease_registry.attach(
-        terminal_id, "proxy", websocket=web, viewer="web", terminal=row
-    )
+    holder_attachment = holder.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
     await _send(
         server,
-        web,
+        holder,
         {
             "type": "terminal_take_control",
             "terminal_id": terminal_id,
-            "attachment_id": web_record.attachment_id,
-            "takeover": True,
+            "attachment_id": holder_attachment,
+            "takeover": False,
         },
     )
-    takeover = web.messages_of_type("terminal_control_result")[-1]
-    assert takeover["granted"] is True
-    assert takeover["host_input_granted"] is None
-    assert runtime.grants[-1] == (terminal_id, None)
-    assert gclient.messages_of_type("terminal_lease_lost")
-
-    # Releasing leaves nobody holding: revoked again, never granted.
     await _send(
         server,
-        web,
+        observer,
         {
-            "type": "terminal_release_control",
+            "type": "terminal_attach",
+            "request_id": "observer",
             "terminal_id": terminal_id,
-            "attachment_id": web_record.attachment_id,
+            "frame_delivery": "direct",
+            **label,
         },
     )
-    released = web.messages_of_type("terminal_control_result")[-1]
-    assert released["reason"] == "released"
-    assert released["host_input_granted"] is None
-    assert runtime.grants == [(terminal_id, direct), (terminal_id, None), (terminal_id, None)]
-
-    # The direct viewer takes again, then loses its socket: grant, then revoke.
-    await _send(server, gclient, take)
-    assert gclient.messages_of_type("terminal_control_result")[-1]["host_input_granted"] is True
-    await server._cleanup_terminal_client(gclient)
-    assert runtime.grants[-2:] == [(terminal_id, direct), (terminal_id, None)]
+    attach_result = observer.messages_of_type("terminal_attach_result")[-1]
+    observer_attachment = attach_result["attachment_id"]
+    assert attach_result["lease_holder"] == {
+        "attachment_id": holder_attachment,
+        "kind": "web",
+        "session_ref": None,
+    }
+    await _send(
+        server,
+        observer,
+        {
+            "type": "terminal_paste",
+            "terminal_id": terminal_id,
+            "attachment_id": observer_attachment,
+            "text": "hi",
+            "client_write_seq": 1,
+        },
+    )
+    refused = observer.messages_of_type("terminal_write_outcome")[-1]
+    assert refused["outcome"] == "refused"
+    assert observer.closed is False
 
 
 def _foreign_message(operation: str, terminal_id: str, attachment_id: str) -> dict[str, Any]:
@@ -979,6 +970,7 @@ async def test_foreign_attachment_operations_do_not_change_owner_state(
         owner,
         {
             "type": "terminal_attach",
+            "viewer": "web",
             "request_id": "r",
             "terminal_id": terminal_id,
             "frame_delivery": "direct",

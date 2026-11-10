@@ -117,6 +117,7 @@ class SpawnPayload(NodeModel):
     sandbox: Sandbox
     timeout_seconds: int
     source_root: str
+    credential_authority_roots: list[str] = Field(default_factory=list)
     workspace: SpawnWorkspace
     agent_name: str | None
     api_base: str | None

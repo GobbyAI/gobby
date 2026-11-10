@@ -12,8 +12,7 @@ use super::super::attention::apply_response;
 use super::super::{PaneId, Workspace};
 use super::chain_apply;
 use super::control::{
-    apply_outage_grant, apply_write_abandoned, apply_write_result, apply_write_unconfirmed,
-    drop_revoked_grants, focus_live_pane,
+    apply_write_abandoned, apply_write_result, apply_write_unconfirmed, focus_live_pane,
 };
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
@@ -36,7 +35,7 @@ pub(super) fn apply_job_outcome(
     let result = match outcome.result {
         JobResult::WriteUnconfirmed { pane, attachment } => {
             let current = current && on_attachment(workspace, pane, &attachment);
-            return apply_write_unconfirmed(workspace, chrome, pane, current);
+            return apply_write_unconfirmed(workspace, pane, current);
         }
         JobResult::WriteAbandoned {
             pane,
@@ -52,10 +51,8 @@ pub(super) fn apply_job_outcome(
             kept,
             result,
         } => return apply_kills(workspace, chrome, killed, kept, result),
-        // A host grant is real whichever generation asked for it, so it lands.
-        result @ JobResult::HostGrant { .. } => result,
         // A relayed theme and a focus report are real whichever generation
-        // sent them, as the host grant is.
+        // sent them.
         result @ (JobResult::ThemeRelayed { .. } | JobResult::FocusReported { .. }) => result,
         // The destroy's kills happened whichever generation issued them.
         result @ JobResult::OrphansDestroyed { .. } => result,
@@ -132,16 +129,6 @@ pub(super) fn apply_job_outcome(
         JobResult::WriteUnconfirmed { .. }
         | JobResult::WriteAbandoned { .. }
         | JobResult::Killed { .. } => {}
-        JobResult::HostGrant {
-            pane,
-            attachment,
-            lease,
-            grant,
-            revoked,
-        } => {
-            drop_revoked_grants(workspace, revoked);
-            apply_outage_grant(workspace, chrome, jobs, pane, &attachment, lease, grant);
-        }
         JobResult::ThemeRelayed {
             pane,
             theme,
@@ -286,6 +273,7 @@ fn apply_open(
     }
     match result {
         Ok(row) => {
+            workspace.record_open(terminal_id, None);
             workspace.install_unresolved_rows(vec![row]);
             // The read cannot await the attach, so the render tick's
             // `start_due_attaches` picks the new pane up.
@@ -293,13 +281,16 @@ fn apply_open(
                 workspace.pane_mut(pane).attach_retry_at = Some(tokio::time::Instant::now());
             }
         }
-        Err(error) => tracing::warn!(
-            terminal_id = %terminal_id,
-            generation = generation.0,
-            error_class = %error.code(),
-            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-            "unresolved terminal open failed: {error}"
-        ),
+        Err(error) => {
+            workspace.record_open(terminal_id, Some(error.to_string()));
+            tracing::warn!(
+                terminal_id = %terminal_id,
+                generation = generation.0,
+                error_class = %error.code(),
+                elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                "unresolved terminal open failed: {error}"
+            );
+        }
     }
 }
 

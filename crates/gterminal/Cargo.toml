@@ -1,6 +1,6 @@
 [package]
 name = "gobby-terminal"
-version = "0.1.22"
+version = "0.1.29"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -19,6 +19,8 @@ path = "src/lib.rs"
 [features]
 default = []
 vt-engine = ["dep:signal-hook"]
+# Test-only fault seams. Without this feature `GTERM_TEST_HELPER` is inert in every build.
+test-seams = []
 
 [dependencies]
 base64 = "0.22.1"
@@ -79,7 +81,7 @@ required-features = ["vt-engine"]
 
 [[test]]
 name = "host_lifecycle"
-required-features = ["vt-engine"]
+required-features = ["vt-engine", "test-seams"]
 
 [[test]]
 name = "host_cli_args"
@@ -87,7 +89,7 @@ required-features = ["vt-engine"]
 
 [[test]]
 name = "control_protocol"
-required-features = ["vt-engine"]
+required-features = ["vt-engine", "test-seams"]
 
 [[test]]
 name = "frame_protocol"
@@ -111,7 +113,7 @@ required-features = ["vt-engine"]
 
 [[test]]
 name = "host_handover"
-required-features = ["vt-engine"]
+required-features = ["vt-engine", "test-seams"]
 
 [[test]]
 name = "wire_golden"

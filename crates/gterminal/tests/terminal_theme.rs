@@ -1,6 +1,6 @@
 //! Client terminal themes reach native panes (#22851): the spawn request's
-//! theme, live re-theme over the frame stream, input-grant ownership, and the
-//! unset fallback. Each child prints its own OSC 10/11 answers, so every
+//! theme, live re-theme over the frame stream, newest-declaration ownership
+//! across a pane's streams, and the unset fallback. Each child prints its own OSC 10/11 answers, so every
 //! assertion reads what a program inside the pane would see.
 
 #![cfg(all(unix, feature = "vt-engine"))]
@@ -178,15 +178,6 @@ impl Host {
         screen
     }
 
-    fn grant(&mut self, host_terminal_id: &str, attachment_id: &str, host_attachment_id: u64) {
-        let granted = rpc(
-            &mut self.ctrl,
-            "grant_input",
-            json!({"host_terminal_id": host_terminal_id, "attachment_id": attachment_id, "host_attachment_id": host_attachment_id}),
-        );
-        assert_eq!(granted["ok"], true, "{granted}");
-    }
-
     fn attach(&self, host_terminal_id: &str) -> (UnixStream, u64) {
         let mut stream = connect(&self.frames_path);
         write_msg(
@@ -256,37 +247,6 @@ fn bind(stream: &mut UnixStream, attachment_id: &str) {
     );
 }
 
-/// Returns once the host has handled everything sent on `stream` so far:
-/// a stream's messages are processed in order and `ReadText` always replies.
-fn barrier(stream: &mut UnixStream) {
-    write_msg(
-        stream,
-        &ClientMessage::ReadText {
-            start_rows_from_live_edge: 0,
-            start_col: 0,
-            end_rows_from_live_edge: 0,
-            end_col: 1,
-        },
-    );
-    loop {
-        match read_msg(stream) {
-            ServerMessage::TextRead { .. } => return,
-            ServerMessage::Error { code, .. } => panic!("barrier refused: {code}"),
-            _ => {}
-        }
-    }
-}
-
-/// The first answer line printed after the line that echoed `marker`: its
-/// queries were sent after the child read the marker.
-fn answer_after<'a>(screen: &'a str, marker: &str) -> Option<&'a str> {
-    screen
-        .lines()
-        .skip_while(|line| !line.contains(marker))
-        .skip(1)
-        .find(|line| line.contains("A<") && line.contains('>'))
-}
-
 fn theme_json(colors: &ThemeColors) -> Value {
     serde_json::to_value(colors.declaration()).unwrap()
 }
@@ -333,7 +293,7 @@ fn unset_theme_is_the_fallback_until_a_client_declares() {
         .unwrap();
     assert_eq!(answer.trim(), "A<>", "{screen}");
 
-    // An ungranted pane takes the first declaring client's theme live.
+    // A pane with no declaration yet takes the first declaring stream's theme live.
     let (mut stream, _) = host.attach(&pane);
     declare(&mut stream, &LIGHT);
     host.wait_for(&pane, "declared theme", |s| LIGHT.shown_by(s));
@@ -344,9 +304,8 @@ fn live_retheme_changes_answers_without_respawn() {
     let mut host = Host::start("theme-live");
     let pane = host.spawn(Some(theme_json(&DARK))).unwrap();
     host.wait_for(&pane, "dark spawn theme", |s| DARK.shown_by(s));
-    let (mut stream, host_attachment_id) = host.attach(&pane);
+    let (mut stream, _) = host.attach(&pane);
     bind(&mut stream, "att-gclient");
-    host.grant(&pane, "att-gclient", host_attachment_id);
     declare(&mut stream, &LIGHT);
     host.wait_for(&pane, "light after toggle", |s| LIGHT.shown_by(s));
     declare(&mut stream, &DARK);
@@ -356,39 +315,52 @@ fn live_retheme_changes_answers_without_respawn() {
 }
 
 #[test]
-fn only_the_input_grant_holder_themes_a_granted_pane() {
-    let mut host = Host::start("theme-grant");
+fn the_newest_declaration_themes_a_pane_shared_by_its_streams() {
+    let mut host = Host::start("theme-newest");
     let pane = host.spawn(None).unwrap();
-    let (mut holder, holder_id) = host.attach(&pane);
-    bind(&mut holder, "att-holder");
-    host.grant(&pane, "att-holder", holder_id);
-    declare(&mut holder, &LIGHT);
-    host.wait_for(&pane, "holder theme", |s| LIGHT.shown_by(s));
+    let (mut first, _) = host.attach(&pane);
+    bind(&mut first, "att-first");
+    declare(&mut first, &LIGHT);
+    host.wait_for(&pane, "first stream theme", |s| LIGHT.shown_by(s));
 
-    // A stale or observing stream cannot undo the holder's theme.
-    let (mut other, other_id) = host.attach(&pane);
-    bind(&mut other, "att-other");
-    declare(&mut other, &DARK);
-    barrier(&mut other);
-    // Every answer after the child echoes this marker postdates the refusal.
-    write_msg(
-        &mut holder,
-        &ClientMessage::Paste {
-            text: "MARK-REFUSED".into(),
-        },
-    );
-    let screen = host.wait_for(&pane, "an answer after the refusal", |s| {
-        answer_after(s, "MARK-REFUSED").is_some()
+    // The second stream's declaration applies on arrival.
+    let (mut second, _) = host.attach(&pane);
+    bind(&mut second, "att-second");
+    declare(&mut second, &DARK);
+    host.wait_for(&pane, "newest declaration theme", |s| DARK.shown_by(s));
+
+    // Re-declaring from the first stream makes its theme the newest.
+    declare(&mut first, &LIGHT);
+    let screen = host.wait_for(&pane, "re-declared theme", |s| LIGHT.shown_by(s));
+    assert!(LIGHT.shown_by(&screen), "{screen}");
+}
+
+#[test]
+fn a_bind_reapplies_the_newest_declaration_not_the_latest_stream() {
+    let mut host = Host::start("theme-rebind");
+    let pane = host.spawn(None).unwrap();
+    let (mut first, _) = host.attach(&pane);
+    bind(&mut first, "att-first");
+    declare(&mut first, &DARK);
+    host.wait_for(&pane, "first declaration theme", |s| DARK.shown_by(s));
+
+    let (mut second, _) = host.attach(&pane);
+    bind(&mut second, "att-second");
+    declare(&mut second, &LIGHT);
+    host.wait_for(&pane, "second declaration theme", |s| LIGHT.shown_by(s));
+
+    // The first stream declares again, so dark is the newest declaration.
+    declare(&mut first, &DARK);
+    host.wait_for(&pane, "re-declared dark theme", |s| DARK.shown_by(s));
+
+    // A third stream binds without a declaration. The pane keeps the newest one,
+    // not the theme of the most recently attached stream.
+    let (mut third, _) = host.attach(&pane);
+    bind(&mut third, "att-third");
+    let screen = host.wait_for(&pane, "newest declaration after a bind", |s| {
+        DARK.shown_by(s)
     });
-    let answer = answer_after(&screen, "MARK-REFUSED").unwrap();
-    assert!(
-        answer.contains(LIGHT.fg_answer) && answer.contains(LIGHT.bg_answer),
-        "{screen}"
-    );
-
-    // Moving the grant applies the new holder's declaration.
-    host.grant(&pane, "att-other", other_id);
-    host.wait_for(&pane, "new holder theme", |s| DARK.shown_by(s));
+    assert!(DARK.shown_by(&screen), "{screen}");
 }
 
 /// A declaration themes only its own attachment's pane (#23286). A laptop

@@ -53,27 +53,37 @@ fn http_requests(mock: &MockDaemon, method: &str, target: &str) -> usize {
         .count()
 }
 
-fn websocket_requests(mock: &MockDaemon, kind: &str) -> usize {
-    mock.requests()
+/// Attachment id of the terminal's latest `terminal_focus` report, when it reported focus.
+fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
+    let last = mock
+        .requests()
         .into_iter()
-        .filter(|request| {
-            request.method == "WS"
-                && request.body.as_ref().and_then(|body| body.get("type")) == Some(&json!(kind))
-        })
-        .count()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body)
+        .rfind(|body| {
+            body.get("type") == Some(&json!("terminal_focus"))
+                && body.get("terminal_id") == Some(&json!(terminal_id))
+        })?;
+    if last.get("focused") != Some(&json!(true)) {
+        return None;
+    }
+    last.get("attachment_id")?.as_str().map(str::to_owned)
 }
 
-async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, count: usize) {
-    timeout(Duration::from_secs(1), async {
+async fn wait_for_focus_report(mock: &MockDaemon) {
+    timeout(Duration::from_secs(2), async {
         loop {
-            if websocket_requests(mock, kind) >= count {
+            if ["terminal-1", "terminal-2"]
+                .iter()
+                .any(|id| focused_attachment(mock, id).is_some())
+            {
                 break;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {count} {kind} requests"));
+    .expect("timed out waiting for a focused attachment report");
 }
 
 async fn wait_for_http_requests(mock: &MockDaemon, method: &str, target: &str, count: usize) {
@@ -316,7 +326,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
 
     let driver = async {
         // The pre-reconciled workspace draws these rows before input begins.
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_focus_report(&mock).await;
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),

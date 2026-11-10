@@ -328,8 +328,8 @@ fn attach_viewport_and_observer_sizing() {
 }
 
 #[test]
-fn ungranted_input_is_refused_and_granted_input_writes() {
-    let token = "frame-input-grant";
+fn attached_input_writes_with_no_grant_and_unattached_input_is_refused() {
+    let token = "frame-input-attached";
     let (dir, mut child) = start_host(token);
     let mut ctrl = control_hello(dir.path(), token);
     let prepared = spawn_prepared(
@@ -338,7 +338,7 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
         &[
             "/bin/sh",
             "-c",
-            "read line; printf 'GOT:%s\\n' \"$line\"; exec /bin/sleep 30",
+            "while IFS= read -r line; do printf 'GOT:%s\\n' \"$line\"; done",
         ],
     );
     child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
@@ -372,12 +372,10 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
             locator: None,
         },
     );
-    let host_attachment_id = match read_reply(&mut frames) {
-        ServerMessage::Attached {
-            host_attachment_id, ..
-        } => host_attachment_id,
+    match read_reply(&mut frames) {
+        ServerMessage::Attached { .. } => {}
         other => panic!("expected attached: {other:?}"),
-    };
+    }
 
     // Legacy write verbs stay rejected as unknown.
     write_msg(
@@ -391,49 +389,18 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
         other => panic!("{other:?}"),
     }
 
-    // Attached, nothing granted, nothing bound.
+    // Attached and unbound: the stream types with no grant and no name.
     write_msg(
         &mut frames,
         &ClientMessage::Input {
-            data: b"nope\n".to_vec(),
+            data: b"hello\n".to_vec(),
         },
     );
-    expect_refusal(&mut frames, "input_not_granted");
+    wait_until_host(&dir, "attached input echoes with no grant", || {
+        snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:hello")
+    });
 
-    // A client-supplied label cannot create authority.
-    write_msg(
-        &mut frames,
-        &ClientMessage::Input {
-            data: b"nope\n".to_vec(),
-        },
-    );
-    expect_refusal(&mut frames, "input_not_granted");
-
-    // Another label is equally powerless.
-    write_msg(
-        &mut frames,
-        &ClientMessage::BindAttachment {
-            attachment_id: "att-2".into(),
-        },
-    );
-    write_msg(
-        &mut frames,
-        &ClientMessage::Input {
-            data: b"nope\n".to_vec(),
-        },
-    );
-    expect_refusal(&mut frames, "input_not_granted");
-
-    let granted = rpc(
-        &mut ctrl,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-1", "host_attachment_id": host_attachment_id}),
-    );
-    assert_eq!(granted["ok"], true, "{granted}");
-    assert_eq!(granted["granted"], true, "{granted}");
-    assert!(granted["previous"].is_null(), "{granted}");
-
-    // The trusted physical grant lets this stream write.
+    // A bound name types the same way.
     write_msg(
         &mut frames,
         &ClientMessage::BindAttachment {
@@ -443,13 +410,12 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
     write_msg(
         &mut frames,
         &ClientMessage::Input {
-            data: b"hello\n".to_vec(),
+            data: b"again\n".to_vec(),
         },
     );
-    wait_until_host(&dir, "child echoes granted input", || {
-        snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:hello")
+    wait_until_host(&dir, "bound input echoes", || {
+        snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:again")
     });
-    assert!(!snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:nope"));
 
     // Over the write cap: refused, and the stream stays open.
     write_msg(
@@ -459,22 +425,6 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
         },
     );
     expect_refusal(&mut frames, "request_too_large");
-
-    let revoked = rpc(
-        &mut ctrl,
-        "revoke_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-1"}),
-    );
-    assert_eq!(revoked["revoked"], true, "{revoked}");
-    write_msg(
-        &mut frames,
-        &ClientMessage::Input {
-            data: b"x".to_vec(),
-        },
-    );
-    expect_refusal(&mut frames, "input_not_granted");
-    write_msg(&mut frames, &ClientMessage::Paste { text: "x".into() });
-    expect_refusal(&mut frames, "input_not_granted");
 
     let src = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -760,33 +710,15 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
     assert_ne!(ids[0], ids[1]);
     let mut events = control_hello(dir.path(), token);
     assert_eq!(rpc(&mut events, "subscribe_events", json!({}))["ok"], true);
-    let granted = rpc(
-        &mut ctrl,
-        "grant_input",
-        json!({
-            "host_terminal_id": terminal, "attachment_id": "holder-a", "host_attachment_id": ids[0],
-        }),
-    );
-    assert_eq!(granted["granted"], true);
-    // No first-bind race: the trusted grant already identifies A's stream.
+    // Both streams type with no grant. A name is unique per slot, so the second
+    // stream's refused name leaves it unbound, and it still types. The owner's
+    // echo confirms its bind before the second stream tries the same name.
     write_msg(
-        &mut streams[1],
+        &mut streams[0],
         &ClientMessage::BindAttachment {
             attachment_id: "holder-a".into(),
         },
     );
-    expect_refusal(&mut streams[1], "attachment_already_bound");
-    for message in [
-        ClientMessage::Input {
-            data: b"attack-input\n".to_vec(),
-        },
-        ClientMessage::Paste {
-            text: "attack-paste\n".into(),
-        },
-    ] {
-        write_msg(&mut streams[1], &message);
-        expect_refusal(&mut streams[1], "input_not_granted");
-    }
     write_msg(
         &mut streams[0],
         &ClientMessage::Input {
@@ -796,46 +728,28 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
     wait_until_host(&dir, "owner's input reaches the child", || {
         snapshot_text(&mut ctrl, &terminal).contains("READ:owner")
     });
-    assert!(!snapshot_text(&mut ctrl, &terminal).contains("attack-"));
     let activity = recv_json(&mut events);
     assert_eq!(activity["event"], "input_activity");
     assert_eq!(activity["attachment_id"], "holder-a");
     assert_eq!(activity["bytes"], 6);
-    let moved = rpc(
-        &mut ctrl,
-        "grant_input",
-        json!({
-            "host_terminal_id": terminal, "attachment_id": "holder-b", "host_attachment_id": ids[1],
-        }),
+    write_msg(
+        &mut streams[1],
+        &ClientMessage::BindAttachment {
+            attachment_id: "holder-a".into(),
+        },
     );
-    assert_eq!(moved["previous"], "holder-a");
-    for message in [
-        ClientMessage::Input {
-            data: b"stale-input\n".to_vec(),
-        },
-        ClientMessage::Paste {
-            text: "stale-paste\n".into(),
-        },
-    ] {
-        write_msg(&mut streams[0], &message);
-        expect_refusal(&mut streams[0], "input_not_granted");
-    }
+    expect_refusal(&mut streams[1], "attachment_already_bound");
     write_msg(
         &mut streams[1],
         &ClientMessage::Paste {
-            text: "new-owner\n".into(),
+            text: "second-stream\n".into(),
         },
     );
-    wait_until_host(&dir, "new owner's input reaches the child", || {
-        snapshot_text(&mut ctrl, &terminal).contains("READ:new-owner")
+    wait_until_host(&dir, "the unbound stream's input reaches the child", || {
+        snapshot_text(&mut ctrl, &terminal).contains("READ:second-stream")
     });
-    let screen = snapshot_text(&mut ctrl, &terminal);
-    assert!(
-        !screen.contains("attack-") && !screen.contains("stale-"),
-        "{screen}"
-    );
     let activity = recv_json(&mut events);
-    assert_eq!(activity["attachment_id"], "holder-b");
+    assert_eq!(activity["attachment_id"], "");
     assert_eq!(activity["kind"], "paste");
     events
         .set_read_timeout(Some(Duration::from_millis(100)))

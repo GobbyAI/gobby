@@ -32,7 +32,6 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
     let index = chrome.active_index();
     let viewer = &mut chrome.viewer;
     let set = chrome.project_tabs.set_mut();
-    let model = workspace.workspace_model();
     for tab in &mut set.tabs {
         let stale: Vec<_> = tab
             .slots
@@ -52,17 +51,15 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
         // good. A reaped terminal or a pane now owned by another tab cannot
         // retain focus.
         let focus = viewer.focus_of(tab);
-        let model_pane = viewer
-            .panes
-            .daemon_id(focus)
-            .and_then(|pane| model.and_then(|model| model.pane(pane)));
-        let spawning = model_pane
+        // A pane whose spawn is still in flight is pending wherever the daemon
+        // put it, as is one awaiting its terminal in this tab.
+        let spawning = workspace
+            .workspace_model()
+            .and_then(|model| viewer.panes.daemon_id(focus).and_then(|pane| model.pane(pane)))
             .and_then(|pane| pane.terminal_id.as_deref())
             .is_some_and(|terminal_id| workspace.pending_spawns.contains(terminal_id));
         let pending = !reaped_slots.contains(&focus)
-            && (spawning
-                || (tab.layout.pane_ids().contains(&focus)
-                    && model_pane.is_some_and(|pane| pane.tab_id == tab.id)));
+            && (spawning || awaiting_pane(workspace, viewer, tab, focus));
         if !tab.slots.is_empty() && !tab.slots.contains_key(&focus) && !pending {
             if let Some(slot) = tab
                 .layout
@@ -85,11 +82,42 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
     if focused_pane_removed {
         if let Some(survivor) = chrome.focused_pane() {
             workspace.focus = Some(survivor);
-            if !workspace.pane(survivor).take_back {
-                workspace.request_control(survivor, false);
-            }
         }
     }
+}
+
+/// Whether `slot` holds a daemon pane of `tab` still waiting on its terminal:
+/// a reserved pane has none until its spawn binds one, and a bound terminal has
+/// none until it resolves. Its focus is the daemon's or a placement's, not
+/// stale, so projection keeps it. A pane the daemon now places in another tab
+/// is not this tab's to wait on. A terminal whose open failed is not waited on
+/// either: no retry is pending, so the focus falls back as for a vanished pane.
+fn awaiting_pane(
+    workspace: &Workspace<LiveDaemon>,
+    viewer: &ViewerState,
+    tab: &Tab,
+    slot: layout::PaneId,
+) -> bool {
+    if !tab.layout.pane_ids().contains(&slot) {
+        return false;
+    }
+    let Some(model) = workspace.workspace_model() else {
+        return false;
+    };
+    let Some(pane) = viewer
+        .panes
+        .daemon_id(slot)
+        .and_then(|pane_id| model.pane(pane_id))
+    else {
+        return false;
+    };
+    if pane.tab_id != tab.id {
+        return false;
+    }
+    let Some(terminal_id) = pane.terminal_id.as_deref() else {
+        return true;
+    };
+    !workspace.open_failed(terminal_id)
 }
 
 /// Project the workspace model onto the focused project's tab bar when it
@@ -111,6 +139,7 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
         return;
     };
     chrome.focus_project(&project);
+    workspace.forget_vanished_open_failures();
     let Some(model) = workspace.workspace_model() else {
         return;
     };

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 from websockets.exceptions import ConnectionClosed
@@ -250,12 +250,12 @@ class TerminalWsMixin(TerminalWriteMixin):
             log_slow(code, row.id, row_loaded, row_loaded, row_loaded)
             return
         registry = self._leases()
-        viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
+        # Every daemon WebSocket attach is a web viewer: the socket carries one
+        # bearer identity, so a viewer label it sends is never trusted.
         record = await registry.attach(
             terminal_id,
             str(delivery),
             websocket=websocket,
-            viewer=viewer,
             backend=str(row.backend),
             terminal=row,
         )
@@ -499,13 +499,12 @@ class TerminalWsMixin(TerminalWriteMixin):
     async def _handle_terminal_set_theme(self, websocket: Any, data: dict[str, Any]) -> None:
         """Declare a proxied pane's terminal theme on its host frame stream.
 
-        Only the websocket that owns the attachment may declare for it, and
-        only while that attachment holds the writer lease or nobody does. The
-        gterm input grant goes to direct holders alone, so the host treats a
-        proxied holder's pane as ungranted and would apply any stream's
-        theme; this lease check is what keeps an observer from recolouring
-        it. A refused theme is remembered and declared when the attachment
-        takes control (``_declare_holder_theme``).
+        Only the websocket that owns the attachment may declare for it. A web
+        viewer declares only while it holds the writer lease or nobody does, so
+        an observer web viewer cannot recolour a pane another viewer drives. A
+        gclient pane is always writable and always declares. A refused web theme
+        is remembered and declared when the attachment takes control
+        (``_declare_holder_theme``).
         """
         attachment_id = data.get("attachment_id")
         record = (
@@ -532,24 +531,25 @@ class TerminalWsMixin(TerminalWriteMixin):
                 code = "invalid_terminal_theme"
             else:
                 record.theme = theme
-                if self._leases().holder(record.terminal_id) in (None, attachment_id):
+                lease = self._leases().get(attachment_id)
+                gclient = lease is not None and lease.viewer != "web"
+                if gclient or self._leases().holder(record.terminal_id) in (None, attachment_id):
                     await declare(attachment_id, theme)
                 else:
                     code = "theme_not_relayed"
         if code is not None:
-            # No attachment_id: gclient routes an attachment's terminal_error
-            # as the answer to its pending take/release control request.
+            # No attachment_id: clients route a terminal_error without one to
+            # their pending request.
             await self._send_json(
                 websocket,
                 {"type": "terminal_error", "code": code, "terminal_id": data.get("terminal_id")},
             )
 
     async def _declare_holder_theme(self, attachment_id: str) -> None:
-        """Declare the theme a proxied attachment sent before it took control.
+        """Declare the theme a web attachment sent before it took control.
 
-        gclient sends a pane's theme once, so an observer refused while
-        another attachment held the lease would otherwise keep that holder's
-        colours after taking over.
+        A web viewer's theme is refused while another attachment held the lease,
+        so it would otherwise keep that holder's colours after taking over.
         """
         record = self._proxy().attachments.get(attachment_id)
         declare = getattr(getattr(record, "frame", None), "declare_terminal_theme", None)

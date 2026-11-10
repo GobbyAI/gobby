@@ -128,6 +128,7 @@ pub(super) fn apply_adopted(
     old_tab: String,
     adopted: AdoptedShell,
 ) {
+    chrome.viewer.adopting.remove(&old_tab);
     let AdoptedShell {
         new_tab,
         rolled_back,

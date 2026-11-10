@@ -27,6 +27,8 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.message_stats import compute_message_stats
+from gobby.sessions.reported_usage import collect_runs
+from gobby.sessions.subagent_usage import read_all_subagent_events
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
@@ -34,8 +36,10 @@ from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.reported_usage import ReportedUsageStore
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
@@ -310,11 +314,23 @@ class TranscriptProcessingMixin:
         # (model, usage, message_id). Other JSON transcripts use the same
         # line-oriented envelope contract as the other supported CLIs.
         # JSON strings may contain Unicode line separators; only physical LF ends a record.
-        parsed_records = parser.parse_lines(list(StringIO(raw)), start_index=0)
+        lines = list(StringIO(raw))
+        parsed_records = parser.parse_lines(lines, start_index=0)
         normalized = normalize_transcript_records(parsed_records, session.source)
         messages = [r for r in normalized if isinstance(r, ParsedMessage)]
         session_source = session.source if isinstance(session.source, str) else None
         stats_records = normalized if session_source == "agy" else messages
+
+        # Provider-reported run totals come from the whole transcript. A transcript with no
+        # message still carries them, so this runs before the early returns below.
+        runs = collect_runs(
+            session_source or "",
+            lines=lines,
+            messages=normalized,
+            transcript_path=transcript_path,
+            session_started_at=session.created_at,
+        )
+        ReportedUsageStore(self.db).upsert_runs(session_id, runs)
 
         if not stats_records:
             return []
@@ -371,7 +387,9 @@ class TranscriptProcessingMixin:
 
         # Parse and index outside the transaction; only usage replacement holds the lock.
         with token_event_retention_transaction(self.db):
-            return self._persist_session_token_usage(session_id, session, messages, session_source)
+            return self._persist_session_token_usage(
+                session_id, session, messages, session_source, transcript_path
+            )
 
     def _persist_session_token_usage(
         self,
@@ -379,6 +397,7 @@ class TranscriptProcessingMixin:
         session: Session,
         messages: list[ParsedMessage],
         session_source: str | None,
+        transcript_path: str,
     ) -> list[dict[str, Any]]:
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.
@@ -393,6 +412,8 @@ class TranscriptProcessingMixin:
         running_totals = self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
+        # Subagent calls join the parent ledger through the live reader, drained to each file's end.
+        subagent_events = read_all_subagent_events(session_id, session_project_id, transcript_path)
         session_source = session_source or "unknown"
         session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None
@@ -506,6 +527,7 @@ class TranscriptProcessingMixin:
                 context_window=message_context_window,
                 event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
+                api_calls=api_call_count(session_source, msg),
             )
             occupancy_snapshot: ContextUsageSnapshot | None
             if session_source == "grok":
@@ -555,10 +577,14 @@ class TranscriptProcessingMixin:
         # Pass 2: one batched insert for every event (#20885). The returned
         # flags preserve the per-event dedup feedback.
         pending_events = [entry for entry in snapshot_plan if isinstance(entry, _PendingTokenEvent)]
+        # Subagent rows follow the parent's, so the parent's flags keep their positions.
+        batch = [entry.event for entry in pending_events] + subagent_events
+        if subagent_events:
+            saw_usage = True
         inserted_flags: list[bool] = []
-        if pending_events:
+        if batch:
             inserted_flags = self.token_event_store.record_batch(
-                [entry.event for entry in pending_events], retention_cutoff=retention_cutoff
+                batch, retention_cutoff=retention_cutoff
             )
 
         # Pass 3: replay the sequential semantics in message order — a window

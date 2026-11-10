@@ -71,6 +71,11 @@ impl Collaborator {
                         || line.contains("/points/delete")
                     {
                         json!({"result":{"status":"completed","operation_id":1},"status":"ok"})
+                    } else if line.starts_with("POST /collections/")
+                        && line.contains("/points/count")
+                    {
+                        // The prune count before a filtered delete: this scripted store holds no points.
+                        json!({"result":{"count":0}})
                     } else {
                         panic!("unexpected collaborator request: {line}");
                     };

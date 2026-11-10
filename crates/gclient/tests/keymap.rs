@@ -45,7 +45,6 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         (shift('D'), Action::CloseTerminal),
         (ch('w'), Action::TerminalPicker),
         (ch('g'), Action::Goto),
-        (ch('q'), Action::Detach),
         (shift('R'), Action::ReloadConfig),
         (ch('o'), Action::OpenNotificationTarget),
         (ch('c'), Action::NewTab),
@@ -76,9 +75,6 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         (ch('z'), Action::Zoom),
         (ch('r'), Action::ResizeMode),
         (ch('b'), Action::ToggleSidebar),
-        (ch('t'), Action::TakeControl),
-        (ch('u'), Action::ReleaseControl),
-        (shift('A'), Action::TakeBack),
         (ch('a'), Action::Respond),
         (shift('Q'), Action::Quit),
     ];
@@ -412,7 +408,6 @@ fn nested_tmux_shifts_the_prefix_unless_overridden() {
         (ch('1'), Action::SwitchTab(1)),
         (ch('n'), Action::NextTab),
         (ch('p'), Action::PreviousTab),
-        (ch('u'), Action::ReleaseControl),
     ] {
         assert_eq!(
             nested.lookup_prefix(&event),

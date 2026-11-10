@@ -27,7 +27,7 @@ from gobby.storage.terminals import AttachLocator, Terminal
 from gobby.storage.workspaces import Workspace, WorkspacePane, WorkspaceTab
 from gobby.terminals import web_spawn
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
-from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -267,7 +267,9 @@ async def _assert_write_outcome(
     server, _, _ = _server(write_result=write_result)
     registry = server.lease_registry
     websocket = MockWebSocket()
-    await registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket)
+    await registry.attach(
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket, viewer="web"
+    )
     await registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     generation = registry.generation(TERMINAL_ID)
     for seq, payload in (primed_writes or {}).items():
@@ -375,7 +377,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     server, _, _ = _server()
     websocket = MockWebSocket()
     await server.lease_registry.attach(
-        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket, viewer="web"
     )
     await server.lease_registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     await TerminalWsMixin._handle_terminal_detach(server, websocket, _message("detach.json"))
@@ -386,7 +388,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     server, _, _ = _server()
     websocket = MockWebSocket()
     await server.lease_registry.attach(
-        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket, viewer="web"
     )
     await TerminalWsMixin._handle_terminal_set_scroll_offset(
         server, websocket, _message("set_scroll_offset.json")
@@ -396,7 +398,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     server, _, _ = _server()
     websocket = MockWebSocket()
     await server.lease_registry.attach(
-        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket, viewer="web"
     )
     await TerminalControlMixin._handle_terminal_take_control(
         server, websocket, _message("take_control.json")
@@ -428,7 +430,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     server, manager, _ = _server()
     websocket = MockWebSocket()
     await server.lease_registry.attach(
-        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket, viewer="web"
     )
     await TerminalSizingMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
     assert websocket.sent_messages == []
@@ -629,32 +631,6 @@ def test_attachment_finalized_is_pinned() -> None:
         "message_seq_overflow",
     }
     assert isinstance(payload["lease_generation"], int)
-
-
-def test_control_result_pins_host_input_granted() -> None:
-    message = _message("control_result.json")
-    assert "host_input_granted" in message
-    assert message["host_input_granted"] is None
-
-
-@pytest.mark.asyncio
-async def test_control_result_carries_the_holder_observer_answer() -> None:
-    server, _, _ = _server()
-
-    async def granting(_change: HolderChange) -> bool | None:
-        return True
-
-    server.lease_registry.set_holder_observer(granting)
-    websocket = MockWebSocket()
-    await server.lease_registry.attach(
-        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
-    )
-    await TerminalControlMixin._handle_terminal_take_control(
-        server, websocket, _message("take_control.json")
-    )
-    sent = _sent(websocket)
-    assert sent["host_input_granted"] is True
-    assert sent | {"host_input_granted": None} == _message("control_result.json")
 
 
 class _ScrollFrame:

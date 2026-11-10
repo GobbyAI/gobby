@@ -154,7 +154,6 @@ fn client_paste_event_routes_through_terminal_paste() {
     // direct pane pastes on its own frame socket (#22573), which
     // `a_direct_paste_reaches_the_host_not_the_daemon` covers.
     ws.reattach_frames(pane).expect("proxy frame source");
-    ws.force_held(pane);
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane, "paste");
 
@@ -212,14 +211,14 @@ fn native_set_scroll_offset_and_tmux_wrap_history() {
 }
 
 #[test]
-fn paste_is_lease_gated_and_bracketed() {
+fn paste_is_bracketed_and_never_gated() {
     let mut ws = Workspace::scripted();
     let pane = ws.open_terminal("term-a", "native", "epoch-a").unwrap();
     // A proxy attachment: the bracketing and the write sequence this test
-    // follows are the daemon paste protocol. gterm brackets a granted `Paste`
+    // follows are the daemon paste protocol. gterm brackets a direct `Paste`
     // itself, so a direct pane has neither (#22573).
     ws.reattach_frames(pane).unwrap();
-    ws.focus_pane(pane).unwrap();
+    ws.focus_pane(pane);
     ws.set_bracketed_paste(pane, true);
     let text = "one\ntwo\nthree";
     ws.paste_to_pty(pane, text).unwrap();
@@ -239,12 +238,6 @@ fn paste_is_lease_gated_and_bracketed() {
     }))
     .unwrap();
 
-    ws.release_control(pane).unwrap();
-    let mutations = ws.daemon().pty_mutation_count();
-    assert!(ws.paste_to_pty(pane, "nope").is_err());
-    assert_eq!(ws.daemon().pty_mutation_count(), mutations);
-
-    ws.focus_pane(pane).unwrap();
     let oversize = "x".repeat(PASTE_MAX_BYTES + 1);
     let err = ws.paste_to_pty(pane, &oversize).unwrap_err();
     assert_eq!(err.code(), "paste_too_large");
@@ -260,10 +253,12 @@ fn paste_is_lease_gated_and_bracketed() {
         "reason": "indeterminate_backend"
     }))
     .unwrap();
-    assert!(ws.pane(pane).is_uncertain_readonly());
+    // An unconfirmed write leaves the pane writable: nothing is read-only.
+    assert!(ws.pane(pane).writable());
+    let before_next = ws.daemon().pty_mutation_count();
+    ws.paste_to_pty(pane, "after-indeterminate").unwrap();
+    assert_eq!(ws.daemon().pty_mutation_count(), before_next + 1);
     let after_indeterminate = ws.daemon().pty_mutation_count();
-    assert!(ws.paste_to_pty(pane, "must-not-resend").is_err());
-    assert_eq!(ws.daemon().pty_mutation_count(), after_indeterminate);
 
     ws.enter_copy_search(pane);
     ws.paste_to_pty(pane, "query").unwrap();
@@ -281,7 +276,7 @@ fn a_direct_paste_reaches_the_host_not_the_daemon() {
         .open_terminal("term-direct", "native", "epoch-direct")
         .expect("open terminal");
     ws.attach_frames(pane).expect("attach frames");
-    ws.focus_pane(pane).expect("focus takes control");
+    ws.focus_pane(pane);
     ws.set_bracketed_paste(pane, true);
     let mutations = ws.daemon().pty_mutation_count();
 
@@ -311,12 +306,6 @@ fn a_direct_paste_reaches_the_host_not_the_daemon() {
             .count(),
         1,
         "one bind per installed source"
-    );
-
-    ws.release_control(pane).expect("release");
-    assert!(
-        ws.paste_to_pty(pane, "nope").is_err(),
-        "an observing pane still refuses to type anywhere"
     );
 }
 
@@ -514,16 +503,13 @@ async fn terminal_mode_drag_selects_and_copies_on_release() {
     assert_eq!(output, b"\x1b]52;c;aGVsbG8=\x07");
     assert_eq!(chrome.last_copy.as_deref(), Some("hello"));
 
-    // A completed click without movement clears the selection and takes an
-    // uncontrolled pane instead of copying.
+    // A completed click without movement clears the selection and copies
+    // nothing.
     let down = left(MouseEventKind::Down(MouseButton::Left), 2, 1);
     assert_eq!(route_mouse(&ws, &mut chrome, &down), MouseOutcome::Handled);
     assert!(chrome.selection.is_some());
     let up = left(MouseEventKind::Up(MouseButton::Left), 2, 1);
-    assert_eq!(
-        route_mouse(&ws, &mut chrome, &up),
-        MouseOutcome::TakeFreeControl { pane }
-    );
+    assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Handled);
     assert!(chrome.selection.is_none());
     assert!(!copy_selection(&ws, &mut chrome, &mut Vec::new()).expect("nothing to copy"));
     assert_eq!(chrome.last_copy.as_deref(), Some("hello"));

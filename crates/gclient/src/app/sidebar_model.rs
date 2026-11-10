@@ -119,7 +119,7 @@ pub struct AgentEntry {
     pub terminal_id: String,
     pub backend: Backend,
     pub name: String,
-    /// The run's agent definition (`backend-architect`); no rung of `name`.
+    /// The run's agent definition; no rung of `name`.
     pub agent_definition_name: Option<String>,
     pub provider: String,
     pub model: Option<String>,

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
+from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
 from gobby.agents.team_admission_records import (
     ENDED_EXECUTIONS,
@@ -37,6 +38,7 @@ from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.project_context import read_isolation_marker
 from gobby.workflows.pipeline_state import StepExecution
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -166,9 +168,46 @@ async def _adopt_leaf_tree(
         parent_team_id=parent.team_id,
     )
     await verify_tree(db, binding)
+    await _repair_adopted_tree(main, tree, parent, caller.session.source)
     await asyncio.to_thread(record_team, caller, asdict(binding))
     await _pin_team_tree(tree.worktree_path)
     return binding
+
+
+async def _repair_adopted_tree(
+    main: Path, tree: Worktree, parent: TeamBinding, provider: str
+) -> None:
+    """Give an adopted tree the isolation marker that the spawn preflight normally writes.
+
+    A marker that already pins a base keeps it. A markerless tree takes the epic branch head
+    as its base, the commit a leaf is cut from.
+    """
+    marker = await asyncio.to_thread(read_isolation_marker, Path(tree.worktree_path))
+    base_commit = None
+    if (
+        marker is None
+        or "base_commit" not in marker
+        or marker.get("parent_project_path") != str(main.resolve())
+        or marker.get("parent_project_id") != parent.project_id
+        or marker.get("ancestor_checkout_path") != str(main.resolve())
+        or marker.get("ancestor_checkout_identity") != parent.project_id
+    ):
+        base_commit = await WorktreeGitManager(str(main)).get_local_commit(
+            f"refs/heads/{parent.branch}^{{commit}}"
+        )
+        if base_commit is None:
+            raise TeamAdmissionRefused(
+                "team_tree_failed", f"epic branch {parent.branch} has no head to base the tree on"
+            )
+    try:
+        await repair_isolation_environment(
+            main_repo_path=str(main),
+            isolated_path=tree.worktree_path,
+            provider=provider,
+            base_commit=base_commit,
+        )
+    except Exception as exc:
+        raise TeamAdmissionRefused("team_tree_failed", str(exc)) from exc
 
 
 async def _held_by_prior_team(db: HubDatabase, tree: Worktree) -> bool:

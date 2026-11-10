@@ -30,12 +30,12 @@ pub(crate) struct HostEvents {
     state: Arc<Mutex<EventState>>,
 }
 
-/// One accepted `Input`/`Paste` from a granted frame stream.
+/// One accepted `Input`/`Paste` from an attached frame stream.
 pub(crate) struct InputActivity {
     pub effect: InputEffect,
     pub terminal_id: String,
     pub host_terminal_id: String,
-    /// The daemon attachment id that held the grant.
+    /// The client attachment name the stream bound, or empty when unbound.
     pub attachment_id: String,
     /// `"input"` or `"paste"`.
     pub kind: &'static str,

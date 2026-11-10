@@ -133,6 +133,26 @@ impl WorkspaceSim {
     /// laid out left to right, the named terminal focused. Returns each
     /// tab's id with its pane ids in layout order.
     pub fn seed(&mut self, project: &str, tabs: &[(&[&str], &str)]) -> Vec<(String, Vec<String>)> {
+        self.seed_with(project, tabs, chain_layout)
+    }
+
+    /// As [`Self::seed`], but each tab's splits form a balanced tree. A chain
+    /// nests about two JSON levels per pane, past serde_json's 128-level limit
+    /// at roughly 63 panes; a balanced tree stays near log2 of the pane count.
+    pub fn seed_balanced(
+        &mut self,
+        project: &str,
+        tabs: &[(&[&str], &str)],
+    ) -> Vec<(String, Vec<String>)> {
+        self.seed_with(project, tabs, balanced_layout)
+    }
+
+    fn seed_with(
+        &mut self,
+        project: &str,
+        tabs: &[(&[&str], &str)],
+        layout_of: fn(&[String]) -> Value,
+    ) -> Vec<(String, Vec<String>)> {
         self.tabs.clear();
         self.panes.clear();
         let mut seeded = Vec::new();
@@ -150,18 +170,7 @@ impl WorkspaceSim {
                     .push(pane_row(&pane_id, &tab_id, terminal, reference, true));
                 pane_ids.push(pane_id);
             }
-            let layout = pane_ids
-                .iter()
-                .rev()
-                .fold(Value::Null, |rest, pane_id| match rest {
-                    Value::Null => leaf(pane_id),
-                    rest => json!({
-                        "kind": "split",
-                        "axis": "horizontal",
-                        "ratio": 0.5,
-                        "children": [leaf(pane_id), rest],
-                    }),
-                });
+            let layout = layout_of(&pane_ids);
             self.tabs.push(json!({
                 "id": tab_id,
                 "workspace_id": self.workspace_id(),
@@ -834,6 +843,48 @@ fn pane_row(
 
 fn leaf(pane_id: &str) -> Value {
     json!({"kind": "pane", "pane_id": pane_id})
+}
+
+/// The right-deep chain `seed` builds: each pane splits off the rest.
+fn chain_layout(pane_ids: &[String]) -> Value {
+    pane_ids
+        .iter()
+        .rev()
+        .fold(Value::Null, |rest, pane_id| match rest {
+            Value::Null => leaf(pane_id),
+            rest => json!({
+                "kind": "split",
+                "axis": "horizontal",
+                "ratio": 0.5,
+                "children": [leaf(pane_id), rest],
+            }),
+        })
+}
+
+/// A balanced split tree over `pane_ids`, alternating axes by level.
+fn balanced_layout(pane_ids: &[String]) -> Value {
+    balanced_split(pane_ids, 0)
+}
+
+fn balanced_split(pane_ids: &[String], depth: usize) -> Value {
+    match pane_ids {
+        [] => Value::Null,
+        [only] => leaf(only),
+        _ => {
+            let (left, right) = pane_ids.split_at(pane_ids.len() / 2);
+            let axis = if depth.is_multiple_of(2) {
+                "horizontal"
+            } else {
+                "vertical"
+            };
+            json!({
+                "kind": "split",
+                "axis": axis,
+                "ratio": 0.5,
+                "children": [balanced_split(left, depth + 1), balanced_split(right, depth + 1)],
+            })
+        }
+    }
 }
 
 fn lowest_free(taken: impl Iterator<Item = u64>) -> u64 {

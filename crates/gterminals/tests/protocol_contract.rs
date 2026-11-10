@@ -620,7 +620,7 @@ fn server_frames() -> Vec<(&'static str, ServerMessage)> {
         (
             "frame_input_refused.bin",
             ServerMessage::InputRefused {
-                code: "input_not_granted".into(),
+                code: "attach_required".into(),
             },
         ),
         (

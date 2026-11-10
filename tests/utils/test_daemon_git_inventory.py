@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import functools
+import gc
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +78,10 @@ class _SyncGitVisitor(ast.NodeVisitor):
         elif node.module == "subprocess":
             for alias in node.names:
                 if alias.name in _SUBPROCESS_CALLS:
+                    self.subprocess_call_names[alias.asname or alias.name] = alias.name
+        elif node.module == "gobby.utils.spawn":
+            for alias in node.names:
+                if alias.name in _SPAWN_CALLS:
                     self.subprocess_call_names[alias.asname or alias.name] = alias.name
         elif node.module == "gobby.utils":
             for alias in node.names:
@@ -191,22 +197,35 @@ class _SyncGitVisitor(ast.NodeVisitor):
 
 
 @functools.cache
-def _source_trees() -> tuple[tuple[str, ast.Module], ...]:
-    """Parse src/gobby once per test session; every scan below walks these trees."""
-    trees = []
-    for path in sorted(_SOURCE_ROOT.rglob("*.py")):
-        relative = path.relative_to(_REPO_ROOT).as_posix()
-        trees.append((relative, ast.parse(path.read_text(encoding="utf-8"), filename=relative)))
-    return tuple(trees)
+def _source_texts() -> tuple[tuple[str, str], ...]:
+    """Read src/gobby once per test session. Source text is small; parsed trees are not."""
+    return tuple(
+        (path.relative_to(_REPO_ROOT).as_posix(), path.read_text(encoding="utf-8"))
+        for path in sorted(_SOURCE_ROOT.rglob("*.py"))
+    )
 
 
-def _sync_git_inventory() -> list[SyncGitUse]:
+def _parsed_sources(*needles: str) -> Iterator[tuple[str, ast.Module]]:
+    """Yield (path, tree) for each src/gobby file whose text contains a needle.
+
+    A scan records a construct only when one of its names or literals appears in the
+    file text, so files without any needle are skipped unparsed. Trees are yielded one
+    at a time and released as the caller moves on: keeping every tree alive put millions
+    of AST objects on the GC heap, and each later gc.collect() then took tens of seconds.
+    """
+    for relative, text in _source_texts():
+        if any(needle in text for needle in needles):
+            yield relative, ast.parse(text, filename=relative)
+
+
+@functools.cache
+def _sync_git_inventory() -> tuple[SyncGitUse, ...]:
     uses: set[SyncGitUse] = set()
-    for relative, tree in _source_trees():
+    for relative, tree in _parsed_sources("git", *_SYNC_GIT_HELPERS):
         visitor = _SyncGitVisitor(relative)
         visitor.visit(tree)
         uses.update(visitor.uses)
-    return sorted(uses)
+    return tuple(sorted(uses))
 
 
 _SYNC_GIT_FACADES = {
@@ -284,13 +303,14 @@ class _SyncFacadeCallVisitor(ast.NodeVisitor):
         return isinstance(receiver, ast.Attribute) and receiver.attr == "updater"
 
 
-def _sync_facade_calls() -> list[SyncFacadeCall]:
+@functools.cache
+def _sync_facade_calls() -> tuple[SyncFacadeCall, ...]:
     calls: set[SyncFacadeCall] = set()
-    for relative, tree in _source_trees():
+    for relative, tree in _parsed_sources(*_SYNC_GIT_FACADES, "update_all", "update_skill"):
         visitor = _SyncFacadeCallVisitor(relative)
         visitor.visit(tree)
         calls.update(visitor.calls)
-    return sorted(calls)
+    return tuple(sorted(calls))
 
 
 _ALLOWED_SYNC_GIT_BOUNDARIES = {
@@ -316,6 +336,10 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/workflows/git_utils.py", "resolve_git_worktree_root"),
     ("src/gobby/workflows/task_dirty_state.py", "committable_task_paths"),
     ("src/gobby/workflows/task_dirty_state.py", "task_dirty_paths"),
+    # Status report git reads run only through compose_report, which the status-report
+    # route calls with asyncio.to_thread (mcp_proxy/tools/communications.py); no other
+    # caller reaches collect_status.
+    ("src/gobby/status_report/collect.py", "_run_git"),
     # Daemon boundaries that run only on worker threads, each with a test proving
     # no event loop runs there.
     # Only navigation_requires_index asks, from rule conditions on the rule-engine
@@ -420,6 +444,20 @@ _ALLOWED_SYNC_FACADE_CALLERS = {
 }
 
 
+def test_scanner_sees_git_argv_through_a_name_imported_from_spawn() -> None:
+    visitor = _SyncGitVisitor("sample.py")
+    visitor.visit(ast.parse('from gobby.utils.spawn import run\nrun(["git", "status"])\n'))
+    assert [use.scope for use in visitor.uses] == ["<module>"]
+
+
+def test_source_scan_keeps_no_parsed_tree_alive() -> None:
+    # Parsed trees retained after a scan put millions of AST objects on the GC heap;
+    # every later gc.collect() then took tens of seconds and stalled session teardown.
+    _sync_git_inventory()
+    live_trees = [obj for obj in gc.get_objects() if isinstance(obj, ast.Module)]
+    assert not live_trees, f"{len(live_trees)} parsed source trees outlived the scan"
+
+
 def test_runtime_git_has_no_unapproved_synchronous_boundaries() -> None:
     inventory = _sync_git_inventory()
     unapproved = [
@@ -455,25 +493,21 @@ def test_daemon_runtime_does_not_call_synchronous_git_facades() -> None:
     )
 
 
-@functools.cache
-def _referenced_names() -> tuple[tuple[str, frozenset[str]], ...]:
-    """Map each src/gobby module to the names, attributes and import aliases it uses."""
-    modules = []
-    for relative, tree in _source_trees():
-        names: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Name):
-                names.add(node.id)
-            elif isinstance(node, ast.Attribute):
-                names.add(node.attr)
-            elif isinstance(node, ast.alias):
-                names.add(node.name)
-        modules.append((relative, frozenset(names)))
-    return tuple(modules)
+def _referenced_names(tree: ast.Module) -> frozenset[str]:
+    """Names, attributes and import aliases one module uses."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.alias):
+            names.add(node.name)
+    return frozenset(names)
 
 
 def _modules_referencing(name: str) -> set[str]:
-    return {relative for relative, names in _referenced_names() if name in names}
+    return {relative for relative, tree in _parsed_sources(name) if name in _referenced_names(tree)}
 
 
 def test_bin_freshness_git_is_reached_only_from_cli_status() -> None:
@@ -548,9 +582,8 @@ def test_display_normalization_callers_read_no_canonical_metadata() -> None:
     # test_post_tool_lifecycle_adds_only_mcp_display_fields.
     callers = _modules_referencing("normalize_tool_display_fields")
     assert callers - {"src/gobby/hooks/normalization.py"} <= _DISPLAY_NORMALIZATION_MODULES
-    for relative, tree in _source_trees():
-        if relative not in _DISPLAY_NORMALIZATION_MODULES:
-            continue
+    for relative in sorted(_DISPLAY_NORMALIZATION_MODULES):
+        tree = ast.parse((_REPO_ROOT / relative).read_text(encoding="utf-8"), filename=relative)
         keys = {
             node.value
             for node in ast.walk(tree)

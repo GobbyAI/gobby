@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -13,10 +14,12 @@ import pytest
 
 from gobby.code_index.gcode_gateway import GcodeCommandResult
 from gobby.code_index.models import IndexedProject
+from gobby.code_index.nightly_reconcile import NightlyReconcileReceipt
 from gobby.code_index.nightly_repair import (
     CODE_INDEX_NIGHTLY_REPAIR_HANDLER,
     CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME,
     CodeIndexNightlyRepairer,
+    nightly_reconcile_apply_switch,
     register_code_index_nightly_repair_cron,
 )
 from gobby.config.code_index import CodeIndexConfig
@@ -52,12 +55,29 @@ def _gcode_result(
     )
 
 
+def _json_result(payload: dict[str, Any], *, returncode: int = 0) -> GcodeCommandResult:
+    return GcodeCommandResult(
+        command=("/tmp/gcode",),
+        returncode=returncode,
+        stdout=json.dumps(payload),
+        stderr="" if returncode == 0 else "read error",
+        started_at="2026-01-01T00:00:00+00:00",
+        completed_at="2026-01-01T00:00:01+00:00",
+        duration_seconds=1.0,
+        timeout_seconds=7200,
+    )
+
+
 class NightlyStorage:
     def __init__(self, projects: list[IndexedProject]) -> None:
         self.projects = projects
+        self.receipts: list[NightlyReconcileReceipt] = []
 
     def list_indexed_projects(self) -> list[IndexedProject]:
         return self.projects
+
+    def record_nightly_reconcile_receipt(self, receipt: NightlyReconcileReceipt) -> None:
+        self.receipts.append(receipt)
 
 
 class NightlyGateway:
@@ -74,6 +94,8 @@ class NightlyGateway:
         self.max_active = 0
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.reconcile_calls: list[bool] = []
+        self.apply_digests: list[str | None] = []
 
     async def nightly_repair(
         self,
@@ -103,6 +125,42 @@ class NightlyGateway:
             )
         finally:
             self.active -= 1
+
+    async def vector_reconcile(
+        self,
+        project_root: Path,
+        *,
+        apply: bool = False,
+        expect_digest: str | None = None,
+        receipt_path: Path | None = None,
+        timeout: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> GcodeCommandResult:
+        del project_root, receipt_path, timeout, env
+        self.reconcile_calls.append(apply)
+        if apply:
+            self.apply_digests.append(expect_digest)
+            return _json_result(
+                {
+                    "success": True,
+                    "mode": "apply",
+                    "inventory_digest": expect_digest,
+                    "deleted_points": 0,
+                    "versions_reset": 0,
+                    "complete": True,
+                }
+            )
+        return _json_result(
+            {
+                "success": True,
+                "mode": "dry_run",
+                "points_scanned": 3,
+                "pg_symbols": 3,
+                "orphans": {"stale": {"count": 0, "ids": []}},
+                "missing": {},
+                "inventory_digest": "obs",
+            }
+        )
 
 
 @contextmanager
@@ -180,6 +238,100 @@ async def test_nightly_repair_runs_per_project_command_and_writes_log(
     assert '"event": "nightly_repair"' in log_text
     assert '"status": "completed"' in log_text
     assert '"repair"' in log_text
+
+
+@pytest.mark.asyncio
+async def test_nightly_repair_records_a_dry_run_reconcile_after_a_completed_repair(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = NightlyGateway()
+    context = NightlyContext(
+        projects=[_project("proj-1", root)],
+        gateway=gateway,
+        log_file=tmp_path / "maintenance.log",
+    )
+    repairer = CodeIndexNightlyRepairer(cast(Any, context))
+
+    await repairer.run_once()
+
+    assert gateway.reconcile_calls == [False]
+    [receipt] = context.storage.receipts
+    assert receipt.project_id == "proj-1"
+    assert receipt.mode == "dry_run"
+    assert receipt.outcome == "completed"
+    assert receipt.digest == "obs"
+
+
+@pytest.mark.asyncio
+async def test_nightly_reconcile_applies_the_observed_digest_when_the_switch_is_on(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = NightlyGateway()
+    context = NightlyContext(
+        projects=[_project("proj-1", root)],
+        gateway=gateway,
+        log_file=tmp_path / "maintenance.log",
+    )
+    repairer = CodeIndexNightlyRepairer(
+        cast(Any, context),
+        apply_enabled=lambda: True,
+    )
+
+    await repairer.run_once()
+
+    assert gateway.reconcile_calls == [False, True]
+    assert gateway.apply_digests == ["obs"]
+    [receipt] = context.storage.receipts
+    assert receipt.mode == "apply"
+    assert receipt.outcome == "completed"
+
+
+@pytest.mark.asyncio
+async def test_nightly_reconcile_reads_the_apply_switch_on_every_run(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = NightlyGateway()
+    context = NightlyContext(
+        projects=[_project("proj-1", root)],
+        gateway=gateway,
+        log_file=tmp_path / "maintenance.log",
+    )
+    switch = {"on": False}
+    repairer = CodeIndexNightlyRepairer(
+        cast(Any, context),
+        apply_enabled=lambda: switch["on"],
+    )
+
+    await repairer.run_once()
+    switch["on"] = True
+    await repairer.run_once()
+
+    assert [receipt.mode for receipt in context.storage.receipts] == ["dry_run", "apply"]
+
+
+@pytest.mark.asyncio
+async def test_nightly_reconcile_is_skipped_when_the_repair_fails(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = NightlyGateway(
+        result=_gcode_result(("/tmp/gcode", "repair"), returncode=1, stderr="repair broke"),
+    )
+    context = NightlyContext(
+        projects=[_project("proj-1", root)],
+        gateway=gateway,
+        log_file=tmp_path / "maintenance.log",
+    )
+    repairer = CodeIndexNightlyRepairer(cast(Any, context))
+
+    result = await repairer.run_once()
+
+    assert "failed=1" in result
+    assert gateway.reconcile_calls == []
+    assert context.storage.receipts == []
 
 
 @pytest.mark.asyncio
@@ -450,3 +602,38 @@ def test_register_nightly_repair_cron_schedules_reenabled_job(
     assert repaired is not None
     assert repaired.enabled is True
     assert repaired.next_run_at is not None
+
+
+class _SwitchRuntime:
+    """Stands in for ConfigRuntime: the snapshot reads the live section value."""
+
+    def __init__(self, *, apply: bool) -> None:
+        self.apply = apply
+
+    @property
+    def snapshot(self) -> Any:
+        return SimpleNamespace(
+            active_section=lambda name: SimpleNamespace(nightly_reconcile_apply=self.apply)
+        )
+
+
+def test_reconcile_switch_reads_the_config_store_on_every_run() -> None:
+    runtime = _SwitchRuntime(apply=False)
+    enabled = nightly_reconcile_apply_switch(cast(Any, runtime))
+
+    assert enabled() is False
+    runtime.apply = True
+    assert enabled() is True
+    runtime.apply = False
+    assert enabled() is False
+
+
+def test_reconcile_switch_reads_as_dry_run_before_config_starts() -> None:
+    class _Unstarted:
+        @property
+        def snapshot(self) -> Any:
+            raise RuntimeError("ConfigRuntime has not started")
+
+    enabled = nightly_reconcile_apply_switch(cast(Any, _Unstarted()))
+
+    assert enabled() is False

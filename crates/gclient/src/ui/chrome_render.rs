@@ -11,8 +11,8 @@ use crate::ui::settings::SettingsHits;
 use crate::ui::sidebar::SidebarHits;
 use crate::ui::tabs::TabBarHits;
 use crate::ui::{
-    context_menu, dialogs, keybind_help, menu_bar, navigator, pane_chrome, panes, settings,
-    sidebar, splash, status, tab_surface,
+    context_menu, dialogs, keybind_help, menu_bar, navigator, panes, settings, sidebar, splash,
+    status, tab_surface,
 };
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
@@ -26,7 +26,6 @@ pub struct ChromeHits {
     pub menu_bar: MenuBarHits,
     pub tab_bar: TabBarHits,
     pub sidebar: SidebarHits,
-    pub control_indicator: Option<Rect>,
     pub status_count: Option<Rect>,
     pub toast: Option<Rect>,
     pub settings: Option<SettingsHits>,
@@ -177,9 +176,6 @@ fn render_chrome<W: WorkspaceView>(
     } else {
         status::render_status_line(frame, status_rect, ws, chrome)
     };
-    hits.control_indicator = status_hits
-        .control_indicator
-        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
     hits.status_count = status_hits.count;
 
     // Ambient notifications sit above panes, but below interactive overlays.

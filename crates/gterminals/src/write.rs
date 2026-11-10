@@ -761,6 +761,7 @@ impl Coordinator {
     }
 
     /// Operator writes must still hold the lease they were admitted under.
+    /// A gclient attachment holds no lease and is always admitted.
     pub(crate) async fn revalidate(
         &self,
         terminal_id: Uuid,
@@ -768,6 +769,14 @@ impl Coordinator {
         lease: Option<LeaseClaim>,
     ) -> Result<(), Refusal> {
         if origin != Origin::Operator {
+            return Ok(());
+        }
+        if let Some(claim) = lease
+            && self
+                .leases
+                .is_gclient_attachment(terminal_id, claim.attachment_id)
+                .await
+        {
             return Ok(());
         }
         let view = self.leases.snapshot(terminal_id).await;

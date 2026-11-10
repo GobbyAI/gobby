@@ -1,6 +1,5 @@
 //! Items under the seven persistent menu-bar titles.
 
-use crate::app::ControlState;
 use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
@@ -16,8 +15,6 @@ pub fn menu_bar_items<W: WorkspaceView>(
     menu: MenuBarMenu,
 ) -> Vec<MenuItem> {
     let act = |label: &'static str, action: Action| item(label, MenuAction::Act(action));
-    let focused = chrome.focused_pane();
-    let held = focused.is_some_and(|pane| ws.pane(pane).control == ControlState::Held);
     match menu {
         MenuBarMenu::Gobby => vec![
             act("Settings", Action::Settings),
@@ -39,7 +36,6 @@ pub fn menu_bar_items<W: WorkspaceView>(
                 chrome.focused_pane().is_some(),
             ),
             item("Destroy orphaned terminals…", MenuAction::DestroyOrphans),
-            enabled_if(act("Detach", Action::Detach), held),
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
         MenuBarMenu::View => {
@@ -94,6 +90,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
             items
         }
         MenuBarMenu::Agent => {
+            let focused = chrome.focused_pane();
             let entry = focused.and_then(|pane| blocked_entry(ws, pane));
             let has_entry = entry.is_some();
             let attention = ws.attention_entry_ids();
@@ -107,16 +104,6 @@ pub fn menu_bar_items<W: WorkspaceView>(
                     item("Mark seen", MenuAction::MarkSeen(entry.unwrap_or_default())),
                     has_entry,
                 ),
-                enabled_if(
-                    act("Take control", Action::TakeControl),
-                    focused.is_some() && !held,
-                ),
-                enabled_if(act("Release control", Action::ReleaseControl), held),
-                enabled_if(
-                    act("Take back", Action::TakeBack),
-                    focused.is_some() && !held,
-                ),
-                enabled_if(act("Detach", Action::Detach), held),
                 enabled_if(
                     act("Open alert target", Action::OpenNotificationTarget),
                     chrome.latest_alert_target().is_some(),

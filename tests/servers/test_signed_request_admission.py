@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.unit
 
 MACHINE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 SIGNING_KEY = derive_managed_signing_key("operator-token")
+TOKEN_ISSUED_AT = time.time()
 TOKEN = issue_agent_api_token(
     SIGNING_KEY,
     agent_run_id="exec-1",
@@ -79,6 +81,12 @@ def _fresh_nonce() -> str:
     nonce = signed_request_nonces.issue(PAYLOAD)
     assert nonce is not None
     return nonce
+
+
+@pytest.fixture(autouse=True)
+def _capability_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep authentication at issuance time even after a long collection-to-test delay."""
+    monkeypatch.setattr(local_token, "time", SimpleNamespace(time=lambda: TOKEN_ISSUED_AT))
 
 
 @pytest.fixture(autouse=True)

@@ -6,14 +6,13 @@ use futures_util::FutureExt;
 use gobby_client::daemon::{
     encode_message, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, KillOutcome,
     LayoutAxis, LiveDaemon, SpawnOutcome, SpawnRequest, WorkspaceError, WorkspaceErrorCode,
-    WorkspaceEvent, WorkspaceEventKind, WorkspaceOp, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE,
-    SUBSCRIBED_EVENTS, TERMINAL_WS_SAFE_INTEGER_MAX,
+    WorkspaceEvent, WorkspaceEventKind, WorkspaceOp, REQUEST_DEADLINE, SUBSCRIBED_EVENTS,
+    TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
 use serde_json::json;
 use std::time::Duration;
-use tokio::sync::watch;
 use tokio::time::{timeout, Instant};
 
 #[tokio::test]
@@ -567,12 +566,7 @@ async fn every_method_has_success_and_typed_failure() {
 #[tokio::test]
 async fn single_reader_routes_replies_and_events() {
     let mock = MockDaemon::start("local-token").await;
-    for kind in [
-        "terminal_create",
-        "terminal_kill",
-        "terminal_input",
-        "terminal_take_control",
-    ] {
+    for kind in ["terminal_create", "terminal_kill", "terminal_input"] {
         mock.suppress_ws(kind);
     }
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
@@ -601,27 +595,14 @@ async fn single_reader_routes_replies_and_events() {
                 .await
         })
     };
-    let control = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": "attachment-1",
-                    "takeover": false
-                }))
-                .await
-        })
-    };
     timeout(Duration::from_secs(1), async {
-        while daemon.pending_counts() != (2, 1, 1)
+        while daemon.pending_counts() != (2, 1)
             || mock
                 .requests()
                 .iter()
                 .filter(|request| request.method == "WS")
                 .count()
-                < 4
+                < 3
         {
             tokio::task::yield_now().await;
         }
@@ -666,7 +647,7 @@ async fn single_reader_routes_replies_and_events() {
     ));
     assert_eq!(
         daemon.pending_counts(),
-        (2, 1, 1),
+        (2, 1),
         "an unmatched request and lifecycle fan-out settle no waiter"
     );
     mock.send_event(json!({
@@ -685,13 +666,6 @@ async fn single_reader_routes_replies_and_events() {
         "backend": "native",
         "reason": null
     }));
-    mock.send_event(json!({
-        "type": "terminal_control_result",
-        "attachment_id": "attachment-1",
-        "granted": true,
-        "lease_generation": 1,
-        "reason": null
-    }));
     mock.send_event_and_wait(json!({
         "type": "terminal_kill_result",
         "request_id": kill_id,
@@ -702,10 +676,6 @@ async fn single_reader_routes_replies_and_events() {
     assert_eq!(
         write.await.expect("write task").expect("write")["client_write_seq"],
         3
-    );
-    assert_eq!(
-        control.await.expect("control task").expect("control")["granted"],
-        true
     );
     assert!(matches!(
         spawn.await.expect("spawn task").expect("spawn"),
@@ -730,21 +700,8 @@ async fn single_reader_routes_replies_and_events() {
                 .await
         })
     };
-    let finalized_control = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": "attachment-finalized",
-                    "takeover": false
-                }))
-                .await
-        })
-    };
     timeout(Duration::from_secs(1), async {
-        while daemon.pending_counts() != (0, 1, 1) {
+        while daemon.pending_counts() != (0, 1) {
             tokio::task::yield_now().await;
         }
     })
@@ -768,15 +725,11 @@ async fn single_reader_routes_replies_and_events() {
     ));
     assert_eq!(
         daemon.pending_counts(),
-        (0, 0, 0),
+        (0, 0),
         "finalization removes attachment maps before fan-out"
     );
     assert_eq!(
         finalized_write.await.expect("finalized write task"),
-        Err(DaemonError::ControlScopeIndeterminate)
-    );
-    assert_eq!(
-        finalized_control.await.expect("finalized control task"),
         Err(DaemonError::ControlScopeIndeterminate)
     );
 
@@ -798,21 +751,8 @@ async fn single_reader_routes_replies_and_events() {
                 .await
         })
     };
-    let dropped_control = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": "attachment-drop",
-                    "takeover": false
-                }))
-                .await
-        })
-    };
     timeout(Duration::from_secs(1), async {
-        while daemon.pending_counts() != (1, 1, 1) {
+        while daemon.pending_counts() != (1, 1) {
             tokio::task::yield_now().await;
         }
     })
@@ -826,13 +766,9 @@ async fn single_reader_routes_replies_and_events() {
     );
     assert_eq!(
         dropped_write.await.expect("dropped write task"),
-        Err(unavailable.clone())
-    );
-    assert_eq!(
-        dropped_control.await.expect("dropped control task"),
         Err(unavailable)
     );
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
+    assert_eq!(daemon.pending_counts(), (0, 0));
     daemon
         .reconnect(generation.generation)
         .await
@@ -1126,7 +1062,6 @@ async fn websocket_handshake_rejects_bad_bearer_token() {
 async fn correlation_maps_drain_on_every_terminal_path() {
     let mock = MockDaemon::start("local-token").await;
     mock.suppress_ws("terminal_input");
-    mock.suppress_ws("terminal_take_control");
     mock.suppress_ws("terminal_kill");
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -1160,50 +1095,18 @@ async fn correlation_maps_drain_on_every_terminal_path() {
                 .await
         }));
     }
-    let mut controls = Vec::new();
-    for sequence in 0..50 {
-        let daemon = daemon.clone();
-        controls.push(tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": format!("deadline-control-{sequence}"),
-                    "takeover": false
-                }))
-                .await
-        }));
-    }
     for _ in 0..10_000 {
-        if daemon.pending_counts() == (50, 50, 50) {
+        if daemon.pending_counts() == (50, 50) {
             break;
         }
         tokio::task::yield_now().await;
     }
-    assert_eq!(daemon.pending_counts(), (50, 50, 50));
-    tokio::time::advance(CONTROL_REQUEST_DEADLINE - Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
-    assert!(controls.iter().all(|request| !request.is_finished()));
-    assert!(writes.iter().all(|request| !request.is_finished()));
-    assert!(requests.iter().all(|request| !request.is_finished()));
-    assert_eq!(daemon.pending_counts(), (50, 50, 50));
-    tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
-    for control in controls {
-        assert_eq!(
-            control.await.expect("control deadline task"),
-            Err(DaemonError::Timeout {
-                request: "terminal_take_control".into()
-            })
-        );
-    }
-    assert_eq!(daemon.pending_counts(), (50, 50, 0));
-    tokio::time::advance(REQUEST_DEADLINE - CONTROL_REQUEST_DEADLINE - Duration::from_millis(1))
-        .await;
+    assert_eq!(daemon.pending_counts(), (50, 50));
+    tokio::time::advance(REQUEST_DEADLINE - Duration::from_millis(1)).await;
     tokio::task::yield_now().await;
     assert!(writes.iter().all(|request| !request.is_finished()));
     assert!(requests.iter().all(|request| !request.is_finished()));
-    assert_eq!(daemon.pending_counts(), (50, 50, 0));
+    assert_eq!(daemon.pending_counts(), (50, 50));
     tokio::time::advance(Duration::from_millis(1)).await;
     tokio::task::yield_now().await;
     for write in writes {
@@ -1222,7 +1125,7 @@ async fn correlation_maps_drain_on_every_terminal_path() {
             })
         );
     }
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
+    assert_eq!(daemon.pending_counts(), (0, 0));
     tokio::time::resume();
 
     let (_, mut observed) = daemon.subscribe();
@@ -1238,13 +1141,6 @@ async fn correlation_maps_drain_on_every_terminal_path() {
         "terminal_id": "terminal-1",
         "client_write_seq": 0,
         "outcome": "applied",
-        "reason": null
-    }));
-    mock.send_event(json!({
-        "type": "terminal_control_result",
-        "attachment_id": "deadline-control-0",
-        "granted": true,
-        "lease_generation": 1,
         "reason": null
     }));
     mock.send_event_and_wait(json!({
@@ -1265,7 +1161,7 @@ async fn correlation_maps_drain_on_every_terminal_path() {
     ));
     assert_eq!(
         daemon.pending_counts(),
-        (0, 0, 0),
+        (0, 0),
         "withheld late replies recreate no exact-key entry"
     );
 
@@ -1297,39 +1193,21 @@ async fn correlation_maps_drain_on_every_terminal_path() {
                 .await
         }));
     }
-    let mut cancelled_controls = Vec::new();
-    for sequence in 0..50 {
-        let daemon = daemon.clone();
-        cancelled_controls.push(tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": format!("cancelled-control-{sequence}"),
-                    "takeover": false
-                }))
-                .await
-        }));
-    }
     timeout(Duration::from_secs(1), async {
-        while daemon.pending_counts() != (50, 50, 50) {
+        while daemon.pending_counts() != (50, 50) {
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("cancelled operations registered in all three maps");
-    for request in cancelled_requests
-        .into_iter()
-        .chain(cancelled_writes)
-        .chain(cancelled_controls)
-    {
+    .expect("cancelled operations registered in both correlation maps");
+    for request in cancelled_requests.into_iter().chain(cancelled_writes) {
         request.abort();
         assert!(request
             .await
             .expect_err("cancelled correlation task")
             .is_cancelled());
     }
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
+    assert_eq!(daemon.pending_counts(), (0, 0));
     mock.send_event(json!({
         "type": "terminal_kill_result",
         "request_id": "cancelled-request-0",
@@ -1342,13 +1220,6 @@ async fn correlation_maps_drain_on_every_terminal_path() {
         "terminal_id": "terminal-1",
         "client_write_seq": 100,
         "outcome": "applied",
-        "reason": null
-    }));
-    mock.send_event(json!({
-        "type": "terminal_control_result",
-        "attachment_id": "cancelled-control-0",
-        "granted": true,
-        "lease_generation": 1,
         "reason": null
     }));
     mock.send_event_and_wait(json!({
@@ -1371,7 +1242,7 @@ async fn correlation_maps_drain_on_every_terminal_path() {
             break;
         }
     }
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
+    assert_eq!(daemon.pending_counts(), (0, 0));
 
     mock.allow_ws("terminal_input");
     mock.allow_ws("terminal_kill");
@@ -1412,135 +1283,6 @@ async fn correlation_maps_drain_on_every_terminal_path() {
         .await
         .expect("request id reusable after cancellation");
 
-    tokio::time::pause();
-    let timed_control = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                    "takeover": false
-                }))
-                .await
-        })
-    };
-    for _ in 0..10_000 {
-        if daemon.pending_counts().2 == 1
-            && mock.requests().iter().any(|request| {
-                request.body.as_ref().and_then(|body| body.get("type"))
-                    == Some(&json!("terminal_take_control"))
-            })
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(daemon.pending_counts().2, 1);
-    tokio::time::advance(CONTROL_REQUEST_DEADLINE - Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
-    assert!(!timed_control.is_finished());
-    assert_eq!(daemon.pending_counts().2, 1);
-    tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
-    assert!(matches!(
-        timed_control.await.expect("timed control task"),
-        Err(DaemonError::Timeout { .. })
-    ));
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
-    assert_eq!(
-        daemon
-            .send(json!({
-                "type": "terminal_release_control",
-                "terminal_id": "terminal-1",
-                "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-            }))
-            .await,
-        Err(DaemonError::ControlScopeIndeterminate)
-    );
-    tokio::time::resume();
-    daemon
-        .send(json!({
-            "type": "terminal_attach",
-            "request_id": "fresh-after-timeout",
-            "terminal_id": "terminal-1",
-            "frame_delivery": "proxy"
-        }))
-        .await
-        .expect("fresh attach clears timed-out control tombstone");
-
-    let controls_before = mock
-        .requests()
-        .iter()
-        .filter(|request| {
-            request.body.as_ref().and_then(|body| body.get("type"))
-                == Some(&json!("terminal_take_control"))
-        })
-        .count();
-    let cancelled_daemon = daemon.clone();
-    let cancelled = tokio::spawn(async move {
-        cancelled_daemon
-            .send(json!({
-                "type": "terminal_take_control",
-                "terminal_id": "terminal-1",
-                "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                "takeover": false
-            }))
-            .await
-    });
-    timeout(Duration::from_secs(1), async {
-        loop {
-            let written = mock
-                .requests()
-                .iter()
-                .filter(|request| {
-                    request.body.as_ref().and_then(|body| body.get("type"))
-                        == Some(&json!("terminal_take_control"))
-                })
-                .count();
-            if written > controls_before {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("control was written");
-    cancelled.abort();
-    assert!(cancelled.await.expect_err("cancelled task").is_cancelled());
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
-    assert_eq!(
-        daemon
-            .send(json!({
-                "type": "terminal_take_control",
-                "terminal_id": "terminal-1",
-                "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                "takeover": false
-            }))
-            .await,
-        Err(DaemonError::ControlScopeIndeterminate)
-    );
-
-    daemon
-        .send(json!({
-            "type": "terminal_attach",
-            "request_id": "fresh-after-cancel",
-            "terminal_id": "terminal-1",
-            "frame_delivery": "proxy"
-        }))
-        .await
-        .expect("fresh attach clears control tombstone");
-    mock.allow_ws("terminal_take_control");
-    daemon
-        .send(json!({
-            "type": "terminal_take_control",
-            "terminal_id": "terminal-1",
-            "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-            "takeover": false
-        }))
-        .await
-        .expect("control key reusable after fresh attach");
     daemon
         .close(Instant::now() + Duration::from_secs(1))
         .await
@@ -1755,7 +1497,7 @@ async fn notify_settles_without_a_reply() {
         }))
         .await
         .expect("one-way notification settles after write");
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
+    assert_eq!(daemon.pending_counts(), (0, 0));
     timeout(Duration::from_secs(1), async {
         while !mock.requests().iter().any(|request| {
             request.body.as_ref().and_then(|body| body.get("type"))
@@ -1790,7 +1532,6 @@ async fn close_is_idempotent_and_rejects_later_requests() {
     let pending_mock = MockDaemon::start("local-token").await;
     pending_mock.suppress_ws("terminal_kill");
     pending_mock.suppress_ws("terminal_input");
-    pending_mock.suppress_ws("terminal_take_control");
     let pending_daemon = LiveDaemon::connect(pending_mock.url(), "local-token")
         .await
         .expect("connect pending live daemon");
@@ -1820,26 +1561,13 @@ async fn close_is_idempotent_and_rejects_later_requests() {
                 .await
         })
     };
-    let pending_control = {
-        let daemon = pending_daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": "close-attachment",
-                    "takeover": false
-                }))
-                .await
-        })
-    };
     timeout(Duration::from_secs(1), async {
-        while pending_daemon.pending_counts() != (1, 1, 1) {
+        while pending_daemon.pending_counts() != (1, 1) {
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("close waiters registered in all correlation maps");
+    .expect("close waiters registered in both correlation maps");
     pending_daemon
         .close(Instant::now() + Duration::from_secs(1))
         .await
@@ -1851,13 +1579,9 @@ async fn close_is_idempotent_and_rejects_later_requests() {
     );
     assert_eq!(
         pending_write.await.expect("pending write task"),
-        Err(unavailable.clone())
-    );
-    assert_eq!(
-        pending_control.await.expect("pending control task"),
         Err(unavailable)
     );
-    assert_eq!(pending_daemon.pending_counts(), (0, 0, 0));
+    assert_eq!(pending_daemon.pending_counts(), (0, 0));
     pending_mock.wait_for_no_websockets().await;
     assert_eq!(pending_mock.websocket_closes(), 1, "sink sent one close");
     pending_mock.shutdown().await;
@@ -1997,15 +1721,6 @@ async fn outbound_messages_match_corpus() {
         .await
         .expect("input");
     daemon
-        .send(json!({
-            "type": "terminal_take_control",
-            "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-            "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-            "takeover": false
-        }))
-        .await
-        .expect("take control");
-    daemon
         .notify(json!({
             "type": "terminal_set_viewport",
             "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -2040,10 +1755,6 @@ async fn outbound_messages_match_corpus() {
         (
             "terminal_input",
             include_str!("../../../tests/fixtures/terminal_ws_golden/input.json"),
-        ),
-        (
-            "terminal_take_control",
-            include_str!("../../../tests/fixtures/terminal_ws_golden/take_control.json"),
         ),
         (
             "terminal_set_viewport",
@@ -2081,337 +1792,6 @@ async fn poll_until(limit: Duration, mut ready: impl FnMut() -> bool, on_timeout
     })
     .await
     .unwrap_or_else(|_| panic!("timed out after {limit:?} waiting for: {on_timeout}"));
-}
-
-/// The deadline of a control request the test ends itself, by cancelling or
-/// answering it. Under load one stall can outlast `CONTROL_REQUEST_DEADLINE`,
-/// which would retire the request before the test observed it (#23559).
-const HELD: Duration = Duration::from_secs(600);
-
-/// Guards an event-driven wait against a hang; it is not a timing claim.
-const HANG: Duration = Duration::from_secs(30);
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn late_control_reply_cannot_settle_a_newer_request() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.suppress_ws("terminal_take_control");
-    mock.suppress_ws("terminal_release_control");
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let attachment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-
-    // The write proves the request registered: a poll for the pending
-    // count would race the deadline this phase lets elapse.
-    let (written_tx, mut written_rx) = watch::channel(false);
-    let timed = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send_marking_written(
-                    json!({
-                        "type": "terminal_take_control",
-                        "terminal_id": "terminal-1",
-                        "attachment_id": attachment,
-                        "takeover": false,
-                        "schedule": "exact-deadline"
-                    }),
-                    written_tx,
-                )
-                .await
-        })
-    };
-    written_rx
-        .wait_for(|written| *written)
-        .await
-        .expect("exact-deadline written");
-    assert!(matches!(
-        timeout(HANG, timed)
-            .await
-            .expect("exact deadline elapses")
-            .expect("exact deadline task"),
-        Err(DaemonError::Timeout { .. })
-    ));
-    assert_eq!(daemon.pending_counts().2, 0);
-    assert_eq!(
-        daemon
-            .send(json!({
-                "type": "terminal_release_control",
-                "terminal_id": "terminal-1",
-                "attachment_id": attachment
-            }))
-            .await,
-        Err(DaemonError::ControlScopeIndeterminate)
-    );
-
-    let (_, mut observed) = daemon.subscribe();
-    mock.send_event(json!({
-        "type": "terminal_control_result",
-        "terminal_id": "terminal-1",
-        "attachment_id": attachment,
-        "granted": true,
-        "lease_generation": 1,
-        "reason": null
-    }));
-    mock.send_event_and_wait(json!({
-        "type": "terminal_event",
-        "event": "updated",
-        "terminal_id": "terminal-1",
-        "daemon_epoch": "epoch-1",
-        "seq": 1,
-        "timestamp": "2026-01-01T00:00:00Z"
-    }))
-    .await;
-    assert!(matches!(
-        timeout(HANG, observed.recv())
-            .await
-            .expect("deadline late-reply sentinel")
-            .expect("deadline late-reply sentinel"),
-        DaemonEvent::Terminal { seq: 1, .. }
-    ));
-    daemon
-        .send(json!({
-            "type": "terminal_attach",
-            "request_id": "fresh-after-deadline",
-            "terminal_id": "terminal-1",
-            "frame_delivery": "proxy"
-        }))
-        .await
-        .expect("fresh attach clears deadline tombstone");
-
-    let post_send = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send_with_deadline(
-                    json!({
-                        "type": "terminal_take_control",
-                        "terminal_id": "terminal-1",
-                        "attachment_id": attachment,
-                        "takeover": false,
-                        "schedule": "post-send"
-                    }),
-                    HELD,
-                )
-                .await
-        })
-    };
-    poll_until(
-        Duration::from_secs(10),
-        || {
-            mock.requests().iter().any(|request| {
-                request.body.as_ref().and_then(|body| body.get("schedule"))
-                    == Some(&json!("post-send"))
-            })
-        },
-        "post-send control write completed",
-    )
-    .await;
-    post_send.abort();
-    assert!(post_send
-        .await
-        .expect_err("post-send cancelled control")
-        .is_cancelled());
-    mock.send_event(json!({
-        "type": "terminal_control_result",
-        "terminal_id": "terminal-1",
-        "attachment_id": attachment,
-        "granted": true,
-        "lease_generation": 1,
-        "reason": null
-    }));
-    mock.send_event_and_wait(json!({
-        "type": "terminal_event",
-        "event": "updated",
-        "terminal_id": "terminal-1",
-        "daemon_epoch": "epoch-1",
-        "seq": 2,
-        "timestamp": "2026-01-01T00:00:01Z"
-    }))
-    .await;
-    assert!(matches!(
-        timeout(HANG, observed.recv())
-            .await
-            .expect("sentinel event deadline")
-            .expect("sentinel event"),
-        DaemonEvent::Terminal { seq: 2, .. }
-    ));
-    assert_eq!(
-        daemon
-            .send(json!({
-                "type": "terminal_release_control",
-                "terminal_id": "terminal-1",
-                "attachment_id": attachment
-            }))
-            .await,
-        Err(DaemonError::ControlScopeIndeterminate)
-    );
-
-    daemon
-        .send(json!({
-            "type": "terminal_attach",
-            "request_id": "fresh-control-scope",
-            "terminal_id": "terminal-1",
-            "frame_delivery": "proxy"
-        }))
-        .await
-        .expect("fresh attach clears indeterminate control scope");
-
-    let read_gate = mock.pause_websocket_reads().await;
-    let mid_send = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send_with_deadline(
-                    json!({
-                        "type": "terminal_take_control",
-                        "terminal_id": "terminal-1",
-                        "attachment_id": "attachment-mid-send",
-                        "takeover": false,
-                        "schedule": "mid-send",
-                        "padding": "x".repeat(8 * 1024 * 1024)
-                    }),
-                    HELD,
-                )
-                .await
-        })
-    };
-    // The waiter registers only after `request_with_deadline` encodes the 8 MiB
-    // padding frame. Under host contention that encode can outlast a 10s budget
-    // (a concurrent run at load average 41-46 timed out here), so both mid-send
-    // waits use the event-driven hang guard, not a timing claim.
-    poll_until(
-        HANG,
-        || daemon.pending_counts().2 == 1,
-        "mid-send registered",
-    )
-    .await;
-    poll_until(
-        HANG,
-        || daemon.control_write_started("attachment-mid-send"),
-        "mid-send write started",
-    )
-    .await;
-    let pre_write = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send_with_deadline(
-                    json!({
-                        "type": "terminal_take_control",
-                        "terminal_id": "terminal-1",
-                        "attachment_id": "attachment-pre-write",
-                        "takeover": false,
-                        "schedule": "pre-write-cancelled"
-                    }),
-                    HELD,
-                )
-                .await
-        })
-    };
-    poll_until(
-        Duration::from_secs(30),
-        || daemon.pending_counts().2 == 2,
-        "pre-write registered",
-    )
-    .await;
-    pre_write.abort();
-    assert!(pre_write
-        .await
-        .expect_err("pre-write cancelled control")
-        .is_cancelled());
-    // Cancelling one control request leaves its in-flight sibling pending.
-    assert_eq!(daemon.pending_counts().2, 1);
-    mid_send.abort();
-    assert!(mid_send
-        .await
-        .expect_err("mid-send cancelled control")
-        .is_cancelled());
-    assert_eq!(daemon.pending_counts().2, 0);
-    assert_eq!(
-        timeout(
-            Duration::from_millis(100),
-            daemon.send(json!({
-                "type": "terminal_release_control",
-                "terminal_id": "terminal-1",
-                "attachment_id": "attachment-mid-send"
-            }))
-        )
-        .await
-        .expect("mid-send cancellation tombstones locally"),
-        Err(DaemonError::ControlScopeIndeterminate)
-    );
-    read_gate.notify_one();
-    // Draining the 8 MiB frame is throughput, so the replacement starts only
-    // after it, on the resumed sink.
-    poll_until(
-        Duration::from_secs(30),
-        || {
-            mock.requests().iter().any(|request| {
-                request.body.as_ref().and_then(|body| body.get("schedule"))
-                    == Some(&json!("mid-send"))
-            })
-        },
-        "the mid-send frame drains",
-    )
-    .await;
-    let replacement = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send_with_deadline(
-                    json!({
-                        "type": "terminal_take_control",
-                        "terminal_id": "terminal-1",
-                        "attachment_id": "attachment-pre-write",
-                        "takeover": false,
-                        "schedule": "pre-write-replacement"
-                    }),
-                    HELD,
-                )
-                .await
-        })
-    };
-    poll_until(
-        Duration::from_secs(5),
-        || {
-            mock.requests().iter().any(|request| {
-                request.body.as_ref().and_then(|body| body.get("schedule"))
-                    == Some(&json!("pre-write-replacement"))
-            })
-        },
-        "replacement control reaches resumed sink",
-    )
-    .await;
-    let resumed_requests = mock.requests();
-    let pre_write_schedules: Vec<_> = resumed_requests
-        .iter()
-        .filter_map(|request| request.body.as_ref())
-        .filter_map(|body| body.get("schedule").and_then(serde_json::Value::as_str))
-        .filter(|schedule| schedule.starts_with("pre-write"))
-        .map(str::to_string)
-        .collect();
-    assert_eq!(
-        pre_write_schedules,
-        ["pre-write-replacement".to_string()],
-        "a request cancelled before write_started never invokes the sink"
-    );
-    mock.send_event_and_wait(json!({
-        "type": "terminal_control_result",
-        "terminal_id": "terminal-1",
-        "attachment_id": "attachment-pre-write",
-        "granted": true,
-        "lease_generation": 2,
-        "reason": null
-    }))
-    .await;
-    replacement
-        .await
-        .expect("pre-write replacement task")
-        .expect("pre-write scope remains reusable");
-    assert_eq!(daemon.pending_counts(), (0, 0, 0));
-    daemon.close(Instant::now() + HANG).await.expect("close");
-    mock.shutdown().await;
 }
 
 /// The daemon's terminal rows carry the id under two keys.

@@ -373,22 +373,15 @@ fn requester() -> leases::Requester {
     }
 }
 
-async fn controller(leases: &Registry, terminal: Uuid) -> anyhow::Result<LeaseClaim> {
+/// A gclient pane's claim. A pane holds no lease, so its writes need no holder.
+async fn pane_claim(leases: &Registry, terminal: Uuid) -> anyhow::Result<LeaseClaim> {
     let req = requester();
     let attachment = leases
-        .attach(
-            terminal,
-            req,
-            Viewer::Web,
-            Backend::Native,
-            leases::Delivery::Proxy,
-        )
+        .attach(terminal, req, Viewer::Gclient, Backend::Native)
         .await?;
-    let control = leases.take_control(attachment, req, true).await?;
-    anyhow::ensure!(control.granted, "control granted");
     Ok(LeaseClaim {
         attachment_id: attachment.id,
-        generation: control.generation,
+        generation: leases.snapshot(terminal).await.generation,
     })
 }
 
@@ -463,6 +456,104 @@ async fn runtime_is_resolved_from_terminal_row() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A gclient attachment holds no lease, so its operator writes are delivered on
+/// its own claim whether or not a web holder has taken control since.
+#[tokio::test]
+async fn gclient_operator_write_is_admitted_without_a_lease() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = hub.insert(Backend::Native).await?;
+    let (leases, _events) = Registry::new(16);
+    let leases = Arc::new(leases);
+    let native = FakeRuntime::new();
+    let tmux = FakeRuntime::new();
+    let coordinator = Arc::new(Coordinator::new(
+        hub.pool.clone(),
+        leases.clone(),
+        runtimes(&native, &tmux),
+    ));
+
+    let pane_req = requester();
+    let pane = leases
+        .attach(row, pane_req, Viewer::Gclient, Backend::Native)
+        .await?;
+    let claim = LeaseClaim {
+        attachment_id: pane.id,
+        generation: 0,
+    };
+    let outcome = coordinator
+        .write(operator(row, "op:gclient", text("typed"), Some(claim)))
+        .await?;
+    assert_eq!(outcome, Outcome::Delivered);
+
+    // A web attachment without a holder is refused; the gclient claim is still
+    // admitted, and no holder appears.
+    let web_req = requester();
+    let web = leases
+        .attach(row, web_req, Viewer::Web, Backend::Native)
+        .await?;
+    let web_claim = LeaseClaim {
+        attachment_id: web.id,
+        generation: 0,
+    };
+    let refused = coordinator
+        .write(operator(
+            row,
+            "op:web",
+            text("typed by web"),
+            Some(web_claim),
+        ))
+        .await;
+    assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
+    let outcome = coordinator
+        .write(operator(
+            row,
+            "op:gclient-2",
+            text("typed again"),
+            Some(claim),
+        ))
+        .await?;
+    assert_eq!(outcome, Outcome::Delivered);
+    assert_eq!(leases.snapshot(row).await.holder, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn finalized_gclient_claim_is_refused_like_any_stale_lease() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = hub.insert(Backend::Native).await?;
+    let (leases, _events) = Registry::new(16);
+    let leases = Arc::new(leases);
+    let native = FakeRuntime::new();
+    let tmux = FakeRuntime::new();
+    let coordinator = Arc::new(Coordinator::new(
+        hub.pool.clone(),
+        leases.clone(),
+        runtimes(&native, &tmux),
+    ));
+
+    let pane_req = requester();
+    let pane = leases
+        .attach(row, pane_req, Viewer::Gclient, Backend::Native)
+        .await?;
+    let claim = LeaseClaim {
+        attachment_id: pane.id,
+        generation: 0,
+    };
+    leases
+        .finalize(pane, pane_req, "socket_closed")
+        .await?
+        .expect("the pane finalizes");
+
+    // A finalized pane no longer admits writes, so its claim is refused before
+    // any bytes exist, as the Python registry refuses it.
+    let refused = coordinator
+        .write(operator(row, "op:late", text("late"), Some(claim)))
+        .await;
+    assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
+    assert!(native.payloads().is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn stale_lease_never_emits_bytes() -> anyhow::Result<()> {
     let hub = Hub::new().await?;
@@ -477,88 +568,31 @@ async fn stale_lease_never_emits_bytes() -> anyhow::Result<()> {
         runtimes(&native, &tmux),
     ));
 
-    let first = controller(&leases, row).await?;
-    let outcome = coordinator
-        .write(operator(row, "op:1", text("held"), Some(first)))
-        .await?;
-    assert_eq!(outcome, Outcome::Delivered);
-
-    // An operator write without a claim, or with a superseded one, is refused
+    // A web attachment without a holder holds no lease, so its claim is refused
     // before any bytes or latch exist.
+    let web_req = requester();
+    let web = leases
+        .attach(row, web_req, Viewer::Web, Backend::Native)
+        .await?;
+    let claim = LeaseClaim {
+        attachment_id: web.id,
+        generation: 0,
+    };
+    let refused = coordinator
+        .write(operator(row, "op:web", text("unheld"), Some(claim)))
+        .await;
+    assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
+    // An operator write without a claim is refused the same way.
     let refused = coordinator
         .write(operator(row, "op:none", text("unclaimed"), None))
         .await;
     assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
-    let second = controller(&leases, row).await?;
-    assert!(second.generation > first.generation);
-    let mut keyed = operator(row, "op:stale", text("stale"), Some(first));
+    let mut keyed = operator(row, "op:stale", text("stale"), Some(claim));
     keyed.idempotency_key = Some("idem-stale".into());
     let refused = coordinator.write(keyed).await;
     assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
-    let refused = coordinator
-        .write(operator(
-            row,
-            "op:wrong-generation",
-            text("stale"),
-            Some(LeaseClaim {
-                attachment_id: second.attachment_id,
-                generation: first.generation,
-            }),
-        ))
-        .await;
-    assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
-    assert_eq!(native.payloads(), vec!["held"]);
+    assert!(native.payloads().is_empty());
     assert!(hub.unresolved(row).await?.is_empty());
-
-    // Serialization: a takeover waits for the in-flight operator write, and a
-    // write queued behind the takeover revalidates after it acquires the lock.
-    let (entered_tx, entered) = oneshot::channel();
-    let (release, release_rx) = oneshot::channel();
-    *native.gate.lock().unwrap() = Some(Gate {
-        entered: entered_tx,
-        release: release_rx,
-    });
-    let in_flight = tokio::spawn({
-        let coordinator = coordinator.clone();
-        async move {
-            coordinator
-                .write(operator(row, "op:slow", text("slow"), Some(second)))
-                .await
-        }
-    });
-    entered.await?;
-    let takeover = tokio::spawn({
-        let leases = leases.clone();
-        async move { controller(&leases, row).await }
-    });
-    // The test runtime is single-threaded and neither attach nor the terminal
-    // lock does I/O, so one yield parks the takeover on that lock.
-    tokio::task::yield_now().await;
-    assert!(!takeover.is_finished(), "takeover ran during a held write");
-    let queued = tokio::spawn({
-        let coordinator = coordinator.clone();
-        async move {
-            coordinator
-                .write(operator(row, "op:queued", text("queued"), Some(second)))
-                .await
-        }
-    });
-    tokio::task::yield_now().await;
-    assert!(!queued.is_finished());
-    assert_eq!(native.payloads(), vec!["held", "slow"]);
-    release.send(()).expect("release gate");
-    assert_eq!(in_flight.await??, Outcome::Delivered);
-    let third = takeover.await??;
-    assert_eq!(third.generation, second.generation + 1);
-    let refused = queued.await?;
-    assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
-    assert_eq!(native.payloads(), vec!["held", "slow"]);
-
-    let outcome = coordinator
-        .write(operator(row, "op:current", text("current"), Some(third)))
-        .await?;
-    assert_eq!(outcome, Outcome::Delivered);
-    assert_eq!(native.payloads(), vec!["held", "slow", "current"]);
     Ok(())
 }
 
@@ -737,7 +771,7 @@ async fn each_evidence_mutation_path_is_explicit() -> anyhow::Result<()> {
 
     // A delivered operator write releases a quarantine the same way.
     coordinator.quarantine(row, "quarantined").await?;
-    let claim = controller(&leases, row).await?;
+    let claim = pane_claim(&leases, row).await?;
     coordinator
         .write(operator(row, "op", text("typed"), Some(claim)))
         .await?;

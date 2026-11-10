@@ -2381,10 +2381,11 @@ fn prior_420_receipt_upgrades_retention_schema_and_matches_fresh() -> anyhow::Re
         return Ok(());
     };
     install_baseline(&mut client)?;
-    // Reconstruct the exact pre-465 catalog and its released baseline receipt.
+    // Reconstruct the exact pre-465 catalog and its released baseline receipt. The 493 receipt
+    // goes too, since 493 alters the table that 465 creates.
     client.batch_execute(
         "DROP INDEX idx_token_events_event_at; DROP TABLE token_event_retention_totals; \
-         DELETE FROM schema_migrations WHERE version=465;",
+         DELETE FROM schema_migrations WHERE version IN (465, 493);",
     )?;
     client.execute(
         "UPDATE schema_migrations SET checksum=$1 WHERE version=420",
@@ -2392,7 +2393,7 @@ fn prior_420_receipt_upgrades_retention_schema_and_matches_fresh() -> anyhow::Re
     )?;
     let report = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!report.baseline_applied);
-    assert_eq!(report.migrations_applied, 1);
+    assert_eq!(report.migrations_applied, 2);
     SchemaRunner::new(&mut client, "public")?.verify()?;
     let upgraded = super::catalog_manifest(&mut client, "public")?;
     let Some((_fresh_database, mut fresh)) = scratch_database()? else {

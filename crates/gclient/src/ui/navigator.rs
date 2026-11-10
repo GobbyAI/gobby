@@ -66,13 +66,12 @@ pub struct NavigatorRow {
 
 /// Rows matching the navigator query and filter, in display order.
 pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<NavigatorRow> {
-    let p = &chrome.palette;
     let query = chrome.navigator.query.trim().to_lowercase();
     let filter = chrome.navigator.filter;
     let terminals = ws.roster_terminal_ids().into_iter().map(|id| {
         let state = row_state(ws, &id);
         NavigatorRow {
-            detail: format!("{} · {}", state_label(state), terminal_detail(ws, &id, p)),
+            detail: format!("{} · {}", state_label(state), terminal_detail(ws, &id)),
             title: terminal_label(ws, &id),
             pane: ws.pane_for_terminal(&id),
             target: NavigatorTarget::Terminal(id),

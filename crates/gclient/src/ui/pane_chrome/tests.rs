@@ -24,7 +24,6 @@ fn corners(title: &str, address: &str) -> PaneCorners {
         sandbox: SandboxState::Sandboxed,
         sandbox_mark: sandbox_mark(SandboxState::Sandboxed, true),
         tone: MetadataTone::Focused,
-        actionable: false,
     }
 }
 
@@ -273,7 +272,7 @@ fn a_seat_that_needs_you_reads_in_the_attention_tone() {
 }
 
 #[test]
-fn corners_map_focus_and_exception_states_per_backend() {
+fn corners_map_focus_per_backend() {
     let ws = Workspace::scripted();
     let chrome = Chrome::dark();
     for (backend, name) in [(Backend::Native, "gclient"), (Backend::Tmux, "tmux")] {
@@ -281,50 +280,13 @@ fn corners_map_focus_and_exception_states_per_backend() {
         pane.command = Some("zsh".to_owned());
         let reads = |pane: &Pane, focused| {
             let corners = pane_corners(&ws, &chrome, pane, focused);
-            (
-                corners.title,
-                corners.address,
-                corners.tone,
-                corners.actionable,
-            )
+            (corners.title, corners.address, corners.tone)
         };
-        let expect =
-            |title: &str, tone, actionable| (title.to_owned(), name.to_owned(), tone, actionable);
-        assert_eq!(
-            reads(&pane, false),
-            expect("  zsh", MetadataTone::Ordinary, false)
-        );
+        let expect = |title: &str, tone| (title.to_owned(), name.to_owned(), tone);
+        assert_eq!(reads(&pane, false), expect("  zsh", MetadataTone::Ordinary));
         assert_eq!(
             reads(&pane, true),
-            expect("  zsh · Focused", MetadataTone::Focused, false)
-        );
-        pane.control = ControlState::Held;
-        assert_eq!(
-            reads(&pane, true),
-            expect("  zsh · Focused", MetadataTone::Focused, false)
-        );
-        pane.control = ControlState::LeaseLost;
-        assert_eq!(
-            reads(&pane, true),
-            expect("  zsh · Read-only", MetadataTone::Held, true)
-        );
-        // The focus word, exception included, is absent on unfocused panes.
-        assert_eq!(
-            reads(&pane, false),
-            expect("  zsh", MetadataTone::Ordinary, false)
-        );
-        pane.control = ControlState::UncertainReadOnly;
-        assert_eq!(
-            reads(&pane, true),
-            expect("  zsh · Uncertain", MetadataTone::Held, true)
-        );
-        // A refused host write or grant leaves the pane observing with
-        // take-back offered: the same Read-only, in the same tone.
-        pane.control = ControlState::Observe;
-        pane.take_back = true;
-        assert_eq!(
-            reads(&pane, true),
-            expect("  zsh · Read-only", MetadataTone::Held, true)
+            expect("  zsh · Focused", MetadataTone::Focused)
         );
     }
 }
@@ -355,7 +317,7 @@ fn the_address_takes_the_bottom_right_corner_alone() {
 
 #[test]
 fn shared_divider_moves_upper_address_beside_title() {
-    let text = corners("  #42: Codex · Read-only", "0:0:1:2");
+    let text = corners("  #42: Codex · Focused", "0:0:1:2");
     let upper = info(
         Rect::new(10, 2, 100, 8),
         Borders::TOP | Borders::LEFT | Borders::RIGHT,

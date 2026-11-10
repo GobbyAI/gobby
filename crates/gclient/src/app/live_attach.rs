@@ -6,7 +6,7 @@ use std::path::Path;
 use std::pin::Pin;
 
 use super::*;
-use crate::frame_source::{ProxyFrameSource, UnixSocketFrameSource};
+use crate::frame_source::{claim_writer_lease, ProxyFrameSource, UnixSocketFrameSource};
 
 mod promotion;
 mod recovery;
@@ -190,12 +190,6 @@ impl Workspace<LiveDaemon> {
         );
         pane.pty_size = super::attach::reply_pty_size(reply);
         pane.host_themes = super::theme_sync::host_accepts_themes(reply);
-        pane.observe_lease_holder(
-            reply
-                .get("lease_holder")
-                .and_then(|holder| holder.get("attachment_id"))
-                .and_then(Value::as_str),
-        );
     }
 
     /// The next frame of one pane, recovering its source inline when it fails.
@@ -342,13 +336,20 @@ impl Workspace<LiveDaemon> {
                 && pane.attached_generation() != Some(generation)
                 && workspace.attached_generation.get(pane_id) != Some(&generation)
         };
-        // A host-local restore keeps an attachment that dies with its daemon
-        // generation; once the daemon is back on a new one, the pane takes a
-        // fresh attachment without waiting for a retry to fall due (#23419).
+        // gclient input and rendering MUST NOT depend on the daemon (#25653).
+        // A new daemon generation only needs new bookkeeping. Reuse EVERY
+        // live direct stream, not just streams restored after a host exec:
+        // begin_attaching would pause input and replace a healthy host socket.
         let reregister: Vec<PaneId> = self
             .order
             .iter()
-            .filter(|pane_id| self.host_recovered.contains(pane_id) && stale(self, pane_id))
+            .filter(|pane_id| {
+                let pane = &self.panes[*pane_id];
+                pane.is_live()
+                    && pane.transport() == Some(Transport::Direct)
+                    && !pane.attach_retry_pending(now)
+                    && stale(self, pane_id)
+            })
             .copied()
             .collect();
         let due: Vec<PaneId> = self
@@ -358,6 +359,7 @@ impl Workspace<LiveDaemon> {
                 let pane = &self.panes[*pane_id];
                 (pane.attach_retry_due(now) || (include_initial && !pane.attach_retry_pending(now)))
                     && !self.host_recovered.contains(pane_id)
+                    && !(pane.is_live() && pane.transport() == Some(Transport::Direct))
                     && stale(self, pane_id)
             })
             .copied()
@@ -434,12 +436,6 @@ impl Workspace<LiveDaemon> {
         );
         pane.pty_size = super::attach::reply_pty_size(reply);
         pane.host_themes = super::theme_sync::host_accepts_themes(reply);
-        pane.observe_lease_holder(
-            reply
-                .get("lease_holder")
-                .and_then(|holder| holder.get("attachment_id"))
-                .and_then(Value::as_str),
-        );
     }
 
     pub(super) fn clear_fallback_flight(&mut self, pane_id: PaneId) {
@@ -498,7 +494,6 @@ async fn request_direct_attachment(
             "terminal_id": terminal_id,
             "frame_delivery": "direct",
             "encoding": "semantic_frame",
-            "viewer": "gclient",
         }))
         .await?;
     if reply.get("success").and_then(Value::as_bool) != Some(true) {
@@ -515,6 +510,10 @@ async fn request_direct_attachment(
         .and_then(Value::as_str)
         .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
         .to_string();
+    // Frame delivery is independent of input: tmux keys still use the daemon writer.
+    if reply.get("backend").and_then(Value::as_str) == Some("tmux") {
+        claim_writer_lease(daemon, terminal_id, &attachment).await?;
+    }
     Ok((reply, attachment))
 }
 
@@ -553,7 +552,6 @@ async fn request_proxy_source(
             "terminal_id": terminal_id,
             "frame_delivery": "proxy",
             "encoding": "semantic_frame",
-            "viewer": "gclient",
         }))
         .await?;
     if reply.get("success").and_then(Value::as_bool) != Some(true) {
@@ -575,12 +573,20 @@ async fn request_proxy_source(
         .and_then(Value::as_str)
         .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
         .to_string();
-    let mut source = ProxyFrameSource::from_attachment(
+    claim_writer_lease(daemon, terminal_id, &attachment).await?;
+    let mut source = match ProxyFrameSource::from_attachment(
         daemon.clone(),
         terminal_id,
         attachment.clone(),
         receiver,
-    )?;
+    ) {
+        Ok(source) => source,
+        Err(error) => {
+            ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment, &error)
+                .await;
+            return Err(error);
+        }
+    };
     let rows = reply
         .get("rows")
         .and_then(Value::as_u64)
@@ -591,9 +597,13 @@ async fn request_proxy_source(
         .and_then(Value::as_u64)
         .and_then(|value| u16::try_from(value).ok())
         .unwrap_or(80);
-    source
+    if let Err(error) = source
         .send(&ClientMessage::SetViewport { rows, cols })
-        .await?;
+        .await
+    {
+        ProxyFrameSource::detach_failed_attachment(daemon, terminal_id, &attachment, &error).await;
+        return Err(error);
+    }
     Ok(ProxyAttachOutcome::Attached(reply, attachment, source))
 }
 

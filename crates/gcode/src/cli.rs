@@ -110,6 +110,10 @@ pub(crate) enum Command {
         /// concurrent reindex does not cause a blocking-waiter pileup (#17701).
         #[arg(long)]
         skip_if_locked: bool,
+        /// Give up on a busy index lock after this many seconds instead of waiting the
+        /// full default. Background hook runs use it so waiters cannot pile up.
+        #[arg(long, value_name = "SECONDS", conflicts_with = "skip_if_locked")]
+        lock_wait_seconds: Option<u64>,
     },
     /// Reconcile stranded index state and graph projection drift
     Repair,
@@ -437,7 +441,7 @@ pub(crate) enum Command {
         #[arg(long, requires = "apply")]
         receipt: Option<String>,
     },
-    /// Remove stale projects and reconcile orphaned graph + vector projection state across indexed projects
+    /// Remove stale projects and garbage-collect unreferenced content versions across indexed projects
     Prune {
         /// Skip confirmation prompt
         #[arg(long)]
@@ -549,8 +553,19 @@ pub(crate) enum VectorCommand {
         #[arg(long)]
         full: bool,
     },
-    /// Remove code-symbol vectors for files no longer indexed in PostgreSQL
-    CleanupOrphans,
+    /// Dry-run inventory of code-symbol vectors against PostgreSQL. Deletes nothing
+    /// unless --apply is given with the digest of a reviewed dry run.
+    Reconcile {
+        /// Apply the plan whose inventory digest matches --expect-digest
+        #[arg(long, requires = "expect_digest", requires = "receipt")]
+        apply: bool,
+        /// Inventory digest (sha256:...) from a dry run of the same project
+        #[arg(long, requires = "apply")]
+        expect_digest: Option<String>,
+        /// Receipt file recording the apply run; must sit in a private directory outside the repository
+        #[arg(long, requires = "apply")]
+        receipt: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

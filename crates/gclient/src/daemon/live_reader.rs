@@ -262,7 +262,6 @@ fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
         {
             if let Some(attachment) = attachment.as_ref() {
                 state.attachment_tombstones.remove(attachment);
-                state.control_tombstones.remove(attachment);
                 state.active_attachments.insert(attachment.clone());
             }
         }
@@ -273,7 +272,6 @@ fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
             if let Some(attachment) = attachment.as_ref() {
                 state.active_attachments.remove(attachment);
                 state.attachment_tombstones.insert(attachment.clone());
-                state.control_tombstones.remove(attachment);
                 let keys: Vec<_> = state
                     .writes
                     .keys()
@@ -309,10 +307,6 @@ fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
                         state.requests.remove(&id)
                     }
                     super::RouteKey::Write(id, sequence) => state.writes.remove(&(id, sequence)),
-                    super::RouteKey::Control(id) => {
-                        state.control_write_states.remove(&id);
-                        state.controls.remove(&id)
-                    }
                 };
             }
         }
@@ -330,9 +324,7 @@ fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
         let _ = waiter.send(Err(DaemonError::ControlScopeIndeterminate));
     }
     if let Some(reply) = reply {
-        if kind == "terminal_attachment_finalized" {
-            let _ = reply.send(Err(DaemonError::ControlScopeIndeterminate));
-        } else if kind == "terminal_error" {
+        if kind == "terminal_error" {
             let detail = value
                 .get("code")
                 .and_then(Value::as_str)
@@ -432,10 +424,7 @@ fn disconnect(inner: &LiveInner, generation: super::Generation, error: DaemonErr
             state.last_error = Some(error.clone());
             state.outbound = None;
             let attachments: Vec<_> = state.active_attachments.drain().collect();
-            state
-                .attachment_tombstones
-                .extend(attachments.iter().cloned());
-            state.control_tombstones.extend(attachments);
+            state.attachment_tombstones.extend(attachments);
             state.attached_workspace = None;
             fail_waiters(&mut state, error.clone());
             true
@@ -455,10 +444,6 @@ fn fail_waiters(state: &mut LiveState, error: DaemonError) {
     for (_, waiter) in state.writes.drain() {
         let _ = waiter.send(Err(error.clone()));
     }
-    for (_, waiter) in state.controls.drain() {
-        let _ = waiter.send(Err(error.clone()));
-    }
-    state.control_write_states.clear();
 }
 
 /// A message's frame text, encoded once by its sender before the request

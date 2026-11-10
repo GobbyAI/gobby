@@ -31,6 +31,8 @@ pub mod runtime;
 pub mod selection;
 pub mod terminal_modes;
 pub mod terminal_theme;
+#[cfg(all(unix, any(feature = "vt-engine", test)))]
+pub(crate) mod test_seam;
 
 #[cfg(feature = "vt-engine")]
 pub mod ghostty;

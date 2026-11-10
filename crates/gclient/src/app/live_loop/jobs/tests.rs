@@ -1,6 +1,6 @@
 use super::super::jobs_apply::apply_job_outcome;
 use super::{Coalescer, JobKey, JobOutcome, JobResult, JobTag, LoopJobs, Pending};
-use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
+use crate::app::{Backend, Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::{PaneFrameSource, ProxyFrameSource, ScriptedFrameSource, Transport};
 use crate::ui::Chrome;
@@ -488,8 +488,8 @@ fn a_direct_pane_already_at_its_rect_keeps_the_size_it_recorded() {
 
 /// R6 F2: a re-attach without a reconnect keeps the connection, so a write
 /// outcome for the attachment it replaced still arrives as current. It is
-/// reported, but leaves the new attachment's control and in-flight write
-/// alone; the same outcome for the pane's own attachment still lands.
+/// reported, but leaves the new attachment's in-flight write alone; the same
+/// outcome for the pane's own attachment still clears it.
 #[test]
 fn a_late_write_outcome_for_a_replaced_attachment_leaves_the_new_one_alone() {
     let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
@@ -497,7 +497,6 @@ fn a_late_write_outcome_for_a_replaced_attachment_leaves_the_new_one_alone() {
     let mut workspace = Workspace::live(daemon.clone());
     let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
     let attachment = pane.attachment_id().to_owned();
-    pane.control = ControlState::Observe;
     pane.in_flight_write = Some(7);
     workspace.panes.insert(pane.id, pane);
     let mut jobs = LoopJobs::new(&workspace);
@@ -526,11 +525,10 @@ fn a_late_write_outcome_for_a_replaced_attachment_leaves_the_new_one_alone() {
     apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome(unconfirmed));
     let pane = workspace.pane(PaneId(1));
     assert_eq!(
-        pane.control,
-        ControlState::Observe,
-        "the replaced attachment's uncertainty is not the new one's"
+        pane.in_flight_write(),
+        Some(7),
+        "the replaced attachment's unconfirmed write is not the new one's"
     );
-    assert_eq!(pane.in_flight_write(), Some(7));
 
     let unconfirmed = JobResult::WriteUnconfirmed {
         pane: PaneId(1),
@@ -538,7 +536,6 @@ fn a_late_write_outcome_for_a_replaced_attachment_leaves_the_new_one_alone() {
     };
     apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome(unconfirmed));
     let pane = workspace.pane(PaneId(1));
-    assert_eq!(pane.control, ControlState::UncertainReadOnly);
     assert_eq!(pane.in_flight_write(), None);
     let titles: Vec<&str> = chrome
         .alert_log
@@ -547,11 +544,7 @@ fn a_late_write_outcome_for_a_replaced_attachment_leaves_the_new_one_alone() {
         .collect();
     assert_eq!(
         titles,
-        [
-            "Input not sent: 2 bytes.",
-            "Input delivery unconfirmed.",
-            "Input delivery unconfirmed."
-        ],
-        "every outcome is still reported"
+        ["Input not sent: 2 bytes."],
+        "an abandoned write is reported; an unconfirmed one raises no toast"
     );
 }

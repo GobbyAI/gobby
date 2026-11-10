@@ -5,7 +5,6 @@ use std::fmt;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
 use tokio::time::Instant;
 
 use super::attach::{AttachState, ATTACH_RETRY_BASE};
@@ -70,11 +69,6 @@ impl fmt::Display for Backend {
     }
 }
 
-/// What a pane says when the daemon granted the writer lease but the terminal
-/// host never got the matching input grant. gclient does not type through the
-/// daemon (#22573), so the only honest offer is to take control again.
-pub const HOST_GRANT_UNAVAILABLE: &str = "terminal did not grant input; take control again";
-
 /// The first eight characters of a terminal ID, used when no name or command
 /// is available for a pane or a terminal row.
 pub fn short_terminal_id(terminal_id: &str) -> &str {
@@ -84,13 +78,13 @@ pub fn short_terminal_id(terminal_id: &str) -> &str {
     }
 }
 
-/// What the input queue will hold while a grant is in flight. A round trip to
+/// What the input queue will hold while the attachment is coming up. A round trip to
 /// a healthy daemon costs a few keys; this is sized for a slow one plus a
 /// pasted file, and it exists so a daemon that never answers cannot grow the
 /// queue without bound.
 const MAX_PENDING_INPUT_BYTES: usize = 256 * 1024;
 
-/// One keystroke or paste waiting for an input grant. Keys and pastes travel
+/// One keystroke or paste waiting for its attachment. Keys and pastes travel
 /// as different messages to the terminal host, and a paste that overtook the
 /// keys typed before it would reorder what the person wrote, so the queue
 /// holds both in one line.
@@ -116,14 +110,6 @@ impl PendingInput {
             Self::Paste(text) => (text.as_bytes(), true),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlState {
-    Observe,
-    Held,
-    LeaseLost,
-    UncertainReadOnly,
 }
 
 #[derive(Debug)]
@@ -153,11 +139,9 @@ pub struct Pane {
     /// The daemon's terminal lifecycle state, when its inventory supplied one.
     pub terminal_state: Option<String>,
     pub expected_host_epoch: String,
-    pub control: ControlState,
     // Chrome consumes this presentation mirror directly. AttachState remains
     // the sole owner of attachment identity, transport, and generations.
     pub live: bool,
-    pub take_back: bool,
     pub frames_rendered: u32,
     pub scroll_offset: u32,
     /// When this client last moved `scroll_offset`; the pane's scrollbar
@@ -171,33 +155,17 @@ pub struct Pane {
     pub in_flight_write: Option<u64>,
     /// The task that sends this pane's daemon writes in typed order (plan A2).
     pub(super) writer: Option<PaneWriter>,
-    /// A focus move gave up this pane's lease; the loop has yet to send the
-    /// release.
-    pub(super) release_pending: bool,
-    /// Resolves once this pane's release has followed its accepted writes
-    /// onto the wire. Every take waits on it (plan A2).
-    pub(super) release_done: Option<watch::Receiver<bool>>,
-    /// Resolves once this pane's own take was written, so a release that
-    /// undoes it never overtakes it.
-    pub(super) take_done: Option<watch::Receiver<bool>>,
-    /// Resolves once this pane's last take was answered.
-    pub(super) take_answered: Option<watch::Receiver<bool>>,
-    /// Keys and pastes typed between a focus change and the input grant that
-    /// focus asked for, kept in the order they were typed. A person typing
-    /// into a pane they just clicked is not asking to lose the first word
-    /// (#22573), so this queue is flushed on the grant rather than dropped.
+    /// A promoted tmux pane releases its proxy lease and claims the replacement
+    /// before its daemon writer sends queued input. Native input never waits here.
+    pub(super) writer_ready: Option<tokio::task::JoinHandle<Result<(), FrameError>>>,
+    /// Keys and pastes typed while this pane's attachment is still coming up,
+    /// kept in the order they were typed. A person typing into a pane that is
+    /// reattaching is not asking to lose the first word, so this queue is
+    /// flushed when the attachment is live rather than dropped.
     pub(super) pending_input: Vec<PendingInput>,
     /// Cached byte count for `pending_input`. Recomputing the sum for every
     /// key turns a stalled 256 KiB queue into quadratic work.
     pending_input_bytes: usize,
-    /// The control request this pane is waiting on. The request runs beside
-    /// the loop so no click waits on the daemon, which means a reply has to
-    /// prove it is still the one this pane wants before it moves any state.
-    pub(super) control_request: Option<u64>,
-    /// The daemon granted this attachment input at the terminal's host, so its
-    /// keystrokes belong on the frame stream rather than in a daemon request
-    /// (#22573). Every control result rewrites it; only `Held` panes read it.
-    pub host_input_granted: bool,
     /// The attachment id already bound on the installed frame source. gterm
     /// delivers input only to the bound holder, and a fresh source or a fresh
     /// attachment has to bind again.
@@ -283,9 +251,7 @@ impl Pane {
             cwd: None,
             terminal_state: None,
             expected_host_epoch: epoch,
-            control: ControlState::Observe,
             live: true,
-            take_back: false,
             frames_rendered: 0,
             scroll_offset: 0,
             scrolled_at: None,
@@ -296,14 +262,9 @@ impl Pane {
             required_created_flag: false,
             in_flight_write: None,
             writer: None,
-            release_pending: false,
-            release_done: None,
-            take_done: None,
-            take_answered: None,
+            writer_ready: None,
             pending_input: Vec::new(),
             pending_input_bytes: 0,
-            control_request: None,
-            host_input_granted: false,
             host_bound_attachment: None,
             host_themes: false,
             declared_theme: None,
@@ -372,60 +333,12 @@ impl Pane {
         short_terminal_id(&self.terminal_id)
     }
 
-    pub fn is_observe(&self) -> bool {
-        self.control == ControlState::Observe
-    }
-
-    pub fn is_held(&self) -> bool {
-        self.control == ControlState::Held
-    }
-
-    pub fn is_lease_lost(&self) -> bool {
-        self.control == ControlState::LeaseLost
-    }
-
-    /// True while the grant this pane asked for is still in flight. The pane
-    /// reads as focused and typing into it queues, so the toggle that gives
-    /// control up has to count it as holding (#22573).
-    pub fn is_acquiring(&self) -> bool {
-        self.control_request.is_some()
-    }
-
-    /// The control state shown to a person. Acquisition is intentionally the
-    /// normal focused state: input queues until the grant lands, so rendering
-    /// it as observe would advertise the wrong interaction contract (#22573).
-    pub fn displayed_control(&self) -> ControlState {
-        if self.is_acquiring() {
-            ControlState::Held
-        } else {
-            self.control
-        }
-    }
-
-    pub fn is_uncertain_readonly(&self) -> bool {
-        self.control == ControlState::UncertainReadOnly
-    }
-
     pub fn is_live(&self) -> bool {
         matches!(self.attach, AttachState::Attached { .. })
     }
 
     pub fn attach_state(&self) -> &AttachState {
         &self.attach
-    }
-
-    pub fn has_take_back(&self) -> bool {
-        self.take_back
-    }
-
-    pub(super) fn observe_lease_holder(&mut self, holder: Option<&str>) {
-        if self.is_held() {
-            return;
-        }
-        self.take_back = holder.is_some_and(|id| id != self.attachment_id());
-        if holder.is_none() && self.control == ControlState::LeaseLost {
-            self.control = ControlState::Observe;
-        }
     }
 
     pub fn attachment_id(&self) -> &str {
@@ -508,20 +421,34 @@ impl Pane {
         &self.search_buffer
     }
 
+    /// Every attached pane types: no take, grant, or read-only state gates it.
     pub fn writable(&self) -> bool {
-        self.is_live() && !self.terminating && self.control == ControlState::Held
+        self.is_live() && !self.terminating
+    }
+
+    /// Keys typed behind a closing tmux detach still go out: that detach rides
+    /// the daemon writer. A native pane's keys stay on its host stream, so a
+    /// closing native pane refuses them (`closing_native`). A recovery detach
+    /// holds its keys for the attachment that follows (#25653).
+    pub fn accepts_input(&self) -> bool {
+        !self.terminating
+            && match self.attach {
+                AttachState::Attached { .. } => true,
+                AttachState::Detaching { closing, .. } => closing && !self.backend.is_native(),
+                AttachState::Attaching { .. } | AttachState::Detached => false,
+            }
+    }
+
+    /// A native pane whose close is in flight. Its keys never ride the daemon.
+    pub(super) fn closing_native(&self) -> bool {
+        self.backend.is_native()
+            && matches!(self.attach, AttachState::Detaching { closing: true, .. })
     }
 
     /// Frames arrive on a direct socket and the backend is one gclient can
-    /// write to. Whether it may type is [`Pane::direct_input`].
+    /// write to. Such a pane types straight onto its host stream.
     pub(super) fn direct_native(&self) -> bool {
         self.transport() == Some(Transport::Direct) && self.backend.is_native()
-    }
-
-    /// This pane types straight into its terminal's host: a direct frame
-    /// socket, a native backend, and a daemon-issued input grant (#22573).
-    pub fn direct_input(&self) -> bool {
-        self.direct_native() && self.host_input_granted
     }
 
     /// A native backend whose frames come over the daemon's proxy. Its keys go
@@ -537,32 +464,7 @@ impl Pane {
         self.promote_at = Some(Instant::now());
     }
 
-    pub(super) fn host_attachment_id(&self) -> Option<u64> {
-        self.frame_source
-            .as_ref()
-            .and_then(PaneFrameSource::host_attachment_id)
-    }
-
-    /// Put back control after a confirmed grant. A recovered physical stream
-    /// must obtain its own host grant before it can type.
-    pub(super) fn restore_host_control(&mut self) {
-        self.control = ControlState::Held;
-        self.take_back = false;
-        self.host_input_granted = true;
-    }
-
-    /// The host has revoked this pane's grant, so it no longer types there.
-    pub(super) fn drop_host_grant(&mut self) {
-        self.host_input_granted = false;
-        self.control = ControlState::Observe;
-        self.take_back = false;
-        self.clear_pending_input();
-    }
-
-    /// Type `data` into the host on the frame stream, binding this attachment
-    /// the first time. Never awaits: a full write channel drops the key and
-    /// names the backlog on the pane instead of stalling the render loop.
-    /// Holds one key or paste until the grant focus asked for lands. `false`
+    /// Holds one key or paste until this pane's attachment is live. `false`
     /// means the queue is full and the caller has to say so: swallowing it
     /// here would be the dropped keystroke this queue exists to prevent.
     pub(super) fn queue_input(&mut self, data: &[u8], paste: bool) -> bool {
@@ -584,6 +486,9 @@ impl Pane {
         self.pending_input_bytes = 0;
     }
 
+    /// Type `data` into the host on the frame stream, binding this attachment
+    /// the first time. Never awaits: a full write channel drops the key and
+    /// names the backlog on the pane instead of stalling the render loop.
     pub(super) fn send_host_input(&mut self, data: &[u8], paste: bool) -> Result<(), FrameError> {
         let attachment_id = self.attachment_id().to_string();
         let needs_bind = self.host_bound_attachment.as_deref() != Some(attachment_id.as_str());
@@ -618,52 +523,11 @@ impl Pane {
         }
     }
 
-    /// This pane's release, while it is still waiting behind accepted writes.
-    pub(super) fn pending_release(&self) -> Option<watch::Receiver<bool>> {
-        self.release_done
-            .as_ref()
-            .filter(|done| !*done.borrow() && done.has_changed().is_ok())
-            .cloned()
-    }
-
-    /// Record the host input grant that came with a granted writer lease. A
-    /// direct native pane the host did not grant cannot type there, and
-    /// gclient never falls back to daemon-mediated keys, so the pane returns
-    /// to observing and offers take-back. Reports whether the grant stands.
-    pub(super) fn apply_host_grant(&mut self, granted: Option<bool>) -> bool {
-        self.host_input_granted = granted.unwrap_or(false);
-        if self.host_input_granted || !self.direct_native() {
-            return true;
-        }
-        self.control = ControlState::Observe;
-        self.take_back = true;
-        self.clear_pending_input();
-        self.status_message = Some(HOST_GRANT_UNAVAILABLE.to_string());
-        false
-    }
-
-    /// gterm refused a host write: `input_not_granted` once the daemon moved
-    /// the grant, `terminal_gone` once the PTY went away. The stream stays
-    /// open; only this pane's claim to type on it is gone. A pane that
-    /// already let go has no claim left to lose (see [`Pane::let_go`]).
+    /// gterm refused a host write: `attach_required` or `terminal_gone` once the
+    /// PTY went away. The stream stays open and the pane stays writable; the
+    /// refusal is named on the pane.
     pub(super) fn refuse_host_input(&mut self, code: &str) {
-        if self.let_go() {
-            return;
-        }
-        self.host_input_granted = false;
-        self.control = ControlState::Observe;
-        self.take_back = true;
-        self.clear_pending_input();
-        self.status_message = Some(format!(
-            "terminal refused input ({code}); take control again"
-        ));
-    }
-
-    /// Whether this pane released control and has not been granted it since.
-    /// A host refusal it meets then is for bytes the host read only after
-    /// the revoke, so their delivery is unconfirmed (A2.11).
-    pub(super) fn let_go(&self) -> bool {
-        self.release_done.is_some() && !self.is_held()
+        self.status_message = Some(format!("terminal refused input ({code})"));
     }
 
     pub fn frame_source(&self) -> Option<&PaneFrameSource> {
@@ -784,24 +648,20 @@ mod tests {
     }
 
     #[test]
-    fn acquiring_control_displays_as_held() {
+    fn a_bare_pane_title_keeps_the_blank_state_cell() {
         let mut pane = pane();
-        pane.control = ControlState::Observe;
-        pane.control_request = Some(1);
-
-        assert_eq!(pane.displayed_control(), ControlState::Held);
-        // The edge metadata agrees: asking is the normal focused state, even
-        // while the request is the take-back a Read-only pane offered.
-        let ws = crate::app::Workspace::scripted();
+        pane.command = Some("terminal".into());
+        let workspace = crate::app::Workspace::scripted();
         let chrome = crate::ui::chrome::Chrome::dark();
-        let reads =
-            |pane: &Pane| crate::ui::pane_chrome::pane_corners(&ws, &chrome, pane, true).title;
-        assert_eq!(reads(&pane), "  terminal · Focused");
-        pane.control = ControlState::LeaseLost;
-        pane.take_back = true;
-        assert_eq!(reads(&pane), "  terminal · Focused");
-        pane.control_request = None;
-        assert_eq!(reads(&pane), "  terminal · Read-only");
+
+        assert_eq!(
+            crate::ui::pane_chrome::pane_corners(&workspace, &chrome, &pane, true).title,
+            "  terminal · Focused"
+        );
+        assert_eq!(
+            crate::ui::pane_chrome::pane_corners(&workspace, &chrome, &pane, false).title,
+            "  terminal"
+        );
     }
 
     #[test]

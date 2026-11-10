@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -59,15 +60,18 @@ pub(crate) fn stage(
     let mut reservations = HashMap::new();
     let mut exits = HashMap::new();
     let mut host_ids = HashSet::new();
-    for pane in state.panes {
+    for pane in &state.panes {
         if !host_ids.insert(pane.host_terminal_id.clone()) {
             return Err(invalid(format!(
                 "duplicate carried pane {}",
                 pane.host_terminal_id
             )));
         }
-        originals.push(pane.master_fd);
-        let (slot, reservation, exit) = stage_pane(pane, scrollback_limits, fallback)?;
+    }
+    originals.extend(state.panes.iter().map(|pane| pane.master_fd));
+    let lanes = std::thread::available_parallelism().map_or(1, usize::from);
+    let staged_panes = stage_panes(state.panes, lanes, scrollback_limits, fallback)?;
+    for (slot, reservation, exit) in staged_panes {
         if let Some(reservation) = reservation {
             reservations.insert(reservation.id.clone(), reservation);
         }
@@ -129,6 +133,66 @@ fn verify(state: &HandoverState, pid_file: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// One pane staged for commit: its slot, its reservation if it had one, and its exit record.
+type StagedPane = (TerminalSlot, Option<Reservation>, Option<ChildExit>);
+
+/// Stages carried panes on at most `lanes` threads. Each lane takes a contiguous run of panes, so
+/// the first failure in carried order is the one reported, as a serial walk reports it; `lanes = 1`
+/// is that serial walk. Every lane is joined before results are read, and a pane that panicked is
+/// resumed on the caller at its carried position, so a restore fault still unwinds the restore.
+pub(super) fn stage_panes(
+    panes: Vec<CarriedPane>,
+    lanes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
+    fallback: bool,
+) -> io::Result<Vec<StagedPane>> {
+    let per_lane = panes.len().div_ceil(lanes.max(1)).max(1);
+    let mut runs: Vec<Vec<CarriedPane>> = Vec::new();
+    for pane in panes {
+        match runs.last_mut() {
+            Some(run) if run.len() < per_lane => run.push(pane),
+            _ => runs.push(vec![pane]),
+        }
+    }
+    // Lane threads carry the caller's runtime context, which pane restore needs for its fd tasks.
+    let runtime = tokio::runtime::Handle::try_current().ok();
+    let outcomes: Vec<Vec<std::thread::Result<io::Result<StagedPane>>>> =
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = runs
+                .into_iter()
+                .map(|run| {
+                    let runtime = runtime.clone();
+                    scope.spawn(move || {
+                        let _entered = runtime.as_ref().map(tokio::runtime::Handle::enter);
+                        run.into_iter()
+                            .map(|pane| {
+                                catch_unwind(AssertUnwindSafe(|| {
+                                    stage_pane(pane, scrollback_limits, fallback)
+                                }))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| {
+                    worker
+                        .join()
+                        .unwrap_or_else(|payload| resume_unwind(payload))
+                })
+                .collect()
+        });
+    let mut staged = Vec::with_capacity(outcomes.iter().map(Vec::len).sum());
+    for outcome in outcomes.into_iter().flatten() {
+        match outcome {
+            Ok(pane) => staged.push(pane?),
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+    Ok(staged)
 }
 
 fn stage_pane(
@@ -226,8 +290,6 @@ fn stage_pane(
         total_bytes: pane.total_bytes,
         truncated: pane.truncated,
         user_attachments: HashSet::new(),
-        input_grant: pane.input_grant,
-        input_grant_attachment: None,
         locator: pane.locator,
         tmux_history_bytes: 0,
         history: None,
@@ -286,7 +348,7 @@ fn injected_fault(fallback: bool, kind: &str, host_terminal_id: &str) -> bool {
     } else {
         "GTERM_RESTORE_FAULT"
     };
-    std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1")
+    crate::test_seam::helper_enabled()
         && std::env::var(var).is_ok_and(|value| value == format!("{kind}:{host_terminal_id}"))
 }
 

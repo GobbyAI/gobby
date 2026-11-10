@@ -72,8 +72,12 @@ async def test_lease_takeover_settles_the_displaced_write(write_harness: WriteHa
     """The displaced holder is refused and nothing is latched; the new one writes."""
     terminal_id = write_harness.terminal_id
     leases = write_harness.leases
-    first = await leases.attach(terminal_id, attachment_id="acceptance-attachment-one")
-    second = await leases.attach(terminal_id, attachment_id="acceptance-attachment-two")
+    first = await leases.attach(
+        terminal_id, attachment_id="acceptance-attachment-one", viewer="web"
+    )
+    second = await leases.attach(
+        terminal_id, attachment_id="acceptance-attachment-two", viewer="web"
+    )
     held = await leases.take_control(terminal_id, first.attachment_id)
     assert held.granted is True
 
@@ -116,7 +120,7 @@ async def test_send_keys_is_delivered_under_another_holder_s_lease(
     """A daemon-origin `send_keys` is delivered while an operator holds control."""
     terminal_id = write_harness.terminal_id
     holder = await write_harness.leases.attach(
-        terminal_id, attachment_id="acceptance-operator-holder"
+        terminal_id, attachment_id="acceptance-operator-holder", viewer="web"
     )
     granted = await write_harness.leases.take_control(terminal_id, holder.attachment_id)
     assert granted.granted is True

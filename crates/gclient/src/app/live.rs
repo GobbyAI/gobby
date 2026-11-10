@@ -60,8 +60,7 @@ impl Workspace<LiveDaemon> {
             placed_panes: Vec::new(),
             placement_seen: HashSet::new(),
             requested_focus: None,
-            pending_control: None,
-            next_control_seq: 0,
+            open_failures: HashMap::new(),
         }
     }
 
@@ -133,12 +132,6 @@ impl Workspace<LiveDaemon> {
             .get("session_id")
             .and_then(Value::as_str)
             .map(str::to_string);
-        pane.observe_lease_holder(
-            row.fields
-                .get("lease_holder")
-                .and_then(|holder| holder.get("attachment_id"))
-                .and_then(Value::as_str),
-        );
         pane_id
     }
 
@@ -333,27 +326,10 @@ impl Workspace<LiveDaemon> {
                 self.advance_lifecycle(daemon_epoch, seq);
             }
             DaemonEvent::LeaseLost {
-                daemon_epoch,
-                seq,
-                payload,
+                daemon_epoch, seq, ..
             } => {
+                // A lease the daemon moves no longer changes any gclient pane.
                 if self.accept_lifecycle(&daemon_epoch, seq) {
-                    if let Some(attachment_id) =
-                        payload.get("attachment_id").and_then(Value::as_str)
-                    {
-                        let lease_generation = payload
-                            .get("lease_generation")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0);
-                        if let Some(pane) = self.pane_for_attachment_mut(attachment_id) {
-                            if lease_generation >= pane.lease_generation() {
-                                pane.set_lease_generation(lease_generation);
-                                pane.control = ControlState::LeaseLost;
-                                pane.take_back = true;
-                                pane.clear_pending_input();
-                            }
-                        }
-                    }
                     self.advance_lifecycle(daemon_epoch, seq);
                 } else if self
                     .lifecycle
@@ -481,7 +457,7 @@ impl Workspace<LiveDaemon> {
 
     pub async fn reconnect_daemon_ws(&mut self) -> Result<Generation, DaemonError> {
         for pane in self.panes.values_mut() {
-            pane.clear_control("Daemon disconnected.");
+            pane.clear_input("Daemon disconnected.");
         }
         self.reconcile_subscribe_first().await?;
         self.daemon_ready = true;

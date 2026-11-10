@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -687,6 +688,16 @@ async def _assert_input_reaches(
     )
 
 
+async def _write_native_input(frames: FrameClient, text: str) -> None:
+    # ClientMessage::Input is tag 9, followed by a bincode byte vector. These
+    # short markers fit bincode's single-byte length; never use legacy tag 1.
+    data = text.encode("utf-8")
+    assert len(data) <= 250, "native test marker exceeds single-byte bincode length"
+    payload = b"\x09" + bytes([len(data)]) + data
+    frames._writer.write(len(payload).to_bytes(4, "little") + payload)
+    await asyncio.wait_for(frames._writer.drain(), timeout=8.0)
+
+
 @pytest.mark.asyncio
 async def test_terminal_client_stack_end_to_end(
     daemon_instance: DaemonInstance,
@@ -817,27 +828,21 @@ async def test_terminal_client_stack_end_to_end(
     assert all(item.get("type") in _FRAME_TYPES for item in native_seen)
     assert all(item.get("type") in _FRAME_TYPES for item in direct_seen)
 
-    gclient_ws = WsSession(daemon_instance)
+    direct_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
-    await gclient_ws.connect()
+    await direct_ws.connect()
     await web_ws.connect()
-    await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native")
+    await direct_ws.attach(native_id, delivery="direct", request_id="web-direct-native")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native")
-    gclient_direct = WsSession(daemon_instance)
-    await gclient_direct.connect()
-    await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct")
+    other_direct_ws = WsSession(daemon_instance)
+    await other_direct_ws.connect()
+    await other_direct_ws.attach(direct_id, delivery="direct", request_id="web-direct-other")
 
     native_marker = f"N-{uuid.uuid4().hex[:6]}"
     direct_marker = f"T-{uuid.uuid4().hex[:6]}"
-    granted = await gclient_ws.take(native_id)
-    assert granted.get("granted") is True
-    delivered = await gclient_ws.write(native_id, native_marker + "\r")
-    assert delivered.get("outcome") == "delivered"
+    await _write_native_input(native_frames, native_marker + "\r")
     await _assert_input_reaches(native_frames, native_marker, description="native keystroke")
-    direct_granted = await gclient_direct.take(direct_id)
-    assert direct_granted.get("granted") is True
-    direct_delivered = await gclient_direct.write(direct_id, direct_marker + "\r")
-    assert direct_delivered.get("outcome") == "delivered"
+    await _write_native_input(direct_frames, direct_marker + "\r")
     await _assert_input_reaches(direct_frames, direct_marker, description="direct keystroke")
 
     await native_frames.detach()
@@ -882,28 +887,20 @@ async def test_terminal_client_stack_end_to_end(
 
     web_take = await web_ws.take(native_id)
     assert web_take.get("granted") is True, web_take
-    await gclient_ws.wait_for(
-        lambda item: item.get("type") == "terminal_lease_lost",
-        timeout=5.0,
-        description="gclient lease lost",
-    )
     web_only = f"W-{uuid.uuid4().hex[:6]}"
     web_write = await web_ws.write(native_id, web_only + "\r")
     assert web_write.get("outcome") == "delivered"
-    dropped = await gclient_ws.write(native_id, "DROPPED-GCLIENT\r")
-    assert dropped.get("outcome") == "refused"
     await _assert_input_reaches(native_frames, web_only, description="web holder input")
-    gclient_back = await gclient_ws.take(native_id)
-    assert gclient_back.get("granted") is True
-    await web_ws.wait_for(
-        lambda item: item.get("type") == "terminal_lease_lost",
-        timeout=5.0,
-        description="web lease lost",
-    )
+    # Direct frame delivery over WS is still web and obeys the writer lease.
     back_marker = f"G-{uuid.uuid4().hex[:6]}"
-    back_write = await gclient_ws.write(native_id, back_marker + "\r")
-    assert back_write.get("outcome") == "delivered"
-    await _assert_input_reaches(native_frames, back_marker, description="gclient takeover input")
+    back_write = await direct_ws.write(native_id, back_marker + "\r")
+    assert back_write.get("outcome") == "refused", back_write
+    assert back_write.get("reason") == "held", back_write
+    # Native host-stream input remains writable beside that web holder.
+    await _write_native_input(native_frames, back_marker + "\r")
+    await _assert_input_reaches(
+        native_frames, back_marker, description="gclient input beside web holder"
+    )
 
     write_shutdown_intent(
         "stack-e2e-outage", ShutdownIntent.RESTART, home=daemon_instance.gobby_home
@@ -929,19 +926,18 @@ async def test_terminal_client_stack_end_to_end(
     client.close()
     client = _http(daemon_instance)
     _wait_for_host(client, daemon_instance)
-    await gclient_ws.close()
+    await direct_ws.close()
     await web_ws.close()
-    await gclient_direct.close()
-    gclient_ws = WsSession(daemon_instance)
+    await other_direct_ws.close()
+    direct_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
-    gclient_direct = WsSession(daemon_instance)
-    await gclient_ws.connect()
+    other_direct_ws = WsSession(daemon_instance)
+    await direct_ws.connect()
     await web_ws.connect()
-    await gclient_direct.connect()
-    await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native-2")
+    await other_direct_ws.connect()
+    await direct_ws.attach(native_id, delivery="direct", request_id="web-direct-native-2")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native-2")
-    await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct-2")
-    await gclient_ws.take(native_id)
+    await other_direct_ws.attach(direct_id, delivery="direct", request_id="web-direct-other-2")
     await web_ws.wait_for(
         lambda item: item.get("type")
         in {"terminal_output", "terminal_attach_history", "terminal_attach_result"},
@@ -949,10 +945,12 @@ async def test_terminal_client_stack_end_to_end(
         description="web reattached after daemon return",
     )
 
+    direct_take = await direct_ws.take(native_id)
+    assert direct_take.get("granted") is True, direct_take
     fault_path = daemon_instance.gobby_home / WRITE_FAULT_NAME
     fault_path.write_text("1")
     try:
-        faulted = await gclient_ws.write(native_id, "FAULT-WRITE\r")
+        faulted = await direct_ws.write(native_id, "FAULT-WRITE\r")
         assert faulted.get("outcome") == "refused"
         assert faulted.get("reason") == "write_handler_fault"
         web_faulted = await web_ws.write(native_id, "FAULT-WEB\r")
@@ -999,36 +997,37 @@ async def test_terminal_client_stack_end_to_end(
         isolated.close()
 
     replay_payload = back_marker + "-dup\r"
-    replay = await gclient_ws.write(native_id, replay_payload)
+    replay = await direct_ws.write(native_id, replay_payload)
+    assert replay.get("outcome") == "delivered", replay
     first_seq = int(replay["client_write_seq"])
-    outcomes_before = len(gclient_ws.of_type("terminal_write_outcome"))
-    await gclient_ws.send(
+    outcomes_before = len(direct_ws.of_type("terminal_write_outcome"))
+    await direct_ws.send(
         {
             "type": "terminal_input",
             "terminal_id": native_id,
-            "attachment_id": gclient_ws.attachment_id,
+            "attachment_id": direct_ws.attachment_id,
             "data": replay_payload,
             "client_write_seq": first_seq,
         }
     )
-    replayed = await gclient_ws.wait_for(
+    replayed = await direct_ws.wait_for(
         lambda item: item.get("type") == "terminal_write_outcome"
         and item.get("client_write_seq") == first_seq
-        and len(gclient_ws.of_type("terminal_write_outcome")) > outcomes_before,
+        and len(direct_ws.of_type("terminal_write_outcome")) > outcomes_before,
         timeout=5.0,
         description="matching fingerprint replay",
     )
     assert replayed.get("outcome") == replay.get("outcome")
-    await gclient_ws.send(
+    await direct_ws.send(
         {
             "type": "terminal_input",
             "terminal_id": native_id,
-            "attachment_id": gclient_ws.attachment_id,
+            "attachment_id": direct_ws.attachment_id,
             "data": "CONFLICT-PAYLOAD\r",
             "client_write_seq": first_seq,
         }
     )
-    conflict = await gclient_ws.wait_for(
+    conflict = await direct_ws.wait_for(
         lambda item: item.get("type") == "terminal_write_outcome"
         and item.get("reason") == "write_seq_conflict",
         timeout=5.0,
@@ -1206,9 +1205,9 @@ async def test_terminal_client_stack_end_to_end(
     epoch_before = _wait_for_host(client, daemon_instance).get("host_epoch")
     await native_frames.close()
     await direct_frames.close()
-    await gclient_ws.close()
+    await direct_ws.close()
     await web_ws.close()
-    await gclient_direct.close()
+    await other_direct_ws.close()
     await control.close()
 
     _restart_daemon_preserving_host(daemon_instance)
@@ -1556,7 +1555,7 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
         # Startup opens nothing, so place one running pane to reorder and
         # move; the two chords below then bring the tab count to three.
         placed_id = await _shell(daemon_instance)
-        await _adopt(daemon_instance, placed_id)
+        await _adopt(daemon_instance, placed_id, title="Alpha")
         first = await until(lambda row: len(row["tabs"]) == 1)
         original = first["panes"][0]
         terminal_id = original["terminal_id"]
@@ -1565,14 +1564,43 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
         # snapshot never lists, so place the extra panes as daemon tabs where
         # the reorder and move assertions can read them.
         extra_addresses: list[str] = []
-        for _ in range(2):
+        for title in ("Bravo", "Charlie"):
             extra_id = await _shell(daemon_instance)
-            extra_addresses.append(await _adopt(daemon_instance, extra_id))
+            extra_addresses.append(await _adopt(daemon_instance, extra_id, title=title))
             await _placed_address(daemon_instance, extra_id)
         three = await until(lambda row: len(row["tabs"]) == 3)
         initial_ids = [tab["id"] for tab in three["tabs"]]
+        titles = dict(zip(initial_ids, ("Alpha", "Bravo", "Charlie"), strict=True))
+        assert [tab["title"] for tab in three["tabs"]] == list(titles.values())
+
+        async def rendered_order(order: list[str]) -> tuple[int, str]:
+            labels = [titles[tab_id] for tab_id in order]
+
+            def matches(screen: Screen) -> bool:
+                for line in screen.lines:
+                    positions = [line.find(label) for label in labels]
+                    if (
+                        all(pos >= 0 for pos in positions)
+                        and positions == sorted(positions)
+                        and all(
+                            title not in line for key, title in titles.items() if key not in order
+                        )
+                    ):
+                        return True
+                return False
+
+            screen = await asyncio.to_thread(
+                client.wait_for, matches, description=f"rendered tab order {labels}"
+            )
+            return next(
+                (row, line)
+                for row, line in enumerate(screen.lines)
+                if all(label in line for label in labels)
+            )
+
         # Activate the last tab so move_tab_left has somewhere to go.
         await _activate_terminal(client, extra_addresses[-1])
+        await rendered_order(initial_ids)
 
         await asyncio.to_thread(client.chord, "\x1b[1;2D")
         moved_left = await until(
@@ -1580,18 +1608,16 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
             == [initial_ids[0], initial_ids[2], initial_ids[1]]
         )
         assert moved_left["tabs"][1]["id"] == initial_ids[2]
+        await rendered_order([initial_ids[0], initial_ids[2], initial_ids[1]])
 
         await asyncio.to_thread(client.chord, "\x1b[1;2C")
         await until(lambda row: [tab["id"] for tab in row["tabs"]] == initial_ids)
 
-        # Drag the first tab onto the last in the live tab bar. The bar
-        # renders "N: title" labels below the menu row, so read its real
-        # row and label columns instead of the retired "tab-0:" header.
-        lines = client.screen.lines
-        tab_row = next(index for index, line in enumerate(lines) if " 0: " in line)
-        bar = lines[tab_row]
-        source = bar.index("0: ")
-        target = bar.rindex(f"{len(initial_ids) - 1}: ")
+        # The daemon acknowledgement can precede the client's redraw. Read
+        # coordinates only from the named tab bar in the acknowledged order.
+        tab_row, bar = await rendered_order(initial_ids)
+        source = bar.index("Alpha")
+        target = bar.index("Charlie")
         assert target > source
         client.send(f"\x1b[<0;{source + 2};{tab_row + 1}M\x1b[<0;{target + 2};{tab_row + 1}m")
         dragged = await until(
@@ -1599,6 +1625,7 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
             == [initial_ids[1], initial_ids[2], initial_ids[0]]
         )
         assert dragged["tabs"][2]["id"] == initial_ids[0]
+        await rendered_order([initial_ids[1], initial_ids[2], initial_ids[0]])
 
         await asyncio.to_thread(client.chord, "@")
         placed = await until(
@@ -1612,6 +1639,7 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
             next(pane for pane in placed["panes"] if pane["id"] == original["id"])["terminal_id"]
             == terminal_id
         )
+        await rendered_order([initial_ids[1], initial_ids[2]])
 
         await asyncio.to_thread(client.chord, "C")
         new_tab = await until(
@@ -1865,7 +1893,7 @@ class ClientWire:
                 raise
 
 
-async def _adopt(daemon: DaemonInstance, terminal_id: str) -> str:
+async def _adopt(daemon: DaemonInstance, terminal_id: str, *, title: str | None = None) -> str:
     """Give a terminal a workspace address and return it.
 
     `terminal_address` (crates/gclient/src/ui/chrome/labels.rs) leads every row
@@ -1902,6 +1930,7 @@ async def _adopt(daemon: DaemonInstance, terminal_id: str) -> str:
                 "workspace": home["id"],
                 "project_id": E2E_PROJECT_ID,
                 "terminal_id": terminal_id,
+                **({"title": title} if title is not None else {}),
             }
         )
         created = await session.wait_for(
@@ -2014,8 +2043,7 @@ async def _shell(daemon: DaemonInstance, *, marker: str = "GCLIENT-SHELL-READY")
     return str(result["terminal_id"])
 
 
-async def _take_and_echo(client: GclientDriver, marker: str) -> None:
-    await asyncio.to_thread(client.chord, "t")
+async def _type_and_echo(client: GclientDriver, marker: str) -> None:
     await _screen(client, "Focused")
     # Splitting the marker means terminal echo alone cannot satisfy the assertion.
     left, right = marker.rsplit("-", 1)
@@ -2060,13 +2088,13 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
             await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
             await _delivery(wire, "direct")
-            await _take_and_echo(client, "GCLIENT-NATIVE-OK")
+            await _type_and_echo(client, "GCLIENT-NATIVE-OK")
             client.send(
                 "printf 'GCLIENT-SLEEP-%s\\n' RUNNING; sleep 30 && echo SLEEP-'COMPLETED'\r"
             )
             await _screen(client, "GCLIENT-SLEEP-RUNNING")
             client.send(b"\x03")
-            await _take_and_echo(client, "GCLIENT-INTERRUPTED-OK")
+            await _type_and_echo(client, "GCLIENT-INTERRUPTED-OK")
             assert "SLEEP-COMPLETED" not in client.screen.text
             inputs = [item for item in wire.sent if item.get("type") == "terminal_input"]
             # Direct delivery writes Ctrl-C on the host frame socket. The
@@ -2096,13 +2124,13 @@ async def test_gclient_survives_daemon_restart_with_usable_native_pane(
         address = await _adopt(daemon_instance, terminal_id)
         await _activate_terminal(client, address)
         await _screen(client, "GCLIENT-RESTART-BEFORE")
-        await _take_and_echo(client, "GCLIENT-RESTART-HELD")
+        await _type_and_echo(client, "GCLIENT-RESTART-HELD")
         await asyncio.to_thread(_stop_daemon_for_client_outage, daemon_instance)
         try:
-            await _screen(client, "Daemon unavailable")
+            await _screen(client, "Daemon unreachable")
             assert client.poll() is None, "gclient exited while the daemon was down"
-            # The carried host grant must accept input before a daemon can
-            # issue another lease. Split the marker to exclude terminal echo.
+            # The carried host takes keys while the daemon is down. Split the
+            # marker to exclude terminal echo.
             client.send("echo GCLIENT-RESTART-'OFFLINE'\r")
             await _screen(client, "GCLIENT-RESTART-OFFLINE")
         finally:
@@ -2110,7 +2138,7 @@ async def test_gclient_survives_daemon_restart_with_usable_native_pane(
         assert client.poll() is None, "gclient exited when the daemon stopped"
         await _screen(client, "GCLIENT-RESTART-BEFORE")
         assert address in client.screen.text, "pane address was not retained after restart"
-        await _take_and_echo(client, "GCLIENT-RESTART-AFTER")
+        await _type_and_echo(client, "GCLIENT-RESTART-AFTER")
         with _http(daemon_instance) as http:
             host_after = await asyncio.to_thread(_wait_for_host, http, daemon_instance)
             assert host_after.get("adopted") is True
@@ -2167,7 +2195,7 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
                     await _activate_terminal(client, address)
                     await _screen(client, "GCLIENT-STARTUP-READY")
                     assert client.poll() is None, "gclient exited on an interrupted launch response"
-                    await _take_and_echo(client, "GCLIENT-STARTUP-AFTER")
+                    await _type_and_echo(client, "GCLIENT-STARTUP-AFTER")
                 except (AssertionError, TimeoutError) as exc:
                     from tests.e2e.readiness_capture import capture_readiness_timeout
 
@@ -2198,19 +2226,77 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
 
 
 @pytest.mark.asyncio
-async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
+async def test_gclient_remote_session_uses_proxy(
+    daemon_instance: DaemonInstance, tmp_path: Path
+) -> None:
+    receipt = tmp_path / "native-input.txt"
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
-        terminal_id = await _shell(daemon_instance)
+        created = await _ws_create(
+            daemon_instance,
+            [
+                "/bin/sh",
+                "-c",
+                "printf 'GCLIENT-PROXY-READY\\n'; IFS= read -r input; "
+                f"printf '%s\\n' \"$input\" > {shlex.quote(str(receipt))}; "
+                "printf 'GCLIENT-PROXY-RECEIVED\\n'; exec /bin/sh -i",
+            ],
+        )
+        terminal_id = str(created["terminal_id"])
+        terminal = await asyncio.to_thread(http.get, f"/api/terminals/{terminal_id}")
+        assert terminal.status_code == 200, terminal.text
+        locator = _attach_locator(terminal.json())
     wire = ClientWire(daemon_instance)
     # Model a remote filesystem: the daemon's Unix socket is not reachable by this client.
     wire.frame_socket = str(daemon_instance.gobby_home / "remote-host.sock")
     async with wire.running():
         async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
             await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
-            await _screen(client, "GCLIENT-SHELL-READY")
+            await _screen(client, "GCLIENT-PROXY-READY")
             await _delivery(wire, "proxy")
-            await _take_and_echo(client, "GCLIENT-PROXY-OK")
+            sent_before = len(wire.sent)
+            client.send("GCLIENT-PROXY-BLOCKED\r")
+            await _screen(client, "direct attach failed; typed input was not sent")
+
+            def promotion_refused() -> bool:
+                requests = {
+                    item.get("request_id")
+                    for item in wire.sent[sent_before:]
+                    if item.get("type") == "terminal_attach"
+                    and item.get("frame_delivery") == "direct"
+                }
+                attempts = {
+                    item.get("attachment_id")
+                    for item in wire.received
+                    if item.get("type") == "terminal_attach_result"
+                    and item.get("request_id") in requests
+                    and item.get("success") is True
+                }
+                return any(
+                    item.get("type") == "terminal_attachment_finalized"
+                    and item.get("attachment_id") in attempts
+                    for item in wire.received
+                )
+
+            await asyncio.to_thread(
+                wait_for_condition,
+                promotion_refused,
+                timeout=15.0,
+                description="attempted input's failed direct promotion finalized",
+            )
+            # A live consumer must receive only the authenticated local control write.
+            frames = await _open_viewer(
+                locator, daemon_token(daemon_instance.gobby_home), cols=80, rows=24
+            )
+            try:
+                await _write_native_input(frames, "GCLIENT-DIRECT-CONTROL\n")
+                await _screen(client, "GCLIENT-PROXY-RECEIVED")
+                assert receipt.read_text() == "GCLIENT-DIRECT-CONTROL\n"
+            finally:
+                await frames.close()
+            assert not any(
+                item.get("type") in {"terminal_input", "terminal_paste"} for item in wire.sent
+            )
             attaches = [item for item in wire.sent if item.get("frame_delivery") == "proxy"]
             assert attaches
             assert all(item.get("encoding") == "semantic_frame" for item in attaches)
@@ -2288,9 +2374,9 @@ async def test_gclient_direct_stream_loss_recovers_to_host(daemon_instance: Daem
                     timeout=20.0,
                     description="gclient reconnected directly to the host",
                 )
-                await _take_and_echo(client, "GCLIENT-HOST-RECOVERED-OK")
+                await _type_and_echo(client, "GCLIENT-HOST-RECOVERED-OK")
                 assert address in client.screen.text
-                # The attachment, lease and grant survive a host reconnect, so
+                # The attachment and its lease survive a host reconnect, so
                 # nothing finalizes and no proxy attach replaces them.
                 assert not [
                     item
@@ -2413,7 +2499,7 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
                 spawned_focused,
                 description="spawned terminal selected",
             )
-            await _take_and_echo(client, "GCLIENT-SPAWNED-OK")
+            await _type_and_echo(client, "GCLIENT-SPAWNED-OK")
             await asyncio.to_thread(client.chord, "D")
             await asyncio.to_thread(
                 wait_for_condition,
@@ -2426,7 +2512,7 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
                 lambda screen: spawned_address not in screen.text and survivor in screen.text,
                 description="terminated pane removed and survivor retained",
             )
-            await _take_and_echo(client, "GCLIENT-SURVIVOR-STILL-LIVE")
+            await _type_and_echo(client, "GCLIENT-SURVIVOR-STILL-LIVE")
 
 
 @pytest.mark.asyncio
@@ -2461,4 +2547,4 @@ async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance
         )
         assert len(client.screen.lines) == 32
         assert all(len(line) == 100 for line in client.screen.lines)
-        await _take_and_echo(client, "GCLIENT-AFTER-RESIZE")
+        await _type_and_echo(client, "GCLIENT-AFTER-RESIZE")

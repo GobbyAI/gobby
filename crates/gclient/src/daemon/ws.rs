@@ -168,7 +168,6 @@ pub fn decode_message(raw: &[u8]) -> Result<Value, WsCodecError> {
 pub enum RouteKey {
     Request(String),
     Write(String, u64),
-    Control(String),
 }
 
 pub fn message_kind(message: &Value) -> Option<&str> {
@@ -186,11 +185,6 @@ pub fn route_key(message: &Value) -> Option<RouteKey> {
             attachment_id,
             message.get("client_write_seq")?.as_u64()?,
         )),
-        "terminal_take_control"
-        | "terminal_release_control"
-        | "terminal_control_result"
-        | "terminal_error"
-        | "terminal_attachment_finalized" => Some(RouteKey::Control(attachment_id)),
         _ => None,
     }
 }

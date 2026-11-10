@@ -629,7 +629,7 @@ fn build_carries_definition_name_and_task_title() {
             PROJECT.to_string(),
             vec![RunRow {
                 run_id: "run-b".to_string(),
-                agent_name: Some("backend-architect".to_string()),
+                agent_name: Some("sample-worker".to_string()),
                 provider: Some("codex".to_string()),
                 status: "running".to_string(),
                 ..Default::default()
@@ -659,13 +659,13 @@ fn build_carries_definition_name_and_task_title() {
     let run_row = &model.agents[0];
     assert_eq!(
         run_row.agent_definition_name.as_deref(),
-        Some("backend-architect")
+        Some("sample-worker")
     );
     assert_eq!(run_row.task_title.as_deref(), Some("Agent data model"));
     assert_eq!(run_row.task_ref.as_deref(), Some("#22744"));
     assert_eq!(run_row.context_percent, Some(42));
     assert_eq!(run_row.tokens_used, Some(128_000));
-    assert_eq!(run_row.definition_label(), "backend-architect");
+    assert_eq!(run_row.definition_label(), "sample-worker");
     let claude_code_row = &model.agents[1];
     assert_eq!(claude_code_row.agent_definition_name, None);
     assert_eq!(claude_code_row.task_title, None);
@@ -798,7 +798,7 @@ fn a_refresh_that_clears_the_status_line_clears_the_agent_row() {
 fn a_seat_is_named_by_its_definition_beside_its_ref() {
     let mut seat = entry("session:s", Some("terminal-s"));
     seat.session_id = Some("s".into());
-    seat.definition = Some("Lane 1 Architect".into());
+    seat.definition = Some("Lane 1 Worker".into());
     let mut rows = SidebarRows::default();
     rows.sessions.insert(
         PROJECT.into(),
@@ -810,11 +810,11 @@ fn a_seat_is_named_by_its_definition_beside_its_ref() {
         }],
     );
     let joined = model(&rows, std::slice::from_ref(&seat), &[]);
-    assert_eq!(joined.agents[0].name, "Lane 1 Architect");
-    assert_eq!(joined.agents[0].definition_label(), "Lane 1 Architect");
+    assert_eq!(joined.agents[0].name, "Lane 1 Worker");
+    assert_eq!(joined.agents[0].definition_label(), "Lane 1 Worker");
     assert_eq!(joined.agents[0].session_ref.as_deref(), Some("#14069"));
     let unjoined = model(&SidebarRows::default(), &[seat], &[]);
-    assert_eq!(unjoined.agents[0].definition_label(), "Lane 1 Architect");
+    assert_eq!(unjoined.agents[0].definition_label(), "Lane 1 Worker");
 }
 
 #[test]

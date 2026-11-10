@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import logging
 import os
@@ -647,7 +648,9 @@ def _run_git_worker(
     except Exception as exc:
         if process is not None:
             _kill_process_group(process)
-            process.wait()
+            # ECHILD: another reaper already collected the leader, so there is nothing to wait for.
+            with contextlib.suppress(ChildProcessError):
+                process.wait()
             control.mark_reaped()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:
@@ -710,7 +713,9 @@ def _stream_git_worker(
     except Exception as exc:
         if process is not None:
             _kill_process_group(process)
-            process.wait()
+            # ECHILD: another reaper already collected the leader, so there is nothing to wait for.
+            with contextlib.suppress(ChildProcessError):
+                process.wait()
             control.mark_reaped()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:

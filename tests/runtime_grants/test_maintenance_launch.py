@@ -52,9 +52,10 @@ def test_maintenance_launch_exports_its_envelope_owner(
         assert read_managed_api_token(child_env) == grant.managed_api_token
 
 
-def test_launch_signs_with_current_bootstrap_key(
+def test_launch_signs_with_current_capability_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Each launch signs with the capability key on disk now, never the machine bearer."""
     from unittest.mock import MagicMock
 
     from starlette.requests import Request
@@ -63,8 +64,10 @@ def test_launch_signs_with_current_bootstrap_key(
     from gobby.servers.auth_service import AuthService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.utils import local_token
+    from gobby.utils.capability_signing_key import CAPABILITY_SIGNING_KEY_FILENAME
 
     bootstrap = tmp_path / "bootstrap.yaml"
+    signing_key = tmp_path / CAPABILITY_SIGNING_KEY_FILENAME
     bootstrap.write_text("api_key: first-key\n")
     monkeypatch.setattr(local_token, "_daemon_bootstrap", None)
     local_token.bind_daemon_bootstrap(bootstrap)
@@ -82,10 +85,11 @@ def test_launch_signs_with_current_bootstrap_key(
         lambda: database, bootstrap_file=bootstrap, break_glass_file=tmp_path / "absent-break-glass"
     )
     tokens: list[str] = []
-    for key in ("first-key", "second-key"):
-        replacement = tmp_path / "replacement.yaml"
-        replacement.write_text(f"api_key: {key}\n")
-        replacement.replace(bootstrap)
+    for key in (b"\x01" * 32, b"\x02" * 32):
+        replacement = tmp_path / "replacement-key"
+        replacement.write_bytes(key)
+        replacement.chmod(0o600)
+        replacement.replace(signing_key)
         with factory.open("project-1", timeout_seconds=30) as launch:
             assert "GOBBY_AGENT_API_TOKEN" not in launch.env
             token = read_managed_api_token(launch.env)
@@ -103,10 +107,11 @@ def test_launch_signs_with_current_bootstrap_key(
             assert service.authenticate(request).allowed
     assert tokens[0] != tokens[1]
     assert local_token.verify_agent_api_token(tokens[0], service.managed_signing_key()) is None
-    bootstrap.unlink()
+    # An unsafe key file fails closed rather than being replaced under live grants.
+    signing_key.chmod(0o644)
     with pytest.raises(HandshakeRejection, match="signing_key_unavailable") as error:
         with factory.open("project-1", timeout_seconds=30):
-            pytest.fail("missing key admitted a maintenance launch")
+            pytest.fail("an unsafe key admitted a maintenance launch")
     assert error.value.code == "signing_key_unavailable"
     assert handshake.calls == 2
 

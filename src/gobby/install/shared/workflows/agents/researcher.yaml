@@ -4,7 +4,7 @@ direct_integration_commit_paths: [".gobby/plans/research/**"]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "3.0.0"
+version: "4.0.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: codex

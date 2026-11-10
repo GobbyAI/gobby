@@ -209,7 +209,7 @@ async def test_send_keys_uses_daemon_origin_and_idempotency(
         temp_db, sample_project["id"]
     )
     terminal = next(iter(store.rows.values()))
-    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator", viewer="web")
     await coordinator.lease_registry.take_control(terminal.id, "operator")
     coordinator_write = AsyncMock(wraps=coordinator.write)
 
@@ -247,7 +247,7 @@ async def test_send_keys_reaches_an_external_tmux_pane(
     )
     terminal = next(iter(store.rows.values()))
     native = coordinator.runtime_for(make_memory_terminal(backend="native"))
-    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator", viewer="web")
     await coordinator.lease_registry.take_control(terminal.id, "operator")
 
     with patch(

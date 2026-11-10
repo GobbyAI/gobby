@@ -134,107 +134,94 @@ async fn assert_direct_progress_while_held(
 }
 
 #[tokio::test]
-async fn split_right_with_a_held_control_or_create_reply_keeps_the_window_live() {
-    for held_kind in ["workspace_op", "terminal_release_control"] {
-        let mock = MockDaemon::start("local-token").await;
-        mock.queue_owned_terminal_id(FIRST_SHELL);
-        let mut host = DirectHost::start("epoch-1").await;
-        // A gterm host serves its control socket, so the host grant a keypress
-        // asks for resolves here. Without it every grant fails to connect, and
-        // whether the queued key survives then depends on which of that error
-        // and the take's answer lands first.
-        host.serve_gterm_control("control-token");
-        mock.seed_workspace(
-            "project-1",
-            &[(&["terminal-a", "terminal-b"], "terminal-b")],
-        );
-        let (mut workspace, _home) = mock_daemon::live_workspace_on_direct_host_terminals(
-            &mock,
-            &host,
-            &["terminal-a", "terminal-b"],
-        )
+async fn split_right_with_a_held_workspace_op_keeps_the_window_live() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(FIRST_SHELL);
+    let host = DirectHost::start("epoch-1").await;
+    mock.seed_workspace(
+        "project-1",
+        &[(&["terminal-a", "terminal-b"], "terminal-b")],
+    );
+    let (mut workspace, _home) = mock_daemon::live_workspace_on_direct_host_terminals(
+        &mock,
+        &host,
+        &["terminal-a", "terminal-b"],
+    )
+    .await;
+    // Consume the helper's second initial roster before arranging the
+    // roster that follows this test's new shell.
+    workspace
+        .fetch_roster()
+        .await
+        .expect("initial direct roster");
+    mock.enqueue("GET", "/api/terminals?", 200, json!({
+        "items": [
+            {"terminal_id": "terminal-a", "backend": "native", "state": "live", "attach": host.roster_attach("terminal-a")},
+            {"terminal_id": "terminal-b", "backend": "native", "state": "live", "attach": host.roster_attach("terminal-b")},
+            {"terminal_id": FIRST_SHELL, "backend": "native", "state": "live"},
+        ],
+        "next_cursor": null, "snapshot": {"daemon_epoch": "epoch-1", "seq": 2},
+    }));
+    let mut chrome = action_chrome();
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_until("terminal-b focused", || {
+            focused_attachment(&mock, "terminal-b").is_some()
+        })
         .await;
-        // Consume the helper's second initial roster before arranging the
-        // roster that follows this test's new shell.
-        workspace
-            .fetch_roster()
-            .await
-            .expect("initial direct roster");
-        mock.enqueue("GET", "/api/terminals?", 200, json!({
-            "items": [
-                {"terminal_id": "terminal-a", "backend": "native", "state": "live", "attach": host.roster_attach("terminal-a")},
-                {"terminal_id": "terminal-b", "backend": "native", "state": "live", "attach": host.roster_attach("terminal-b")},
-                {"terminal_id": FIRST_SHELL, "backend": "native", "state": "live"},
-            ],
-            "next_cursor": null, "snapshot": {"daemon_epoch": "epoch-1", "seq": 2},
-        }));
-        let mut chrome = action_chrome();
-        let (backend, draws, frames) = DrawRecorder::new(96, 30);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        let (input_tx, input_rx) = mpsc::channel(16);
-        let driver = async {
-            let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-            wait_for_replies(&mock, "terminal_take_control", 1).await;
-            probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
-            wait_for_typed_at_host(&host, b"x").await;
-            let release = mock.hold_ws(held_kind, |request| {
-                request["op"] == "pane.split" || request["terminal_id"] == "terminal-b"
-            });
-            if held_kind == "terminal_release_control" {
-                probe.next_pane().await;
-                wait_for_websocket_requests(&mock, held_kind, 1).await;
-                // The split below commits and focuses its new shell, which
-                // the direct host does not serve: probe while the release is held.
-                assert_direct_progress_while_held(&probe, &host, &release).await;
-            }
-            chord(&probe, 'i').await;
-            wait_until("split request", || {
-                operations(&mock, "pane.split").len() == 1
-            })
-            .await;
-            if held_kind == "workspace_op" {
-                assert!(
-                    attach_requests(&mock, FIRST_SHELL).is_empty(),
-                    "no placement before commit"
-                );
-                assert_direct_progress_while_held(&probe, &host, &release).await;
-            }
-            wait_until("new shell viewport", || {
-                websocket_requests(&mock, "terminal_set_viewport")
-                    .iter()
-                    .any(|request| request["terminal_id"] == FIRST_SHELL)
-            })
-            .await;
-            drop(input_tx);
-        };
-        let mut switch = TerminalGuard::recording().0;
-        let (result, ()) = tokio::join!(
-            run_live_loop(
-                &mut workspace,
-                &mut terminal,
-                &mut chrome,
-                input_rx,
-                &mut switch
-            ),
-            driver
+        probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
+        host.expect_input(1).await;
+        let release = mock.hold_ws("workspace_op", |request| {
+            request["op"] == "pane.split" || request["terminal_id"] == "terminal-b"
+        });
+        chord(&probe, 'i').await;
+        wait_until("split request", || {
+            operations(&mock, "pane.split").len() == 1
+        })
+        .await;
+        assert!(
+            attach_requests(&mock, FIRST_SHELL).is_empty(),
+            "no placement before commit"
         );
-        result.expect("split loop");
-        let pane = workspace
-            .pane_for_terminal(FIRST_SHELL)
-            .expect("created terminal");
-        assert!(chrome
-            .tabs()
-            .tabs
-            .iter()
-            .any(|tab| tab.slots.values().any(|id| *id == pane)));
-        assert_eq!(
-            chrome.focused_pane(),
-            Some(pane),
-            "the committed split takes focus"
-        );
-        assert_eq!(operations(&mock, "pane.split").len(), 1);
-        mock.shutdown().await;
-    }
+        assert_direct_progress_while_held(&probe, &host, &release).await;
+        wait_until("new shell viewport", || {
+            websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|request| request["terminal_id"] == FIRST_SHELL)
+        })
+        .await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("split loop");
+    let pane = workspace
+        .pane_for_terminal(FIRST_SHELL)
+        .expect("created terminal");
+    assert!(chrome
+        .tabs()
+        .tabs
+        .iter()
+        .any(|tab| tab.slots.values().any(|id| *id == pane)));
+    assert_eq!(
+        chrome.focused_pane(),
+        Some(pane),
+        "the committed split takes focus"
+    );
+    assert_eq!(operations(&mock, "pane.split").len(), 1);
+    mock.shutdown().await;
 }
 
 #[tokio::test]
@@ -249,7 +236,12 @@ async fn two_new_tabs_before_the_first_create_lands_place_both() {
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
         let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        wait_until("a pane is focused", || {
+            websocket_requests(&mock, "terminal_focus")
+                .iter()
+                .any(|request| request["focused"] == true)
+        })
+        .await;
         let release = mock.hold_ws("workspace_op", |request| request["op"] == "tab.create");
         chord(&probe, 'c').await;
         chord(&probe, 'i').await;
@@ -351,7 +343,10 @@ async fn a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal() 
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
         let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        wait_until("the focused pane is attached", || {
+            focused_attachment(&mock, &focused).is_some()
+        })
+        .await;
         probe.key_reaches(&focused, 'x').await;
         let release = mock.hold_ws("workspace_op", |request| request["op"] == "tab.create");
         chord(&probe, 'i').await;
@@ -441,7 +436,10 @@ async fn closing_a_tab_issues_tab_close_only_after_every_kill_settles() {
         let (input_tx, input_rx) = mpsc::channel(16);
         let driver = async {
             let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-            wait_for_replies(&mock, "terminal_take_control", 1).await;
+            wait_until("terminal-b focused", || {
+                focused_attachment(&mock, "terminal-b").is_some()
+            })
+            .await;
             let first = mock.hold_ws("terminal_kill", |_| true);
             let second = mock.hold_ws("terminal_kill", |_| true);
             probe.key(KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -452,10 +450,8 @@ async fn closing_a_tab_issues_tab_close_only_after_every_kill_settles() {
                 "first kill is outstanding"
             );
             chord(&probe, 'n').await;
-            wait_until("surviving tab control", || {
-                websocket_requests(&mock, "terminal_take_control")
-                    .iter()
-                    .any(|request| request["terminal_id"] == "terminal-c")
+            wait_until("surviving tab focus", || {
+                focused_attachment(&mock, "terminal-c").is_some()
             })
             .await;
             assert_progress_while_held(&probe, "terminal-c", &first).await;
@@ -558,7 +554,10 @@ async fn a_held_arrange_or_grid_op_keeps_frames_flowing_and_places_from_returned
         let (input_tx, input_rx) = mpsc::channel(16);
         let driver = async {
             let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-            wait_for_replies(&mock, "terminal_take_control", 1).await;
+            wait_until("terminal-b focused", || {
+                focused_attachment(&mock, "terminal-b").is_some()
+            })
+            .await;
             probe.key(KeyCode::Enter, KeyModifiers::NONE).await;
             wait_until("held arrange/grid op", || {
                 !operations(&mock, held_op).is_empty()

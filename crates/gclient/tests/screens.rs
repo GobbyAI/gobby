@@ -20,7 +20,7 @@
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::startup_stages::{ConnectionView, StageState, StartupStages};
 use gobby_client::app::{
-    apply_local_menu_action, route_mouse, ContextMenuKind, ControlState, MouseOutcome, Submenu,
+    apply_local_menu_action, route_mouse, ContextMenuKind, MouseOutcome, Submenu,
 };
 use gobby_client::daemon::{
     Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
@@ -225,7 +225,7 @@ fn agent_rows() -> (Workspace, Chrome) {
         "proj-alpha".into(),
         vec![RunRow {
             run_id: "run-long".into(),
-            agent_name: Some("backend-architect-workflow-run".into()),
+            agent_name: Some("backend-publisher-workflow-run".into()),
             provider: Some("codex".into()),
             model: Some("gpt-5".into()),
             terminal_id: Some("term-agent".into()),
@@ -459,7 +459,6 @@ fn pane_edges() -> (Workspace, Chrome) {
     let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");
     ws.pane_mut(alpha).label = None;
     ws.pane_mut(beta).label = None;
-    ws.pane_mut(alpha).control = ControlState::LeaseLost;
 
     let mut chrome = Chrome::dark();
     chrome.prefs.pane_gaps = false;
@@ -859,7 +858,7 @@ fn agent_rows_golden() {
     let rows = glyph_rows(&rendered);
     let agent = rows
         .iter()
-        .position(|row| row.contains("#123: backend-architect-work"))
+        .position(|row| row.contains("#123: backend-publisher-work"))
         .expect("agent definition row");
     assert!(rows[agent + 1].contains("gpt-5"), "{:?}", rows[agent + 1]);
     assert!(

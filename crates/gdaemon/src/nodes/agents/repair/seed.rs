@@ -50,13 +50,32 @@ pub async fn preseed(workspace: &Path, uv: Option<&Path>, timeout: Duration) -> 
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // Dropping the child on timeout kills it; piped output would hold the wait open.
-    let status = tokio::time::timeout(timeout, command.status())
+    // The sync leads its own process group, so an abandoned sync takes its children with it.
+    let mut child = command.process_group(0).spawn().context("start uv sync")?;
+    // Declared after `child`, so an abandoned sync is signalled while its leader is still unreaped.
+    let mut group = SyncGroup(child.id().and_then(|pid| libc::pid_t::try_from(pid).ok()));
+    let status = tokio::time::timeout(timeout, child.wait())
         .await
         .context("uv sync timed out")?
-        .context("start uv sync")?;
+        .context("wait for uv sync")?;
+    // The leader is reaped, so its id may be reused: never signal the group again.
+    group.0 = None;
     ensure!(status.success(), "uv sync exited with {status}");
     Ok(())
+}
+
+/// Process group of a seed sync that has not been reaped. Dropping it, on timeout or
+/// cancellation, SIGKILLs the group, which reaches the children uv started, not only uv.
+struct SyncGroup(Option<libc::pid_t>);
+
+impl Drop for SyncGroup {
+    fn drop(&mut self) {
+        if let Some(pgid) = self.0 {
+            // SAFETY: the leader is unreaped, so its pid, the group id `pgid`, is still ours.
+            // An already-empty group returns ESRCH, which needs no action.
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
+    }
 }
 
 /// Resolves uv's default cache directory, falling back to `~/.cache/uv`.

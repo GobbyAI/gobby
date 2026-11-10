@@ -57,7 +57,7 @@ Recorded verbatim:
   communications seat label and the spawn pane title derive from ref and
   definition through it. The tmux window fallback is the session ref alone
   (`_synthesize_fallback_title` in `src/gobby/sessions/tmux_window_naming.py`).
-- Schema: `crates/gcore/assets/schema/migrations/494_drop_session_titles.sql`.
+- Schema: `crates/gcore/assets/schema/migrations/496_drop_session_titles.sql`.
 - Roster: `src/gobby/storage/attention.py` (`AttentionRosterRow.definition`,
   `task_claim_held`) and `src/gobby/servers/routes/attention_roster.py` (entry
   key `definition`, task key `claim_holder`).

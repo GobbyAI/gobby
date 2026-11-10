@@ -656,6 +656,10 @@ class WriteCoordinator:
     ) -> None:
         if origin != "operator":
             return
+        record = None if attachment_id is None else self.lease_registry.get(attachment_id)
+        if record is not None and record.viewer != "web":
+            # A gclient pane is always writable, so its operator write needs no lease.
+            return
         if (
             attachment_id is None
             or expected_generation is None

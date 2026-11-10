@@ -9,16 +9,18 @@ WITH candidates AS (
 ), deleted AS (
     DELETE FROM token_events
     WHERE id IN (SELECT id FROM candidates)
-    RETURNING session_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+    RETURNING session_id, COALESCE(message_id, '') AS message_key,
+              input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
 ), archived AS (
     INSERT INTO token_event_retention_totals (
-        session_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+        session_id, message_key, input_tokens, output_tokens, cache_creation_tokens,
+        cache_read_tokens
     )
-    SELECT session_id, sum(input_tokens), sum(output_tokens),
+    SELECT session_id, message_key, sum(input_tokens), sum(output_tokens),
            sum(cache_creation_tokens), sum(cache_read_tokens)
     FROM deleted
-    GROUP BY session_id
-    ON CONFLICT (session_id) DO UPDATE SET
+    GROUP BY session_id, message_key
+    ON CONFLICT (session_id, message_key) DO UPDATE SET
         input_tokens = token_event_retention_totals.input_tokens + excluded.input_tokens,
         output_tokens = token_event_retention_totals.output_tokens + excluded.output_tokens,
         cache_creation_tokens = token_event_retention_totals.cache_creation_tokens

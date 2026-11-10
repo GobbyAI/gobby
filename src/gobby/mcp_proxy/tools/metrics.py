@@ -19,6 +19,7 @@ from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.token_tracker import SessionTokenTracker
+from gobby.storage.usage_ledger import UsageLedgerStore, resolve_ledger_subject
 
 if TYPE_CHECKING:
     from gobby.providers.capacity_service import ProviderCapacityService
@@ -206,13 +207,13 @@ def create_metrics_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def require_calling_project_id() -> str:
+    def require_calling_project_id(action: str = "reset metrics") -> str:
         from gobby.utils.project_context import get_project_context
 
         project_context = get_project_context()
         project_id = project_context.get("id") if project_context else None
         if not isinstance(project_id, str) or not project_id:
-            raise ValueError("A project context is required to reset metrics")
+            raise ValueError(f"A project context is required to {action}")
         return project_id
 
     @registry.tool(
@@ -350,6 +351,46 @@ def create_metrics_registry(
         try:
             summary = token_tracker.get_usage_summary(days=days)
             return {"success": True, "usage": summary}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="get_usage_ledger",
+        read_only=True,
+        description=(
+            "Usage ledger page for one session or one task: token rows, totals, reported spend, "
+            "and per-source coverage. Pass exactly one of session_id or task_id."
+        ),
+    )
+    def get_usage_ledger(
+        session_id: str | None = None,
+        task_id: str | None = None,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Return one page of the usage ledger for a session or task in the calling project.
+
+        Args:
+            session_id: Session ref (#N, UUID, or prefix) in the calling project
+            task_id: Task ref (#N, dotted path, or UUID) in the calling project
+            cursor: Cursor from a previous page; omit for the first page
+            limit: Rows per page, clamped to 1-1000 (default 200)
+
+        Returns:
+            The ledger page with success true, or success false with an error
+        """
+        if session_storage is None:
+            return {"success": False, "error": "Usage ledger not configured"}
+        try:
+            project_id = require_calling_project_id("read the usage ledger")
+            db = session_storage.db
+            resolved_session, resolved_task = resolve_ledger_subject(
+                db, session_id, task_id, project_id
+            )
+            page = UsageLedgerStore(db).page(
+                session_id=resolved_session, task_id=resolved_task, cursor=cursor, limit=limit
+            )
+            return {"success": True, **page}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

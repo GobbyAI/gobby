@@ -6,6 +6,81 @@
 use super::*;
 use serde_json::json;
 
+use crate::mock_daemon;
+
+#[tokio::test]
+async fn buffered_proxy_finalization_never_detaches_the_retired_attachment() {
+    assert_buffered_finalization_has_no_cleanup(true).await;
+}
+
+#[tokio::test]
+async fn buffered_public_proxy_finalization_never_detaches_the_retired_attachment() {
+    assert_buffered_finalization_has_no_cleanup(false).await;
+}
+
+async fn assert_buffered_finalization_has_no_cleanup(live_request: bool) {
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.finalize_next_proxy_attach_before_reply(
+        "epoch-1",
+        1,
+        "attach_eof",
+        "ended before attach result",
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        if live_request {
+            request_proxy_source(&daemon, "terminal-buffered-finalization", "retired-attach")
+                .await
+                .map(|_| ())
+        } else {
+            ProxyFrameSource::attach(daemon.clone(), "terminal-buffered-finalization")
+                .await
+                .map(|_| ())
+        }
+    })
+    .await
+    .expect("attach outcome completed");
+    assert!(matches!(
+        outcome,
+        Err(FrameError::Finalized { code, reason })
+            if code == "attach_eof" && reason == "ended before attach result"
+    ));
+
+    // Await the whole attach outcome, then a reply on the same socket. Every
+    // cleanup request it issued must have reached the mock before this reply.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        daemon.send(json!({
+            "type": "subscribe",
+            "events": [],
+            "request_id": "retired-attach-wire-barrier",
+        })),
+    )
+    .await
+    .expect("wire barrier answered")
+    .expect("wire barrier succeeded");
+    let forbidden: Vec<_> = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("attachment_id") == Some(&json!("attachment-1")))
+        .filter(|body| {
+            matches!(
+                body.get("type").and_then(Value::as_str),
+                Some("terminal_detach" | "terminal_set_viewport")
+            )
+        })
+        .collect();
+    assert!(
+        forbidden.is_empty(),
+        "retired attach requests: {forbidden:?}"
+    );
+    mock.shutdown().await;
+}
+
 /// `direct_block()` for a tmux pane: the pane object carries the identity and
 /// `host_terminal_id` rides along as null.
 fn tmux_reply() -> Value {

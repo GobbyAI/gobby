@@ -9,16 +9,14 @@ The host binds two Unix sockets in `~/.gobby` (mode `0600`):
 
 | Socket | Speaks | Credential | Can write a PTY |
 | --- | --- | --- | --- |
-| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, for the attachment named in `grant_input` |
-| `gterm-control.sock` | newline-delimited JSON, spoken by the daemon and by gclient while the daemon is unreachable | `~/.gobby/gterm-control.token` | yes |
+| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, on a stream with a bound attachment |
+| `gterm-control.sock` | newline-delimited JSON, spoken by the daemon | `~/.gobby/gterm-control.token` | yes |
 
-The API key alone still reaches nothing writable: a frame stream is read-only
-until the daemon, or gclient during a daemon outage for its own frame attachment
-id, names one attachment id in `grant_input` over the control socket and the
-client binds that id. The credential proves who may
-watch; the grant decides who may type. If the daemon's control connection
-drops, frames keep arriving and standing grants keep working — only
-`revoke_input` or removing the terminal clears one.
+The API key is the frame stream's only credential, and it is what lets a
+stream type: there is no read-only frame stream and no input grant. Keystrokes
+on a direct native attachment go straight to the host. Losing the daemon
+connection does not stop frames or typing, because the host holds no lease
+state.
 
 The host reads `api_key` from its startup bootstrap on every frames `Hello`.
 Replacing the bootstrap key applies to the next hello immediately: the new key
@@ -34,17 +32,17 @@ Client → host:
 - `SetViewport { rows, cols }` — attachment-local render size, never `TIOCSWINSZ`
 - `SetScrollOffset { rows_from_live_edge }` — attachment-local scroll, never PTY input
 - `BindAttachment { attachment_id }` — the daemon attachment id this stream
-  types as
-- `Input { data }` — bytes for the PTY, granted attachments only
-- `Paste { text }` — bracketed by the host, granted attachments only
+  types as, which `input_activity` reports
+- `Input { data }` — bytes for the PTY, on a stream with a bound attachment
+- `Paste { text }` — bracketed by the host, on a stream with a bound attachment
 - `ReadText { start_rows_from_live_edge, start_col, end_rows_from_live_edge,
   end_col }` — plain text from a native pane's retained screen
 - `SetTerminalTheme { theme }` — the client's foreground, background and sparse
   palette, which the host uses for the child's OSC 10/11 answers and mode-2031
   reports; the control `spawn` takes the same `terminal_theme` object.
-  Only on a host advertising `terminal_theme`. It applies to a granted pane only
-  from the stream bound to the grant holder. A declaration themes only its own
-  attachment's pane. A spawn starts with its own `terminal_theme`, else the
+  Only on a host advertising `terminal_theme`. A declaration comes from the stream
+  bound to its attachment, and the slot's theme is the newest declared theme among
+  the slot's attachments. A spawn starts with its own `terminal_theme`, else the
   current theme of the live native pane its optional `theme_from` names (the
   daemon names the spawning session's pane), else unset, leaving OSC 10/11
   unanswered. An unknown, external or unthemed `theme_from` pane counts as unset
@@ -82,30 +80,29 @@ MiB from the head with `truncated: true` when the result is larger. It returns a
 for a tmux attachment, `terminal_gone` after the pane disappears, or
 `read_failed` when the emulator cannot read the retained screen.
 
-### Granted input
+### Input
 
-A frame stream carries granted input: `Input` and `Paste` reach the PTY only
-when the stream's bound `attachment_id` equals the slot's standing grant. The
-host compares the two on every message; nothing is cached per stream beyond the
-bound id.
+`Input` and `Paste` reach the PTY on a frame stream once `AttachTerminal` has attached
+it, for a native slot. A stream that has not attached yet refuses each input with
+`attach_required` and types nothing. No grant, take, or read-only state gates an
+attached stream, and the host keeps no per-slot input state. `BindAttachment` only
+names the attribution that `input_activity` reports; an attached stream that has not
+bound reports `""`, and its input still writes.
 
 Every refusal is an `InputRefused { code }` on the same stream and never closes
 it, so a refused key leaves output flowing:
 
 | Code | Meaning |
 | --- | --- |
-| `attach_required` | the stream has no attachment yet |
-| `input_not_granted` | the stream is unbound, or its id is not the slot's grant |
+| `attach_required` | the stream has not attached a terminal yet |
 | `not_native` | the slot is a tmux pane, which types through its own renderer |
 | `request_too_large` | over `MAX_WRITE_BYTES` (1 MiB) |
 | `pty_busy` | the PTY write channel is full |
 | `terminal_gone` | the attachment or its terminal is gone |
 
-`BindAttachment` is refused the same way and is idempotent: it costs one message
-per installed stream, and a later `AttachTerminal` on the same stream clears the
-bound id, so a reattaching client rebinds. Binding does not check the grant —
-only `Input` and `Paste` do — so a client may bind before the daemon grants and
-learn the outcome from the first key.
+`BindAttachment` is idempotent: it costs one message per installed stream, and a
+later `AttachTerminal` on the same stream clears the bound id, so a reattaching
+client rebinds.
 
 An accepted `Input` or `Paste` emits `input_activity` on the control socket,
 which is how the daemon keeps turn observation for keystrokes it never sees.
@@ -117,38 +114,9 @@ Wrong protocol version or `local_token` is a typed error before any attach.
 After `hello { protocol_version, control_token }`, the daemon may call `ping`,
 `list`, `host_shutdown`, `reserve_observer`, `release_observer`, `spawn` →
 `spawn_prepared` / `spawn_commit`, `kill`, `resize`, `snapshot`, `write`
-(`encoding: "utf8-b64"`), `write_batch`, `grant_input`, `revoke_input`, and
-`subscribe_events`. While the daemon is unreachable, gclient may also call
-`grant_input` and `revoke_input` for its own frame attachment ids, after the same
-`hello`.
-
-`grant_input { host_terminal_id, attachment_id }` names the one daemon
-attachment id allowed to type on a frame stream and answers
-`{ok: true, granted: true, previous}`, where `previous` is the displaced id or
-`null` — one holder per slot, so granting replaces. `revoke_input
-{ host_terminal_id, attachment_id? }` answers `{ok: true, revoked}`; it clears
-the grant when `attachment_id` matches or is omitted, and reports
-`revoked: false` when nothing was cleared. Both answer `not_found` for an
-unknown terminal and `not_native` for a tmux slot. Neither is ledgered: they
-carry no `operation_seq`, and a control reconnect may reissue either one.
-
-A grant lives in the host's slot, not in the connection. It survives a control
-disconnect, a daemon restart, and the daemon's death; only `revoke_input` or
-removing the terminal clears one. Nothing sweeps stale grants at startup and
-nothing needs to: attachment ids are minted per attach and never persisted, so a
-grant the previous daemon left names an id no client can bind, and the next take
-of the lease replaces it.
-
-A surviving grant does not mean typing survives a daemon outage. The lease is
-daemon state, so a client that loses the daemon drops its panes to observing and
-stops typing even though the host would still accept its input — it can no
-longer know the lease is still its own. The grant removes the daemon from the
-keystroke path, not from the decision.
-
-The lease holder is the only thing that moves a grant. On every holder change
-the daemon reconciles: it grants the new holder when the terminal is native and
-that holder took direct frame delivery, and otherwise revokes, which covers a
-release, a web or proxied holder, and a tmux backend.
+(`encoding: "utf8-b64"`), `write_batch`, and `subscribe_events`. The control
+socket carries no input grant: the daemon does not tell the host who may type,
+and gclient does not ask the host for typing rights in any state.
 
 `subscribe_events` also carries `input_activity`:
 
@@ -225,10 +193,10 @@ unavailable. Golden messages live in `tests/fixtures/terminal_ws_golden/`.
 | `terminal_list` | Client ↔ daemon | A request supplies `request_id` and optional filters/cursor: `project_id`, `limit`, and `states` (a list drawn from `pending`, `live`, `exited`, `orphaned`; default `pending` + `live`; anything else is a `terminal_error` with code `invalid_states`). A response carries `items`, `next_cursor`, and `snapshot: {daemon_epoch, seq}` (nullable in the wire shape). Each item carries `state`, `ownership`, `backend`, and `updated_at`; a row the tmux sweep matched also carries `name`, `socket`, `attached_clients` (`#{session_attached}`), and the `pane_*` fields. The first page's snapshot pins the lifecycle watermark for roster reconciliation. |
 | `terminal_event`, `terminal_lease_lost`, `terminal_attachment_finalized` | Daemon → client | Lifecycle messages carry `daemon_epoch` and `seq`. Apply events newer than the pinned snapshot in the same epoch; reconcile on an epoch change. |
 | `terminal_set_scroll_offset` | Client → daemon | `terminal_id`, `attachment_id`, `rows_from_live_edge`, and `max_rows` — the client's own ceiling belief, where 0 means "not known yet" and the daemon applies what was asked. Native only: the daemon clamps, forwards `SetScrollOffset` to the host, and gterm re-renders frames from the offset. A tmux attachment scrolls through the mouse reports its renderer already writes to the attach client, and must not send this. Both `gclient` and the web terminal drive it: `crates/gclient/src/app/live_loop/control.rs` and `web/src/components/activity/terminal/scrollOffset.ts`. |
-| `terminal_set_theme` | Client → daemon | `terminal_id`, `attachment_id`, and `theme` (`{foreground, background, palette}` as `ThemeDeclaration` JSON). Proxied native attachments only, after the attach result advertised `terminal_theme`. The daemon checks the socket owns the attachment, binds its host stream to that attachment, and sends `SetTerminalTheme`, so the host's input grant still decides whether it applies. Refusals are `terminal_error` with `theme_not_relayed` or `invalid_terminal_theme`. `gclient` sends it from `crates/gclient/src/app/theme_sync.rs`. |
+| `terminal_set_theme` | Client → daemon | `terminal_id`, `attachment_id`, and `theme` (`{foreground, background, palette}` as `ThemeDeclaration` JSON). Proxied native attachments only, after the attach result advertised `terminal_theme`. The daemon checks the socket owns the attachment, binds its host stream to that attachment, and sends `SetTerminalTheme`. Refusals are `terminal_error` with `theme_not_relayed` or `invalid_terminal_theme`. `gclient` sends it from `crates/gclient/src/app/theme_sync.rs`. |
 | `terminal_take_control`, `terminal_release_control` | Client → daemon | `terminal_id` and `attachment_id`; a take also accepts `takeover` to displace the current holder. |
-| `terminal_focus` | Client → daemon | `terminal_id`, `attachment_id`, and `focused` (a boolean). No reply. A viewer state report, sent by `gclient` and the web terminal, that the daemon records on the attachment and clears on release, finalize, and takeover. Only the holder's report counts; a stale attachment is ignored. |
-| `terminal_control_result` | Daemon → client | `attachment_id`, `granted`, `reason`, `lease_generation`, and `host_input_granted`. The last is `true` when the host accepted the matching `grant_input`, `false` when it refused or could not be reached, and `null` when no grant applies — a tmux or web backend, a proxied holder, or a release. A direct native client that holds the lease without `host_input_granted: true` has nowhere to type and offers take-back rather than falling back to the daemon. |
+| `terminal_focus` | Client → daemon | `terminal_id`, `attachment_id`, and `focused` (a boolean). No reply. A viewer state report, sent by `gclient` and the web terminal, that the daemon records on the attachment and clears on release, finalize, and takeover. Any live focused attachment counts for operator focus protection, including a direct native attachment without a writer lease. A stale attachment is ignored. |
+| `terminal_control_result` | Daemon → client | `attachment_id`, `granted`, `reason`, and `lease_generation`. A gclient attach using proxy delivery, or a tmux attach using direct delivery, sends a non-takeover `terminal_take_control` right after attaching. Daemon-routed writes require this lease. A direct native pane never takes and types over the frame socket. |
 | `terminal_scroll_offset_applied` | Daemon → client | `terminal_id`, `attachment_id`, `applied_rows`, and `max_rows`. A proxied attachment sees it twice — the daemon's own clamp against the proposed ceiling, then the host's, relayed, which owns the real scrollback depth. Clients mirror the offset optimistically and reconcile to `applied_rows`, clamping later requests to `max_rows`. |
 
 For direct delivery, `terminal_attach_result.direct` contains
@@ -238,14 +206,10 @@ For direct delivery, `terminal_attach_result.direct` contains
 to `frame_socket_path`, performs the host handshake, and verifies the host epoch
 before attaching. Proxy delivery returns `direct: null`.
 
-A direct locator still grants no write authority by itself. What changes with a
-lease is narrow: taking the lease on a direct native attachment makes the daemon
-call `grant_input`, and from then until the holder changes that client types on
-its own frame stream with no daemon round trip per key. Everything else stays
-mediated — PTY resize, tmux panes, proxied and web attachments, and every
-automatic write go through the daemon's lease checks as before. Releasing the
-lease, losing it to a takeover, or detaching revokes the grant, and the host
-refuses the next key with `input_not_granted`.
+A direct native attachment types on its own frame stream with no daemon round
+trip per key and no lease. The writer lease still governs web and proxied
+attachments, tmux panes, PTY resize, and every automatic write, which go through
+the daemon's lease checks as before.
 
 The `terminal_list.snapshot` watermark is the daemon's published lifecycle
 position, not a terminal screen capture. The client pins page one's watermark,
@@ -324,10 +288,10 @@ with a keyframe) and a 16-entry / 64 KiB control queue. Control overflow or a
 2s delivery deadline closes the attachment. Delta lag timeout is 5s. A blocked
 peer may miss the typed error and still sees EOF. Frame and control lines are
 capped at `MAX_FRAME_SIZE` (2 MiB). Raw `write`/`paste` and aggregate decoded
-`write_batch` payloads are capped at 1 MiB, as is a granted frame `Input` or
+`write_batch` payloads are capped at 1 MiB, as is a frame `Input` or
 `Paste` (`request_too_large` past it).
 
-Granted input is never awaited. A client enqueues it on its own outbound frame
+Frame input is never awaited. A client enqueues it on its own outbound frame
 queue and keeps rendering; a full queue drops that one keystroke and is reported
 to the person typing, not retried, because a retried keystroke is a wrong
 keystroke. `pty_busy` is the host's half of the same rule.
@@ -339,23 +303,16 @@ fallback. Corpus regeneration: encode each listed message with the current
 encoder, write `tests/fixtures/wire_golden/*`, and keep the round-trip test
 green in the same commit.
 
-Granted frame input was appended under `PROTOCOL_VERSION` 1: the input verbs sit
-after the existing variants, so a host and a client of different builds still
-agree on every older message, and an ungranted `Input` is refused rather than
-misread.
+Frame input verbs were appended under `PROTOCOL_VERSION` 1 after the existing
+variants, so a host and a client of different builds still agree on every older
+message.
 
 ## Decision record
 
-Granted input replaces the daemon-mediated keystroke path that memory
-`be35449d` item 1 described, where gclient was a pure viewer mutating only
-through the daemon. Memory `be35449d` updated to point at the superseding
-decision in memory `b59e4ce9` and its plan,
-`.gobby/plans/gclient-direct-input.md`. The daemon still owns leases, layout,
-workspaces, and every automatic write.
-
-Task #24815 adds one exception: while the daemon is unreachable, gclient may send
-`grant_input` and `revoke_input` for its own frame attachment ids. Scope: the same
-user only. gclient reads the token only from `gterm-control.token` beside the
-frame socket, after both control files pass an owner-only check and are owned by
-the caller. The token is never logged or placed in error text. The last grant
-wins. On daemon return, the focused pane's retake replaces the outage grant.
+Frame input is ungated. The grant model is removed: the host no longer holds a
+per-slot input grant, `grant_input` and `revoke_input` are gone from the control
+socket, and gclient cannot be read-only. Every direct native pane is writable,
+and no take-control handshake sits on the keystroke path. A proxied gclient pane
+types through the daemon while its attachment holds the writer lease, which the
+attach claims without a takeover. The daemon still owns the writer lease for web
+and proxied viewers, layout, workspaces, and every automatic write.

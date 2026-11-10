@@ -88,11 +88,10 @@ async fn a_restore_for_a_closed_pane_gives_up_as_stale() {
 }
 
 #[tokio::test]
-async fn a_restored_stream_keeps_the_lease_but_requires_a_fresh_host_grant() {
+async fn a_restored_stream_keeps_its_host_attachment() {
     let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
     let mut workspace = Workspace::live(daemon);
-    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
-    pane.restore_host_control();
+    let pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
     workspace.panes.insert(pane.id, pane);
     let generation = workspace.daemon.generation();
     let recovery = workspace.apply_host_recovery(HostRecovery {
@@ -105,109 +104,35 @@ async fn a_restored_stream_keeps_the_lease_but_requires_a_fresh_host_grant() {
     });
     assert!(recovery.is_none());
     let pane = &workspace.panes[&PaneId(1)];
-    assert!(pane.is_held());
-    assert!(
-        !pane.host_input_granted,
-        "a new stream has no inherited host authority"
+    assert_eq!(
+        pane.frame_source()
+            .and_then(|source| source.host_attachment_id()),
+        Some(1)
     );
-    assert_eq!(pane.host_attachment_id(), Some(1));
 }
 
 #[tokio::test]
-async fn input_on_a_held_stream_without_a_host_grant_queues_and_requests_control() {
+async fn a_native_pane_types_on_its_host_while_the_daemon_is_away() {
     use crate::app::live_loop::{control::send_live_input, jobs::LoopJobs};
+    use crate::daemon::Generation;
+    use crate::frame_source::{PaneFrameSource, Transport};
     use crate::ui::Chrome;
-
-    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
-    let mut workspace = Workspace::live(daemon);
-    workspace.daemon_ready = true;
-    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
-    pane.install_frame_source(crate::frame_source::PaneFrameSource::Direct(
-        restored_source("epoch-1").await,
-    ));
-    pane.live = true;
-    pane.restore_host_control();
-    pane.host_input_granted = false;
-    workspace.panes.insert(pane.id, pane);
-    let mut jobs = LoopJobs::new(&workspace);
-    let mut chrome = Chrome::dark();
-    send_live_input(
-        &mut workspace,
-        &mut chrome,
-        &mut jobs,
-        PaneId(1),
-        b"queued",
-        false,
-    )
-    .expect("queue input until host grant");
-    let pane = &workspace.panes[&PaneId(1)];
-    assert_eq!(pane.pending_input.len(), 1);
-    assert_eq!(pane.pending_input[0].parts(), (b"queued".as_slice(), false));
-    assert!(workspace.awaiting_control(PaneId(1)));
-    assert!(chrome.alert_log.is_empty());
-}
-
-#[tokio::test]
-async fn recovered_held_stream_regrants_and_flushes_input_during_daemon_outage() {
-    use crate::app::live_loop::{
-        control::send_live_input, jobs::LoopJobs, jobs_apply::apply_job_outcome,
-    };
-    use crate::ui::Chrome;
-    use std::os::unix::fs::PermissionsExt;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::time::{timeout, Duration};
 
-    let dir = tempfile::tempdir().unwrap();
-    let frame_socket = dir.path().join("gterm-frames.sock");
-    let control_socket = dir.path().join("gterm-control.sock");
-    let token = dir.path().join("gterm-control.token");
-    std::fs::write(&token, "test-token").unwrap();
-    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let listener = tokio::net::UnixListener::bind(&control_socket).unwrap();
-    std::fs::set_permissions(&control_socket, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let control = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut stream = BufReader::new(stream);
-        let mut line = String::new();
-        stream.read_line(&mut line).await.unwrap();
-        let hello: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(hello["control_token"], "test-token");
-        stream
-            .get_mut()
-            .write_all(b"{\"ok\":true}\n")
-            .await
-            .unwrap();
-        line.clear();
-        stream.read_line(&mut line).await.unwrap();
-        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(request["method"], "grant_input");
-        assert_eq!(request["host_terminal_id"], "terminal-1");
-        assert_eq!(request["host_attachment_id"], 1);
-        stream
-            .get_mut()
-            .write_all(b"{\"ok\":true,\"granted\":true}\n")
-            .await
-            .unwrap();
-    });
-    let (source, mut host) =
-        restored_source_with_host("epoch-1", frame_socket.to_str().unwrap()).await;
+    let (source, mut host) = restored_source_with_host("epoch-1", "").await;
     let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
     let mut workspace = Workspace::live(daemon);
     workspace.daemon_ready = false;
     // The keypress targets the focused pane, which is the pane the grant answers.
     workspace.focus = Some(PaneId(1));
     let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
-    pane.install_frame_source(crate::frame_source::PaneFrameSource::Direct(source));
-    pane.remember_host_locator(&AttachLocator {
-        backend: "native".into(),
-        frame_host_epoch: "epoch-1".into(),
-        host_terminal_id: "terminal-1".into(),
-        frame_socket_path: frame_socket.to_string_lossy().into_owned(),
-        pane: None,
-    });
-    pane.live = true;
-    pane.restore_host_control();
-    pane.host_input_granted = false;
+    pane.install_attachment(
+        "attachment-1".to_owned(),
+        Transport::Direct,
+        Generation(0),
+        0,
+        PaneFrameSource::Direct(source),
+    );
     workspace.panes.insert(pane.id, pane);
     let mut jobs = LoopJobs::new(&workspace);
     let mut chrome = Chrome::dark();
@@ -216,19 +141,10 @@ async fn recovered_held_stream_regrants_and_flushes_input_during_daemon_outage()
         &mut chrome,
         &mut jobs,
         PaneId(1),
-        b"queued",
+        b"typed",
         false,
     )
-    .unwrap();
-    let outcome = timeout(Duration::from_secs(2), jobs.rx.recv())
-        .await
-        .expect("recovered Held stream must dispatch HostGrant during outage")
-        .expect("grant outcome");
-    apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome);
-    timeout(Duration::from_secs(2), control)
-        .await
-        .unwrap()
-        .unwrap();
+    .expect("a native pane types without the daemon");
     let input = timeout(Duration::from_secs(2), async {
         loop {
             let message: ClientMessage =
@@ -239,9 +155,8 @@ async fn recovered_held_stream_regrants_and_flushes_input_during_daemon_outage()
         }
     })
     .await
-    .expect("queued input must reach the recovered host stream");
-    assert!(matches!(input, ClientMessage::Input { data } if data == b"queued"));
-    assert!(workspace.panes[&PaneId(1)].pending_input.is_empty());
+    .expect("typed input must reach the host while the daemon is away");
+    assert!(matches!(input, ClientMessage::Input { data } if data == b"typed"));
     assert!(chrome.alert_log.is_empty());
 }
 

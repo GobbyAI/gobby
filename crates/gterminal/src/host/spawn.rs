@@ -183,9 +183,9 @@ pub fn spawn_prepared(
     drop(status_pipe_writer);
     set_nonblocking(status_reader.as_raw_fd())?;
 
-    let test_helper = std::env::var_os("GTERM_TEST_HELPER").filter(|value| value == "1");
+    let test_helper = crate::test_seam::helper_enabled();
     #[cfg(debug_assertions)]
-    let wait_for_child_exit_before_status = test_helper.is_some()
+    let wait_for_child_exit_before_status = test_helper
         && env.iter().any(|(name, value)| {
             name == "GTERM_TEST_WAIT_FOR_CHILD_EXIT_BEFORE_STATUS" && value == "1"
         });
@@ -204,8 +204,8 @@ pub fn spawn_prepared(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(marker) = test_helper {
-        command.env("GTERM_TEST_HELPER", marker);
+    if test_helper {
+        command.env("GTERM_TEST_HELPER", "1");
     } else {
         command.env_remove("GTERM_TEST_HELPER");
     }

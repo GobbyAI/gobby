@@ -496,22 +496,34 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 493,
-        filename: "493_session_status_line.sql",
-        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
-        sql: include_str!("../../assets/schema/migrations/493_session_status_line.sql"),
+        filename: "493_token_event_per_key_archive.sql",
+        checksum: "a91fb9ab01e17ef35047ec9282f1dbe66af7e67f9c7cb86db19e0b8339634679",
+        sql: include_str!("../../assets/schema/migrations/493_token_event_per_key_archive.sql"),
     },
     EmbeddedMigration {
         version: 494,
-        filename: "494_drop_session_titles.sql",
-        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
-        sql: include_str!("../../assets/schema/migrations/494_drop_session_titles.sql"),
+        filename: "494_code_index_reconcile_receipts.sql",
+        checksum: "f450128071ac171b519d75b47c94770023288ef49d901b2d6cbb5887a83c65b6",
+        sql: include_str!("../../assets/schema/migrations/494_code_index_reconcile_receipts.sql"),
     },
     EmbeddedMigration {
         version: 495,
-        filename: "495_session_status_line_control_check.sql",
-        checksum: "3b555e41bb76bb7f44f918062473dbac7d71b27b7967a49ed3aad2d3a171a31f",
+        filename: "495_session_status_line.sql",
+        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
+        sql: include_str!("../../assets/schema/migrations/495_session_status_line.sql"),
+    },
+    EmbeddedMigration {
+        version: 496,
+        filename: "496_drop_session_titles.sql",
+        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
+        sql: include_str!("../../assets/schema/migrations/496_drop_session_titles.sql"),
+    },
+    EmbeddedMigration {
+        version: 497,
+        filename: "497_session_status_line_control_check.sql",
+        checksum: "81166e87a4295fda233c9e265ee33136a9bcd1dcfcf1f0f93bbcdbac2329cb29",
         sql: include_str!(
-            "../../assets/schema/migrations/495_session_status_line_control_check.sql"
+            "../../assets/schema/migrations/497_session_status_line_control_check.sql"
         ),
     },
 ];

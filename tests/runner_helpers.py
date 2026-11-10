@@ -159,6 +159,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     set_mock_default(config.code_index, "nightly_repair_timezone", None)
     set_mock_default(config.code_index, "nightly_repair_timeout_seconds", 8 * 60 * 60)
     set_mock_default(config.code_index, "nightly_repair_concurrency", 1)
+    set_mock_default(config.code_index, "nightly_reconcile_apply", False)
     set_mock_default(
         config.code_index,
         "maintenance_log_file",

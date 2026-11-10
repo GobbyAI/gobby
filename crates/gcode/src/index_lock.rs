@@ -82,6 +82,19 @@ impl IndexLockPolicy {
     }
 }
 
+/// A bounded `Wait` ran out before the lock was acquired. The text names the holder.
+/// Callers that queue the work they could not lock downcast to this type.
+#[derive(Debug)]
+pub(crate) struct LockWaitTimeout(pub(crate) String);
+
+impl std::fmt::Display for LockWaitTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for LockWaitTimeout {}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum IndexLockResult<T> {
     Acquired(T),
@@ -289,12 +302,13 @@ fn try_acquire_project_key(
             if !try_advisory_lock_until(conn, key, max_wait, WAIT_LOCK_POLL, notify_every)? {
                 // Name the holder even under `--quiet`: quiet suppresses
                 // warnings, and giving up on the lock is an error.
-                anyhow::bail!(
+                return Err(LockWaitTimeout(format!(
                     "gave up acquiring gcode index lock for project {} after {}s; {}",
                     project_id,
                     max_wait.as_secs(),
                     holder_detail(conn, key),
-                );
+                ))
+                .into());
             }
         }
         IndexLockPolicy::BriefTry { total_wait, poll } => {
@@ -368,11 +382,12 @@ fn acquire_advisory_key(
             if try_advisory_lock_until_mode(conn, key, max_wait, WAIT_LOCK_POLL, None, mode)? {
                 Ok(true)
             } else {
-                anyhow::bail!(
+                Err(LockWaitTimeout(format!(
                     "gave up acquiring gcode write lock after {}s; {}",
                     max_wait.as_secs(),
                     holder_detail(conn, key),
-                )
+                ))
+                .into())
             }
         }
         IndexLockPolicy::BriefTry { total_wait, poll } => {
@@ -381,7 +396,7 @@ fn acquire_advisory_key(
     }
 }
 
-fn remaining_policy(policy: IndexLockPolicy, elapsed: Duration) -> IndexLockPolicy {
+pub(crate) fn remaining_policy(policy: IndexLockPolicy, elapsed: Duration) -> IndexLockPolicy {
     match policy {
         IndexLockPolicy::Wait { max_wait } => IndexLockPolicy::Wait {
             max_wait: max_wait.saturating_sub(elapsed),
@@ -608,7 +623,10 @@ fn file_lock_key(project_id: &str, path: &Path) -> i64 {
     )
 }
 
-fn normalize_file_lock_path(project_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+pub(crate) fn normalize_file_lock_path(
+    project_root: &Path,
+    path: &Path,
+) -> anyhow::Result<PathBuf> {
     let canonical_root = project_root.canonicalize().with_context(|| {
         format!(
             "failed to canonicalize project root {}",

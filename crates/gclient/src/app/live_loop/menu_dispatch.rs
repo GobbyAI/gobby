@@ -11,7 +11,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::super::attention::open_response_dialog;
 use super::super::Workspace;
 use super::actions::{activate_live_tab, handle_live_action};
-use super::control::{focus_live_pane, observe_live_pane, release_live_control, take_live_control};
+use super::control::focus_live_pane;
 use super::daemon_ops::apply_daemon_menu_action;
 use super::jobs::JobOutcome;
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
@@ -116,14 +116,6 @@ pub async fn apply_live_menu_action(
                 close_live_terminal(workspace, chrome, outcomes, pane).await?;
             }
         }
-        MenuAction::TakeControl(pane) => {
-            focus_menu_target(workspace, chrome, outcomes, &kind).await?;
-            take_live_control(workspace, pane);
-        }
-        MenuAction::ReleaseControl(pane) => {
-            focus_menu_target(workspace, chrome, outcomes, &kind).await?;
-            release_live_control(workspace, pane);
-        }
         _ => {
             if !apply_daemon_menu_action(workspace, chrome, outcomes, &action) {
                 apply_local_menu_action(workspace, chrome, &action);
@@ -180,7 +172,7 @@ fn open_about_dialog(chrome: &mut Chrome) {
 
 /// Make the menu's pane or tab the one keymap actions act on: a worktree
 /// row's is the tab opened from it, an agent row's the pane its entry maps
-/// to, revealed and observed so the lease stays the action's decision.
+/// to, revealed and focused.
 async fn focus_menu_target(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -190,7 +182,7 @@ async fn focus_menu_target(
     match kind {
         ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(*pane) => {
             chrome.focus_pane(*pane);
-            observe_live_pane(workspace, *pane);
+            focus_live_pane(workspace, *pane);
         }
         ContextMenuKind::Tab(index) if *index != chrome.active_index() => {
             activate_live_tab(workspace, chrome, *index).await?;
@@ -200,7 +192,7 @@ async fn focus_menu_target(
         }
         ContextMenuKind::Agent(entry_id) => {
             if let Some(pane) = reveal_agent(workspace, chrome, outcomes, entry_id).await? {
-                observe_live_pane(workspace, pane);
+                focus_live_pane(workspace, pane);
             }
         }
         ContextMenuKind::MenuBar(_) => {}

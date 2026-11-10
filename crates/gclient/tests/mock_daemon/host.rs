@@ -10,7 +10,7 @@
 #![allow(dead_code)]
 
 use std::os::unix::fs::PermissionsExt;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::client::daemon::LiveDaemon;
@@ -59,7 +59,7 @@ pub struct DirectHost {
     relocate_attach: Arc<Mutex<Option<String>>>,
     task: tokio::task::JoinHandle<()>,
     /// Set by [`DirectHost::serve_gterm_control`]; a host without it has no
-    /// control socket, so a grant cannot connect.
+    /// control socket for a client to connect to.
     control: Option<(Arc<ControlShared>, tokio::task::JoinHandle<()>)>,
 }
 
@@ -158,7 +158,6 @@ impl DirectHost {
             token: token.to_string(),
             requests: Mutex::new(Vec::new()),
             hellos: AtomicUsize::new(0),
-            refuse_grants: AtomicBool::new(false),
             gate: Arc::new(gate),
         });
         let task = tokio::spawn({
@@ -175,7 +174,7 @@ impl DirectHost {
         self.control = Some((shared, task));
     }
 
-    /// Grant and revoke verbs the control socket has received, in order.
+    /// Requests the control socket has received after its hello, in order.
     pub fn control_requests(&self) -> Vec<Value> {
         self.control_shared()
             .requests
@@ -187,27 +186,6 @@ impl DirectHost {
     /// Authenticated `hello`s the control socket has accepted.
     pub fn control_hellos(&self) -> usize {
         self.control_shared().hellos.load(Ordering::SeqCst)
-    }
-
-    /// Answer every later `grant_input` with a refusal, as a host whose
-    /// terminal is gone does.
-    pub fn refuse_grants(&self) {
-        self.control_shared()
-            .refuse_grants
-            .store(true, Ordering::SeqCst);
-    }
-
-    /// Hold every control reply before it is written, so a grant stays in
-    /// flight. Release with [`DirectHost::release_control_replies`].
-    pub fn hold_control_replies(&self) -> Arc<watch::Sender<bool>> {
-        let gate = Arc::clone(&self.control_shared().gate);
-        let _ = gate.send_replace(false);
-        gate
-    }
-
-    /// Let held and future control replies answer.
-    pub fn release_control_replies(&self, gate: &watch::Sender<bool>) {
-        let _ = gate.send_replace(true);
     }
 
     fn control_shared(&self) -> &ControlShared {
@@ -542,7 +520,6 @@ struct ControlShared {
     token: String,
     requests: Mutex<Vec<Value>>,
     hellos: AtomicUsize,
-    refuse_grants: AtomicBool,
     /// `false` holds every reply after its request is recorded.
     gate: Arc<watch::Sender<bool>>,
 }
@@ -592,13 +569,7 @@ async fn serve_control(stream: UnixStream, shared: Arc<ControlShared>) {
                     return;
                 }
             }
-            match method.as_str() {
-                "grant_input" if shared.refuse_grants.load(Ordering::SeqCst) => {
-                    json!({"id": id, "ok": false, "error": "terminal_gone"})
-                }
-                "grant_input" => json!({"id": id, "ok": true, "granted": true, "previous": null}),
-                _ => json!({"id": id, "ok": true, "revoked": true}),
-            }
+            json!({"id": id, "ok": true})
         };
         let mut out = reply.to_string();
         out.push('\n');

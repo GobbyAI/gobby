@@ -6,6 +6,7 @@ import logging
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ from gobby.hub.spawn_payload import build_spawn_payload
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import SpawnGenerationEndpointResolution
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils import local_token
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -210,6 +212,37 @@ def _seed_workspaces(db: HubDatabase, project_id: str, rows: list[dict[str, Any]
                 """,
                 values,
             )
+
+
+@pytest.fixture(autouse=True)
+def _credential_authorities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(local_token, "account_home", lambda: tmp_path / "hub-account")
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", tmp_path / "bound-hub/startup.yaml")
+
+
+def test_credential_authorities_are_hub_resolved(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "hub-runtime"
+    monkeypatch.setenv("GOBBY_HOME", str(runtime))
+    child_home = tmp_path / "seat-runtime"
+    payload = _build(
+        temp_db,
+        _run(),
+        _request(credential_authority_roots=[str(child_home / "fake.yaml")]),
+        endpoint=_endpoint(child_env={"GOBBY_HOME": str(child_home), "HOME": str(child_home)}),
+    )
+    wire = payload.model_dump(mode="json")
+    authorities = wire.get("credential_authority_roots")
+    assert authorities is not None, "the hub payload must carry credential authorities"
+    assert {
+        str(runtime / "bootstrap.yaml"),
+        str(tmp_path / "hub-account/.gobby/bootstrap.yaml"),
+        str(tmp_path / "bound-hub/startup.yaml"),
+        str(tmp_path / "bound-hub/break_glass"),
+        str(tmp_path / "bound-hub/.break_glass-staging"),
+    } <= set(authorities)
+    assert not any(path.startswith(str(child_home)) for path in authorities)
 
 
 def test_sandbox_is_resolved_config(temp_db: HubDatabase) -> None:
