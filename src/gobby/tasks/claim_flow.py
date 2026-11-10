@@ -248,6 +248,42 @@ def _seat_for_task(
     return next(iter(pool)) if pool else None
 
 
+def _installed_claim_flow(
+    db: HubDatabase, execution: PipelineExecution, definition: PipelineDefinition, project_id: str
+) -> PipelineDefinition:
+    """The admitted snapshot, its claim flow replaced by the installed pipeline's when both
+    route the same seats and agents.
+
+    A team keeps its admitted steps and seats. Its stages' done_when kinds follow the installed
+    flow, so a team admitted before a kind was retired is not held forever on a kind its seat can
+    no longer write. A changed stage or seat layout is not reconciled: the snapshot keeps governing.
+    """
+    from gobby.workflows.pipeline_loader import PipelineLoader
+
+    try:
+        installed = PipelineLoader(db)._load_from_db(execution.pipeline_name, project_id=project_id)
+    except ValueError:
+        logger.warning(
+            "claim flow of execution %s: installed pipeline %r is unreadable; the admitted "
+            "snapshot governs",
+            execution.id,
+            execution.pipeline_name,
+            exc_info=True,
+        )
+        return definition
+    if installed is None or not installed.enabled or not installed.claim_flow:
+        return definition
+
+    def routing(flow: dict[str, ClaimStage]) -> dict[str, tuple[str | None, str | None]]:
+        return {name: (stage.seat, stage.agent) for name, stage in flow.items()}
+
+    if routing(installed.claim_flow) != routing(definition.claim_flow):
+        return definition
+    return definition.model_copy(
+        update={"version": installed.version, "claim_flow": installed.claim_flow}
+    )
+
+
 def _ungrantable(db: HubDatabase, writer: str | None, project_id: str, kinds: list[str]) -> bool:
     """Whether the seat's installed definition can no longer write one of ``kinds``.
 
@@ -263,6 +299,14 @@ def _ungrantable(db: HubDatabase, writer: str | None, project_id: str, kinds: li
     return any("*" not in writes and kind not in writes for kind in kinds)
 
 
+def _seat_live(db: HubDatabase, session_id: str | None) -> bool:
+    """Whether a stage's seat session is still live, the test a hand-off recipient must pass."""
+    if session_id is None:
+        return False
+    session = SessionManager(db).get(session_id)
+    return session is not None and session.status in LIVE_SESSION_STATUSES
+
+
 def _stall(
     db: HubDatabase,
     task: Task,
@@ -271,11 +315,14 @@ def _stall(
     name: str,
     writer: str | None,
     active: dict[str, TaskAttestation],
+    holder_live: bool,
 ) -> ClaimFlowStall | None:
     """The stage's unmet done_when kinds when they can never be met, otherwise None.
 
-    They can never be met once the execution has ended, or once the seat's definition cannot write
-    one of them. A stage with nothing unmet is complete, not stalled.
+    They can never be met once the seat's definition cannot write one of them, or once the
+    execution has ended and no live seat holds the stage. An ended execution alone is not
+    enough: a pipeline ends once it has spawned its seats, and a live seat keeps working.
+    A stage with nothing unmet is complete, not stalled.
     """
     from gobby.agents.team_admission_records import ENDED_EXECUTIONS
 
@@ -287,9 +334,8 @@ def _stall(
     ]
     if not unmet:
         return None
-    if execution.status not in ENDED_EXECUTIONS and not _ungrantable(
-        db, writer, task.project_id, unmet
-    ):
+    ended_unheld = execution.status in ENDED_EXECUTIONS and not holder_live
+    if not ended_unheld and not _ungrantable(db, writer, task.project_id, unmet):
         return None
     return ClaimFlowStall(
         execution_id=execution.id,
@@ -327,6 +373,7 @@ def advance_claim_flow(
     definition = PipelineDefinition.model_validate_json(execution.definition_json)
     if not definition.claim_flow:
         return None
+    definition = _installed_claim_flow(db, execution, definition, task.project_id)
     # The admission must cover this task, including a persistent epic team's leaves.
     if task.id != team.task_id:
         from gobby.agents.team_scope import open_leaf_below
@@ -522,7 +569,16 @@ def advance_claim_flow(
             )
         targets = routes[:1]
     if not targets:
-        stall = _stall(db, task, execution, definition, name, stage_agents[name], active)
+        stall = _stall(
+            db,
+            task,
+            execution,
+            definition,
+            name,
+            stage_agents[name],
+            active,
+            _seat_live(db, stage_session(name)),
+        )
         if stall is not None:
             logger.warning(
                 "claim flow stage %r of execution %s (definition version %s) can never complete; "

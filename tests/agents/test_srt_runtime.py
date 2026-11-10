@@ -749,7 +749,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
 
     monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
     # #25069: the re-signed ps shim serves every SRT launch, not only Droid. Every
-    # provider must get it readable and first on PATH so `ps -axo pid,ppid,etime,comm`
+    # provider must get it readable and first on PATH so `ps -axo pid,ppid,etime,ucomm`
     # resolves inside the sandbox.
     ps_shim_dir = tmp_path / "ps-shim"
     ps_shim_dir.mkdir()
@@ -850,14 +850,14 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     (login_bin / "ps").chmod(0o755)
     reordered_path = os.pathsep.join([str(login_bin), "/usr/bin", "/bin", expected_path])
     shim_run = subprocess.run(
-        ["sh", "-c", "$GOBBY_PS_SHIM -axo pid,ppid,etime,comm"],
+        ["sh", "-c", "$GOBBY_PS_SHIM -axo pid,ppid,etime,ucomm"],
         env={**launch.provider_env, "PATH": reordered_path},
         capture_output=True,
         text=True,
         check=False,
     )
     assert shim_run.returncode == 0, shim_run.stderr
-    assert "FAKE-PS-HIT args=-axo pid,ppid,etime,comm" in shim_run.stdout
+    assert "FAKE-PS-HIT args=-axo pid,ppid,etime,ucomm" in shim_run.stdout
     if platform_name == "darwin":
         assert mux_dir.is_dir()
         assert mux_dir.stat().st_mode & 0o777 == 0o700

@@ -132,11 +132,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 "whose cmd and absolute workdir are literal strings in that cell's source; "
                 "do not use load() or a variable for workdir."
             )
+            refusal = event.metadata.get("_native_shell_cwd_refusal")
+            detail = f"{refusal}. " if isinstance(refusal, str) and refusal else ""
             return HookResponse(
                 decision="block",
                 reason=(
                     "Shell command blocked before execution: Gobby cannot prove its working "
-                    "directory and the command is not proven read-only. " + retry
+                    "directory and the command is not proven read-only. " + detail + retry
                 ),
             )
         project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)

@@ -38,9 +38,11 @@ def _process_snapshot() -> dict[int, tuple[int, str]]:
     single stale row would blank the command for every other terminal on the
     page.
     """
+    # ucomm, the accounting name: on macOS ``comm`` prints the full command line, arguments
+    # included, so the daemon never asks for it. The labels take only the bare name anyway.
     try:
         result = spawn.run(
-            ["ps", "-A", "-o", "pid=,tpgid=,comm="],
+            ["ps", "-A", "-o", "pid=,tpgid=,ucomm="],
             capture_output=True,
             text=True,
             timeout=PS_TIMEOUT_SECONDS,
@@ -55,7 +57,7 @@ def _process_snapshot() -> dict[int, tuple[int, str]]:
         parts = line.strip().split(maxsplit=2)
         if len(parts) != 3:
             continue
-        # comm is last because it is the only field that can contain spaces.
+        # ucomm is last because it is the only field that can contain spaces.
         raw_pid, raw_tpgid, comm = parts
         try:
             snapshot[int(raw_pid)] = (int(raw_tpgid), comm)

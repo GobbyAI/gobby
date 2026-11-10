@@ -1,4 +1,4 @@
-version: "1.10.1"
+version: "1.11.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -102,7 +102,13 @@ rules:
               "src/gobby/servers/routes/source_control_worktrees.py",
               "src/gobby/agents/srt_runner.mjs",
               "src/gobby/utils/dependency_requirements.py",
-              "crates/gdaemon/src/nodes/agents/sandbox/verify.rs"
+              "crates/gdaemon/src/nodes/agents/sandbox/verify.rs",
+              "src/gobby/sessions/owner_process_tree.py",
+              "src/gobby/adapters/codex_impl/pending_execution.py",
+              "src/gobby/install/shared/workflows/rules/worker-safety/no-process-environment-listing.yaml",
+              "crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh",
+              "src/gobby/agents/droid_ps_shim.py",
+              "src/gobby/terminals/foreground.py"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–06:30 America/Chicago daily",

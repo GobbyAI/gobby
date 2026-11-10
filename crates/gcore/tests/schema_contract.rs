@@ -18,10 +18,10 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 491);
+    assert_eq!(identity.latest_asset.version, 493);
     assert_eq!(
         identity.latest_asset.filename,
-        "491_skills_live_name_slots.sql"
+        "493_skills_live_name_slots.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
@@ -29,7 +29,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     );
     assert_eq!(
         identity.root_hash,
-        "1c62f8fc1202145207a5c3b44d1be4f20736ccb6b57b687c8fcc2617a5d41460"
+        "d97402f2c33f91662bd0619617ae3f449d858bd8528af6d38f173f53a3657ba2"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
