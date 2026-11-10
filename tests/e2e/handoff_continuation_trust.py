@@ -24,26 +24,34 @@ def project_folder(home: Path) -> Path:
     return home / ".gobby" / "e2e" / "handoff-continuation-project"
 
 
-def _folder_entry(config: Mapping[str, object], folder: Path) -> Mapping[str, object]:
-    # The folder is its own git repository root. Claude bounds its trust walk at the repo
-    # root, so a trusted ancestor such as ~/.gobby does not cover it (observed with Claude
-    # 2.1.322: the seat sat at the trust prompt and never registered). Only the folder's own
-    # entry counts, for every provider, so the preflight never passes a seat that will block.
+def _entries(config: Mapping[str, object], folder: Path) -> list[Mapping[str, object]]:
+    # The folder is a plain directory, not a git repo: Claude bounds its trust walk at an
+    # enclosing repo root (observed with Claude 2.1.322, where a repo-root folder sat at the
+    # trust prompt despite a trusted ~/.gobby). Outside any repo the walk reaches every
+    # ancestor, so ~/.gobby's existing trust covers the folder.
     projects = config.get("projects")
     if not isinstance(projects, dict):
-        return {}
-    entry = projects.get(str(folder))
-    return entry if isinstance(entry, dict) else {}
+        return []
+    found = [projects.get(str(path)) for path in (folder, *folder.parents)]
+    return [entry for entry in found if isinstance(entry, dict)]
 
 
 def claude_trusts(config: Mapping[str, object], folder: Path) -> bool:
-    """True when the folder itself has an accepted Claude trust dialog."""
-    return _folder_entry(config, folder).get("hasTrustDialogAccepted") is True
+    """True when the folder or an ancestor has an accepted Claude trust dialog."""
+    return any(entry.get("hasTrustDialogAccepted") is True for entry in _entries(config, folder))
 
 
 def codex_trusts(config: Mapping[str, object], folder: Path) -> bool:
-    """True when the folder itself is a trusted Codex project."""
-    return _folder_entry(config, folder).get("trust_level") == "trusted"
+    """True when the folder or an ancestor is a trusted Codex project."""
+    return any(entry.get("trust_level") == "trusted" for entry in _entries(config, folder))
+
+
+def enclosing_git_root(folder: Path) -> Path | None:
+    """The nearest folder or ancestor holding ``.git``; it would bound the trust walk."""
+    for path in (folder, *folder.parents):
+        if (path / ".git").exists():
+            return path
+    return None
 
 
 def _read_claude(home: Path) -> Mapping[str, object]:
@@ -63,6 +71,12 @@ def _read_codex(home: Path) -> Mapping[str, object]:
 
 def require_provider_trust(provider: str, folder: Path, *, home: Path) -> None:
     """Read the operator's trust state; refuse with the exact one-time step when untrusted."""
+    repo = enclosing_git_root(folder)
+    if repo is not None:
+        raise ProofRefused(
+            f"{provider}: {folder} is inside git repo {repo}; the CLI would stop its trust "
+            "lookup there, so the proof folder must stay a plain directory"
+        )
     if provider == "claude":
         trusted = claude_trusts(_read_claude(home), folder)
         step = f"run `claude` once in {folder} and accept the folder-trust dialog"
@@ -91,7 +105,8 @@ def e2e_project_dir() -> Iterator[Path]:
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(mode=0o700)
     try:
-        build_e2e_project(folder)
+        # A plain directory: the handoff cases never touch clones or worktrees.
+        build_e2e_project(folder, git=False)
         yield folder
     finally:
         if not keep_e2e_artifacts():

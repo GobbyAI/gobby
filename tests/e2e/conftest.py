@@ -1016,34 +1016,38 @@ def e2e_project_dir() -> Generator[Path]:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def build_e2e_project(project_dir: Path) -> None:
-    """Populate an empty directory as the E2E project: a git repo, marker and pipelines."""
+def build_e2e_project(project_dir: Path, *, git: bool = True) -> None:
+    """Populate an empty directory as the E2E project: marker, pipelines and (by default) git.
+
+    ``git=False`` builds a plain directory for proofs that never touch clones or worktrees.
+    """
     gobby_dir = project_dir / ".gobby"
     gobby_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize git repository for clone/worktree tests
-    subprocess.run(["git", "init"], cwd=project_dir, capture_output=True, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=project_dir,
-        capture_output=True,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=project_dir,
-        capture_output=True,
-        check=True,
-    )
-    # Create initial commit (needed for worktree/clone operations)
     (project_dir / "README.md").write_text("# E2E Test Project\n")
-    subprocess.run(["git", "add", "."], cwd=project_dir, capture_output=True, check=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=project_dir,
-        capture_output=True,
-        check=True,
-    )
+
+    if git:
+        # Initialize git repository for clone/worktree tests
+        subprocess.run(["git", "init"], cwd=project_dir, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=project_dir,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=project_dir,
+            capture_output=True,
+            check=True,
+        )
+        # Create initial commit (needed for worktree/clone operations)
+        subprocess.run(["git", "add", "."], cwd=project_dir, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=project_dir,
+            capture_output=True,
+            check=True,
+        )
 
     (gobby_dir / "project.json").write_text(
         json.dumps({"id": "00000000-0000-0000-0000-000000000e2e", "name": "E2E Test Project"})

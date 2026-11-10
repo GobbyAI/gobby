@@ -53,29 +53,55 @@ def test_the_project_folder_is_fixed_under_the_gobby_home() -> None:
     assert project_folder(home) == home / ".gobby" / "e2e" / "handoff-continuation-project"
 
 
-def test_claude_trust_is_read_from_the_folder_itself_only() -> None:
+def test_claude_trust_is_read_from_the_folder_or_an_ancestor() -> None:
     from tests.e2e.handoff_continuation_trust import claude_trusts
 
     folder = Path("/home/op/.gobby/e2e/handoff-continuation-project")
-    own = {"projects": {str(folder): {"hasTrustDialogAccepted": True}}}
-    assert claude_trusts(own, folder)
-    # The folder is a git repo root; Claude stops its trust walk there, so ~/.gobby's
-    # trust does not reach it and the preflight must not pretend it does.
     gobby_trusted = {"projects": {"/home/op/.gobby": {"hasTrustDialogAccepted": True}}}
-    assert not claude_trusts(gobby_trusted, folder)
-    assert not claude_trusts({"projects": {str(folder): {"hasTrustDialogAccepted": False}}}, folder)
+    assert claude_trusts(gobby_trusted, folder)
+    assert claude_trusts({"projects": {str(folder): {"hasTrustDialogAccepted": True}}}, folder)
+    assert not claude_trusts({"projects": {"/home/op": {"hasTrustDialogAccepted": False}}}, folder)
     assert not claude_trusts({}, folder)
     assert not claude_trusts({"projects": []}, folder)
 
 
-def test_codex_trust_is_read_from_the_folder_itself_only() -> None:
+def test_codex_trust_is_read_from_the_folder_or_an_ancestor() -> None:
     from tests.e2e.handoff_continuation_trust import codex_trusts
 
     folder = Path("/home/op/.gobby/e2e/handoff-continuation-project")
+    assert codex_trusts({"projects": {"/home/op/.gobby": {"trust_level": "trusted"}}}, folder)
     assert codex_trusts({"projects": {str(folder): {"trust_level": "trusted"}}}, folder)
-    assert not codex_trusts({"projects": {"/home/op/.gobby": {"trust_level": "trusted"}}}, folder)
-    assert not codex_trusts({"projects": {str(folder): {"trust_level": "untrusted"}}}, folder)
+    assert not codex_trusts({"projects": {"/home/op/.gobby": {"trust_level": "untrusted"}}}, folder)
     assert not codex_trusts({}, folder)
+
+
+def test_a_folder_inside_a_git_repo_is_refused(tmp_path: Path) -> None:
+    # Claude bounds its trust walk at an enclosing repo root, so ancestor trust would not
+    # reach the seat; the preflight refuses instead of letting it sit at the prompt.
+    from tests.e2e.composer_proof import ProofRefused
+    from tests.e2e.handoff_continuation_trust import require_provider_trust
+
+    home = tmp_path / "home"
+    folder = home / ".gobby" / "e2e" / "handoff-continuation-project"
+    (folder / ".git").mkdir(parents=True)
+    (home / ".claude.json").write_text(
+        f'{{"projects": {{"{home / ".gobby"}": {{"hasTrustDialogAccepted": true}}}}}}'
+    )
+
+    with pytest.raises(ProofRefused, match="plain directory"):
+        require_provider_trust("claude", folder, home=home)
+
+
+def test_the_proof_folder_is_built_without_git(tmp_path: Path) -> None:
+    from tests.e2e.conftest import build_e2e_project
+    from tests.e2e.handoff_continuation_trust import enclosing_git_root
+
+    folder = tmp_path / "project"
+    folder.mkdir()
+    build_e2e_project(folder, git=False)
+
+    assert (folder / ".gobby" / "project.json").is_file()
+    assert enclosing_git_root(folder) is None
 
 
 def test_an_untrusted_folder_is_refused_with_the_operator_step(tmp_path: Path) -> None:
@@ -101,9 +127,9 @@ def test_a_trusted_folder_passes_and_the_config_is_untouched(tmp_path: Path) -> 
     home = tmp_path / "home"
     (home / ".codex").mkdir(parents=True)
     config = home / ".codex" / "config.toml"
-    folder = home / ".gobby" / "e2e" / "handoff-continuation-project"
-    text = f'[projects."{folder}"]\ntrust_level = "trusted"\n'
+    text = f'[projects."{home / ".gobby"}"]\ntrust_level = "trusted"\n'
     config.write_text(text)
+    folder = home / ".gobby" / "e2e" / "handoff-continuation-project"
 
     require_provider_trust("codex", folder, home=home)
 
