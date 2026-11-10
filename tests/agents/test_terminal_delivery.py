@@ -26,10 +26,14 @@ from tests.agents.cleanup_test_support import (
     RecordingDb,
     _handler,
 )
+from tests.terminal_scene import agent_target
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+# The shared send_keys scene is autouse: every dispatcher here is wired like the runner's.
+__all__ = ["agent_target"]
 
 pytestmark = pytest.mark.unit
 
@@ -964,12 +968,11 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
     async def dispatch_stub(
         session_id: str,
         *,
-        priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = "",
         require_unread: bool = False,
     ) -> dict[str, object]:
-        del priority, bypass_debounce, prompt, require_unread
+        del bypass_debounce, prompt, require_unread
         dispatch_loops.append(asyncio.get_running_loop())
         if len(dispatch_loops) == 1:
             first_dispatch_started.set()

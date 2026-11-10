@@ -38,7 +38,11 @@ from gobby.utils.session_context import (
     set_daemon_execution,
     set_session_context,
 )
+from tests.terminal_scene import agent_target
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+
+# The shared send_keys scene is autouse: every dispatcher here is wired like the runner's.
+__all__ = ["agent_target"]
 
 pytestmark = pytest.mark.unit
 
@@ -457,8 +461,12 @@ class TestSendMessage:
         assert "project reaches that population in the sender's project" in description
         assert "global reaches every live non-system session" in description
         assert "Omitting wake requests immediate processing" in description
-        assert "Fanout (global, and project with wake=true) live-wakes only active" in description
-        assert "an idle, paused, or waiting recipient with no claimed task" in description
+        assert "Fanout (global, and project with wake=true) applies that same rule" in description
+        assert "with no claimed-task filter" in description
+        assert "A wake types '[Gobby] Check messages' only into an idle, paused, or waiting" in (
+            description
+        )
+        assert "An active turn takes no typed input at any priority" in description
         assert "Otherwise project fanout stays queued without live wakes" in description
         assert "The daemon sends restart and cutover notices itself" in description
         assert "wake=false queues any target without a live wake" in description
