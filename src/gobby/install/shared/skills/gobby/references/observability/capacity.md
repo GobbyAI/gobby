@@ -21,6 +21,19 @@ without having a capacity reporter. Snapshots are scoped by machine/provider;
 the service normally reuses observations for 60 seconds and joins concurrent
 refreshes. Repeated calls inside that interval need not contact the provider.
 
+Observations cover six providers, from verified signals only: Claude's typed
+`rate_limit_event` when actually emitted, Codex transcript `rate_limits` and its
+typed usage-limit error, and AGY's `/usage` reporter. Grok, Droid and Qwen have
+no verified quota source and read `unknown`. A verified reached flag with no
+window still makes the provider `exhausted`. A pane match of a provider's limit
+message is a possible-limit hint only: it carries no numbers, never changes
+`state`, and a hint-only provider stays `unknown`.
+
+`details` lists each component with its scope, state, `source_observed_at`,
+`resets_at` and `fresh`. A component is stale when its source is older than 900
+seconds or its reset time has passed. Quota alerts go only to the operator
+channel set in `communications.operator_alert_channel`, never to agent sessions.
+
 For failures, inspect the returned reason and provider/version support first.
 Use provider setup and authentication guidance for the underlying repair; do
 not launch a billable agent turn merely to test the quota report. After repair,
@@ -29,4 +42,4 @@ provider switching still requires the authority of the user's task.
 
 See the [observability guide](../../../../../../../../docs/guides/observability.md).
 
-_Version: 1.0.0_
+_Version: 1.1.0_

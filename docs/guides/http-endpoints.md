@@ -127,6 +127,7 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/lease/recover` | Explicit stale-owner recovery on standby; active owner refuses with 409. |
 | `GET` | `/api/admin/stats` | Aggregate daemon statistics. |
 | `GET` | `/api/admin/usage` | Token-event breakdown; `hours` (0 means all history) and optional `project_id`. Storage failures log and return empty totals. |
+| `GET` | `/api/admin/usage/ledger` | Per-call usage ledger page for exactly one of `session_id` or `task_id` (UUIDs), with optional `cursor` and `limit` (1 to 1000, default 200). Totals cover the whole scope on every page. Returns 400 for a malformed cursor or a scope that is not exactly one; a project-scoped caller gets 403 for another project's session or task. |
 | `GET` | `/api/admin/tokens/timeseries` | Token-event buckets; `hours`, optional `project_id`, and `granularity` (`30m`, `1h`, `1d`). |
 | `POST` | `/api/admin/test/register-project` | Test helper for registering a project. |
 | `POST` | `/api/admin/test/register-agent` | Test helper for registering an agent run. |
