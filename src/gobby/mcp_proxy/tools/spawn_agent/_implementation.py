@@ -27,7 +27,6 @@ from gobby.agents.spawn import PreparedSpawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
-from gobby.fleet_health import launch_refusal, spawn_refusal
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
     AGY_UNPUBLISHED_REASON,
@@ -154,11 +153,6 @@ async def spawn_agent_impl(
     refusal = await native_front_door_refusal()
     if refusal is not None:
         return refusal
-    # Early check only, nothing is recorded. The seat is admitted once the spawn has
-    # validated and before any session, run or task lease is prepared.
-    fleet_refusal = await asyncio.to_thread(launch_refusal)
-    if fleet_refusal is not None:
-        return fleet_refusal.as_result()
     spawn_started_at = start_spawn_phase()
     phase_timings_ms: dict[str, float] = {}
     resume_target = None
@@ -624,14 +618,6 @@ async def spawn_agent_impl(
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
     enhanced_prompt += standing_seat_suffix(run_lifetime)
 
-    # The seat is admitted here, after every other refusal: nothing below creates a session,
-    # run or task lease until the fleet health gate admits it.
-    seat_refusal = await asyncio.to_thread(spawn_refusal)
-    if seat_refusal is not None:
-        await cleanup_created_isolation(
-            handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=reserved_run_id
-        )
-        return seat_refusal.as_result()
     run_id = reserved_run_id or str(uuid.uuid4())
     prepared_spawn = None
     spawn_request = None
