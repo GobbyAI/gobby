@@ -14,6 +14,7 @@ from gobby.agents.sandbox_gate import SandboxRequiredError, require_managed_srt
 from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+from tests.fleet_health.support import write_fleet_state
 from tests.servers import test_mcp_programmatic_boundary as programmatic
 
 pytestmark = pytest.mark.unit
@@ -96,6 +97,7 @@ async def test_gate_refuses_when_isolated_srt_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    write_fleet_state()
     monkeypatch.setattr(srt_runtime, "_verified_srt_cache", None)
     runner = _runner()
     with (

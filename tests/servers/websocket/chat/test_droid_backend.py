@@ -970,7 +970,7 @@ async def test_exit_spec_mode_request_changes_cancels_and_queues_feedback() -> N
     assert result == "cancel"
     assert session._plan_approved is False
     # Feedback rides the next plan-mode prompt context.
-    plan_context = session._pop_plan_mode_context()
+    plan_context = session._plan_mode_context()
     assert plan_context is not None
     assert "tighten step 1" in plan_context
 

@@ -4,7 +4,7 @@ use crate::ai_types::AiError;
 use crate::grant::{
     AGENT_RUN_HEADER, CALLER_PROJECT_HEADER, GRANT_HEADER, GrantBundle, MACHINE_HEADER,
     MANAGED_EXECUTION_HEADER, PrincipalKind, SESSION_HEADER, TARGET_PROJECT_HEADER,
-    encode_grant_header,
+    encode_grant_header, presentation_bearer,
 };
 use crate::local_token::{
     AUTHORIZATION_HEADER, authorization_bearer, read_api_key as read_shared_api_key,
@@ -66,7 +66,8 @@ pub(crate) fn with_grant_presentation(
     token: &str,
     grant: &GrantBundle,
 ) -> Result<RequestBuilder, AiError> {
-    let mut request = with_local_token(request, token);
+    let bearer = presentation_bearer(Some(grant), token)?;
+    let mut request = with_local_token(request, &bearer);
     for (name, value) in grant_presentation_headers(grant)? {
         request = request.header(name, value);
     }

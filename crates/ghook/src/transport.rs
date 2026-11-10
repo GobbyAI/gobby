@@ -14,8 +14,10 @@
 //! `.tmp` suffix on the intermediate write — never a valid replay target.
 
 use crate::envelope::Envelope;
+use crate::session_binding;
 use anyhow::{Context, Result};
 use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_api_key};
+use gobby_core::session_credential::SESSION_ID_HEADER;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -270,16 +272,32 @@ pub fn post_and_cleanup(
     daemon_url: &str,
 ) -> DeliveryReport {
     let endpoint = format!("{daemon_url}{HOOKS_ENDPOINT}");
+    let caller = session_binding::caller_for(envelope);
     let mut req = ureq::post(&endpoint)
         .timeout(post_timeout(&envelope.hook_type))
         .set("Content-Type", "application/json");
     for (k, v) in &envelope.headers {
+        // The machine key never travels with a session selector; the body names the session.
+        if caller.is_unspawned() && session_binding::is_session_selector(k) {
+            continue;
+        }
         if !k.eq_ignore_ascii_case(AUTHORIZATION_HEADER) {
             req = req.set(k, v);
         }
     }
-    if let Ok(token) = read_api_key() {
-        req = req.set(AUTHORIZATION_HEADER, &authorization_bearer(&token));
+    match &caller {
+        session_binding::Caller::Bound(credential) => {
+            req = req.set(
+                AUTHORIZATION_HEADER,
+                &authorization_bearer(&credential.token),
+            );
+            req = req.set(SESSION_ID_HEADER, &credential.session_id);
+        }
+        session_binding::Caller::Managed | session_binding::Caller::Unbound => {
+            if let Ok(token) = read_api_key() {
+                req = req.set(AUTHORIZATION_HEADER, &authorization_bearer(&token));
+            }
+        }
     }
     if let Some(envelope_id) = envelope_id_from_path(enqueued_path) {
         req = req.set(ENVELOPE_ID_HEADER, envelope_id);
@@ -301,7 +319,12 @@ pub fn post_and_cleanup(
     match req.send_string(&body) {
         Ok(resp) if (200..300).contains(&resp.status()) => {
             let status_code = Some(resp.status());
-            let response_body = resp.into_string().ok();
+            session_binding::remember_bound_credential(envelope, &caller);
+            // The session credential is recorded and removed from the body here, so
+            // the report that reaches diagnostics and response mapping never holds it.
+            let response_body = resp.into_string().ok().map(|raw| {
+                session_binding::remember_response_credential(envelope, &raw).into_owned()
+            });
             DeliveryReport {
                 outcome: DeliveryOutcome::Delivered,
                 failure_kind: None,

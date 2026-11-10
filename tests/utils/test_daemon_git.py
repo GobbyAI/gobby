@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
+import signal
 import stat
 import subprocess
 import threading
@@ -507,6 +509,44 @@ async def test_timeout_kills_process_group_and_reaps_leader(
     assert "running_seconds=" in message
 
 
+def _kill_recorded_group(pids: Path) -> None:
+    """Reap a fake Git group that a test deliberately left running."""
+    if not pids.exists():
+        return
+    leader = int(pids.read_text(encoding="utf-8").split()[0])
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(leader, signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_child_that_survives_its_kill_returns_a_bounded_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Git child that ignores the deadline kill must not hold its caller past the grace."""
+    _write_fake_git(tmp_path)
+    pids = tmp_path / "pids"
+    monkeypatch.setattr(daemon_git, "_kill_process_group", lambda _process: None)
+
+    try:
+        started = time.monotonic()
+        result = await asyncio.wait_for(
+            DaemonGitService().run(
+                ["status"],
+                cwd=tmp_path,
+                timeout=0.2,
+                env=_git_env(tmp_path, GIT_TEST_DELAY="15", GIT_TEST_PIDS=str(pids)),
+            ),
+            timeout=10,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        _kill_recorded_group(pids)
+
+    assert isinstance(result, GitTimeout)
+    assert elapsed < 8
+    assert "did not exit" in result.stderr
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed", [False, True])
 async def test_completed_git_keeps_result_when_loop_resumes_after_deadline(
@@ -582,6 +622,35 @@ async def test_timeout_warning_reports_loop_stall_overrun(
     fields = dict(field.split("=", 1) for field in warnings[0].split() if "=" in field)
     assert "overrun_seconds" in fields
     assert float(fields["overrun_seconds"]) >= 0.4
+
+
+@pytest.mark.asyncio
+async def test_slow_git_child_warns_once_with_argv_phase_and_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("WARNING", logger="gobby.utils.daemon_git")
+    monkeypatch.setattr(daemon_git, "_SLOW_GIT_WARNING_SECONDS", 0.2)
+    _write_fake_git(tmp_path)
+
+    result = await DaemonGitService().run(
+        ["status"], cwd=tmp_path, timeout=5, env=_git_env(tmp_path, GIT_TEST_DELAY="1")
+    )
+
+    assert isinstance(result, GitOk)
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "gobby.utils.daemon_git"
+        and record.levelname == "WARNING"
+        and record.getMessage().startswith("Git command is slow")
+    ]
+    assert len(warnings) == 1
+    assert "argv=git status" in warnings[0]
+    assert f"cwd={tmp_path}" in warnings[0]
+    assert "phase=running" in warnings[0]
+    assert re.search(r" pid=\d+ ", warnings[0])
+    elapsed = re.search(r"elapsed_seconds=([\d.]+)", warnings[0])
+    assert elapsed is not None and float(elapsed.group(1)) >= 0.2
 
 
 @pytest.mark.asyncio

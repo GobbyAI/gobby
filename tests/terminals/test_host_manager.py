@@ -2259,6 +2259,73 @@ async def test_mismatch_retries_and_adopts_after_pidfile_recovers(
     await host.stop()
 
 
+async def test_retry_waits_on_a_host_still_starting_instead_of_rotating(
+    short_socket_dir: Path,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host past the ready deadline still holds the token it read at startup.
+
+    The retry waits on that host with the same token. Rotating would make the host,
+    once bound, refuse the daemon's token, and a second spawn would race it.
+    """
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals import host_manager
+    from gobby.terminals.host_client import HostUnavailableError
+    from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.host_protocol import CONTROL_TOKEN_FILE_NAME
+
+    monkeypatch.setattr(host_manager, "HOST_READY_DEADLINE_SECONDS", 0.05)
+    token_path = short_socket_dir / CONTROL_TOKEN_FILE_NAME
+    terminals = TerminalManager(temp_db)
+    epoch = str(uuid.uuid4())
+    client = FakeControlClient(host_epoch=epoch, host_pid=4242)
+    spawns: list[FakeHostProcess] = []
+    startup_tokens: list[str] = []
+    bound = False
+
+    def spawn() -> FakeHostProcess:
+        # A host reads the token file once, at startup, and keeps that token.
+        startup_tokens.append(token_path.read_text(encoding="utf-8").strip())
+        process = FakeHostProcess(pid=4242)
+        spawns.append(process)
+        return process
+
+    async def connect() -> FakeControlClient:
+        if not bound:
+            raise HostUnavailableError("gterm control socket never appeared")
+        client.token = startup_tokens[0]
+        return client
+
+    def bind_socket(tick: int) -> None:
+        nonlocal bound
+        if tick == 2:
+            bound = True
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), shutdown_grace_seconds=0.2),
+        terminal_config=TerminalConfig(),
+        terminal_manager=terminals,
+        run_manager=FakeRunManager(),
+        connector=connect,
+        spawner=spawn,
+        pid_identity=lambda pid: pid == 4242,
+    )
+    ticks = _Ticks(count=2, before_tick=bind_socket)
+    host._sleep = ticks
+
+    await host.start()
+    assert host.running is False
+    assert len(spawns) == 1
+    await asyncio.wait_for(ticks.done.wait(), 5)
+
+    assert len(spawns) == 1, "a host still starting is waited on, never replaced"
+    assert token_path.read_text(encoding="utf-8").strip() == startup_tokens[0], "no rotation"
+    assert host.running is True
+    assert host.host_epoch == epoch
+    await host.stop()
+
+
 async def test_mismatch_retry_never_spawns_second_host(
     short_socket_dir: Path,
     temp_db: HubDatabase,

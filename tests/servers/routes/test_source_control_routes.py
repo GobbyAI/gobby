@@ -1425,9 +1425,11 @@ class TestDeleteWorktree:
         response = client.delete("/api/source-control/worktrees/wt-999")
         assert response.status_code == 404
 
-    def test_delete_success_no_git_manager(
+    def test_delete_without_git_manager_refuses_and_keeps_record(
         self, client: TestClient, mock_server: MagicMock, tmp_path: Path
     ) -> None:
+        # Without Git nothing proves the registration or branch is gone, so a stale
+        # record is kept until a Git manager can verify the removal (#25165).
         wt = MagicMock()
         wt.worktree_path = str(tmp_path / "missing-worktree")
         wt.project_id = "proj-1"
@@ -1439,11 +1441,12 @@ class TestDeleteWorktree:
         mock_server.services.git_manager = None
 
         response = client.delete("/api/source-control/worktrees/wt-1")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["id"] == "wt-1"
-        assert data["git_deleted"] is True  # defaults to True when no git_manager
+        assert response.status_code == 409
+        data = response.json()["detail"]
+        assert data["success"] is False
+        assert data["git_deleted"] is False
+        assert data["error_code"] == "worktree_git_unavailable"
+        mock_storage.delete.assert_not_called()
 
     def test_delete_live_path_without_git_manager_preserves_files_and_record(
         self, client: TestClient, mock_server: MagicMock, tmp_path: Path
@@ -1470,10 +1473,16 @@ class TestDeleteWorktree:
 
     @pytest.mark.parametrize("merged_into", [None, "0.5.0"])
     def test_delete_success_with_git_manager(
-        self, client: TestClient, mock_server: MagicMock, merged_into: str | None
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        tmp_path: Path,
+        merged_into: str | None,
     ) -> None:
+        worktree_path = tmp_path / "wt"
+        worktree_path.mkdir()
         wt = MagicMock()
-        wt.worktree_path = "/tmp/wt"
+        wt.worktree_path = str(worktree_path)
         wt.project_id = "proj-1"
         wt.branch_name = "feature"
         wt.base_branch = "main"
@@ -1486,25 +1495,35 @@ class TestDeleteWorktree:
         mock_artifacts = MagicMock()
         mock_artifacts.clear_worktree_references.return_value = 2
         mock_server.services.task_manager = SimpleNamespace(artifacts=mock_artifacts)
+        mock_server.services.git_manager = MagicMock()
 
         mock_git_result = MagicMock()
         mock_git_result.success = True
-        mock_git_manager = MagicMock()
-        mock_server.services.git_manager = mock_git_manager
+
+        def git_removes_tree(*_args: object, **_kwargs: object) -> MagicMock:
+            worktree_path.rmdir()  # Git deletes the checkout it was asked to remove
+            return mock_git_result
+
+        git = MagicMock()
+        git.get_worktree_status = AsyncMock(
+            return_value=SimpleNamespace(branch="feature", has_uncommitted_changes=False)
+        )
+        git.delete_worktree = AsyncMock(side_effect=git_removes_tree)
+        # The removal is verified against Git's registrations; the removed tree is not one.
+        git.run_git_command = AsyncMock(
+            return_value=SimpleNamespace(
+                returncode=0, stdout=f"worktree {tmp_path / 'repo'}\0", stderr=""
+            )
+        )
 
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value="/tmp/repo",
+                return_value=str(tmp_path / "repo"),
             ),
-            patch(
-                "gobby.worktrees.git.WorktreeGitManager",
-            ) as mock_wgm_cls,
+            patch("gobby.worktrees.git.WorktreeGitManager", return_value=git),
             patch("gobby.worktrees.deletion.emit_worktree_event") as emit_event,
-            patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
-            mock_wgm_cls.return_value.delete_worktree = AsyncMock(return_value=mock_git_result)
-
             response = client.delete(
                 "/api/source-control/worktrees/wt-1",
                 params={"merged_into": merged_into} if merged_into is not None else None,
@@ -1514,9 +1533,10 @@ class TestDeleteWorktree:
         data = response.json()
         assert data["success"] is True
         assert data["git_deleted"] is True
-        mock_wgm_cls.return_value.delete_worktree.assert_called_once_with(
-            "/tmp/wt",
-            force=True,
+        # HTTP honors only request.force, which the route never sets.
+        git.delete_worktree.assert_awaited_once_with(
+            str(worktree_path),
+            force=False,
             delete_branch=True,
             force_delete_branch=False,
             branch_name=None,
@@ -1530,7 +1550,7 @@ class TestDeleteWorktree:
             worktree_id="wt-1",
             project_id="proj-1",
             branch_name="feature",
-            worktree_path="/tmp/wt",
+            worktree_path=str(worktree_path),
             artifact_refs_cleared=2,
         )
 
@@ -1561,6 +1581,9 @@ class TestDeleteWorktree:
             ) as mock_wgm_cls,
             patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
+            mock_wgm_cls.return_value.get_worktree_status = AsyncMock(
+                return_value=SimpleNamespace(branch="feature", has_uncommitted_changes=False)
+            )
             mock_wgm_cls.return_value.delete_worktree = AsyncMock(return_value=mock_git_result)
 
             response = client.delete("/api/source-control/worktrees/wt-1")
@@ -1593,6 +1616,9 @@ class TestDeleteWorktree:
             ) as mock_wgm_cls,
             patch("gobby.worktrees.deletion.Path.exists", return_value=True),
         ):
+            mock_wgm_cls.return_value.get_worktree_status = AsyncMock(
+                return_value=SimpleNamespace(branch="feature", has_uncommitted_changes=False)
+            )
             mock_wgm_cls.return_value.delete_worktree.side_effect = RuntimeError("git failed")
 
             response = client.delete("/api/source-control/worktrees/wt-1")
@@ -2219,7 +2245,24 @@ def test_delete_client_worktree_refuses_live_terminals(
     storage.delete.assert_not_called()
 
     terminal.state = "exited"
-    deleted = client.delete("/api/source-control/worktrees/wt-client")
+    # The tree and its branch are already gone and Git no longer registers the tree,
+    # so the record can be deleted once Git verifies it (no-Git deletions refuse).
+    git = MagicMock()
+    git.run_git_command = AsyncMock(
+        side_effect=[
+            SimpleNamespace(returncode=1, stdout="", stderr=""),
+            SimpleNamespace(returncode=0, stdout="worktree /tmp/repo\0", stderr=""),
+        ]
+    )
+    mock_server.services.git_manager = MagicMock()
+    with (
+        patch(
+            "gobby.servers.routes.source_control_git._resolve_project",
+            return_value="/tmp/repo",
+        ),
+        patch("gobby.worktrees.git.WorktreeGitManager", return_value=git),
+    ):
+        deleted = client.delete("/api/source-control/worktrees/wt-client")
 
     assert deleted.status_code == 200
     assert deleted.json()["success"] is True

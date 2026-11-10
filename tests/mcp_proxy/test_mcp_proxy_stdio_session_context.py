@@ -9,6 +9,7 @@ import pytest
 
 from gobby.mcp_proxy.stdio import DaemonProxy
 from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
+from tests.mcp_proxy.conftest import BOUND_SESSION_ID
 
 pytestmark = pytest.mark.unit
 
@@ -87,7 +88,8 @@ async def test_request_session_id_override_does_not_mutate_proxy_state() -> None
         )
 
     _, kwargs = client.request.call_args
-    assert kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
+    # A wrapper session_id never selects a session: an unspawned proxy speaks for its bound one.
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == BOUND_SESSION_ID
     assert not hasattr(proxy, "_session_id")
 
 
@@ -101,7 +103,8 @@ async def test_request_body_session_id_does_not_update_context_header() -> None:
         await proxy._request("POST", "/some/path", json={"session_id": "target-session"})
 
     _, kwargs = client.request.call_args
-    assert "X-Gobby-Session-Id" not in kwargs["headers"]
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == BOUND_SESSION_ID
+    assert TERMINAL_CONTEXT_HEADER not in kwargs["headers"]
     assert not hasattr(proxy, "_session_id")
 
 
@@ -126,7 +129,7 @@ async def test_call_tool_session_id_override_does_not_mutate_proxy_state() -> No
             )
 
     _, kwargs = client.request.call_args
-    assert kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == BOUND_SESSION_ID
     assert kwargs["json"] == {"status": "open"}
     assert not hasattr(proxy, "_session_id")
 
@@ -156,7 +159,7 @@ async def test_call_tool_sends_caller_project_header_with_target_project_overrid
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Project-Id"] == "target-project"
     assert kwargs["headers"]["X-Gobby-Caller-Project-Id"] == "caller-project"
-    assert kwargs["headers"]["X-Gobby-Session-Id"] == "#7"
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == BOUND_SESSION_ID
 
 
 @pytest.mark.asyncio
@@ -185,7 +188,7 @@ async def test_managed_agent_pins_session_header_to_spawn_env(
 
 
 @pytest.mark.asyncio
-async def test_interactive_tmux_omits_guessed_wrapper_session_header() -> None:
+async def test_interactive_tmux_sends_only_the_bound_session_header() -> None:
     with patch(
         "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
         return_value=TERMINAL_CONTEXT,
@@ -203,7 +206,8 @@ async def test_interactive_tmux_omits_guessed_wrapper_session_header() -> None:
         )
 
     _, kwargs = client.request.call_args
-    assert "X-Gobby-Session-Id" not in kwargs["headers"]
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == BOUND_SESSION_ID
+    assert TERMINAL_CONTEXT_HEADER not in kwargs["headers"]
     assert kwargs["json"] == {"session_id": "target-session"}
 
 
@@ -223,10 +227,10 @@ async def test_variable_tools_send_target_in_path_and_caller_identity_in_headers
     assert get_call.args[1].endswith("/api/sessions/new-session/variables/get")
     assert get_call.kwargs["json"] == {"name": "flag", "scope": "session", "brief": True}
     for call in (set_call, get_call):
-        # The target names the path only. A headless caller is identified by its own
-        # terminal context, never by the session it is writing to.
-        assert "X-Gobby-Session-Id" not in call.kwargs["headers"]
-        assert TERMINAL_CONTEXT_HEADER in call.kwargs["headers"]
+        # The target names the path only. An unspawned caller is identified by its bound
+        # session, never by the session it is writing to.
+        assert call.kwargs["headers"]["X-Gobby-Session-Id"] == BOUND_SESSION_ID
+        assert TERMINAL_CONTEXT_HEADER not in call.kwargs["headers"]
     assert not hasattr(proxy, "_session_id")
 
 
@@ -235,6 +239,7 @@ async def test_variable_tools_keep_managed_caller_header_over_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOBBY_SESSION_ID", "spawn-session-uuid")
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-123")
     proxy = DaemonProxy(60887)
 
     with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:

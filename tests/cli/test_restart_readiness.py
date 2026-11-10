@@ -27,6 +27,7 @@ class RestartDaemon:
     becomes_ready: bool = True
     progress_requests: int = 0
     restart_requests: list[str] = field(default_factory=list)
+    initial_wait: str | None = None
 
 
 @pytest.fixture
@@ -51,9 +52,12 @@ def restart_daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[
                 return
             state.progress_requests += 1
             if state.progress_requests == 1 or not state.becomes_ready:
+                backend: dict[str, object] = {"state": "starting", "target": "test"}
+                if state.progress_requests == 1 and state.initial_wait is not None:
+                    backend["wait"] = state.initial_wait
                 self.respond(
                     503,
-                    {"status": "unavailable", "backend": {"state": "starting", "target": "test"}},
+                    {"status": "unavailable", "backend": backend},
                 )
                 return
             self.respond(
@@ -122,6 +126,31 @@ def test_restart_waits_through_native_unavailability(
         assert "Backend did not finish startup readiness" not in result.output
     else:
         assert "Backend did not finish startup readiness" in result.output
+
+
+def test_restart_wait_names_the_backend_state_it_was_waiting_on(
+    restart_daemon: RestartDaemon,
+) -> None:
+    """A backend that never leaves 'starting' fails the wait and names the state it reports."""
+    restart_daemon.becomes_ready = False
+    result = CliRunner().invoke(lifecycle.restart, ["--wait"])
+
+    assert result.exit_code == 1, result.output
+    assert "Backend did not finish startup readiness" in result.output
+    assert "backend state 'starting' at test" in result.output
+
+
+def test_restart_timeout_retains_holder_after_state_only_responses(
+    restart_daemon: RestartDaemon,
+) -> None:
+    restart_daemon.becomes_ready = False
+    restart_daemon.initial_wait = "lease lock held by test lease holder"
+    result = CliRunner().invoke(lifecycle.restart, ["--wait"])
+    assert result.exit_code != 0
+    assert restart_daemon.progress_requests > 1
+    timeout_lines = [line for line in result.output.splitlines() if "timed out" in line]
+    assert len(timeout_lines) == 1
+    assert "test lease holder" in timeout_lines[0]
 
 
 @pytest.mark.parametrize(

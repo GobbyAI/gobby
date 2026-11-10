@@ -566,10 +566,16 @@ async def delete_worktree(
             output=output,
         )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        # Name the stalled command and the daemon's diagnostic (pid, phase, elapsed).
+        command = " ".join(map(str, exc.cmd))
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
         return GitOperationResult(
             success=False,
             message="Git command timed out",
+            error=f"{command} timed out after {exc.timeout}s; {stderr or 'no diagnostic'}",
         )
     except Exception as e:
         return GitOperationResult(

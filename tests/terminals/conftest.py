@@ -25,6 +25,11 @@ from tests.native_binary_selection import (
     NativeBinarySelectionError,
     select_native_binary,
 )
+from tests.terminal_scene import agent_target
+
+# Wake dispatch runs the send_keys target gate; its process and pane reads come from the
+# shared scene (see tests/terminal_scene.py), so the composer suites share one fixture.
+__all__ = ["agent_target"]
 
 
 def pytest_report_header(config: pytest.Config) -> list[str]:

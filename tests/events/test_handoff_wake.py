@@ -165,7 +165,7 @@ async def test_compact_receipt_does_not_override_protected_session(
 ) -> None:
     wake = handoff_wake
     session_manager.update_status(wake.session_id, status)
-    result = await wake.dispatcher.dispatch_live_wake(wake.session_id, priority="urgent")
+    result = await wake.dispatcher.dispatch_live_wake(wake.session_id)
     assert result["skipped"] == f"session_{status}"
     wake.sender.assert_not_awaited()
 
@@ -200,7 +200,7 @@ async def test_continuation_wake_requires_empty_composer(
 ) -> None:
     wake = handoff_wake
     wake.probe.return_value = TerminalActivity(composer=ComposerRead(state, "unsent text"))
-    result = await wake.dispatcher.dispatch_live_wake(wake.session_id, priority="urgent")
+    result = await wake.dispatcher.dispatch_live_wake(wake.session_id)
     assert result["skipped"] == (
         "composer_occupied" if state == "draft" else "composer_unconfirmed"
     )

@@ -136,23 +136,24 @@ def test_managed_tokens_sign_with_derived_key() -> None:
     assert verify_agent_api_token(raw_signed, key) is None
 
 
-def test_missing_bootstrap_key_refuses_issuance_and_verification(tmp_path: Path) -> None:
+def test_capability_authority_is_independent_of_bootstrap_bearer(tmp_path: Path) -> None:
     from gobby.utils.local_token import read_managed_signing_key
 
     bootstrap = tmp_path / "bootstrap.yaml"
+    original = read_managed_signing_key(bootstrap)
+    assert original is not None and len(original) == 32
     for content in ("", "api_key: null\n", "api_key: ''\n", "api_key: 42\n"):
         bootstrap.write_text(content)
         key = read_managed_signing_key(bootstrap)
-        assert key is None
-        assert classify_agent_api_token("gobby-agent-v1.e30.sig", key) == "signing_key_unavailable"
-        with pytest.raises(ValueError, match="signing_key_unavailable"):
-            issue_agent_api_token(
-                key or b"",
-                agent_run_id="run-1",
-                session_id="session-1",
-                project_id="project-1",
-                machine_id="machine-1",
-            )
+        assert key == original
+        token = issue_agent_api_token(
+            key,
+            agent_run_id="run-1",
+            session_id="session-1",
+            project_id="project-1",
+            machine_id="machine-1",
+        )
+        assert verify_agent_api_token(token, key) is not None
 
 
 def test_managed_signing_key_reads_fail_closed(
@@ -160,18 +161,21 @@ def test_managed_signing_key_reads_fail_closed(
 ) -> None:
     from gobby.utils.local_token import read_managed_signing_key
 
-    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap = tmp_path / "missing-parent" / "bootstrap.yaml"
     assert read_managed_signing_key(bootstrap) is None
-    for content in (b"[unterminated", b"\xff", b"[]"):
-        bootstrap.write_bytes(content)
+    bootstrap = tmp_path / "bootstrap.yaml"
+    key_file = tmp_path / "capability_signing_key"
+    for content in (b"", b"\xff", b"[]"):
+        key_file.write_bytes(content)
+        key_file.chmod(0o600)
         assert read_managed_signing_key(bootstrap) is None
-    bootstrap.write_text("api_key: bootstrap-key\n")
 
-    def denied_read(_path: Path) -> bytes:
+    def denied_read(_path: Path, _flags: int) -> int:
         raise PermissionError("sandbox denial")
 
-    monkeypatch.setattr(Path, "read_bytes", denied_read)
-    assert read_managed_signing_key(bootstrap) is None
+    with monkeypatch.context() as denied:
+        denied.setattr("gobby.utils.capability_signing_key.os.open", denied_read)
+        assert read_managed_signing_key(bootstrap) is None
 
 
 def _signed_token(payload: dict[str, object], operator_token: bytes) -> str:

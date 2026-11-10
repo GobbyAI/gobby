@@ -28,7 +28,7 @@ from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_ha
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import get_session_context, reset_seeded_contexts
 from gobby.workflows.state_manager import SessionVariableManager
@@ -65,9 +65,9 @@ async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-def _token(pane: _StagedClear, run_id: str, session_id: str) -> str:
+def _token(pane: _StagedClear, run_id: str, session_id: str, service: AuthService) -> str:
     return issue_agent_api_token(
-        derive_managed_signing_key(_API_KEY),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=run_id,
         session_id=session_id,
         project_id=pane.project_id,
@@ -192,7 +192,10 @@ def seat(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         clock=lambda: _GRANT_NOW + 10,
     )
     return _Seat(
-        pane=pane, run=run, service=service, token=_token(pane, run.id, pane.predecessor_id)
+        pane=pane,
+        run=run,
+        service=service,
+        token=_token(pane, run.id, pane.predecessor_id, service),
     )
 
 
@@ -337,7 +340,7 @@ async def test_no_forwarding_without_live_run_binding(seat: _Seat) -> None:
     assert other is not None
     seat.db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (other.id, other_id))
     other_headers = _frozen_headers(
-        _token(pane, other.id, other_id), other.id, other_id, pane.project_id
+        _token(pane, other.id, other_id, seat.service), other.id, other_id, pane.project_id
     )
     assert await seat.caller(other_headers) == other_id
     assert (

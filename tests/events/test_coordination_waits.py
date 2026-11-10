@@ -448,8 +448,8 @@ async def test_parked_waiter_without_a_task_resumes_its_wait_past_a_global_notic
 ) -> None:
     """A parked waiter with no claimed task resumes its committed wait after a restart.
 
-    The global notice queues for it without a live wake, so the resume must come from
-    the durable wait itself.
+    The global notice live-wakes it like any fanout recipient (#25830), and the resume
+    must still come from the durable wait itself, not from that wake.
     """
     harness.db.execute("UPDATE sessions SET status = 'waiting' WHERE id = %s", (harness.waiter,))
     row = harness.wait(coordination_key="restart-park")
@@ -474,7 +474,7 @@ async def test_parked_waiter_without_a_task_resumes_its_wait_past_a_global_notic
         from_session_id=harness.owner, target="global", content="DAEMON BACK"
     )
     assert harness.waiter in notice.recipient_session_ids
-    assert harness.waiter not in notice_calls
+    assert harness.waiter in notice_calls
 
     payloads: list[dict[str, Any]] = []
 

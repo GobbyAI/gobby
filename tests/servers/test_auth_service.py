@@ -83,11 +83,9 @@ async def test_front_door_identity_requires_secret(
     database.fetchone.assert_not_called()
 
 
-def _bootstrap_request(api_key: str, run_id: str) -> Request:
-    from gobby.utils.local_token import derive_managed_signing_key
-
+def _bootstrap_request(signing_key: bytes, run_id: str) -> Request:
     token = issue_agent_api_token(
-        derive_managed_signing_key(api_key),
+        signing_key,
         agent_run_id=run_id,
         session_id="session-123",
         project_id="project-123",
@@ -113,7 +111,9 @@ def test_managed_token_survives_restart_and_new_lease(
 
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: bootstrap-key\n")
-    request = _bootstrap_request("bootstrap-key", live_agent_run.id)
+    key = AuthService(lambda: temp_db, bootstrap_file=bootstrap).managed_signing_key()
+    assert key is not None
+    request = _bootstrap_request(key, live_agent_run.id)
     for epoch, secret in ((1, "first-lease-secret"), (2, "second-lease-secret")):
         grants = GrantService(
             runtime=StaticRuntime(
@@ -139,43 +139,42 @@ def test_managed_token_survives_restart_and_new_lease(
         assert service.verified_agent_claims(request) is not None
 
 
-def test_rotated_bootstrap_key_invalidates_managed_tokens(
+def test_rotated_machine_bearer_does_not_rotate_daemon_authority(
     temp_db: HubDatabase, tmp_path: Path, live_agent_run: AgentRun
 ) -> None:
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: first-key\n")
     service = AuthService(lambda: temp_db, bootstrap_file=bootstrap)
-    old_request = _bootstrap_request("first-key", live_agent_run.id)
+    key = service.managed_signing_key()
+    assert key is not None
+    old_request = _bootstrap_request(key, live_agent_run.id)
     assert service.authenticate(old_request).allowed
     replacement = tmp_path / "replacement.yaml"
     replacement.write_text("api_key: second-key\n")
     replacement.replace(bootstrap)
-    assert service.authenticate(old_request).code == "capability_invalid"
-    assert service.authenticate(_bootstrap_request("second-key", live_agent_run.id)).allowed
+    assert service.authenticate(old_request).allowed
+    assert service.managed_signing_key() == key
     bootstrap.unlink()
-    assert service.authenticate(old_request).code == "signing_key_unavailable"
+    assert service.authenticate(old_request).allowed
 
 
-def test_managed_signing_key_cache_observes_file_identity(tmp_path: Path) -> None:
-    from gobby.utils.local_token import read_managed_signing_key
-
+def test_managed_signing_key_revalidates_the_private_inode(tmp_path: Path) -> None:
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: first-key\n")
     database = MagicMock(spec=HubDatabase)
     service = AuthService(lambda: database, bootstrap_file=bootstrap)
-    with patch(
-        "gobby.servers.auth_service.read_managed_signing_key", wraps=read_managed_signing_key
-    ) as read_key:
-        assert service.managed_signing_key() == derive_managed_signing_key("first-key")
-        assert service.managed_signing_key() == derive_managed_signing_key("first-key")
-        assert read_key.call_count == 1
-        replacement = tmp_path / "replacement.yaml"
-        replacement.write_text("api_key: second-key\n")
-        replacement.replace(bootstrap)
-        assert service.managed_signing_key() == derive_managed_signing_key("second-key")
-        assert read_key.call_count == 2
-        bootstrap.unlink()
-        assert service.managed_signing_key() is None
+    key = service.managed_signing_key()
+    assert key is not None and len(key) == 32
+    key_file = tmp_path / "capability_signing_key"
+    key_file.chmod(0o644)
+    assert service.managed_signing_key() is None
+    key_file.chmod(0o600)
+    assert service.managed_signing_key() == key
+    replacement = tmp_path / "replacement-key"
+    replacement.write_bytes(b"r" * 32)
+    replacement.chmod(0o600)
+    replacement.replace(key_file)
+    assert service.managed_signing_key() == b"r" * 32
     database.fetchone.assert_not_called()
 
 
@@ -195,13 +194,16 @@ def test_managed_signing_uses_the_daemon_bootstrap(
     monkeypatch.setenv("GOBBY_HOME", str(home))
     monkeypatch.setattr(local_token, "_daemon_bootstrap", None)
     local_token.bind_daemon_bootstrap(bootstrap)
-    assert local_token.read_managed_signing_key() == local_token.derive_managed_signing_key(
-        "daemon-key"
-    )
+    key = local_token.read_managed_signing_key()
+    assert key is not None and key == (tmp_path / "capability_signing_key").read_bytes()
     service = AuthService(lambda: temp_db)
-    assert service.authenticate(_bootstrap_request("daemon-key", live_agent_run.id)).allowed
+    assert service.authenticate(_bootstrap_request(key, live_agent_run.id)).allowed
     assert (
-        service.authenticate(_bootstrap_request("home-key", live_agent_run.id)).code
+        service.authenticate(
+            _bootstrap_request(
+                local_token.derive_managed_signing_key("home-key"), live_agent_run.id
+            )
+        ).code
         == "capability_invalid"
     )
 
@@ -305,7 +307,7 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     _write_bootstrap(bootstrap_file, "operator-token")
     service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     token = issue_agent_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=live_agent_run.id,
         session_id="session-123",
         project_id="project-123",
@@ -352,7 +354,7 @@ def test_projects_listing_operator_only(
     _write_bootstrap(bootstrap_file, "operator-token")
     service = _operator_service(temp_db, bootstrap_file=bootstrap_file)
     capability = issue_agent_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=live_agent_run.id,
         session_id="session-123",
         project_id="project-123",
@@ -438,7 +440,7 @@ def test_agent_capability_matrix(
     service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     session_uuid = "11111111-2222-3333-4444-555555555555"
     token = issue_agent_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=live_agent_run.id,
         session_id=session_uuid,
         project_id="project-123",
@@ -558,7 +560,7 @@ def test_agent_capability_survives_ref_spelled_path_segment(
     service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     session_uuid = "11111111-2222-3333-4444-555555555555"
     token = issue_agent_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=live_agent_run.id,
         session_id=session_uuid,
         project_id="project-123",
@@ -636,7 +638,7 @@ def test_tool_capability_is_bound_to_live_managed_execution(
     execution_id = "11111111-2222-4333-8444-555555555555"
     session_id = "22222222-3333-4444-8555-666666666666"
     token = issue_tool_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, service.managed_signing_key()),
         managed_execution_id=execution_id,
         session_id=session_id,
         project_id="project-123",
@@ -673,6 +675,7 @@ def _agent_service_and_headers(
     *,
     timeout_seconds: float | None = None,
     minted_at: float | None = None,
+    signing_key: bytes | None = None,
 ) -> tuple[AuthService, dict[str, str]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     bootstrap_file = tmp_path / "bootstrap.yaml"
@@ -681,7 +684,7 @@ def _agent_service_and_headers(
 
     def mint() -> str:
         return issue_agent_api_token(
-            derive_managed_signing_key("operator-token"),
+            signing_key or cast(bytes, service.managed_signing_key()),
             agent_run_id=run_id,
             session_id="session-123",
             project_id="project-123",
@@ -766,6 +769,7 @@ def test_rejections_name_why_each_credential_was_refused(
         live_agent_run.id,
         timeout_seconds=120,
         minted_at=time.time() - 300,
+        signing_key=service.managed_signing_key(),
     )
     rotated_token = issue_agent_api_token(
         derive_managed_signing_key("rotated-operator-token"),
@@ -809,9 +813,13 @@ def test_rejections_name_why_each_credential_was_refused(
     }
     live = _request(headers, method="POST", path=tool_call)
     assert service.authenticate(live).allowed
+    unkeyed_path = tmp_path / "unkeyed"
+    unkeyed_path.mkdir()
+    (unkeyed_path / "capability_signing_key").write_bytes(b"damaged")
+    (unkeyed_path / "capability_signing_key").chmod(0o600)
     unkeyed = AuthService(
         lambda: temp_db,
-        bootstrap_file=_write_bootstrap(tmp_path / "bootstrap.yaml", None),
+        bootstrap_file=_write_bootstrap(unkeyed_path / "bootstrap.yaml", None),
     )
     assert unkeyed.authenticate(live).code == "signing_key_unavailable"
     LocalAgentRunManager(temp_db).complete(live_agent_run.id, result="done")
@@ -949,7 +957,7 @@ def _grant_service(revocations: Any | None = None) -> Any:
 
 def _signed_presentation_grant(
     *,
-    session_id: str = "cli-session",
+    session_id: str | None = "cli-session",
     kind: Literal["interactive", "agent_run", "tool_chat"] = "interactive",
     machine_id: str = "machine-1",
     project_id: str = "project-1",
@@ -1029,18 +1037,19 @@ def test_ai_routes_require_identity(temp_db: HubDatabase, tmp_path: Path) -> Non
         assert bearer_only.code == "missing_grant"
 
         presented = service.authenticate(_request(headers, method=method, path=path))
-        assert presented.allowed is True
-        assert presented.principal is not None
-        assert presented.principal.project_id == "project-1"
-        assert presented.principal.machine_id == "machine-1"
+        assert presented.allowed is False
+        assert presented.code == "session_requires_bound_credential"
+        assert presented.status_code == 403
 
 
 def test_modality_grant_presentation_matrix(temp_db: HubDatabase, tmp_path: Path) -> None:
     service, headers = _grant_auth_service(temp_db, tmp_path)
 
     for method, path in _MODALITY_ROUTES:
-        allowed = service.authenticate(_request(headers, method=method, path=path))
-        assert allowed.allowed is True, path
+        presented = service.authenticate(_request(headers, method=method, path=path))
+        assert presented.allowed is False, path
+        assert presented.code == "session_requires_bound_credential", path
+        assert presented.status_code == 403, path
 
         forged = service.authenticate(
             _request(
@@ -1051,8 +1060,8 @@ def test_modality_grant_presentation_matrix(temp_db: HubDatabase, tmp_path: Path
             )
         )
         assert forged.allowed is False, path
-        assert forged.code == "forged_identity"
-        assert forged.status_code == 401
+        assert forged.code == "session_requires_bound_credential", path
+        assert forged.status_code == 403, path
 
 
 def test_agent_bearer_cannot_present_foreign_grant(
@@ -1064,7 +1073,7 @@ def test_agent_bearer_cannot_present_foreign_grant(
 
     service, operator_headers = _grant_auth_service(temp_db, tmp_path)
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key("operator-token"),
+        cast(bytes, service.managed_signing_key()),
         agent_run_id=live_agent_run.id,
         session_id="11111111-2222-3333-4444-555555555555",
         project_id="project-123",
@@ -1169,8 +1178,10 @@ def test_revoked_grant_cannot_be_reused_across_requests(
         local_machine_id="machine-1",
         clock=lambda: _GRANT_NOW + 10,
     )
-    allowed = first.authenticate(_request(headers, method="POST", path="/api/embeddings"))
-    assert allowed.allowed is True
+    refused = first.authenticate(_request(headers, method="POST", path="/api/embeddings"))
+    assert refused.allowed is False
+    assert refused.code == "session_requires_bound_credential"
+    assert refused.status_code == 403
 
     store.revoke_grant(grant)
     second = _operator_service(
@@ -1182,8 +1193,8 @@ def test_revoked_grant_cannot_be_reused_across_requests(
     )
     denied = second.authenticate(_request(headers, method="POST", path="/api/embeddings"))
     assert denied.allowed is False
-    assert denied.code == "revoked"
-    assert denied.status_code == 401
+    assert denied.code == "session_requires_bound_credential"
+    assert denied.status_code == 403
 
     lease = SimpleNamespace(
         fencing_epoch=FENCING_EPOCH,

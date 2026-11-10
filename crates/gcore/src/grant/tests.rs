@@ -177,6 +177,15 @@ impl Harness {
             format!("api_key: {TOKEN}\n"),
         )
         .expect("API key");
+        // Interactive grants bound to the fixture session present that session's credential.
+        *super::bearer::TEST_PROCESS_RECORD
+            .lock()
+            .expect("record seam") = Some(crate::session_credential::SessionCredential {
+            token: "session-credential".into(),
+            session_id: "cli".into(),
+            project_id: PROJECT.into(),
+            provider_session_id: String::new(),
+        });
         let gobby = project.path().join(".gobby");
         fs::create_dir_all(&gobby).expect("project dir");
         fs::write(
@@ -2032,7 +2041,9 @@ fn config_revision_second_mismatch_terminal() {
 
 #[test]
 fn machine_config_is_grant_presented_and_not_capability() {
-    let grant = fixture_grant(PrincipalKind::Interactive);
+    // The operator's session-less grant is the only interactive grant the machine key presents.
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.principal.session_id = None;
     let scripted = spawn_scripted(vec![Step::Config {
         revision: grant.config_revision,
     }]);
@@ -2075,7 +2086,8 @@ fn managed_runtime_config_fetch_sends_identity_headers() {
 
 #[test]
 fn operator_runtime_config_fetch_sends_no_identity_headers() {
-    let grant = fixture_grant(PrincipalKind::Interactive);
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.principal.session_id = None;
     let scripted = spawn_scripted(vec![Step::Config {
         revision: grant.config_revision,
     }]);
