@@ -20,6 +20,7 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.releases.activation import _SPAWNED_ENV_NAMES
 from gobby.runner_pid_file import ProbeState
 from gobby.storage import schema_contract, schema_divergence
 from gobby.storage.schema_contract import SchemaContractError
@@ -49,6 +50,20 @@ def _isolated_native_bin_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     divergence they stage.
     """
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "native-bin"))
+
+
+@pytest.fixture(autouse=True)
+def _operator_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stage divergence as the operator's shell, not from inside a spawned seat.
+
+    A spawned seat carries activation markers, and a caller with no marker must still read
+    the operator's bootstrap credential to activate the daemon. Either refusal would fire
+    before the heads these tests stage are checked, so the refusal would hide the outcome
+    under test. The guard itself keeps its own tests.
+    """
+    for name in _SPAWNED_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("gobby.releases.activation.operator_credential_readable", lambda: True)
 
 
 def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -553,6 +568,10 @@ def _restart_preflight(
 
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
+    # Admission has separate coverage in tests/releases/test_activation_guard.py.
+    # These tests exercise schema preflight with an admitted caller.
+    monkeypatch.setattr("gobby.releases.activation.caller_is_spawned", lambda: False)
+    monkeypatch.setattr("gobby.releases.activation.agent_activation_refusal", lambda _action: None)
     monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
     monkeypatch.setattr(
         "gobby.cli.daemon_preflight.dirty_bundled_content_refusal",
