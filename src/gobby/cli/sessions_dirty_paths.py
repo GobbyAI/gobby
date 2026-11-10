@@ -47,8 +47,8 @@ def approve_dirty_paths(
 ) -> None:
     """Let SESSION_REF write exactly PATHS, dirty with no live owner, in one checkout.
 
-    Operator only; configured rules refuse this command to every agent
-    session. The daemon accepts the approval only from the bootstrap operator API
+    Agent sessions are refused unless their installed definition exempts them from the
+    configured refusal rules. The daemon accepts the approval only from the bootstrap operator API
     key, so run `gobby auth login` first. SESSION_REF is a session UUID or
     <project>#N. Each path stays approved only while its content matches what it is
     now. A new approval replaces the session's earlier one for the checkout. The

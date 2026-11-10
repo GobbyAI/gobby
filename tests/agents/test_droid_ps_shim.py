@@ -193,7 +193,8 @@ def _run_wrapper(directory: Path, argv: list[str]) -> subprocess.CompletedProces
 @pytest.mark.parametrize(
     "argv",
     [
-        ["-axo", "pid,ppid,etime,comm"],
+        ["-axo", "pid,ppid,etime,ucomm"],
+        ["-Ao", "pid,pcpu,pmem,ucomm", "-r"],
         ["-o", "ppid=", "-p", "4242"],  # Droid's supervisor probe.
         ["-axo", "pid="],
         ["-p", "123", "-o", "pid,etime"],
@@ -216,6 +217,9 @@ def test_wrapper_runs_the_allowed_listings(shim_dir: Path, argv: list[str]) -> N
         ["-o", "args"],
         ["-axo", "command"],
         ["-o", "comm,args"],
+        ["-o", "comm"],
+        ["-axo", "pid,ppid,etime,comm"],
+        ["-Ao", "pid,comm"],
         ["-E", "-o", "pid"],
         ["-o"],
         ["-o", "pid,"],
