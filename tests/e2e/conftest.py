@@ -1009,68 +1009,55 @@ def e2e_project_dir() -> Generator[Path]:
     tmpdir = tempfile.mkdtemp(prefix="gobby_e2e_")
     try:
         project_dir = Path(tmpdir).resolve()
-        gobby_dir = project_dir / ".gobby"
-        gobby_dir.mkdir(parents=True, exist_ok=True)
-
-        # Initialize git repository for clone/worktree tests
-        subprocess.run(
-            ["git", "init"],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
-        # Create initial commit (needed for worktree/clone operations)
-        (project_dir / "README.md").write_text("# E2E Test Project\n")
-        subprocess.run(
-            ["git", "add", "."],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=project_dir,
-            capture_output=True,
-            check=True,
-        )
-
-        # Create project.json
-        project_json = gobby_dir / "project.json"
-        project_json.write_text(
-            json.dumps(
-                {
-                    "id": "00000000-0000-0000-0000-000000000e2e",
-                    "name": "E2E Test Project",
-                }
-            )
-        )
-
-        # Copy shared pipelines for spawn_agent tests
-        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
-
-        shared_pipelines = get_bundled_pipelines_path()
-        if shared_pipelines.exists():
-            target_workflows = gobby_dir / "workflows"
-            target_workflows.mkdir(parents=True, exist_ok=True)
-            for wf_file in shared_pipelines.glob("*.yaml"):
-                shutil.copy2(wf_file, target_workflows / wf_file.name)
-
+        build_e2e_project(project_dir)
         yield project_dir
     finally:
         if not keep_e2e_artifacts():
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def build_e2e_project(project_dir: Path) -> None:
+    """Populate an empty directory as the E2E project: a git repo, marker and pipelines."""
+    gobby_dir = project_dir / ".gobby"
+    gobby_dir.mkdir(parents=True, exist_ok=True)
+
+    # Initialize git repository for clone/worktree tests
+    subprocess.run(["git", "init"], cwd=project_dir, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=project_dir,
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=project_dir,
+        capture_output=True,
+        check=True,
+    )
+    # Create initial commit (needed for worktree/clone operations)
+    (project_dir / "README.md").write_text("# E2E Test Project\n")
+    subprocess.run(["git", "add", "."], cwd=project_dir, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=project_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    (gobby_dir / "project.json").write_text(
+        json.dumps({"id": "00000000-0000-0000-0000-000000000e2e", "name": "E2E Test Project"})
+    )
+
+    # Copy shared pipelines for spawn_agent tests
+    from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+
+    shared_pipelines = get_bundled_pipelines_path()
+    if shared_pipelines.exists():
+        target_workflows = gobby_dir / "workflows"
+        target_workflows.mkdir(parents=True, exist_ok=True)
+        for wf_file in shared_pipelines.glob("*.yaml"):
+            shutil.copy2(wf_file, target_workflows / wf_file.name)
 
 
 @pytest.fixture(scope="function")
@@ -2318,7 +2305,12 @@ def assert_no_external_writes() -> Generator[None]:
     snapshot verdict for uninstrumented children and native filesystem writes.
     In live mode these remain outside the Python audit attribution boundary.
     """
-    from tests.fixtures.external_write_audit import daemon_writes, observe_writes, write_log_offset
+    from tests.fixtures.external_write_audit import (
+        daemon_writes,
+        is_e2e_owned,
+        observe_writes,
+        write_log_offset,
+    )
 
     root = Path.home() / ".gobby"
     prod_before = _production_daemon_running()
@@ -2331,6 +2323,8 @@ def assert_no_external_writes() -> Generator[None]:
     if not prod_before and not prod_after:
         for rel_path, mtime in _snapshot_dir(root).items():
             basename = Path(rel_path).name
+            if is_e2e_owned(rel_path):
+                continue
             if rel_path not in before:
                 if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                     continue

@@ -20,7 +20,6 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.trust import pre_approve_directory
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.composer_proof import (
@@ -49,6 +48,7 @@ from tests.e2e.handoff_continuation_admission import (
 )
 from tests.e2e.handoff_continuation_barrier import HandoffBarrier
 from tests.e2e.handoff_continuation_launch import seat_environment
+from tests.e2e.handoff_continuation_trust import require_provider_trust
 from tests.e2e.test_terminal_client_stack import _open_control
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
@@ -173,10 +173,9 @@ async def handoff_fixture(
     clean = False
     try:
         readback = await asyncio.to_thread(binary_readback, spec, env, provider_environment)
-        # Seed workspace trust exactly as every daemon spawn does (spawn_executor_providers),
-        # else the real CLI waits at its trust prompt and never registers. No provider
-        # installer, auth link or other config mutation.
-        await asyncio.to_thread(pre_approve_directory, provider, e2e_project_dir)
+        # The real CLI needs workspace trust or it waits at its trust prompt. The proof never
+        # writes the operator's provider config; it reads the fixed folder's trust and refuses.
+        require_provider_trust(provider, e2e_project_dir, home=Path.home())
         (e2e_project_dir / "AGENTS.md").write_text(
             "Disposable handoff acceptance seat. Follow the launch prompt. Never edit files, "
             "run shell commands, spawn agents or contact other sessions.\n"
