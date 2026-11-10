@@ -11,9 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.fleet_health.state import fleet_state_path
-from tests.fixtures.fleet_state import keep_fleet_state_fresh
-
 # Capture the operator location before pytest or individual tests isolate home.
 # Host guards only compare paths here; tests never read or mutate this directory.
 OPERATOR_GOBBY_HOME = Path.home() / ".gobby"
@@ -109,20 +106,6 @@ def pytest_configure(config: pytest.Config) -> None:
     config.add_cleanup(home.cleanup)
     config.add_cleanup(patcher.undo)
     _ensure_isolated_bootstrap()
-
-
-@pytest.fixture(autouse=True)
-def healthy_fleet_state() -> Iterator[None]:
-    """Start each test with a healthy fleet.
-
-    The fleet gate reads the Gobby home, which one pytest session shares, so each test
-    writes its own healthy state. The state is re-stamped every 30 seconds while the test
-    runs, so a slow test does not age it past the gate's 90 second window. Refusal tests
-    overwrite the state file with the condition they need, and the refresh leaves that
-    file alone. This is fixture data, not a bypass.
-    """
-    with keep_fleet_state_fresh(fleet_state_path()):
-        yield
 
 
 @pytest.fixture(autouse=True)
