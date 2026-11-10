@@ -316,6 +316,11 @@ class TestSpawnAgentWithCloneIsolation:
             arguments={
                 "prompt": "Test task",
                 "checkout_mode": "clone",
+                # The unpinned default agent is refused before the parent check, so pin
+                # the launch to reach the parent_session_id check this test is about.
+                "provider": "claude",
+                "model": "claude-haiku-5-5",
+                "reasoning_effort": "xhigh",
                 # Missing parent_session_id
             },
         )
@@ -492,8 +497,8 @@ class TestParallelTaskProcessing:
             assert result.get("closed") is False, result
             assert result.get("can_close") is True, result
             assert "error" not in result, result
-            assert all(gate["status"] in {"passed", "skipped"} for gate in result["gates"]), result
-            assert len(result["gates"]) == 5, result
+            assert result.get("blocking_reasons") == [], result
+            assert isinstance(result.get("facts"), dict), result
 
         mcp_client.session_id = session_id
         # Preview keeps every claim intact until the worker requests close.
