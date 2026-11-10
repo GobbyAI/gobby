@@ -23,11 +23,9 @@ import ssl
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
@@ -1248,51 +1246,6 @@ def native_daemon_command(env: dict[str, str], backend_command: list[str]) -> li
     return [str(binary), "serve"]
 
 
-FLEET_STATE_REFRESH_SECONDS = 30  # fleet-watch's cadence; the daemon treats 90 s as stale.
-
-
-def _write_healthy_fleet_state(state_path: Path) -> None:
-    """Write the document fleet-watch writes for a healthy fleet, sampled now."""
-    healthy = {
-        "schema_version": 1,
-        "state": "healthy",
-        "sampled_at_unix": time.time(),
-        "last_non_healthy_at_unix": None,
-        "reasons": [],
-        "ramp": {"max_new_seats": 1000, "ramp_window_seconds": 900},
-        "thresholds_source": "defaults",
-        "watcher_pid": 0,
-    }
-    staged = state_path.with_name(state_path.name + ".tmp")
-    staged.write_text(json.dumps(healthy), encoding="utf-8")
-    os.replace(staged, state_path)
-
-
-@contextmanager
-def _keep_fleet_state_fresh(state_path: Path) -> Generator[None]:
-    """Stand in for fleet-watch in the isolated home for the daemon's whole lifetime.
-
-    The daemon gates seat admission on the state file under its own GOBBY_HOME, and no
-    watcher runs in E2E, so the file must be written there and kept younger than
-    STALE_AFTER_SECONDS until teardown.
-    """
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_healthy_fleet_state(state_path)
-    stop = threading.Event()
-
-    def refresh() -> None:
-        while not stop.wait(FLEET_STATE_REFRESH_SECONDS):
-            _write_healthy_fleet_state(state_path)
-
-    refresher = threading.Thread(target=refresh, name="e2e-fleet-state", daemon=True)
-    refresher.start()
-    try:
-        yield
-    finally:
-        stop.set()
-        refresher.join(timeout=5)
-
-
 def spawn_daemon_instance(
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
@@ -1300,12 +1253,10 @@ def spawn_daemon_instance(
     tls: str | None = None,
     runner_module: str = "gobby.runner",
 ) -> Generator[DaemonInstance]:
-    """Spawn the isolated daemon with a fresh healthy fleet state in its home."""
-    config_path, _, _ = e2e_config
-    with _keep_fleet_state_fresh(config_path.parent / "state" / "fleet-health.json"):
-        yield from _start_daemon_instance(
-            e2e_project_dir, e2e_config, tls=tls, runner_module=runner_module
-        )
+    """Spawn the isolated daemon."""
+    yield from _start_daemon_instance(
+        e2e_project_dir, e2e_config, tls=tls, runner_module=runner_module
+    )
 
 
 def _start_daemon_instance(
