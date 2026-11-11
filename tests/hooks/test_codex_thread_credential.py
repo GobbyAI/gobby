@@ -98,7 +98,10 @@ def _thread_session(
     )
     temp_db.execute(
         "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
-        (json.dumps({"parent_pid": CODEX_TUI_PID}), session.id),
+        (
+            json.dumps({"parent_pid": CODEX_TUI_PID, "parent_create_time": FAKE_PROCESS_START}),
+            session.id,
+        ),
     )
     if host is not None:
         register_thread_host(temp_db, machine_id=TEST_MACHINE_ID, external_id=thread, host=host)

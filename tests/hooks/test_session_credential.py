@@ -740,7 +740,10 @@ def expired_codex_session(
     )
     temp_db.execute(
         "UPDATE sessions SET terminal_context = %s::jsonb, status = 'expired' WHERE id = %s",
-        (json.dumps({"parent_pid": CODEX_OLD_TUI_PID}), session.id),
+        (
+            json.dumps({"parent_pid": CODEX_OLD_TUI_PID, "parent_create_time": FAKE_PROCESS_START}),
+            session.id,
+        ),
     )
     return session
 
