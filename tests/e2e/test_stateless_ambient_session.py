@@ -16,7 +16,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, daemon_health_unavailable
-from tests.e2e.gmcp_client import GmcpSession, gmcp_session
+from tests.e2e.gmcp_client import GmcpSession, bind_cli_session, gmcp_session
 
 pytestmark = pytest.mark.e2e
 
@@ -230,6 +230,7 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
     manager = SessionManager(postgres_db)
     variable_manager = SessionVariableManager(postgres_db)
     session_a = _session_for(manager, external_a, cli_source)
+    record = bind_cli_session(daemon_instance.gobby_home, session_a)
     async with _gmcp_proxy(daemon_instance, terminal_context) as proxy:
         ambient_a = await proxy.list_tools(TARGET_SERVER)
         assert ambient_a.get("success") is True
@@ -259,6 +260,8 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         assert session_a.status == "expired"
         assert session_b.status == "active"
         expired_a = session_a.to_dict()
+        # The clear's SessionStart replaces the CLI's record with the new session's.
+        bind_cli_session(daemon_instance.gobby_home, session_b)
 
         ambient_b = await proxy.list_tools(TARGET_SERVER)
         assert ambient_b.get("success") is True
@@ -295,7 +298,8 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         assert refreshed_a.status == "expired"
         assert refreshed_a.to_dict() == expired_a
 
-        # A hookless terminal has no session, so the daemon refuses dispatch with SESSION_REQUIRED.
+        # A hookless terminal's CLI stored no record, so gmcp refuses before any request.
+        record.unlink()
         async with _gmcp_proxy(daemon_instance, _terminal_context("ambient-hookless")) as hookless:
             refused = await hookless.call_tool(
                 TARGET_SERVER,
@@ -304,7 +308,7 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
                 preflight_enabled=False,
             )
         assert refused["success"] is False
-        assert refused["error_code"] == "SESSION_REQUIRED"
+        assert refused["error_code"] == "session_credential_unbound"
 
 
 @pytest.mark.asyncio
@@ -428,9 +432,10 @@ async def test_hookless_terminal_requires_session_before_tool_dispatch(
             preflight_enabled=False,
         )
 
+        # No SessionStart stored a record for this CLI, so gmcp refuses before any request
+        # and the machine key never travels for it.
         assert result["success"] is False
-        assert result["error_code"] == "SESSION_REQUIRED"
-        assert result["terminal_context_seen"] is True
+        assert result["error_code"] == "session_credential_unbound"
         row = postgres_db.fetchone(
             "SELECT COUNT(*) AS count FROM tasks WHERE project_id = %s",
             (PROJECT_ID,),
@@ -485,6 +490,7 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
     manager = SessionManager(postgres_db)
     variable_manager = SessionVariableManager(postgres_db)
     session = _session_for(manager, external_id, "codex")
+    bind_cli_session(daemon_instance.gobby_home, session)
     async with _gmcp_proxy(daemon_instance, terminal_context) as proxy:
         initial = await proxy.list_tools(TARGET_SERVER)
         assert initial.get("success") is True

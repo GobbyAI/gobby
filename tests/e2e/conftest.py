@@ -330,9 +330,11 @@ def _isolated_native_bin_dir(
     """Copy the native set so test provisioning and locks cannot mutate its source.
 
     gterm refuses a symlinked executable. Copies also isolate in-place writes,
-    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds;
-    only that replacement invalidates the pinned set's identity stamp.
+    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds, and
+    the set is stamped with that gdaemon's identity, as an install of it stamps it,
+    so restart preflight checks the other members against the gdaemon that runs.
     """
+    from gobby.storage.schema_identity_pin import probe_identity, stamp_bytes
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
     composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
@@ -342,6 +344,7 @@ def _isolated_native_bin_dir(
             shutil.copy2(entry, composite / entry.name)
     if checkout_gdaemon is not None:
         (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+        (composite / IDENTITY_STAMP_NAME).write_bytes(stamp_bytes(probe_identity(checkout_gdaemon)))
     return composite
 
 
@@ -1500,6 +1503,17 @@ def authenticated_async_daemon_client(
 # --- CLI Event Helpers ---
 
 
+def _raise_with_body(response: httpx.Response) -> None:
+    """Fail an error response with its body, which carries the daemon's refusal code."""
+    if response.is_error:
+        response.read()
+        raise httpx.HTTPStatusError(
+            f"{response.status_code} for {response.request.url}: {response.text}",
+            request=response.request,
+            response=response,
+        )
+
+
 class CLIEventSimulator:
     """Helper for simulating CLI hook events and session registration."""
 
@@ -1509,6 +1523,7 @@ class CLIEventSimulator:
             base_url=daemon_url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
+            event_hooks={"response": [_raise_with_body]},
         )
 
     def close(self) -> None:
@@ -1532,13 +1547,15 @@ class CLIEventSimulator:
         self,
         external_id: str,
         machine_id: str = "21000000-0000-4000-8000-000000000002",
-        source: str = "Claude Code",
+        source: str = "claude",
         project_id: str | None = None,
         parent_session_id: str | None = None,
         cwd: str | None = None,
     ) -> dict[str, Any]:
         """Register a new session via /sessions/register endpoint.
 
+        The default source is the one this simulator's hooks send, so the hook claim
+        finds the registered row as its own live session (#25905).
         Returns response with 'id' (internal session ID), 'external_id', 'machine_id'.
         """
         payload: dict[str, Any] = {
@@ -1897,7 +1914,7 @@ def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
 # --- MCP Client Helpers ---
 
 
-def _session_bound_headers(
+def session_bound_headers(
     gobby_home: Path, session: Mapping[str, Any], agent_run_id: str | None = None
 ) -> dict[str, str]:
     """Headers a session's own caller sends: its bound bearer and selectors.
@@ -1969,7 +1986,7 @@ class MCPTestClient:
             response = self.client.get(f"/api/sessions/{session_id}")
             response.raise_for_status()
             session = cast(dict[str, Any], response.json()["session"])
-            headers = _session_bound_headers(self.gobby_home, session, agent_run_id)
+            headers = session_bound_headers(self.gobby_home, session, agent_run_id)
             self._bound = (key, headers)
         return dict(self._bound[1])
 
@@ -2096,7 +2113,7 @@ class AsyncMCPTestClient:
         response = await self.client.get(f"/api/sessions/{self.session_id}")
         response.raise_for_status()
         session = cast(dict[str, Any], response.json()["session"])
-        return _session_bound_headers(self.gobby_home, session)
+        return session_bound_headers(self.gobby_home, session)
 
     async def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""

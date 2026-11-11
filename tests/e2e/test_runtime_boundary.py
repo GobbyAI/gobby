@@ -36,6 +36,7 @@ from tests.e2e.conftest import (
     authenticated_daemon_client_for_home,
     daemon_auth_headers,
     daemon_health_unavailable,
+    session_bound_headers,
     wait_for_daemon_health,
 )
 from tests.fixtures.gdaemon_binary import checkout_debug_dir
@@ -561,7 +562,6 @@ def _present_embeddings(daemon: DaemonInstance, home: Path, grant: GrantBundle) 
                 "X-Gobby-Runtime-Grant": encode_grant_header(grant),
                 "X-Gobby-Machine-Id": grant.principal.machine_id,
                 "X-Gobby-Project-Id": grant.principal.project_id,
-                "X-Gobby-Session-Id": grant.principal.session_id or "",
             },
             json={"texts": ["hi"]},
         )
@@ -732,14 +732,37 @@ class BoundaryHarness:
         )
 
     def grant_headers(self) -> dict[str, str]:
-        return {
-            **daemon_auth_headers(self.home),
-            "X-Gobby-Runtime-Grant": encode_grant_header(self.grant),
-            "X-Gobby-Machine-Id": self.grant.principal.machine_id,
-            "X-Gobby-Caller-Project-Id": self.grant.principal.project_id,
-            "X-Gobby-Project-Id": self.grant.principal.project_id,
-            "X-Gobby-Session-Id": self.grant.principal.session_id or "",
-        }
+        return {**daemon_auth_headers(self.home), **_grant_presentation(self.grant)}
+
+    def session_grant_headers(self) -> dict[str, str]:
+        """Present a live session's grant with that session's own bearer, as gcore does."""
+        with self.client as client:
+            registered = client.post(
+                "/api/sessions/register",
+                json={
+                    "external_id": f"boundary-{uuid.uuid4()}",
+                    "machine_id": E2E_MACHINE_ID,
+                    "source": "Claude Code",
+                    "project_id": E2E_PROJECT_ID,
+                },
+            )
+        assert registered.status_code == 200, registered.text
+        session_id = str(registered.json()["id"])
+        grant = _handshake_grant(self.daemon, self.project_dir, session_id=session_id)
+        bound = session_bound_headers(
+            self.home,
+            {"id": session_id, "project_id": E2E_PROJECT_ID, "machine_id": E2E_MACHINE_ID},
+        )
+        return {**_grant_presentation(grant), **bound}
+
+
+def _grant_presentation(grant: GrantBundle) -> dict[str, str]:
+    return {
+        "X-Gobby-Runtime-Grant": encode_grant_header(grant),
+        "X-Gobby-Machine-Id": grant.principal.machine_id,
+        "X-Gobby-Caller-Project-Id": grant.principal.project_id,
+        "X-Gobby-Project-Id": grant.principal.project_id,
+    }
 
 
 def _handshake_grant(
@@ -747,18 +770,16 @@ def _handshake_grant(
     project_dir: Path,
     *,
     home: Path | None = None,
+    session_id: str | None = None,
 ) -> GrantBundle:
-    session_id = str(uuid.uuid4())
+    # An operator shell's grant names no session, so the machine key presents it; a
+    # session's grant needs that session's own credential (#25855).
     auth_home = home or daemon.gobby_home
+    body = {"machine_id": E2E_MACHINE_ID, "project_id": E2E_PROJECT_ID}
+    if session_id is not None:
+        body["session_id"] = session_id
     with authenticated_daemon_client_for_home(daemon.http_url, auth_home) as client:
-        response = client.post(
-            "/api/runtime/handshake",
-            json={
-                "machine_id": E2E_MACHINE_ID,
-                "project_id": E2E_PROJECT_ID,
-                "session_id": session_id,
-            },
-        )
+        response = client.post("/api/runtime/handshake", json=body)
     assert response.status_code == 200, (
         f"{response.text}\n--- daemon log ---\n{daemon.read_logs()}\n"
         f"--- daemon error ---\n{daemon.read_error_logs()}"
@@ -921,7 +942,9 @@ def _modality_request(
 
 
 def test_modality_identity_binding(boundary: BoundaryHarness) -> None:
-    headers = boundary.grant_headers()
+    # The LLM route acts for a session, so the grant names one and its bearer is that
+    # session's own; the authenticated client's machine bearer is replaced per request.
+    headers = boundary.session_grant_headers()
     with authenticated_daemon_client(boundary.daemon) as client:
         for method, path in _MODALITY_ROUTES:
             ok = _modality_request(client, method, path, headers, boundary.project_dir)

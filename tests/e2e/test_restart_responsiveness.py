@@ -62,7 +62,6 @@ def test_seeded_restart_keeps_wake_health_and_hooks_responsive(
         cli_events.register_session(
             external_id=external_id,
             machine_id=MACHINE_ID,
-            source="Claude Code",
             project_id=PROJECT_ID,
             cwd=str(daemon_instance.project_dir),
         )["id"]

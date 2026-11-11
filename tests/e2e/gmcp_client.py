@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,9 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
+from gobby.storage.session_models import Session
+from gobby.utils.local_token import issue_session_api_token, read_managed_signing_key
+from gobby.utils.session_credential_record import cli_pid_key, record_path
 from tests.e2e.test_runtime_boundary import _native_bin
 
 # Terminal-context keys and the environment variables gmcp captures them from.
@@ -77,6 +81,38 @@ class GmcpSession:
     async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
         arguments = {} if session_id is None else {"session_id": session_id}
         return await self._payload("list_mcp_servers", arguments)
+
+
+def bind_cli_session(home: Path, session: Session, *, signing_home: Path | None = None) -> Path:
+    """Store the record a CLI's SessionStart hook stores for its own session.
+
+    gmcp presents only its CLI's session-bound credential, read from the owner-only
+    record keyed by that CLI's pid (#25855). gmcp's parent here is the test process, so
+    the record is keyed by this pid; storing it again for another session is a /clear.
+    The daemon that minted the token signs it: ``signing_home`` names a hub's home when
+    the record lives on one of its nodes. These simulated hooks have no kernel-proven
+    CLI, so the daemon mints nothing for them and the test mints the same token.
+    Returns the record path so a test can remove it to model a hookless terminal.
+    """
+    signer = signing_home or home
+    signing_key = read_managed_signing_key(signer / "bootstrap.yaml")
+    assert signing_key is not None, f"daemon signing key missing beside {signer}"
+    record = {
+        "token": issue_session_api_token(
+            signing_key,
+            session_id=session.id,
+            project_id=session.project_id,
+            machine_id=session.machine_id,
+        ),
+        "session_id": session.id,
+        "project_id": session.project_id,
+        "provider_session_id": session.external_id,
+    }
+    path = record_path(home, cli_pid_key(os.getpid()))
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.touch(mode=0o600)
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
 
 
 @asynccontextmanager

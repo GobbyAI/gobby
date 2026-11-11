@@ -35,6 +35,7 @@ from gobby.cli.install_setup_impeccable import (
 )
 from gobby.cli.utils_process import is_port_available
 from gobby.install.bin_set_coherence import probe_set_member_identity
+from gobby.servers.routes.admin._lifecycle import RESTART_START_PROOF_TIMEOUT_SECONDS
 from gobby.storage.schema_identity_pin import stamp_bytes
 from gobby.utils.dependency_requirements import IMPECCABLE_RELEASE
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME, NATIVE_BIN_DIR_ENV, native_bin_name
@@ -544,6 +545,8 @@ class TestFrontDoor:
                 "POST",
                 f"{daemon_instance.http_url}/api/admin/restart",
                 daemon_instance.gobby_home,
+                # The route proves the start half before it answers, within its own bound.
+                timeout=RESTART_START_PROOF_TIMEOUT_SECONDS + 15.0,
             )
             assert response.status_code == 200, response.text
             assert response.json()["backend_pid"] == previous.pid
