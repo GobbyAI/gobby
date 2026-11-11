@@ -25,8 +25,9 @@ retries or additional inference calls during evidence intake.
 | [LM Studio gap capture](lmstudio-item4-2026-10-26.json) | 22:41:46 | 1 catalog GET, 2 Noul POSTs | All returned 200 |
 | [LM Studio model metadata](lmstudio-models-2026-10-26.json) | 20:44:23 | 1 earlier authorized GET | `clef-flash`, Q8_0, loaded, context 262144 |
 
-These JSON files preserve the original bytes; SHA256 values are in the
-checklist. The metadata GET was separate from the three-call LM probe run.
+The two gap-capture JSON files preserve the original bytes; SHA256 values are in the
+checklist. The LM Studio model metadata is an authored extract of the earlier GET,
+not a byte-preserved HTTP response. That GET was separate from the three-call LM probe run.
 Captures retain request hashes, sizes, statuses, selected usage and parsed
 answers. They omit authorization headers, raw error bodies and image bytes.
 The only credential reference is the stored name `openrouter_api_key`.

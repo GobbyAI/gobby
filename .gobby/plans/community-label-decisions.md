@@ -4,6 +4,33 @@ Plan artifact: `.gobby/plans/community-label-decisions.md`
 
 **Plan ID:** community-label-decisions
 
+## Current rollout contract (Josh approved, 2026-11-11)
+`kind: framing`
+
+This contract supersedes the older routing, corpus and regression-count instructions below
+for the remaining rollout #25163, under Code index #24820. Keep completed #25817 (fallback
+study and Josh's 30 ratings) and #25818 closed. #25819 is the sole real Box-capture owner
+and blocks #25163. The post-freeze restriction is lifted for this work.
+
+Choice, Noul and Score use local `clef:27b` at `http://127.0.0.1:11434` on `systemone`;
+Box uses Jev through OpenRouter. Qualify each shipping endpoint against the activation
+checklist; missing evidence remains a blocker. Extend the existing study harness for
+the local endpoint and report local API charges as zero with compute cost unmeasured.
+
+The full study samples 15 eligible Gobby communities with seed 22604 and the existing
+size stratification. C1 is excluded. Run D/G/J, carry and shadow sufficiency with shared
+generations and in-memory writes. Rule 1 requires zero G regressions; retain the other
+numeric bars and default thresholds. Preserve the fallback artifacts unchanged. Reuse
+a prior rating only for an exact displayed member-list/name match, retaining the mapping
+and source hashes. Request only remaining unrated items, keeping the new key private
+until ratings finish. A new evidence directory holds the full run and rating provenance.
+
+Publish every metric and ship/no-ship decision. Enable only consumers with passing
+backend evidence and quality bars, using their evaluated identities. Prepare the exact
+configuration patch and rollback for operator approval/application. Complete V2's focused
+checks and the all-off maintenance check; never run the full pytest suite. Fix the LM
+metadata extract provenance wording. Close #25163 only after its remaining criteria pass.
+
 ## Context
 `kind: framing`
 
@@ -271,9 +298,9 @@ completion gate for Box's consumer, and 3.5 records it.
 Targets:
 - `src/gobby/ai/decisions.py::*` — scope-reason: add NoulAnswer, DecisionService.noul and DecisionService.estimate_request_tokens, and generalize the request check, body, parse, dial and schema-hash helpers over question type
 - `tests/ai/test_decisions_service.py::*` — scope-reason: add the Noul wire, malformed-answer and request-estimate tests
-- `tests/ai/fixtures/systemone_noul_response.json`
-- `tests/ai/fixtures/openrouter_decisions_noul_response.json`
-- `tests/ai/fixtures/workers_ai_noul_response.json`
+- `tests/ai/fixtures/systemone_noul_response.json::*` — scope-reason: maintain the complete existing wire or study contract
+- `tests/ai/fixtures/openrouter_decisions_noul_response.json::*` — scope-reason: maintain the complete existing wire or study contract
+- `tests/ai/fixtures/workers_ai_noul_response.json::*` — scope-reason: maintain the complete existing wire or study contract
 - `docs/evidence/decisions/wire-contracts.md`
 
 Add `async noul(consumer, state, propositions: Mapping[str, str], *, timeout_seconds:
@@ -339,9 +366,9 @@ Update `docs/evidence/decisions/wire-contracts.md`:
 Targets:
 - `src/gobby/ai/decisions.py::*` — scope-reason: add ScoreQuestion, ScoreAnswer, DecisionService.score and the strict Score parser, and extend the request check, body, estimate and schema hash to Score
 - `tests/ai/test_decisions_service.py::*` — scope-reason: add the Score wire and malformed-answer tests
-- `tests/ai/fixtures/systemone_score_response.json`
-- `tests/ai/fixtures/openrouter_decisions_score_response.json`
-- `tests/ai/fixtures/workers_ai_score_response.json`
+- `tests/ai/fixtures/systemone_score_response.json::*` — scope-reason: maintain the complete existing wire or study contract
+- `tests/ai/fixtures/openrouter_decisions_score_response.json::*` — scope-reason: maintain the complete existing wire or study contract
+- `tests/ai/fixtures/workers_ai_score_response.json::*` — scope-reason: maintain the complete existing wire or study contract
 - `docs/evidence/decisions/wire-contracts.md`
 
 Add `ScoreQuestion(instructions: str, levels: tuple[str, ...])`, with
@@ -402,7 +429,7 @@ Targets:
 - `src/gobby/ai/decisions.py::*` — scope-reason: add BoxImage, BoxQuestion, BoxAnswer, DecisionService.box, the image boundary check, the per-wire image transport and the strict Box parser
 - `tests/ai/test_decisions_service.py::*` — scope-reason: add the Box wire, transport and malformed-answer tests
 - `tests/ai/fixtures/systemone_box_response.json`
-- `tests/ai/fixtures/openrouter_decisions_box_response.json`
+- `tests/ai/fixtures/openrouter_decisions_box_response.json::*` — scope-reason: maintain the complete existing wire or study contract
 - `docs/evidence/decisions/wire-contracts.md`
 
 Box's consumer is #24248's evaluate tool (Decision Record 9). This leaf delivers the
@@ -753,8 +780,8 @@ at `docs/evidence/community-labels-2026-09/label-quality.md` for the ship decisi
 `kind: deliverable`
 
 Targets:
-- `scripts/decisions_live_capture.py`
-- `tests/scripts/test_decisions_live_capture.py`
+- `scripts/decisions_live_capture.py::*` — scope-reason: maintain the complete existing wire or study contract
+- `tests/scripts/test_decisions_live_capture.py::*` — scope-reason: maintain the complete existing wire or study contract
 
 `uv run python scripts/decisions_live_capture.py` takes these flags: `--wire-api`,
 `--api-base`, `--model`, `--identity-contract`, `--backend-max-state-tokens`,
@@ -846,8 +873,8 @@ OpenRouter fails item 4, no consumer may enforce, so 3.4 ships with every consum
 `kind: deliverable`
 
 Targets:
-- `scripts/community_label_study.py`
-- `tests/scripts/test_community_label_study.py`
+- `scripts/community_label_study.py::*` — scope-reason: maintain the complete existing wire or study contract
+- `tests/scripts/test_community_label_study.py::*` — scope-reason: maintain the complete existing wire or study contract
 
 `uv run python scripts/community_label_study.py prepare` reads `code_communities` for
 projects `gobby` (`d45545c5-ded5-4335-b115-0245752edacf`) and C1

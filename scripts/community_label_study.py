@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, Field, TypeAdapter
@@ -83,6 +84,8 @@ class RunRecord(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     seed: int = SEED
     no_decisions: bool
+    wire_api: str | None = None
+    api_base: str | None = None
     reason: str | None = None
     evaluated_model: str | None = None
     evaluated_backend: str | None = None
@@ -381,6 +384,8 @@ async def _prepare(
     generation = generation or _load_generation()
     run = RunRecord(
         no_decisions=args.no_decisions,
+        wire_api=args.wire_api,
+        api_base=args.api_base,
         reason="Operator selected --no-decisions; OpenRouter checklist unmet"
         if args.no_decisions
         else None,
@@ -393,8 +398,8 @@ async def _prepare(
     with StudyEvents(run) as events:
         config = None
         if not args.no_decisions:
-            if args.wire_api != "openrouter-decisions":
-                raise ValueError("The J study arm requires --wire-api openrouter-decisions")
+            if args.wire_api not in {"systemone", "openrouter-decisions"}:
+                raise ValueError("The J study arm requires systemone or openrouter-decisions")
             config = build_decisions_config(args, resolve_secret)
             run.evaluated_model = config.model
             run.evaluated_backend = await _probe(config, run)
@@ -543,6 +548,10 @@ def _finite_number(value: object) -> float | None:
 
 
 def _cost(capture: Path, run: RunRecord) -> float | None:
+    if run.wire_api == "systemone" and run.api_base:
+        endpoint = urlsplit(run.api_base)
+        if endpoint.scheme == "http" and endpoint.hostname in {"127.0.0.1", "::1", "localhost"}:
+            return 0.0
     matches = re.findall(r"```json\s*(.*?)```", capture.read_text(encoding="utf-8"), re.DOTALL)
     if not matches:
         return None

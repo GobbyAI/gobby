@@ -628,6 +628,34 @@ def test_missing_capture_cost_fails_cost_bar(
     _assert_ships(results, _off_everywhere("false"))
 
 
+@pytest.mark.parametrize(
+    ("base", "expected"),
+    [("http://127.0.0.1:11434", 0.0), ("https://paid.example", None)],
+)
+def test_local_study_cost_requires_loopback_provenance(
+    tmp_path: Path, base: str, expected: float | None
+) -> None:
+    run = community_label_study.RunRecord(no_decisions=False, wire_api="systemone", api_base=base)
+    capture = tmp_path / "capture.md"
+    capture.write_text("No remote billing evidence", encoding="utf-8")
+    assert community_label_study._cost(capture, run) == expected
+
+
+def test_local_study_runs_all_decisions_and_records_endpoint(
+    tmp_path: Path, openrouter_wire: OpenRouterWire
+) -> None:
+    prepared = _prepare(
+        tmp_path, "local", "--wire-api", "systemone", "--api-base", "http://127.0.0.1:11434"
+    )
+    assert prepared.code == 0
+    run = json.loads((prepared.out / "run.json").read_text(encoding="utf-8"))
+    assert run["wire_api"] == "systemone"
+    assert run["api_base"] == "http://127.0.0.1:11434"
+    assert {"choice", "noul", "score"} <= openrouter_wire.kinds_sent()
+    assert all(request.url.host == "127.0.0.1" for request in openrouter_wire.requests)
+    assert len(run["main"]) == 15
+
+
 def test_live_loader_scopes_machine_and_omits_stored_labels(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
