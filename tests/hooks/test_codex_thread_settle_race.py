@@ -19,7 +19,12 @@ import pytest
 
 from gobby.hooks.session_claimant import Claimant, SessionStartClaim, claim_session_start
 from gobby.hooks.session_credential import mint_session_credential, settle_claim
-from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host, thread_host
+from gobby.storage.codex_thread_hosts import (
+    ThreadHost,
+    refresh_thread_host,
+    register_thread_host,
+    thread_host,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import (
     StartupPin,
@@ -30,6 +35,7 @@ from gobby.storage.session_startup_marks import (
 from gobby.storage.sessions import SessionManager
 from tests.hooks.test_session_credential import (
     CODEX_HOOK_PID,
+    CODEX_OLD_TUI_PID,
     CODEX_PROVIDER_SESSION,
     CODEX_SHARED_HOST_PID,
     FAKE_PROCESS_START,
@@ -134,11 +140,24 @@ def _registered(db: HubDatabase) -> ThreadHost | None:
 def _before_registration(action: Callable[[], object]) -> Iterator[None]:
     """Run ``action`` after the child's claim checks and before it writes its registration."""
 
-    def interleaved(db: HubDatabase, **kwargs: Any) -> bool:
+    def interleaved_register(db: HubDatabase, **kwargs: Any) -> bool:
         action()
         return register_thread_host(db, **kwargs)
 
-    with patch("gobby.hooks.session_claimant.register_thread_host", side_effect=interleaved):
+    def interleaved_refresh(db: HubDatabase, **kwargs: Any) -> bool:
+        action()
+        return refresh_thread_host(db, **kwargs)
+
+    with (
+        patch(
+            "gobby.hooks.session_claimant.register_thread_host",
+            side_effect=interleaved_register,
+        ),
+        patch(
+            "gobby.hooks.session_claimant.refresh_thread_host",
+            side_effect=interleaved_refresh,
+        ),
+    ):
         yield
 
 
@@ -237,3 +256,69 @@ def test_an_uncontested_child_start_still_mints_for_its_thread(
     assert minted is not None
     assert minted["session_id"] == session.id
     assert _registered(temp_db) == WORKER
+
+
+def test_a_seat_that_takes_a_registered_thread_before_the_refresh_keeps_it(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    register_thread_host(temp_db, machine_id=TEST_MACHINE_ID, external_id=THREAD, host=WORKER)
+
+    def seat_starts_and_creates_its_row() -> None:
+        _seat_starts(temp_db)
+        _seat_row(temp_db, session_manager, sample_project)
+
+    with _before_registration(seat_starts_and_creates_its_row):
+        child = _claim(temp_db, CHILD)
+
+    assert child.refusal == MISMATCH
+    assert _registered(temp_db) is None
+    assert _mint(temp_db, host=WORKER) is None
+
+
+def test_a_child_settling_before_a_resumed_seat_settles_mints_nothing(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    seat_session = _seat_row(temp_db, session_manager, sample_project)
+    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (seat_session,))
+    child = _claim(temp_db, CHILD)
+    seat = _claim(temp_db, SEAT)
+    # The seat's resume handler revives its row before either settle runs.
+    temp_db.execute("UPDATE sessions SET status = 'active' WHERE id = %s", (seat_session,))
+
+    assert _settle(temp_db, child) is None
+    assert seat.proven
+
+
+def test_a_child_claiming_after_a_resumed_seat_claims_is_refused(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    seat_session = _seat_row(temp_db, session_manager, sample_project)
+    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (seat_session,))
+    seat = _claim(temp_db, SEAT)
+    assert seat.proven
+
+    child = _claim(temp_db, CHILD)
+    temp_db.execute("UPDATE sessions SET status = 'active' WHERE id = %s", (seat_session,))
+
+    assert child.refusal == MISMATCH
+    assert _registered(temp_db) == ThreadHost(SEAT_PID, SEAT_STARTED)
+    assert _mint(temp_db, host=WORKER) is None
+
+
+def test_a_registered_worker_mints_nothing_once_a_seat_takes_over_its_dead_owners_row(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    seat_session = _seat_row(temp_db, session_manager, sample_project)
+    dead_owner = {"parent_pid": CODEX_OLD_TUI_PID, "parent_create_time": FAKE_PROCESS_START}
+    temp_db.execute(
+        "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
+        (json.dumps(dead_owner), seat_session),
+    )
+    register_thread_host(temp_db, machine_id=TEST_MACHINE_ID, external_id=THREAD, host=WORKER)
+    child = _claim(temp_db, CHILD)
+    assert child.proven
+
+    seat = _claim(temp_db, SEAT)
+
+    assert seat.proven
+    assert _settle(temp_db, child) is None

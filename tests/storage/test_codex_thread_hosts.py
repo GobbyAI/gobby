@@ -9,9 +9,12 @@ import pytest
 from gobby.storage.codex_thread_hosts import (
     THREAD_HOST_MAX_AGE_HOURS,
     ThreadHost,
+    hold_thread_for_cli,
     prune_thread_hosts,
+    refresh_thread_host,
     register_thread_host,
     thread_host,
+    unregister_thread_host,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -94,3 +97,22 @@ def test_pruning_keeps_a_quiet_registration_whose_thread_is_still_live(
 
     assert prune_thread_hosts(temp_db) == 0
     assert thread_host(temp_db, **live) == WORKER
+
+
+def test_a_refresh_never_recreates_a_dropped_registration(temp_db: HubDatabase) -> None:
+    register_thread_host(temp_db, **KEY, host=WORKER)
+    assert refresh_thread_host(temp_db, **KEY, host=WORKER)
+
+    unregister_thread_host(temp_db, **KEY)
+
+    assert not refresh_thread_host(temp_db, **KEY, host=WORKER)
+    assert thread_host(temp_db, **KEY) is None
+
+
+def test_a_cli_hold_replaces_any_registration(temp_db: HubDatabase) -> None:
+    register_thread_host(temp_db, **KEY, host=WORKER)
+
+    hold_thread_for_cli(temp_db, **KEY, cli=OTHER_WORKER)
+
+    assert thread_host(temp_db, **KEY) == OTHER_WORKER
+    assert not refresh_thread_host(temp_db, **KEY, host=WORKER)

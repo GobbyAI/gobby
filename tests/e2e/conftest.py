@@ -1894,15 +1894,24 @@ def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
 
 
 def _session_bearer(signing_key: bytes, session: dict[str, Any]) -> dict[str, str]:
-    """Headers that select ``session`` with a credential bound to it."""
+    """Headers that select ``session`` with a credential bound to it.
+
+    Identity-bound routes such as tool calls also require the caller's project, which
+    must be the token's.
+    """
     session_id = str(session["id"])
+    project_id = str(session.get("project_id") or "")
     token = issue_session_api_token(
         signing_key,
         session_id=session_id,
-        project_id=str(session.get("project_id") or ""),
+        project_id=project_id,
         machine_id=session.get("machine_id"),
     )
-    return {"Authorization": f"Bearer {token}", "X-Gobby-Session-Id": session_id}
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Session-Id": session_id,
+        "X-Gobby-Caller-Project-Id": project_id,
+    }
 
 
 def _daemon_signing_key(daemon_instance: DaemonInstance) -> bytes | None:

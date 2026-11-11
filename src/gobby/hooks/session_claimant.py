@@ -10,7 +10,9 @@ Ownership is durable. A live terminal row stores its CLI. A deferred startup's m
 its CLI, and only that CLI's hook creates the row (session_startup_marks). A thread run by
 Codex's shared app-server is registered to that worker (codex_thread_hosts). The first
 owner stands: another may replace it only after proving it dead, by pid and start time,
-and the replacement is a compare-and-swap, so of two racers one wins.
+and the replacement is a compare-and-swap, so of two racers one wins. A Codex CLI's
+proven start holds its thread in that registry from its claim to its settle, so no
+worker child registers or mints the thread while the CLI's handler revives its row.
 """
 
 from __future__ import annotations
@@ -28,6 +30,8 @@ from gobby.hooks.terminal_context import _is_codex_shared_host, _stable_cli_proc
 from gobby.sessions.terminal_kill import create_time_matches
 from gobby.storage.codex_thread_hosts import (
     ThreadHost,
+    hold_thread_for_cli,
+    refresh_thread_host,
     register_thread_host,
     thread_host,
     unregister_thread_host,
@@ -268,15 +272,34 @@ def claim_session_start(
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
     if claimant.pid == daemon_pid:
         return SessionStartClaim()
+    key = {"external_id": external_id, "source": source, "machine_id": machine_id}
     if claimant.shared_host:
-        return _claim_shared_host(
+        return _claim_shared_host(db, claimant, start=start, **key)
+    claim = _claim_cli(db, claimant, start=start, **key)
+    if start and claim.proven and source == "codex" and claim.cli_pid and claim.create_time:
+        # Hold the thread before the handler runs: a resume or take-over revives the row
+        # before settle drops any worker registration, and a worker child must not mint
+        # it in between. Settle drops the hold; a handler that raises leaves it, which
+        # refuses worker children until a start displaces this CLI once it is dead.
+        hold_thread_for_cli(
             db,
-            claimant,
-            external_id=external_id,
-            source=source,
             machine_id=machine_id,
-            start=start,
+            external_id=external_id,
+            cli=ThreadHost(claim.cli_pid, claim.create_time),
         )
+    return claim
+
+
+def _claim_cli(
+    db: Any,
+    claimant: Claimant,
+    *,
+    external_id: str,
+    source: str,
+    machine_id: str,
+    start: bool,
+) -> SessionStartClaim:
+    """Decide a hook whose claimant is a CLI process rather than a shared worker."""
     live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
     cli_pid, started = claimant.cli_pid, claimant.create_time
     if cli_pid is None or started is None:
@@ -377,7 +400,10 @@ def _claim_shared_host(
     elif stored != host:
         if not process_is_dead(stored.pid, stored.create_time):
             return _refuse(
-                SESSION_CLAIMANT_MISMATCH, "another live worker registered it", source, external_id
+                SESSION_CLAIMANT_MISMATCH,
+                "another live worker or CLI holds it",
+                source,
+                external_id,
             )
         displaced = stored
     if not start:
@@ -401,11 +427,15 @@ def _register_shared_host(
     thread, or pinned it and created its row, in between. The seat's start drops any
     registration after it pins, so a write that lands first is removed; one that lands
     later finds the live pin, or the seat's row on a thread that had no registration, and
-    withdraws. Settle writes nothing, so no registration appears after these checks.
+    withdraws. A worker the thread was already registered to only refreshes that entry,
+    so a registration a seat dropped since the read above stays dropped. Settle writes
+    nothing, so no registration appears after these checks.
     """
-    registered = register_thread_host(
-        db, machine_id=machine_id, external_id=external_id, host=host, displaced=displaced
-    )
+    thread = {"machine_id": machine_id, "external_id": external_id}
+    if new or displaced is not None:
+        registered = register_thread_host(db, **thread, host=host, displaced=displaced)
+    else:
+        registered = refresh_thread_host(db, **thread, host=host)
     if not registered:
         return _refuse(
             SESSION_CLAIMANT_MISMATCH, "another worker registered it first", source, external_id

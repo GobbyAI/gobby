@@ -114,8 +114,8 @@ def settle_claim(
             pin=pin,
             displaced=claim.displaced,
         )
-        # The thread's own CLI runs its hooks, so a registration a shared worker's child
-        # wrote before this pin could otherwise mint for it.
+        # The pin, or the live row a resume revived, now excludes worker children, so this
+        # drops the hold the claim wrote (and any registration a worker child wrote first).
         unregister_thread_host(db, machine_id=machine_id, external_id=external_id)
     elif not claim.creates_row:
         return None

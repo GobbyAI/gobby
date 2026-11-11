@@ -82,15 +82,47 @@ def register_thread_host(
             """,
             (machine_id, external_id, host.pid, host.create_time),
         )
-        db.execute(
-            """
-            UPDATE codex_thread_hosts SET seen_at = clock_timestamp()
-            WHERE machine_id = %s AND external_id = %s
-              AND host_pid = %s AND host_create_time = %s
-            """,
-            (machine_id, external_id, host.pid, host.create_time),
-        )
+    return refresh_thread_host(db, machine_id=machine_id, external_id=external_id, host=host)
+
+
+def refresh_thread_host(
+    db: HubDatabase, *, machine_id: str, external_id: str, host: ThreadHost
+) -> bool:
+    """Refresh ``host``'s existing registration; return whether the thread is registered to it.
+
+    It never creates one, so a registration deleted since the caller read it stays deleted.
+    """
+    db.execute(
+        """
+        UPDATE codex_thread_hosts SET seen_at = clock_timestamp()
+        WHERE machine_id = %s AND external_id = %s
+          AND host_pid = %s AND host_create_time = %s
+        """,
+        (machine_id, external_id, host.pid, host.create_time),
+    )
     return thread_host(db, machine_id=machine_id, external_id=external_id) == host
+
+
+def hold_thread_for_cli(
+    db: HubDatabase, *, machine_id: str, external_id: str, cli: ThreadHost
+) -> None:
+    """Replace any registration with ``cli``, a CLI proven to run the thread's own hooks.
+
+    A ``--no-daemon`` seat's start claim holds its thread this way before its handler
+    runs, so no worker refresh passes and no worker child registers while the hold stands.
+    Its settle then drops the entry.
+    """
+    db.execute(
+        """
+        INSERT INTO codex_thread_hosts (machine_id, external_id, host_pid, host_create_time)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (machine_id, external_id) DO UPDATE
+        SET host_pid = EXCLUDED.host_pid,
+            host_create_time = EXCLUDED.host_create_time,
+            seen_at = clock_timestamp()
+        """,
+        (machine_id, external_id, cli.pid, cli.create_time),
+    )
 
 
 def unregister_thread_host(
