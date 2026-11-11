@@ -11030,3 +11030,271 @@ Synthetic inputs; no settings changed. Backend metadata and response bodies only
   }
 }
 ```
+## Decision capture 2026-11-11
+
+Service round trips validate all four shapes. Raw probes record usage and cost, chars-per-token, both input-limit responses and the alias comparison. A failed shape remains a finding; successful probes do not waive it. Each shape records the endpoint it was sent to; raw probes and limit calibration use the shared endpoint.
+
+The measured ratio uses the difference in state characters divided by the difference in reported input tokens across two probes, removing fixed question overhead. Limit-probe sizes account for the estimated overhead. If calibration is unavailable, the measured ratio is null and probes assume 4 characters per token with zero overhead. The responses establish whether the backend rejects or truncates.
+
+OpenRouter privacy flags are checked on every service exchange and raw probe. Input scope, documented errors and usage: [OpenRouter Jev](https://openrouter.ai/docs/guides/community/jev.md), [decision API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request.md), [TypeSafe models](https://docs.typesafe.ai/models), and [local wire contracts](wire-contracts.md). Documentation references are those recorded in the wire contracts; this run measures the backend independently.
+
+```json
+{
+  "wire_api": "systemone",
+  "api_base": "http://127.0.0.1:11434",
+  "request_model": "clef:27b",
+  "identity_contract": "response_version",
+  "backend_max_state_tokens": 16384,
+  "backend_max_question_tokens": null,
+  "long_context": false,
+  "probe_timeout_seconds": 600.0,
+  "shapes": [
+    {
+      "shape": "choice",
+      "wire_api": "systemone",
+      "api_base": "http://127.0.0.1:11434",
+      "request_model": "clef:27b",
+      "state": {
+        "description": "A red square is centered on a white background."
+      },
+      "exchanges": [
+        {
+          "status": 200,
+          "usage": {
+            "input_tokens": 145,
+            "output_tokens": 0
+          }
+        }
+      ],
+      "questions": {
+        "color": {
+          "type": "choice",
+          "instructions": "Choose the square's color.",
+          "criteria": {
+            "red": "The square is red",
+            "blue": "The square is blue"
+          }
+        }
+      },
+      "result": {
+        "answers": {
+          "color": {
+            "choice": "red",
+            "probabilities": {
+              "red": 0.9975273768433653,
+              "blue": 0.0024726231566347748
+            },
+            "confidence": 0.9750248943326087
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "shape": "noul",
+      "wire_api": "systemone",
+      "api_base": "http://127.0.0.1:11434",
+      "request_model": "clef:27b",
+      "state": {
+        "description": "A red square is centered on a white background."
+      },
+      "exchanges": [
+        {
+          "status": 200,
+          "usage": {
+            "input_tokens": 156,
+            "output_tokens": 0
+          }
+        }
+      ],
+      "questions": {
+        "red": {
+          "type": "noul",
+          "instructions": "The described square is red."
+        }
+      },
+      "result": {
+        "answers": {
+          "red": {
+            "probability": 0.9915215980653225
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "shape": "score",
+      "wire_api": "systemone",
+      "api_base": "http://127.0.0.1:11434",
+      "request_model": "clef:27b",
+      "state": {
+        "description": "A red square is centered on a white background."
+      },
+      "exchanges": [
+        {
+          "status": 200,
+          "usage": {
+            "input_tokens": 161,
+            "output_tokens": 0
+          }
+        }
+      ],
+      "questions": {
+        "clarity": {
+          "type": "score",
+          "instructions": "Rate how specifically the description identifies the shape.",
+          "criteria": [
+            "vague",
+            "clear",
+            "clear and specific"
+          ]
+        }
+      },
+      "result": {
+        "answers": {
+          "clarity": {
+            "score": 1.797504069023257,
+            "probabilities": {
+              "0": 0.008149065809423421,
+              "1": 0.18619779935789618,
+              "2": 0.8056531348326804
+            },
+            "confidence": 0.5209525307029494
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "shape": "box",
+      "wire_api": "openrouter-decisions",
+      "api_base": "https://openrouter.ai/api",
+      "request_model": "typesafe/jev-1.14",
+      "state": {
+        "description": "A red square is centered on a white background."
+      },
+      "exchanges": [
+        {
+          "status": 200,
+          "privacy_verified": true,
+          "usage": {
+            "input_tokens": 1050,
+            "output_tokens": 20,
+            "cost": 4.41e-05
+          }
+        }
+      ],
+      "image_sha256": "8c0e2212dd292e1f8a4ec163806ed349844a616cd9fd933b7d72c3a99a1690c2",
+      "consumer": "gobby-decisions:evaluate",
+      "questions": {
+        "square": {
+          "type": "box",
+          "instructions": "Locate the red square.",
+          "image_path": "/private/tmp/gobby-25163-red-square-20261111.png"
+        }
+      },
+      "tool_output": {
+        "success": true,
+        "answers": {
+          "square": {
+            "type": "box",
+            "success": true,
+            "answer": {
+              "box": {
+                "top": 0.26,
+                "bottom": 0.75,
+                "left": 0.25,
+                "right": 0.76
+              },
+              "confidence": 0.95
+            },
+            "response_model": "typesafe/jev-1.14-20261014",
+            "backend_identity": "response:typesafe/jev-1.14-20261014"
+          }
+        }
+      }
+    }
+  ],
+  "probes": [
+    {
+      "probe": "chars-per-token",
+      "request_model": "clef:27b",
+      "state_chars": 4096,
+      "status": 200,
+      "response_model": "clef:27b",
+      "usage": {
+        "input_tokens": 891,
+        "output_tokens": 0
+      },
+      "chars_per_token": 4.597081930415264
+    },
+    {
+      "probe": "chars-per-token",
+      "request_model": "clef:27b",
+      "state_chars": 8192,
+      "status": 200,
+      "response_model": "clef:27b",
+      "usage": {
+        "input_tokens": 1637,
+        "output_tokens": 0
+      },
+      "chars_per_token": 5.004276114844227
+    },
+    {
+      "probe": "just-under",
+      "request_model": "clef:27b",
+      "state_chars": 88262,
+      "status": 413,
+      "finding": "http_status: 413",
+      "response_error": {
+        "content_type": "application/json; charset=utf-8",
+        "body": "{\"error\":\"text and schema must not exceed 64 KiB\"}"
+      }
+    },
+    {
+      "probe": "over-limit",
+      "request_model": "clef:27b",
+      "state_chars": 93660,
+      "status": 413,
+      "finding": "http_status: 413",
+      "response_error": {
+        "content_type": "application/json; charset=utf-8",
+        "body": "{\"error\":\"text and schema must not exceed 64 KiB\"}"
+      }
+    },
+    {
+      "probe": "pinned-model",
+      "request_model": "clef:27b",
+      "state_chars": 4096,
+      "status": 200,
+      "response_model": "clef:27b",
+      "usage": {
+        "input_tokens": 891,
+        "output_tokens": 0
+      },
+      "chars_per_token": 4.597081930415264
+    },
+    {
+      "probe": "alias",
+      "request_model": "clef:27b",
+      "state_chars": 4096,
+      "status": 200,
+      "response_model": "clef:27b",
+      "usage": {
+        "input_tokens": 891,
+        "output_tokens": 0
+      },
+      "chars_per_token": 4.597081930415264
+    }
+  ],
+  "measured_chars_per_token": 5.490616621983914,
+  "limit_probe_chars_per_token": 5.490616621983914,
+  "estimated_input_overhead_tokens": 145.0,
+  "alias_matches_pinned_response": true,
+  "canonical_slug": {},
+  "privacy_policy": null
+}
+```

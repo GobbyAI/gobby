@@ -367,3 +367,39 @@ Sources transcribed by researcher gobby#17515 in the 2026-10-24 working note:
 [OpenRouter OpenAPI](https://openrouter.ai/openapi.json), and the Cloudflare and
 llama.cpp schemas linked above. These fixtures establish documented wire conformance,
 not a live Box consumer or backend capture.
+The [2026-11-11 capture](systemone-live.md#decision-capture-2026-11-11) supplies a successful live Jev Box consumer round trip with the 512 by 512 image.
+
+## 10. Decision shape consumers (2026-11-11)
+
+The [dated capture](systemone-live.md#decision-capture-2026-11-11) records Choice,
+Noul and Score on local `clef:27b` (`systemone`, `http://127.0.0.1:11434`), with
+backend identity `response:clef:27b`. Their product consumers and live-path tests are:
+
+| Shape | Product consumer | Live-path test in `tests/code_index/test_community_labeler.py` |
+| --- | --- | --- |
+| Choice | Generated community-label admission gate | `test_gate_admits_at_threshold_and_rejects_below` |
+| Noul | Retain stale names after membership changes | `test_carry_keeps_name_above_threshold_without_generation` |
+| Score | Skip generation when deterministic labels suffice | `test_sufficient_deterministic_label_skips_generation` |
+
+Box ran through the registered `gobby-decisions:evaluate` tool from #24248,
+closing commit `fe0c921cbe2780838fcb0c339d4e3f8a23e943b6`.
+Its live-path test is
+`tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_round_trips_every_decision_shape`.
+The serving endpoint was `https://openrouter.ai/api`, wire `openrouter-decisions`,
+request model `typesafe/jev-1.14`, backend `response:typesafe/jev-1.14-20261014`.
+The capture retains the tool questions, typed output and image SHA-256
+`8c0e2212dd292e1f8a4ec163806ed349844a616cd9fd933b7d72c3a99a1690c2`.
+
+The committed image is white, 512 by 512, with red pixels on [128,384) on both axes.
+
+| Edge | Expected | Captured | Captured minus expected |
+| --- | ---: | ---: | ---: |
+| top | 0.25 | 0.26 | +0.01 |
+| bottom | 0.75 | 0.75 | 0 |
+| left | 0.25 | 0.25 | 0 |
+| right | 0.75 | 0.76 | +0.01 |
+
+Box confidence was 0.95 and reported OpenRouter cost was $0.0000441.
+This completes the real Box consumer evidence. Every consumer remains off.
+The local just-under and over-limit probes both returned 413, so this capture does
+not pass the complete local activation checklist. #25163 owns that remaining work.
