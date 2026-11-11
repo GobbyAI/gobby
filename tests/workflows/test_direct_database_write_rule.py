@@ -7,6 +7,7 @@ effect's flags, so the corpus pins what a seat's Bash call actually meets.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -193,3 +194,18 @@ def test_database_clients_and_inline_drivers_are_refused(command: str) -> None:
 )
 def test_searches_messages_and_unrelated_python_stay_open(command: str) -> None:
     assert not _blocked(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "docker" + " -a" * 40 + " ps",
+        "docker compose" + " -a" * 40 + " logs db",
+        "docker" + " -a" * 40 + " exec db psql",
+    ],
+)
+def test_option_chains_scan_without_backtracking(command: str) -> None:
+    started = time.perf_counter()
+    blocked = _blocked(command)
+    assert time.perf_counter() - started < 1.0
+    assert blocked is command.endswith("psql")
