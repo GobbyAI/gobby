@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 
 from gobby.hooks.envelope_dedupe import ENVELOPE_ID_HEADER
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+from gobby.hooks.session_claimant import SessionStartClaim
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.postgres import TEST_USER_ID
@@ -74,6 +75,12 @@ def _post(
         TestClient(server.app) as client,
         patch("gobby.adapters.droid.DroidAdapter") as adapter_cls,
         patch("gobby.servers.routes.mcp.hooks.claim_envelope_processing") as claim,
+        # The machine check runs before the claimant check; this module covers only the
+        # former, so the claimant is taken as proven.
+        patch(
+            "gobby.hooks.session_claimant.claim_session_start",
+            return_value=SessionStartClaim(),
+        ),
     ):
         adapter_cls.return_value.handle_native.return_value = {"continue": True}
         response = client.post("/api/hooks/execute", json=body, headers=request_headers)

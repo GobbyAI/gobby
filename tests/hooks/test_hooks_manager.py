@@ -2773,9 +2773,8 @@ _ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
 }
 
 # A PostCompact and an auto PreCompact wait for a main-thread event, then materialize.
+# The matrix sends them as settled replays, so they materialize like any other event.
 _HELD_COMPACTION_EVENTS = (HookEventType.PRE_COMPACT, HookEventType.POST_COMPACT)
-# The matrix sends compact hooks as settled replays, which materialize like any other hook;
-# holding them at receipt is covered by the held-compaction tests below.
 _FIRST_HOOK_CASES = tuple(
     (event_type, event_type not in _ORPHAN_NON_MATERIALIZING_EVENTS)
     for event_type in HookEventType
