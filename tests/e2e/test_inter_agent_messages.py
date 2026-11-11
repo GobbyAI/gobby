@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.daemon_notices import NOTICE_MESSAGE_TYPE
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
@@ -37,6 +38,16 @@ def unwrap_result(result: dict[str, Any]) -> dict[str, Any]:
         inner: dict[str, Any] = result["result"]
         return inner
     return result
+
+
+def session_messages(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Inbox rows other sessions sent.
+
+    The isolated daemon's startup DAEMON BACK notice reaches every live session,
+    including ones a test has just registered, so it is not part of what a test sent.
+    """
+    messages: list[dict[str, Any]] = result.get("messages", [])
+    return [message for message in messages if message["message_type"] != NOTICE_MESSAGE_TYPE]
 
 
 class TestInterAgentMessagingE2E:
@@ -237,8 +248,8 @@ class TestInterAgentMessagingE2E:
         result = unwrap_result(raw_result)
 
         assert "error" not in result, f"get_inter_session_messages failed: {result}"
-        assert result.get("messages", []) == []
-        assert result.get("count", 0) == 0
+        assert session_messages(result) == []
+        assert result["count"] == len(result["messages"])
 
     def test_mailbox_reads_do_not_mark_messages_delivered(
         self,
@@ -308,7 +319,7 @@ class TestInterAgentMessagingE2E:
             },
         )
         result = unwrap_result(raw_result)
-        first_messages = result.get("messages", [])
+        first_messages = session_messages(result)
         assert len(first_messages) >= 1, "First read should return messages"
         first_message_id = first_messages[0]["id"]
 
@@ -323,9 +334,9 @@ class TestInterAgentMessagingE2E:
             },
         )
         result = unwrap_result(raw_result)
-        second_messages = result.get("messages", [])
+        second_messages = session_messages(result)
         assert len(second_messages) >= 1, "Second read should preserve messages"
-        assert second_messages[0]["id"] == first_message_id
+        assert [message["id"] for message in second_messages] == [first_message_id]
 
         # Cleanup
         cli_events.unregister_test_agent(run_id)
