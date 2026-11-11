@@ -40,7 +40,8 @@ _HOMEBREW_ZIG_016 = (
     Path("/usr/local/opt/zig@0.16/bin/zig"),
 )
 _ZIG_VERSION_TIMEOUT_SECONDS = 10
-_WORKSPACE_BUILD_TIMEOUT_SECONDS = 600
+# A cold vt-engine build (libghostty-vt through Zig, no sccache) runs past 10 minutes.
+_WORKSPACE_BUILD_TIMEOUT_SECONDS = 1800
 _CRATE_PACKAGE = "gobby-terminal"
 _CRATE_DIR = "gterminal"
 
@@ -213,28 +214,35 @@ def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
         src_bin = release_dir / module._GTERM_BIN_NAME
         if not src_bin.exists():
             return None
-
-        dest = bin_dir / module._GTERM_BIN_NAME
-        if workspace_binary_is_current(
-            bin_dir, "gterm", src_bin, dest, workspace_root=manifest.parent
-        ):
-            return "current"
-        lock = try_acquire_native_bin_lock("gterm", bin_dir=bin_dir)
-        if lock is None:
-            module.logger.warning("gterm: native binary update is already in progress")
-            return None
-        with lock:
-            stage_and_promote_binary_file(
-                src_bin,
-                destination=dest,
-                prepare_staged=_codesign_workspace_binary,
-                workspace_root=manifest.parent,
-            )
-            write_source_hash(bin_dir, "gterm", file_sha256(src_bin))
-        return "promoted"
+        return promote_gterm_workspace_artifact(module, src_bin, bin_dir, manifest.parent)
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gterm: local workspace build failed: %s", e)
         return None
+
+
+def promote_gterm_workspace_artifact(
+    module: Any, src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    """Promote a built gterm through a signed new inode; None when another update holds it.
+
+    Running hosts keep the inode they exec'd, so live terminals are untouched.
+    """
+    dest = bin_dir / module._GTERM_BIN_NAME
+    if workspace_binary_is_current(bin_dir, "gterm", src_bin, dest, workspace_root=workspace_root):
+        return "current"
+    lock = try_acquire_native_bin_lock("gterm", bin_dir=bin_dir)
+    if lock is None:
+        module.logger.warning("gterm: native binary update is already in progress")
+        return None
+    with lock:
+        stage_and_promote_binary_file(
+            src_bin,
+            destination=dest,
+            prepare_staged=_codesign_workspace_binary,
+            workspace_root=workspace_root,
+        )
+        write_source_hash(bin_dir, "gterm", file_sha256(src_bin))
+    return "promoted"
 
 
 def install_gterm_from_cargo_git(module: Any, bin_dir: Path) -> bool:

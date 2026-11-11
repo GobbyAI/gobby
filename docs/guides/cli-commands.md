@@ -446,12 +446,21 @@ members already promoted and those still unpromoted. Cutover does not claim to
 restore binaries after a partial promotion. A promotion or verification failure
 leaves the daemon stopped; resolve the reported failure, then run `gobby start`.
 
-`gclient` sits outside the stamped set. After the daemon set is live, cutover
-promotes `gclient` separately through the same signed new-inode path and refreshes
-its version stamp, then prints `gclient matches this build.` A `gclient` build or
-promotion failure prints `gclient was not promoted: ...` on stderr with the
-remedy `uv run gobby install gclient`, leaves the daemon set live, and still exits
-0.
+`gmcp`, `gclient`, and `gterm` sit outside the stamped set. Cutover builds `gmcp`
+(`-p gobby-mcp`) and `gterm` (`-p gobby-terminal --features vt-engine`) one at a
+time after the set, with the same arguments `gobby install` uses. If either build
+fails, or either one has changed source under an already-installed version,
+cutover refuses before anything stops. After the daemon set is live, cutover
+promotes each stale one through the same signed new-inode path, records its source
+hash and release identity, and refreshes its version stamp. An already-current one
+stays on its inode. `Promoted: gmcp, gterm.` lists what was replaced. Running
+terminal hosts keep the inode they exec'd, so live terminals are not interrupted.
+
+`gclient` follows the same post-start path and prints `gclient matches this build.`
+If `gclient` fails to build, or any companion fails to promote after the start,
+cutover prints `<name> was not promoted: ...` on stderr with the remedy
+`uv run gobby install <name>`. It leaves the daemon set live, prints
+`Cutover set is live: ...` instead of `Cutover complete: ...`, and still exits 0.
 
 The command refuses before it builds when the schema inputs carry uncommitted
 changes — `crates/gcore/assets/schema`, `crates/gcore/src/schema`, and

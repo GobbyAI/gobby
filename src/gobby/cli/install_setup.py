@@ -515,6 +515,12 @@ def _write_gterm_version_stamp(bin_dir: Path, version: str) -> None:
     _gterm_impl.write_gterm_version_stamp(_module(), bin_dir, version)
 
 
+def _promote_gterm_workspace_artifact(
+    src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    return _gterm_impl.promote_gterm_workspace_artifact(_module(), src_bin, bin_dir, workspace_root)
+
+
 def _install_gterm_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
     return _gterm_impl.install_gterm_from_github(_module(), bin_dir, target, version)
 
@@ -599,6 +605,12 @@ def _get_installed_gmcp_version(bin_dir: Path) -> str | None:
 
 def _write_gmcp_version_stamp(bin_dir: Path, version: str) -> None:
     _gmcp_impl.write_gmcp_version_stamp(_module(), bin_dir, version)
+
+
+def _promote_gmcp_workspace_artifact(
+    src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    return _gmcp_impl.promote_gmcp_workspace_artifact(_module(), src_bin, bin_dir, workspace_root)
 
 
 def _install_gmcp_from_submodule(bin_dir: Path) -> str | None:
