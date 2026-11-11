@@ -134,6 +134,16 @@ def test_gate_exempts_only_the_grant_and_the_operator_terminal() -> None:
         "script -q /dev/null psql gobby",
         "docker exec -it -u postgres pg psql -U gobby",
         "docker compose exec db psql",
+        "docker compose -f - exec db psql",
+        "docker compose --file - exec db psql",
+        "docker compose -f x.yml --env-file - exec db psql",
+        'docker compose -f "my file.yml" exec db psql',
+        'docker --config "/tmp/my config.json" exec db psql',
+        "docker -Htcp://127.0.0.1:2375 exec db psql",
+        "docker compose -f./x.yml exec db psql",
+        "docker-compose -f./x.yml exec db psql",
+        "docker --context prod exec db psql",
+        "docker --log-level debug exec db psql",
     ],
 )
 def test_database_clients_and_inline_drivers_are_refused(command: str) -> None:

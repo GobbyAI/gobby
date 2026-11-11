@@ -1,4 +1,4 @@
-version: "1.4.1"
+version: "1.4.2"
 tags: [gobby, default, tool-hygiene]
 
 # Operator ruling, 2026-11-10: direct database writes are allowed for the seats whose
@@ -49,8 +49,11 @@ rules:
         # option value (--entrypoint=psql), a path, or quoted inner shell
         # (sh -c 'psql ...'). Quoted text stays visible here because the client runs
         # inside the container; other commands that merely mention docker are not
-        # in command position.
-        command_pattern: '(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?(?:docker|podman)(?:-compose)?(?:\s+--?[\w-]+(?:=\S+|\s+(?!(?:exec|run|container|compose)\b)[^\s|;&-]\S*)?)*\s+(?:(?:container|compose)(?:\s+--?[\w-]+(?:=\S+|\s+(?!(?:exec|run)\b)[^\s|;&-]\S*)?)*\s+)?(?:exec|run)\b[^|\n]*?(?:[\s=''"/])(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=[\s''";&|)]|$)'
+        # in command position. An option token is any word starting with `-`
+        # (attached values such as -Htcp://h or -f./x.yml included); its optional
+        # separate value is any word, quoted words with spaces and a bare `-` (stdin)
+        # included.
+        command_pattern: '(?:^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:sudo\s+|command\s+|exec\s+|nohup\s+|time\s+|do\s+|then\s+|else\s+|env\s+(?:-\S+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)*(?:[^\s;&|]*/)?(?:docker|podman)(?:-compose)?(?:\s+-(?:"[^"]*"|''[^'']*''|[^\s"''|;&])+(?:\s+(?!(?:exec|run|container|compose)\b)(?:"[^"]*"|''[^'']*''|[^\s"''|;&])+)?)*\s+(?:(?:container|compose)(?:\s+-(?:"[^"]*"|''[^'']*''|[^\s"''|;&])+(?:\s+(?!(?:exec|run)\b)(?:"[^"]*"|''[^'']*''|[^\s"''|;&])+)?)*\s+)?(?:exec|run)\b[^|\n]*?(?:[\s=''"/])(?:psql|pgcli|pgbench|pg_restore|createdb|dropdb|createuser|dropuser|vacuumdb|reindexdb|clusterdb)(?=[\s''";&|)]|$)'
         reason: *db_reason
 
   inline-database-driver-authority:
